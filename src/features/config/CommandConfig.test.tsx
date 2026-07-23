@@ -20,6 +20,7 @@ test('无选中命令时提示', () => {
 test('必填缺失时点运行不触发 onRun 并显示错误', async () => {
   const onRun = vi.fn()
   render(<CommandConfig onRun={onRun} />)
+  expect(screen.queryByTestId('error-url')).not.toBeInTheDocument()  // mount 后、点击前不显 error
   await userEvent.click(screen.getByTestId('run-button'))
   expect(onRun).not.toHaveBeenCalled()
   expect(screen.getByTestId('error-url')).toHaveTextContent('此字段必填')

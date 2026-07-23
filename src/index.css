@@ -11,6 +11,7 @@
   --color-success: #3fb950;
   --color-warning: #d29922;
   --color-danger: #f85149;
+  --color-on-accent: #ffffff;
 }
 
 :root { color-scheme: dark; }

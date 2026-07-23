@@ -48,7 +48,7 @@ export function CommandConfig({ onRun }: { onRun: () => void }) {
 
       <button data-testid="run-button" disabled={running} onClick={handleRun}
         className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
-        style={{ background: 'var(--color-accent)', color: '#fff' }}>
+        style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
         {running ? '运行中…' : '运行任务'}
       </button>
     </div>
