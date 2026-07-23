@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../../App'
+import { RunPanel } from './RunPanel'
 import { useAppStore } from '../../store/appStore'
 import type { CommandManifest } from '../../data/types'
 
@@ -24,4 +25,24 @@ test('运行中显示取消执行按钮', async () => {
   render(<App />)
   await userEvent.click(screen.getByTestId('run-button'))
   await waitFor(() => expect(screen.getByTestId('cancel-button')).toBeInTheDocument())
+})
+
+test('取消闭环：cancelled 终态显示已取消、不出现 error 框、收起取消按钮', () => {
+  useAppStore.setState({
+    currentRun: {
+      id: 'run-1',
+      command: cmd,
+      values: {},
+      state: 'cancelled',
+      startedAt: Date.now(),
+      endedAt: Date.now(),
+      lines: [],
+      error: undefined,
+    },
+  })
+  render(<RunPanel onCancel={() => {}} />)
+
+  expect(screen.getByTestId('run-state')).toHaveTextContent('已取消')
+  expect(screen.queryByTestId('cancel-button')).not.toBeInTheDocument()
+  expect(screen.queryByText('命令执行失败')).not.toBeInTheDocument()
 })
