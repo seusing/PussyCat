@@ -29,3 +29,15 @@ test('mergeManifestFields 对没有 manifest 对应项的命令保持原样', ()
   expect(merged[0].navigateBefore).toBeUndefined()
   expect(merged[0].site).toBe('baidubaike')
 })
+
+test('mergeManifestFields 命令自身已有字段时优先保留命令值，不被 manifest 覆盖', () => {
+  const list: CommandManifest[] = [
+    { command: 'x/y', site: 'x', name: 'y', description: '', access: 'read', browser: false, args: [], navigateBefore: true, type: 'js' },
+  ]
+  const manifest = [
+    { site: 'x', name: 'y', navigateBefore: false, type: 'other' },
+  ]
+  const merged = mergeManifestFields(list, manifest)
+  expect(merged[0].navigateBefore).toBe(true)
+  expect(merged[0].type).toBe('js')
+})
