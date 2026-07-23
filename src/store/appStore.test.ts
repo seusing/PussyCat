@@ -6,6 +6,20 @@ const cmd: CommandManifest = {
   args: [{ name: 'password', type: 'str' }, { name: 'timeout', type: 'int' }],
 }
 
+const initialState = useAppStore.getState()
+beforeEach(() => { useAppStore.setState(initialState, true) })  // true = replace，每个用例前恢复初始态
+
+test('markCancelling→finishRun(cancelled) 取消流程且不带 error', () => {
+  useAppStore.getState().selectCommand(cmd)
+  useAppStore.getState().beginRun('run-2')
+  useAppStore.getState().appendOutput({ runId: 'run-2', seq: 0, at: 1, stream: 'stdout', text: 'x' })
+  useAppStore.getState().markCancelling()
+  expect(useAppStore.getState().currentRun?.state).toBe('cancelling')
+  useAppStore.getState().finishRun({ runId: 'run-2', at: 2, outcome: 'cancelled' })
+  expect(useAppStore.getState().currentRun?.state).toBe('cancelled')
+  expect(useAppStore.getState().currentRun?.error).toBeUndefined()
+})
+
 test('redactValues 脱敏敏感字段', () => {
   const out = redactValues(cmd, { password: 'secret', timeout: 5 })
   expect(out.password).toBe('••••')

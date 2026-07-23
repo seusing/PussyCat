@@ -24,3 +24,9 @@ test('done 的 outcome 决定终态', () => {
   expect(transition('running', { type: 'DONE', outcome: 'error' })).toBe('failed')
   expect(transition('running', { type: 'DONE', outcome: 'cancelled' })).toBe('cancelled')
 })
+
+test('终态幂等，不再迁移', () => {
+  expect(transition('succeeded', { type: 'RUN' })).toBe('succeeded')
+  expect(transition('failed', { type: 'RUN' })).toBe('failed')
+  expect(transition('cancelled', { type: 'RUN' })).toBe('cancelled')
+})
