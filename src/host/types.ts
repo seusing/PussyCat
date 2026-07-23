@@ -24,6 +24,7 @@ export type DoneEvent = {
   outcome: RunOutcome
   exitCode?: number
   result?: Record<string, unknown>[]
+  // error 仅在 outcome:'error' 时出现；cancelled/success 不带 error
   error?: { summary: string; detail?: string }
 }
 

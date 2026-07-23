@@ -8,13 +8,13 @@ export function createMockHost(): HostBridge {
   const runs = new Map<string, ActiveRun>()
 
   const emit = (runId: string, run: ActiveRun, stream: 'stdout' | 'stderr', text: string) => {
-    if (run.done) return
+    if (run.done) return // 防御性守卫：同步 mock 下不可达（done-once 由 clearTimeout+runs.delete+!run 短路保证）；真实异步 host（P0-B/P1）需自备竞态测试
     const e: OutputEvent = { runId, seq: run.seq++, at: Date.now(), stream, text }
     outputCbs.forEach((cb) => cb(e))
   }
 
   const finish = (runId: string, run: ActiveRun, outcome: RunOutcome, extra: Partial<DoneEvent> = {}) => {
-    if (run.done) return                 // ① done-once
+    if (run.done) return                 // ① done-once；防御性守卫，同步 mock 下不可达（同上），真实异步 host（P0-B/P1）需自备竞态测试
     run.done = true
     run.timers.forEach(clearTimeout)
     doneCbs.forEach((cb) => cb({ runId, at: Date.now(), outcome, ...extra }))
@@ -39,9 +39,10 @@ export function createMockHost(): HostBridge {
 
     async cancelCommand(runId: string) {
       const run = runs.get(runId)
-      if (!run || run.cancelled) return   // ②③ 幂等 + 已结束(natural)则 no-op 保留真实终态
+      // ②③ 幂等 + 已结束(natural)则 no-op 保留真实终态；run.cancelled 分支同步 mock 下不可达（done-once 由 clearTimeout+runs.delete+!run 短路保证），真实异步 host（P0-B/P1）需自备竞态测试
+      if (!run || run.cancelled) return
       run.cancelled = true
-      finish(runId, run, 'cancelled', { error: { summary: '已取消' } })
+      finish(runId, run, 'cancelled') // cancelled 不带 error：error 字段仅属于 outcome:'error'（见 types.ts DoneEvent 注释）
     },
 
     onOutput(cb) { outputCbs.add(cb); return () => { outputCbs.delete(cb) } },
