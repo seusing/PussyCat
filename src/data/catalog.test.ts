@@ -6,9 +6,11 @@ const c = (site: string, name: string, extra: Partial<CommandManifest> = {}): Co
 })
 
 const cmds = [
+  // 插入顺序刻意与字母序相反（xiaohongshu 在前、12306 在后），
+  // 使 groupBySite 的排序测试无法靠 Map 插入顺序侥幸通过。
+  c('xiaohongshu', 'download', { description: '下载笔记图片和视频', aliases: ['dl'] }),
   c('12306', 'login', { description: 'Open 12306 login' }),
   c('12306', 'orders'),
-  c('xiaohongshu', 'download', { description: '下载笔记图片和视频', aliases: ['dl'] }),
 ]
 
 test('groupBySite 按站点分组并按站点名排序', () => {
