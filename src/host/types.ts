@@ -3,11 +3,10 @@ export type OutputFormat = 'table' | 'plain' | 'json' | 'yaml' | 'md' | 'csv'
 
 export type RunRequest = {
   runId: string
-  site: string
-  command: string
-  args: Record<string, unknown>
+  commandKey: string          // "site/name"，list 主键
+  argv: string[]              // buildArgv 产物（[site, name, ...]），唯一执行事实源
   format?: OutputFormat
-  mockScenario?: 'success' | 'error'   // 仅 mockHost 使用；缺省 success
+  mockScenario?: 'success' | 'error'
 }
 
 export type OutputEvent = {

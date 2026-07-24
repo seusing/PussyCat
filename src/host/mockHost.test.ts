@@ -15,7 +15,7 @@ function collect(host: HostBridge) {
 test('成功：先有 output，最后恰好一个 success done', async () => {
   const host = createMockHost()
   const { outputs, dones } = collect(host)
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {} })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'] })
   await vi.runAllTimersAsync()
   expect(dones).toHaveLength(1)
   expect(dones[0].outcome).toBe('success')
@@ -26,7 +26,7 @@ test('成功：先有 output，最后恰好一个 success done', async () => {
 test('seq 严格单调递增且不重复', async () => {
   const host = createMockHost()
   const { outputs } = collect(host)
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {} })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'] })
   await vi.runAllTimersAsync()
   const seqs = outputs.map((o) => o.seq)
   expect(seqs).toEqual([...seqs].sort((a, b) => a - b))
@@ -36,7 +36,7 @@ test('seq 严格单调递增且不重复', async () => {
 test('cancel 幂等，产生唯一 cancelled done', async () => {
   const host = createMockHost()
   const { dones } = collect(host)
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {} })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'] })
   await vi.advanceTimersByTimeAsync(35)
   await host.cancelCommand('r1')
   await host.cancelCommand('r1')
@@ -48,7 +48,7 @@ test('cancel 幂等，产生唯一 cancelled done', async () => {
 test('自然结束后迟到的 cancel 保留真实终态（竞态）', async () => {
   const host = createMockHost()
   const { dones } = collect(host)
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {} })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'] })
   await vi.runAllTimersAsync()
   await host.cancelCommand('r1')
   expect(dones).toHaveLength(1)
@@ -58,7 +58,7 @@ test('自然结束后迟到的 cancel 保留真实终态（竞态）', async () 
 test('error 场景：error done 带 exitCode 与摘要', async () => {
   const host = createMockHost()
   const { outputs, dones } = collect(host)
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {}, mockScenario: 'error' })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'], mockScenario: 'error' })
   await vi.runAllTimersAsync()
   expect(dones).toHaveLength(1)
   expect(dones[0].outcome).toBe('error')
@@ -70,7 +70,7 @@ test('error 场景：error done 带 exitCode 与摘要', async () => {
 test('done 之后不再有该 run 的 output（终态抑制 pending output）', async () => {
   const host = createMockHost()
   const { outputs } = collect(host)
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {} })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'] })
   await vi.advanceTimersByTimeAsync(35)   // 触发 10/30ms，t=50ms 的 emit 仍 pending
   const before = outputs.length
   await host.cancelCommand('r1')          // finish 的 clearTimeout 应清掉 t=50 pending emit
@@ -81,7 +81,7 @@ test('done 之后不再有该 run 的 output（终态抑制 pending output）', 
 test('cancelled done 不带 error 字段（error 仅 error outcome）', async () => {
   const host = createMockHost()
   const { dones } = collect(host)
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {} })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'] })
   await vi.advanceTimersByTimeAsync(35)
   await host.cancelCommand('r1')
   await vi.runAllTimersAsync()
@@ -96,7 +96,7 @@ test('onOutput/onDone 退订函数生效（退订后零增长）', async () => {
   const offOut = host.onOutput((e) => outs.push(e))
   const offDone = host.onDone((e) => dns.push(e))
   offOut(); offDone()
-  await host.startCommand({ runId: 'r1', site: 'x', command: 'c', args: {} })
+  await host.startCommand({ runId: 'r1', commandKey: 'x/c', argv: ['x', 'c'] })
   await vi.runAllTimersAsync()
   expect(outs).toHaveLength(0)
   expect(dns).toHaveLength(0)

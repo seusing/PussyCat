@@ -5,6 +5,7 @@ import { CommandConfig } from './features/config/CommandConfig'
 import { RunPanel } from './features/runs/RunPanel'
 import { useAppStore } from './store/appStore'
 import { loadCatalog } from './data/catalog'
+import { buildArgv } from './data/command'
 import { createMockHost } from './host/mockHost'
 
 let runSeq = 0
@@ -25,7 +26,8 @@ export default function App() {
     if (!s.selected) return
     const runId = `run-${++runSeq}`
     s.beginRun(runId)
-    void host.startCommand({ runId, site: s.selected.site, command: s.selected.name, args: s.values })
+    const argv = buildArgv(s.selected, s.values)
+    void host.startCommand({ runId, commandKey: s.selected.command, argv })
   }
 
   const onCancel = () => {
