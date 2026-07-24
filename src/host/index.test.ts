@@ -12,3 +12,8 @@ test('environment and query select connected node host', () => {
   const fromQuery = createHostSelection({ search: '?host=node', env: { VITE_HOST_MODE: 'mock' } })
   expect(fromQuery.mode).toBe('connected')
 })
+
+test('createHostSelection: demo→snapshot 源;node→live 源', () => {
+  expect(createHostSelection({}).catalogSource.kind).toBe('snapshot')
+  expect(createHostSelection({ search: '?host=node' }).catalogSource.kind).toBe('live')
+})

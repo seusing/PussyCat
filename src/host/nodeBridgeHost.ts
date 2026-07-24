@@ -20,7 +20,7 @@ export type NodeBridgeHostOptions = {
 
 type HostWithClose = HostBridge & { close: () => void }
 
-const DEFAULT_BASE_URL = 'http://127.0.0.1:43117'
+export const DEFAULT_BASE_URL = 'http://127.0.0.1:43117'
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 
 function eventMessage(event: Event): string | undefined {

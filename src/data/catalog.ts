@@ -2,7 +2,7 @@ import type { CommandManifest, CatalogSnapshot } from './types'
 
 export class CatalogError extends Error {}
 
-function assertSnapshot(x: unknown): CatalogSnapshot {
+export function assertSnapshot(x: unknown): CatalogSnapshot {
   const s = x as any
   if (s?.schemaVersion !== 1) throw new CatalogError(`schemaVersion 不支持：${s?.schemaVersion}`)
   if (!Array.isArray(s.commands)) throw new CatalogError('commands 非数组')
@@ -12,8 +12,9 @@ function assertSnapshot(x: unknown): CatalogSnapshot {
   return s as CatalogSnapshot
 }
 
-export async function loadCatalog(): Promise<CatalogSnapshot> {
-  const res = await fetch('/catalog.snapshot.json')
+export async function loadCatalog(opts: { cache?: RequestCache; fetchImpl?: typeof fetch } = {}): Promise<CatalogSnapshot> {
+  const fetchImpl = opts.fetchImpl ?? fetch
+  const res = await fetchImpl('/catalog.snapshot.json', opts.cache ? { cache: opts.cache } : undefined)
   if (!res.ok) throw new CatalogError(`加载 catalog 失败：${res.status}`)
   return assertSnapshot(await res.json())
 }
