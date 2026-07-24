@@ -54,3 +54,26 @@ test('切换命令后旧字段错误不残留', async () => {
   act(() => { useAppStore.getState().selectCommand(cmdB) })          // 切到 cmdB（非 DOM 事件触发的 store 直改，手动 act 包裹）
   await waitFor(() => expect(screen.queryByTestId('error-url')).not.toBeInTheDocument())
 })
+
+import { emptyPreferences } from '../../data/preferences'
+
+describe('收藏动作', () => {
+  beforeEach(() => { useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined, preferences: emptyPreferences(), stale: { sites: new Set(), commands: new Set() } }); localStorage.clear() })
+
+  test('点 ☆站点 收藏并变实心', async () => {
+    render(<CommandConfig onRun={() => {}} />)
+    const btn = screen.getByTestId('fav-site')
+    expect(btn).toHaveTextContent('☆')
+    await userEvent.click(btn)
+    expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])
+    expect(screen.getByTestId('fav-site')).toHaveTextContent('★')
+  })
+
+  test('点 ☆命令 收藏 command+site', async () => {
+    render(<CommandConfig onRun={() => {}} />)
+    await userEvent.click(screen.getByTestId('fav-command'))
+    const fav = useAppStore.getState().preferences.favoriteCommands[0]
+    expect(fav.command).toBe('x/go'); expect(fav.site).toBe('x')
+    expect(screen.getByTestId('fav-command')).toHaveTextContent('★')
+  })
+})

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { commandPreview } from '../../data/command'
+import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { validate } from './validation'
 import { DynamicField } from './DynamicField'
 
@@ -10,6 +11,9 @@ export function CommandConfig({ onRun }: { onRun: () => void }) {
   const setValue = useAppStore((s) => s.setValue)
   const currentRun = useAppStore((s) => s.currentRun)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const preferences = useAppStore((s) => s.preferences)
+  const toggleSiteFavorite = useAppStore((s) => s.toggleSiteFavorite)
+  const toggleCommandFavorite = useAppStore((s) => s.toggleCommandFavorite)
 
   useEffect(() => { setErrors({}) }, [selected])   // ⑦a 切换命令后清掉上一条命令残留的字段错误
 
@@ -30,9 +34,30 @@ export function CommandConfig({ onRun }: { onRun: () => void }) {
 
   return (
     <div>
-      <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{selected.site} / {selected.name}</div>
+      <div className="mb-1 flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+        <span>{selected.site}</span>
+        <button
+          data-testid="fav-site"
+          onClick={() => toggleSiteFavorite(selected.site)}
+          aria-pressed={isSiteFavorited(preferences, selected.site)}
+          title={isSiteFavorited(preferences, selected.site) ? '取消收藏站点' : '收藏站点'}
+          style={{ color: isSiteFavorited(preferences, selected.site) ? 'var(--color-warning)' : 'var(--color-fg-dim)', lineHeight: 1 }}
+        >
+          {isSiteFavorited(preferences, selected.site) ? '★' : '☆'}
+        </button>
+        <span>/ {selected.name}</span>
+      </div>
       <div className="mb-1 flex items-center gap-2">
         <h2 className="text-lg font-semibold">{selected.name}</h2>
+        <button
+          data-testid="fav-command"
+          onClick={() => toggleCommandFavorite(selected)}
+          aria-pressed={isCommandFavorited(preferences, selected.command)}
+          title={isCommandFavorited(preferences, selected.command) ? '取消收藏命令' : '收藏命令'}
+          style={{ color: isCommandFavorited(preferences, selected.command) ? 'var(--color-warning)' : 'var(--color-fg-dim)', lineHeight: 1 }}
+        >
+          {isCommandFavorited(preferences, selected.command) ? '★' : '☆'}
+        </button>
         <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
         {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
       </div>
