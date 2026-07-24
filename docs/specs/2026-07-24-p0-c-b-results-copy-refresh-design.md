@@ -123,7 +123,7 @@ export async function copyText(text: string): Promise<boolean> {
 }
 ```
 
-降级次序：`navigator.clipboard.writeText` **缺失或 reject** 后才走 textarea fallback；两者皆败返 false。
+降级次序：`navigator.clipboard.writeText` **缺失或 reject** 后才走 textarea fallback；两者皆败返 false。fallback 的 textarea 清理必须 `try/finally`——`select()`/`execCommand()` 抛错时含完整命令/日志的隐藏节点不得驻留 DOM（三轮复审 F3，回归断言 `querySelectorAll('textarea')` 为空）。
 
 - 运行前复制命令：`CommandConfig` preview 旁「复制命令」按钮，text = 当前 preview 同一字符串（`commandPreview(selected, values)` 现有产物）。
 - 复制反馈：点击后按钮文案短暂（~1.5s）变「已复制」/「复制失败」后回弹（组件局部 state + setTimeout）。
@@ -137,6 +137,7 @@ export async function copyText(text: string): Promise<boolean> {
 - `AppShell` 加通用槽 `headerActions?: ReactNode`，header 右侧渲染 `{headerActions}<HealthPill />`——**不塞 Catalog 业务逻辑进 AppShell**。
 - App 组装刷新控件（App 内小组件）：
   - 局部 state：`refresh: { state: 'idle' | 'refreshing' | 'error'; error?: string; generatedAt?: number }`——**独立于首载 `catalogStatus`**，不复用 loading/error 覆盖三栏（决策④）。
+  - **latest-wins 契约（三轮复审 F1 补）**：刷新按钮在首载期间即可用，故首载与手动刷新共享同一请求世代计数 `loadGen`（useRef）；每次发起 load 递增世代，then/catch 提交前校验世代，**过期响应（无论成功/失败/降级）一律丢弃**——只有最新请求有权更新 commands/generatedAt/degraded/error。受控 Promise 回归测试锁定「慢首载不得覆盖已成功的手动刷新」。
   - 按钮「刷新目录」：在途 disabled + 「刷新中…」；成功 → `setCommands(snap.commands)`（自动触发 §5 的 selection reconcile 与 stale 重算）+ 更新 `generatedAt`；失败 → 按钮旁小字「刷新失败」（title=详情），**目录保持 ready**。
   - 旁显「N 条 · HH:mm 更新」（N=commands.length，时间取 snapshot.generatedAt）。
 
@@ -157,7 +158,7 @@ createCatalogService({ opencliEntry, manifestPath, spawnImpl?, readFileImpl?, cl
 3. 收集 stdout ≤ `maxOutputBytes`（超限 kill 子进程 → 失败）；`timeoutMs` 超时 kill → 失败；非零退出 → 失败。
 4. `JSON.parse(stripBom(stdout))` 坏 JSON → 失败。
 5. `mergeManifestFields(list, manifest)`（`readFileImpl(manifestPath)`；`.mjs → src/data/normalize.ts` import 已由 `scripts/sync-catalog.mjs` 在本机 Node 25 实证可用——**运行约束：Node ≥ 23（type-stripping）**，写入 server README/注释）。
-6. schema 校验（`schemaVersion:1`、commands 数组、每条含 command/site/name/access/args——与前端 `assertSnapshot` 同准则的服务端版）。
+6. schema 深校验（三轮复审 F2 升级为**双端共享** `src/data/catalogSchema.ts` 的 `assertCatalogCommands`）：`schemaVersion:1`、commands 非空数组、每条 command/site/name/access/args 齐 + **元素级** args（name/type string）与 choices（string 或 {label,value}）+ **key 一致性**（command===site/name）+ **重复 command 拒绝**。fail-loud（与块 A preferences「坏项丢弃」区分：catalog 是单一生成器产物，结构异常=生成端 bug；服务端原子替换保旧值，前端首载走错误屏/刷新走失败提示）。四规则已在真实 catalog 1278 命令上预验零异常。
 7. `buildExecutionPolicy(snapshot)`（见 §4.3）构建新 policy。
 8. **原子替换**：`state = { snapshot, policy }` 单引用一次性换。
 9. 返回新 snapshot。
@@ -224,3 +225,15 @@ setCommands(commands) 在现有(换 commands/catalog 态/stale 派生)之上扩�
 - [ ] 刷新失败不打翻现有目录（无错误屏），按钮旁可见提示。
 - [ ] 刷新后：selected 同 key 换新 manifest 且活值保留/新参补默认；key 删则清空表单；currentRun 不变。
 - [ ] 冻结 run 契约零改动；`tsc`/`npm test`/`build` 全绿。
+
+## 9. 合并后三轮复审修复（2026-07-24，分支 p0-c-b-fixes）
+
+外部复审在已合并的块 B 上坐实 1P1+2P2（均经独立核实），上文相关小节已同步为修复后语义：
+
+| # | 问题 | 修复 |
+|---|---|---|
+| F1[P1] | 首载与手动刷新独立提交、无排序契约——慢首载降级响应覆盖已成功的手动刷新（确定性复现）；根因=两轮评审都盯服务端 single-flight，没人认领**前端**响应排序 | 请求世代 `loadGen` latest-wins（§3.5），受控 Promise 确定性回归 |
+| F2[P2] | 双端只查 args 是数组不验元素，`args:[null]` 进 policy、DynamicField 访问 arg.choices 炸 UI | 共享 `catalogSchema.ts` 深校验双端接线（§4.1），真实 catalog 1278 门测试；collateral=空 catalog 拒绝在前端新生效（正确收敛：空目录=生成端坏，错误屏比「ready 空列表」诚实） |
+| F3[P2] | clipboard fallback 抛错时含复制内容的 textarea 永久驻留 DOM | 内层 `try/finally` 清理 + DOM 断言回归（§3.3） |
+
+流程教训：**「刷新按钮在首载期间可用」是可用性选择，但没配排序契约背书**——并发面的裁决不能只看服务端；前端每个可并发提交结果的入口都要有明确的 latest-wins/取消契约。
