@@ -20,6 +20,7 @@
 - **失效收藏灰显保留**:reconcile 只派生 `stale` 集合,**不删除**持久化数据。
 - **排序 createdAt 升序**;`order` 字段照常持久化,P0 不用于排序,供 P1 拖拽复用。
 - **常量**:localStorage 键 `opencli-app:prefs:v1`;`RECENT_CAP = 20`;`schemaVersion = 1`。
+- **测试环境 localStorage 桩（Task 3 发现）**:本机 Node 25 原生 `globalThis.localStorage` 是坏桩(`typeof` 为 object 但 `setItem` 不可用),且遮蔽 jsdom 实现 → 裸 `localStorage.*` 在测试里全抛。`src/vitest.setup.ts` 的 `beforeEach` 必须 `vi.stubGlobal('localStorage', <内存 Storage>)`(test-only,不碰生产码;Task 3 落地,Tasks 4-6 复用;作独立 commit)。
 - **测试门**:`npm test` 全绿;`npm run build`(tsc + vite build)通过;TypeScript strict 无错。
 - **验收门**:真实 catalog fuzz(`public/catalog.snapshot.json`,>1000 命令)固化为 Vitest 测试。
 
@@ -334,8 +335,6 @@ git commit -m "feat(prefs): 收藏/最近/失效纯操作——toggle 幂等 + p
 - [ ] **Step 1: 追加失败测试**(接在 `appStore.test.ts` 末尾)
 
 ```ts
-import { emptyPreferences } from '../data/preferences'
-
 describe('preferences 切片', () => {
   beforeEach(() => { useAppStore.setState(initialState, true); localStorage.clear() })
 
