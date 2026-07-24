@@ -44,7 +44,7 @@ test('取消闭环：cancelled 终态显示已取消、不出现 error 框、收
       error: undefined,
     },
   })
-  render(<RunPanel onCancel={() => {}} />)
+  render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
 
   expect(screen.getByTestId('run-state')).toHaveTextContent('已取消')
   expect(screen.queryByTestId('cancel-button')).not.toBeInTheDocument()
@@ -119,7 +119,7 @@ test('× 只收起面板：隐藏日志区、不取消、不改 run.state', asyn
       startedAt: Date.now(), lines: [{ runId: 'run-1', seq: 0, at: 1, stream: 'stdout' as const, text: 'hello' }],
     },
   })
-  render(<RunPanel onCancel={onCancel} />)
+  render(<RunPanel onCancel={onCancel} onRerun={() => {}} />)
   expect(screen.getByText('hello')).toBeInTheDocument()
 
   await userEvent.click(screen.getByTestId('collapse-panel'))
@@ -128,4 +128,147 @@ test('× 只收起面板：隐藏日志区、不取消、不改 run.state', asyn
   expect(screen.getByTestId('run-state')).toHaveTextContent('运行中')
   expect(onCancel).not.toHaveBeenCalled()
   expect(useAppStore.getState().currentRun?.state).toBe('running')
+})
+
+describe('终态按钮矩阵与错误详情(块 B)', () => {
+  test('succeeded → 「复制结构化结果」+「再次执行」', () => {
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-succ', command: cmd, values: {}, state: 'succeeded',
+        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [{ status: 'ok' }],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.getByTestId('copy-run')).toHaveTextContent('复制结构化结果')
+    expect(screen.getByTestId('rerun-button')).toHaveTextContent('再次执行')
+  })
+
+  test('failed → 「复制日志」+「重试」;cancelled → 「重新执行」', () => {
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-failed', command: cmd, values: {}, state: 'failed',
+        startedAt: Date.now(), endedAt: Date.now(),
+        lines: [{ runId: 'run-failed', seq: 0, at: 1, stream: 'stdout' as const, text: 'x' }],
+        error: { summary: 'boom' },
+      },
+    })
+    const { unmount } = render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.getByTestId('copy-run')).toHaveTextContent('复制日志')
+    expect(screen.getByTestId('rerun-button')).toHaveTextContent('重试')
+    unmount()
+
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-cancelled', command: cmd, values: {}, state: 'cancelled',
+        startedAt: Date.now(), endedAt: Date.now(), lines: [],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.getByTestId('rerun-button')).toHaveTextContent('重新执行')
+  })
+
+  test('点复制 → clipboard 收到 payload text', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    const result = [{ a: 1 }, { b: 2 }]
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-copy', command: cmd, values: {}, state: 'succeeded',
+        startedAt: Date.now(), endedAt: Date.now(), lines: [], result,
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    await userEvent.click(screen.getByTestId('copy-run'))
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(result, null, 2))
+  })
+
+  test('切走命令 → 重跑按钮隐藏', () => {
+    const otherCmd: CommandManifest = {
+      command: 'y/list', site: 'y', name: 'list', description: '', access: 'read', browser: false, args: [],
+    }
+    useAppStore.setState({
+      selected: otherCmd,
+      values: {},
+      currentRun: {
+        id: 'run-switched', command: cmd, values: {}, state: 'succeeded',
+        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.queryByTestId('rerun-button')).not.toBeInTheDocument()
+  })
+
+  test('validate 有错 → 重跑 disabled + title 提示', () => {
+    const cmdRequired: CommandManifest = {
+      command: 'x/go', site: 'x', name: 'go', description: '', access: 'read', browser: false,
+      args: [{ name: 'url', type: 'str', required: true }],
+    }
+    useAppStore.setState({
+      selected: cmdRequired,
+      values: {},
+      currentRun: {
+        id: 'run-invalid', command: cmdRequired, values: {}, state: 'succeeded',
+        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    const btn = screen.getByTestId('rerun-button')
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('title', '参数校验未通过，请回表单修正')
+  })
+
+  test('点重跑 → onRerun 被调', async () => {
+    const onRerun = vi.fn()
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-rerun', command: cmd, values: {}, state: 'succeeded',
+        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={onRerun} />)
+    await userEvent.click(screen.getByTestId('rerun-button'))
+    expect(onRerun).toHaveBeenCalledOnce()
+  })
+
+  test('error.detail 展开/收起', async () => {
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-detail', command: cmd, values: {}, state: 'failed',
+        startedAt: Date.now(), endedAt: Date.now(), lines: [],
+        error: { summary: 'boom', detail: 'stack trace here' },
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.queryByTestId('error-detail')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('error-detail-toggle'))
+    expect(screen.getByTestId('error-detail')).toHaveTextContent('stack trace here')
+    await userEvent.click(screen.getByTestId('error-detail-toggle'))
+    expect(screen.queryByTestId('error-detail')).not.toBeInTheDocument()
+  })
+
+  test('运行中不显示复制/重跑', () => {
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-active', command: cmd, values: {}, state: 'running',
+        startedAt: Date.now(), lines: [],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.queryByTestId('copy-run')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('rerun-button')).not.toBeInTheDocument()
+  })
 })

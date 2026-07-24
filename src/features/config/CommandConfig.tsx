@@ -4,6 +4,7 @@ import { commandPreview } from '../../data/command'
 import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { validate } from './validation'
 import { DynamicField } from './DynamicField'
+import { CopyButton } from '../../components/CopyButton'
 
 export function CommandConfig({ onRun }: { onRun: () => void }) {
   const selected = useAppStore((s) => s.selected)
@@ -71,7 +72,10 @@ export function CommandConfig({ onRun }: { onRun: () => void }) {
         {selected.args.length === 0 && <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>此命令无参数</div>}
       </div>
 
-      <pre className="mb-4 overflow-x-auto rounded-lg p-3 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{commandPreview(selected, values)}</pre>
+      <div className="mb-4">
+        <pre className="mb-1 overflow-x-auto rounded-lg p-3 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{commandPreview(selected, values)}</pre>
+        <CopyButton label="复制命令" getText={() => commandPreview(selected, values)} testid="copy-command" />
+      </div>
 
       <button data-testid="run-button" disabled={running} onClick={handleRun}
         className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"

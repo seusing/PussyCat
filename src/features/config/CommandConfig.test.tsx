@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommandConfig } from './CommandConfig'
 import { useAppStore } from '../../store/appStore'
+import { commandPreview } from '../../data/command'
 import type { CommandManifest } from '../../data/types'
 
 const cmd: CommandManifest = {
@@ -76,4 +77,13 @@ describe('收藏动作', () => {
     expect(fav.command).toBe('x/go'); expect(fav.site).toBe('x')
     expect(screen.getByTestId('fav-command')).toHaveTextContent('★')
   })
+})
+
+test('preview 旁复制命令按钮,text=commandPreview', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined })
+  render(<CommandConfig onRun={() => {}} />)
+  await userEvent.click(screen.getByTestId('copy-command'))
+  expect(writeText).toHaveBeenCalledWith(commandPreview(cmd, {}))
 })

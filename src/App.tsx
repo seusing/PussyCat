@@ -88,7 +88,7 @@ export default function App({
       <AppShell
         nav={<SiteCommandNav />}
         config={<CommandConfig onRun={executeSelected} />}
-        runs={<RunPanel onCancel={onCancel} />}
+        runs={<RunPanel onCancel={onCancel} onRerun={executeSelected} />}
         catalogStatus={catalogStatus}
         catalogError={catalogError}
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
