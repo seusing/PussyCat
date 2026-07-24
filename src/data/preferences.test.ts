@@ -124,6 +124,16 @@ test('元素结构校验:无效项丢弃、有效项保留、不再抛', () => {
   expect(isSiteFavorited(p, 'x')).toBe(true)   // 不抛且判定正确
 })
 
+test('loadPreferences: recent 去重+RECENT_CAP 截断(载入端与 pushRecent 不变量对齐)', () => {
+  const s = fakeStorage()
+  const many = Array.from({ length: RECENT_CAP + 5 }, (_, i) => ({ command: `s/c${i}`, at: i }))
+  s.setItem(PREFS_KEY, JSON.stringify({ schemaVersion: 1, favoriteSites: [], favoriteCommands: [], recent: [{ command: 's/c0', at: 99 }, ...many] }))
+  const p = loadPreferences(s)
+  expect(p.recent).toHaveLength(RECENT_CAP)
+  expect(p.recent.filter((r) => r.command === 's/c0')).toHaveLength(1)
+  expect(p.recent[0]).toEqual({ command: 's/c0', at: 99 })   // 首见(最近)保留,重复丢弃
+})
+
 test('localStorage 属性访问抛 SecurityError → load/save 降级不抛', () => {
   const desc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('SecurityError: denied') } })

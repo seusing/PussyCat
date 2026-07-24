@@ -53,11 +53,20 @@ export function loadPreferences(storage?: Storage): PreferencesSnapshot {
     if (!Array.isArray(p.favoriteSites) || !Array.isArray(p.favoriteCommands) || !Array.isArray(p.recent)) {
       return emptyPreferences()
     }
+    // recent 载入端与 pushRecent 不变量对齐:去重(首见=最近)+RECENT_CAP 截断(评审 M1 硬化)
+    const recent: RecentEntry[] = []
+    const seenCommands = new Set<string>()
+    for (const r of p.recent.filter(isRecentEntry)) {
+      if (seenCommands.has(r.command)) continue
+      seenCommands.add(r.command)
+      recent.push(r)
+      if (recent.length >= RECENT_CAP) break
+    }
     return {
       schemaVersion: 1,
       favoriteSites: p.favoriteSites.filter(isFavSite),
       favoriteCommands: p.favoriteCommands.filter(isFavCommand),
-      recent: p.recent.filter(isRecentEntry),
+      recent,
     }
   } catch {
     return emptyPreferences()
