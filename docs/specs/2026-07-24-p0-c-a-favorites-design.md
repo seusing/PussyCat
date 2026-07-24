@@ -81,6 +81,7 @@ export const RECENT_CAP = 20
 
 export function emptyPreferences(): PreferencesSnapshot
 // 解析 localStorage；schemaVersion 不符 / JSON 坏 / 缺字段 → 回退 emptyPreferences（永不抛）
+// 数组元素逐项校验（string 字段 + Number.isFinite 数值），坏项丢弃好项保留（复审 F3）
 export function loadPreferences(storage?: Storage): PreferencesSnapshot
 export function savePreferences(prefs: PreferencesSnapshot, storage?: Storage): void  // storage 不可用则 no-op
 
@@ -96,9 +97,13 @@ export function pushRecent(prefs: PreferencesSnapshot, command: string, at: numb
 
 // 拿当前 manifest 校验，返回已失效（找不到对应命令/站点）的键集合，供 UI 灰显
 export function staleKeys(prefs: PreferencesSnapshot, commands: CommandManifest[]): { sites: Set<string>; commands: Set<string> }
+
+// 撤销回插：原记录原样回插（保 createdAt/order → 按 createdAt 排序自然回原位）；已存在则不动（幂等）（复审 F4）
+export function restoreFavoriteSite(prefs: PreferencesSnapshot, item: FavoriteSite): PreferencesSnapshot
+export function restoreFavoriteCommand(prefs: PreferencesSnapshot, item: FavoriteCommand): PreferencesSnapshot
 ```
 
-**默认 storage：** 内部用 `storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined)`；测试注入假 Storage（`Map` 包装），保证纯函数可测且不依赖浏览器。
+**默认 storage：** 内部用 `storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined)`；测试注入假 Storage（`Map` 包装），保证纯函数可测且不依赖浏览器。解析包在 try/catch 内——浏览器封锁存储时访问 `localStorage` 属性本身抛 SecurityError，降级为无存储（load 返 empty / save no-op），永不抛（复审 F2）。
 
 **`now`/`at` 由调用方注入**（而非函数内 `Date.now()`）→ 纯函数、时间可控、单测稳定。
 
@@ -108,6 +113,7 @@ export function staleKeys(prefs: PreferencesSnapshot, commands: CommandManifest[
 ```ts
 preferences: PreferencesSnapshot     // 初始 = emptyPreferences()，挂载后 hydrate
 stale: { sites: Set<string>; commands: Set<string> }   // 派生，不持久化
+lastUndo?: { kind: 'site'; item: FavoriteSite } | { kind: 'command'; item: FavoriteCommand }   // 取消收藏时存完整被删记录（复审 F4）
 ```
 
 新增 actions：
@@ -115,7 +121,7 @@ stale: { sites: Set<string>; commands: Set<string> }   // 派生，不持久化
 hydratePreferences: () => void        // = loadPreferences() → set；App 挂载时调一次
 toggleSiteFavorite: (site: string) => void      // 调 toggleFavoriteSite → set → savePreferences
 toggleCommandFavorite: (cmd: CommandManifest) => void  // 调 toggleFavoriteCommand(cmd.command, cmd.site)
-undoLastFavorite: () => void          // 用 lastUndo 里的项再 toggle 回去（幂等）
+undoLastFavorite: () => void          // 用 lastUndo 存的完整被删记录 restoreFavorite* 原位回插（复审 F4 升级，弃「再 toggle」）
 dismissUndo: () => void               // 清 lastUndo
 // 注：stale 派生不单列 reconcile action，内联进 setCommands / toggleSite/Command / hydratePreferences 的 set（单次原子，避免二次 set 读到旧 commands）
 ```
@@ -134,13 +140,14 @@ dismissUndo: () => void               // 清 lastUndo
 
 ```
 最近使用        recent.map → 查 commands.find(c=>c.command===r.command) → 命令按钮（点击=selectCommand）；查不到=灰显
-常用站点        favoriteSites（按 createdAt 升序）→ 站点按钮（点击=跳到该站点分组/展开）；stale.sites 命中=灰显
+常用站点        favoriteSites（按 createdAt 升序）→ 站点按钮（点击=进入精确站点过滤态 siteFilter，只显示 c.site===site 的命令组）；stale.sites 命中=灰显
 常用命令        favoriteCommands → 命令按钮（点击=selectCommand）；stale.commands 命中=灰显
 ———— 全部站点（现有 groups 列表原样保留）
 ```
 
 - 灰显：`opacity` 降低 + `title="该命令/站点在当前目录中已不存在"`，仍可点（命令仍在 recent/收藏里，只是当前 manifest 无匹配则禁用点击）。
 - 命令按钮复用现有样式（第 32-40 行的 button 结构）。
+- 站点过滤态：顶部显示可清除 chip（`站点：xxx ✕`）；输入搜索词即退出过滤；过滤态下隐藏三分组。**弃 setQ 借道全文搜索**——site 名作子串会跨站误命中（真实 catalog：`ke` 142 命中仅 6 条本站、`google` 39/4、`web` 35/1），不满足「进入站点目录」（复审 F1）。
 
 ### 7.2 `CommandConfig.tsx` — 标题栏两个收藏动作
 
@@ -153,7 +160,7 @@ dismissUndo: () => void               // 清 lastUndo
 ### 7.3 `UndoToast.tsx` — 撤销提示（新增，自建）
 
 - 取消收藏（toggle off）时，store 记一个 `lastUndo`（被移除项 + 类型），UI 弹出「已取消收藏 · 撤销」约 5s。
-- 点「撤销」→ 再 toggle 回去（因 toggle 幂等，等价于重新 toggle on）。
+- 点「撤销」→ `restoreFavorite*` 原记录原位回插（保原 createdAt/order；复审 F4 升级，弃「再 toggle」——那会刷新 createdAt 使项落列表末尾）。
 - **自决**：不引第三方 toast 库，自建极简组件（一个绝对定位的浮层 + `setTimeout` 自动消失），零依赖。
 
 ## 8. 契约与安全边界
@@ -191,7 +198,7 @@ dismissUndo: () => void               // 清 lastUndo
 - [ ] 「全部站点」之上依次出现 最近使用 / 常用站点 / 常用命令。
 - [ ] 站点标题与命令标题各有独立收藏动作（☆站点 / ☆命令），实心/描边随收藏态。
 - [ ] 收藏与最近记录在**刷新页面后保持**（localStorage 往返）。
-- [ ] 点击常用站点 → 进入该站点命令目录（展开/定位）。
+- [ ] 点击常用站点 → 进入该站点命令目录（精确 `siteFilter` 过滤态，非全文搜索；chip 可清除）。
 - [ ] 点击常用命令 / 最近项 → **载入其参数表单**（`selectCommand`，默认值填充）。
 - [ ] manifest 更新后失效收藏**灰显保留**、不消失、不误删。
 - [ ] 取消收藏出现短暂「撤销」提示，点撤销可恢复。
@@ -208,3 +215,16 @@ dismissUndo: () => void               // 清 lastUndo
 - `server/run-manager.mjs:81-91` `seen` 集合无界增长 → active IDs + 有界 recent-ID 缓存（**块 C**）。
 - `appendOutput` 全量 sort（O(n²)）（**块 C perf**）。
 - master 设计 §3 把 BrowserBridge 验证写在 P0-B，与 P0-B 专项规格后置口径冲突 → 更新 master 设计消歧（**文档卫生**）。
+
+## 14. 合并后复审修复（2026-07-24，分支 p0-c-a-fixes）
+
+外部复审在已合并的块 A 上坐实 3 bug + 1 语义升级（均经独立核实），上文相关小节已同步为修复后语义：
+
+| # | 问题 | 修复 |
+|---|---|---|
+| F1[P1] | 常用站点点击=setQ 借道全文搜索，真实 catalog 跨站噪声（`ke` 142 命中/6 本站、`google` 39/4、`web` 35/1；20/175 站点有噪声） | 独立 `siteFilter` 精确过滤态 + 可清除 chip，输入搜索即退出（§7.1） |
+| F2[P2] | `resolveStorage` 在 try 外，浏览器封锁存储时访问 localStorage 属性本身抛 SecurityError → hydrate/收藏全断 | resolveStorage 内 try/catch 永不抛（§5） |
+| F3[P2] | 持久化只验数组外壳，`[null]` 载入后 `isSiteFavorited` 抛 TypeError 可炸渲染 | 元素级校验，坏项丢弃好项保留（§5） |
+| F4[🟡用户拍板] | undo=重新 toggle 刷新 createdAt，项落列表末尾 | `lastUndo` 存完整被删记录，`restoreFavorite*` 原位回插（§5/§6/§7.3） |
+
+流程教训：块 A 的 whole-branch 评审点名过 F1/F3 但按「spec 措辞宽松/唯一写方」裁轻、未量真实数据幅度；F2 全漏。**裁「可接受」必须有真实数据量级，不能靠对 spec 措辞的解释。**
