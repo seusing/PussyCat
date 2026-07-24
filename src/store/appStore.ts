@@ -2,6 +2,11 @@ import { create } from 'zustand'
 import type { CommandManifest } from '../data/types'
 import type { OutputEvent, DoneEvent } from '../host/types'
 import { transition, type RunState } from './runMachine'
+import {
+  emptyPreferences, loadPreferences, savePreferences,
+  toggleFavoriteSite, toggleFavoriteCommand, isSiteFavorited, isCommandFavorited,
+  pushRecent, staleKeys, type PreferencesSnapshot,
+} from '../data/preferences'
 
 const SENSITIVE = /password|passcode|secret|token|cookie/i
 
@@ -23,6 +28,10 @@ export type CommandRun = {
   result?: Record<string, unknown>[]
   error?: { summary: string; detail?: string }
 }
+
+export type LastUndo =
+  | { kind: 'site'; site: string }
+  | { kind: 'command'; command: string; site: string }
 
 function defaultsOf(cmd: CommandManifest): Record<string, unknown> {
   const v: Record<string, unknown> = {}
@@ -51,11 +60,24 @@ type AppState = {
   markCancelling: () => void
   mode: 'demo' | 'connected'
   setMode: (mode: 'demo' | 'connected') => void
+  // —— preferences 切片 ——
+  preferences: PreferencesSnapshot
+  stale: { sites: Set<string>; commands: Set<string> }
+  lastUndo?: LastUndo
+  hydratePreferences: () => void
+  toggleSiteFavorite: (site: string) => void
+  toggleCommandFavorite: (cmd: CommandManifest) => void
+  reconcilePreferences: () => void
+  undoLastFavorite: () => void
+  dismissUndo: () => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
   commands: [],
-  setCommands: (commands) => set({ commands, catalogStatus: 'ready', catalogError: undefined }),
+  setCommands: (commands) => set((s) => ({
+    commands, catalogStatus: 'ready', catalogError: undefined,
+    stale: staleKeys(s.preferences, commands),
+  })),
   catalogStatus: 'loading',
   catalogError: undefined,
   setCatalogStatus: (status, error) => set({ catalogStatus: status, catalogError: error }),
@@ -67,7 +89,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   beginRun: (runId) => {
     const cmd = get().selected
     if (!cmd) return
+    const preferences = pushRecent(get().preferences, cmd.command, Date.now())
+    savePreferences(preferences)
     set({
+      preferences,
       currentRun: {
         id: runId, command: cmd, values: redactValues(cmd, get().values),
         state: transition(transition('idle', { type: 'RUN' }), { type: 'VALID' }), // →starting
@@ -91,4 +116,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
   mode: 'demo',
   setMode: (mode) => set({ mode }),
+  // —— preferences 切片 ——
+  preferences: emptyPreferences(),
+  stale: { sites: new Set<string>(), commands: new Set<string>() },
+  lastUndo: undefined,
+  hydratePreferences: () => set((s) => {
+    const preferences = loadPreferences()
+    return { preferences, stale: staleKeys(preferences, s.commands) }
+  }),
+  toggleSiteFavorite: (site) => set((s) => {
+    const wasFav = isSiteFavorited(s.preferences, site)
+    const preferences = toggleFavoriteSite(s.preferences, site, Date.now())
+    savePreferences(preferences)
+    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: wasFav ? { kind: 'site', site } : undefined }
+  }),
+  toggleCommandFavorite: (cmd) => set((s) => {
+    const wasFav = isCommandFavorited(s.preferences, cmd.command)
+    const preferences = toggleFavoriteCommand(s.preferences, cmd.command, cmd.site, Date.now())
+    savePreferences(preferences)
+    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: wasFav ? { kind: 'command', command: cmd.command, site: cmd.site } : undefined }
+  }),
+  reconcilePreferences: () => set((s) => ({ stale: staleKeys(s.preferences, s.commands) })),
+  undoLastFavorite: () => set((s) => {
+    const u = s.lastUndo
+    if (!u) return s
+    const preferences = u.kind === 'site'
+      ? toggleFavoriteSite(s.preferences, u.site, Date.now())
+      : toggleFavoriteCommand(s.preferences, u.command, u.site, Date.now())
+    savePreferences(preferences)
+    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
+  }),
+  dismissUndo: () => set({ lastUndo: undefined }),
 }))
