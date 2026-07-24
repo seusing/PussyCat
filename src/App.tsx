@@ -9,8 +9,6 @@ import { buildArgv } from './data/command'
 import { createMockHost } from './host/mockHost'
 import type { HostBridge } from './host/types'
 
-let runSeq = 0
-
 function normalizeHostError(e: unknown): { summary: string; detail?: string } {
   return {
     summary: e instanceof Error ? e.message : '任务启动失败',
@@ -47,7 +45,7 @@ export default function App({
   const onRun = () => {
     const s = useAppStore.getState()
     if (!s.selected) return
-    const runId = `run-${++runSeq}`
+    const runId = crypto.randomUUID()
     s.beginRun(runId)
     const argv = buildArgv(s.selected, s.values)
     void host.startCommand({ runId, commandKey: s.selected.command, argv })
