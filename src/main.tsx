@@ -11,6 +11,6 @@ const hostSelection = createHostSelection({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App host={hostSelection.host} mode={hostSelection.mode} />
+    <App host={hostSelection.host} catalogSource={hostSelection.catalogSource} mode={hostSelection.mode} />
   </StrictMode>,
 )

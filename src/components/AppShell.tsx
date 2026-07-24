@@ -1,19 +1,23 @@
 import type { ReactNode } from 'react'
 import { HealthPill } from './HealthPill'
 
-export default function AppShell({ nav, config, runs, catalogStatus, catalogError, onRetryCatalog }: {
+export default function AppShell({ nav, config, runs, catalogStatus, catalogError, onRetryCatalog, headerActions }: {
   nav: ReactNode
   config: ReactNode
   runs: ReactNode
   catalogStatus: 'loading' | 'ready' | 'error'
   catalogError?: string
   onRetryCatalog: () => void
+  headerActions?: ReactNode
 }) {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: 'var(--color-line)' }}>
         <div className="font-semibold">OpenCLI App</div>
-        <HealthPill />
+        <div className="flex items-center gap-3">
+          {headerActions}
+          <HealthPill />
+        </div>
       </header>
 
       {catalogStatus === 'loading' && (
