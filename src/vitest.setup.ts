@@ -12,8 +12,24 @@ import '@testing-library/jest-dom'
 // 触发 React "not wrapped in act(...)" 警告（commands 数组引用变化会让订阅方重渲染）。
 // 挂起则让这类测试里 catalogStatus 保持 beforeEach 摆好的值，零竞态、零警告。
 // 需要真正验证 loadCatalog 成功/失败路径的测试，自行 vi.stubGlobal('fetch', ...) 覆盖。
+function makeMemoryStorage(): Storage {
+  const m = new Map<string, string>()
+  return {
+    get length() { return m.size },
+    clear: () => m.clear(),
+    getItem: (k) => (m.has(k) ? m.get(k)! : null),
+    key: (i) => [...m.keys()][i] ?? null,
+    removeItem: (k) => void m.delete(k),
+    setItem: (k, v) => void m.set(k, String(v)),
+  }
+}
+
+// 本机 Node 25 原生 globalThis.localStorage 是坏桩（typeof object 但 setItem 不可用，
+// 且遮蔽 jsdom 实现），任何裸 localStorage.* 都会抛。用内存 Storage 桩替换，
+// 每个用例一份干净实例；afterEach 的 unstubAllGlobals 恢复。
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+  vi.stubGlobal('localStorage', makeMemoryStorage())
 })
 
 afterEach(() => {
