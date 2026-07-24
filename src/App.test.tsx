@@ -101,3 +101,22 @@ test('刷新降级(degraded) → 目录更新 + 降级提示', async () => {
   await userEvent.click(screen.getByTestId('refresh-catalog'))
   await screen.findByTestId('refresh-degraded')
 })
+
+test('latest-wins:慢速首载响应不得覆盖已成功的手动刷新(三轮复审 F1)', async () => {
+  let resolveFirst!: (v: { snapshot: ReturnType<typeof SNAP>; degraded?: string }) => void
+  const firstLoad = new Promise<{ snapshot: ReturnType<typeof SNAP>; degraded?: string }>((r) => { resolveFirst = r })
+  const source: CatalogSource = {
+    kind: 'live',
+    load: vi.fn()
+      .mockReturnValueOnce(firstLoad)                          // 首载:悬挂中
+      .mockResolvedValueOnce({ snapshot: SNAP({ generatedAt: 2000, commands: [{ command: 'c/d', site: 'c', name: 'd', description: '', access: 'read', browser: false, args: [] }] }) }),
+  }
+  render(<App catalogSource={source} />)
+  await screen.findByTestId('refresh-catalog')                 // header 常驻,首载悬挂时按钮即可用
+  await userEvent.click(screen.getByTestId('refresh-catalog'))  // 手动刷新:立即成功 new/live
+  await waitFor(() => expect(useAppStore.getState().commands[0]?.command).toBe('c/d'))
+  resolveFirst({ snapshot: SNAP({ generatedAt: 1000 }), degraded: 'Host 不可达' })   // 慢首载:旧数据+降级
+  await new Promise((r) => setTimeout(r, 50))                  // 给过期响应一个提交窗口
+  expect(useAppStore.getState().commands[0]?.command).toBe('c/d')            // 未被覆盖
+  expect(screen.queryByTestId('refresh-degraded')).not.toBeInTheDocument()   // 未错误显示降级
+})

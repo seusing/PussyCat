@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import AppShell from './components/AppShell'
 import { SiteCommandNav } from './features/nav/SiteCommandNav'
 import { CommandConfig } from './features/config/CommandConfig'
@@ -31,15 +31,21 @@ export default function App({
   const catalogStatus = useAppStore((s) => s.catalogStatus)
   const catalogError = useAppStore((s) => s.catalogError)
   const [refresh, setRefresh] = useState<{ state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }>({ state: 'idle' })
+  const loadGen = useRef(0)   // 请求世代:latest-wins,过期响应(首载或刷新)一律丢弃(三轮复审 F1)
 
   const fetchCatalog = () => {
+    const gen = ++loadGen.current
     catalogSource.load()
       .then(({ snapshot, degraded }) => {
+        if (gen !== loadGen.current) return
         setCommands(snapshot.commands)
         setRefresh((r) => ({ ...r, generatedAt: snapshot.generatedAt, degraded }))
         if (degraded) console.warn('[catalog]', degraded)
       })
-      .catch((err) => setCatalogStatus('error', err instanceof Error ? err.message : String(err)))
+      .catch((err) => {
+        if (gen !== loadGen.current) return
+        setCatalogStatus('error', err instanceof Error ? err.message : String(err))
+      })
   }
 
   useEffect(() => {
@@ -54,13 +60,18 @@ export default function App({
   useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
 
   const onRefreshCatalog = () => {
+    const gen = ++loadGen.current
     setRefresh((r) => ({ ...r, state: 'refreshing', error: undefined, degraded: undefined }))
     catalogSource.load()
       .then(({ snapshot, degraded }) => {
+        if (gen !== loadGen.current) return
         useAppStore.getState().setCommands(snapshot.commands)
         setRefresh({ state: 'idle', generatedAt: snapshot.generatedAt, degraded })
       })
-      .catch((err) => setRefresh((r) => ({ ...r, state: 'error', error: err instanceof Error ? err.message : String(err) })))
+      .catch((err) => {
+        if (gen !== loadGen.current) return
+        setRefresh((r) => ({ ...r, state: 'error', error: err instanceof Error ? err.message : String(err) }))
+      })
   }
 
   const executeSelected = (): boolean => {
