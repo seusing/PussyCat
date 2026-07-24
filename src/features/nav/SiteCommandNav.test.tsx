@@ -55,10 +55,29 @@ describe('收藏与最近分组', () => {
     expect(useAppStore.getState().selected?.command).toBe('xiaohongshu/download')
   })
 
-  test('点常用站点 → setQ 进该站点目录', async () => {
+  test('点常用站点 → 精确站点过滤,他站噪声不出现', async () => {
+    // 加一条描述含 "xiaohongshu" 的他站命令:旧 setQ 借道会误命中,精确过滤必须排除
+    const noisy = { ...c('other', 'sync'), description: '同步 xiaohongshu 内容' }
+    useAppStore.setState({ commands: [...cmds, noisy] })
     render(<SiteCommandNav />)
     await userEvent.click(screen.getByTestId('fav-site-nav-xiaohongshu'))
-    expect((screen.getByTestId('nav-search') as HTMLInputElement).value).toBe('xiaohongshu')
+    expect(screen.getByTestId('site-filter-chip')).toHaveTextContent('xiaohongshu')
+    expect((screen.getByTestId('nav-search') as HTMLInputElement).value).toBe('')
+    expect(screen.getByText('download')).toBeInTheDocument()      // 本站命令在
+    expect(screen.queryByText('sync')).not.toBeInTheDocument()    // 描述噪声命令不在
+    expect(screen.queryByText('login')).not.toBeInTheDocument()   // 他站命令不在
+    expect(screen.queryByTestId('group-recent')).not.toBeInTheDocument()  // 过滤态不显示三分组
+  })
+
+  test('清除 chip → 回全列表;输入搜索 → 退出站点过滤', async () => {
+    render(<SiteCommandNav />)
+    await userEvent.click(screen.getByTestId('fav-site-nav-xiaohongshu'))
+    await userEvent.click(screen.getByTestId('site-filter-clear'))
+    expect(screen.queryByTestId('site-filter-chip')).not.toBeInTheDocument()
+    expect(screen.getByText('login')).toBeInTheDocument()          // 12306 回来了
+    await userEvent.click(screen.getByTestId('fav-site-nav-xiaohongshu'))
+    await userEvent.type(screen.getByTestId('nav-search'), 'or')
+    expect(screen.queryByTestId('site-filter-chip')).not.toBeInTheDocument()
   })
 
   test('失效收藏灰显且禁用', () => {

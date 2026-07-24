@@ -37,13 +37,18 @@ export function SiteCommandNav() {
   const preferences = useAppStore((s) => s.preferences)
   const stale = useAppStore((s) => s.stale)
   const [q, setQ] = useState('')
+  const [siteFilter, setSiteFilter] = useState<string | null>(null)
 
-  const groups = useMemo(() => groupBySite(searchCommands(commands, q)), [commands, q])
+  const visible = useMemo(
+    () => (siteFilter ? commands.filter((c) => c.site === siteFilter) : searchCommands(commands, q)),
+    [commands, q, siteFilter],
+  )
+  const groups = useMemo(() => groupBySite(visible), [visible])
   const byKey = useMemo(() => new Map(commands.map((c) => [c.command, c])), [commands])
   const favSites = useMemo(() => [...preferences.favoriteSites].sort((a, b) => a.createdAt - b.createdAt), [preferences.favoriteSites])
   const favCommands = useMemo(() => [...preferences.favoriteCommands].sort((a, b) => a.createdAt - b.createdAt), [preferences.favoriteCommands])
   const recent = preferences.recent
-  const showGroups = q.trim() === '' && (recent.length + favSites.length + favCommands.length) > 0
+  const showGroups = q.trim() === '' && !siteFilter && (recent.length + favSites.length + favCommands.length) > 0
 
   return (
     <div className="flex h-full flex-col">
@@ -51,13 +56,19 @@ export function SiteCommandNav() {
         <input
           data-testid="nav-search"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => { setQ(e.target.value); setSiteFilter(null) }}
           placeholder="搜索服务或命令"
           className="w-full rounded-lg px-3 py-2 text-sm outline-none"
           style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
         />
       </div>
       <nav className="min-h-0 flex-1 overflow-auto px-2 pb-3">
+        {siteFilter && (
+          <div data-testid="site-filter-chip" className="mb-2 flex items-center justify-between rounded-md px-2 py-1.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg)' }}>
+            <span>站点：{siteFilter}</span>
+            <button data-testid="site-filter-clear" onClick={() => setSiteFilter(null)} style={{ color: 'var(--color-fg-dim)' }}>✕</button>
+          </div>
+        )}
         {showGroups && (
           <>
             {recent.length > 0 && (
@@ -77,7 +88,7 @@ export function SiteCommandNav() {
                   const dead = stale.sites.has(f.site)
                   return (
                     <button key={f.site} data-testid={`fav-site-nav-${f.site}`}
-                      onClick={() => setQ(f.site)} disabled={dead}
+                      onClick={() => { setSiteFilter(f.site); setQ('') }} disabled={dead}
                       title={dead ? '该站点在当前目录中已不存在' : undefined}
                       className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm"
                       style={{ background: 'transparent', color: 'var(--color-fg)', opacity: dead ? 0.4 : 1, cursor: dead ? 'not-allowed' : 'pointer' }}>
