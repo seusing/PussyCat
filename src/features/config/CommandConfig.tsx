@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { commandPreview } from '../../data/command'
 import { validate } from './validation'
@@ -10,6 +10,8 @@ export function CommandConfig({ onRun }: { onRun: () => void }) {
   const setValue = useAppStore((s) => s.setValue)
   const currentRun = useAppStore((s) => s.currentRun)
   const [errors, setErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => { setErrors({}) }, [selected])   // ⑦a 切换命令后清掉上一条命令残留的字段错误
 
   if (!selected) return <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>从左侧选择一个服务和命令</div>
 

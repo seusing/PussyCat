@@ -82,3 +82,10 @@ test('catalogStatus 默认 loading，setCatalogStatus 可切', () => {
   expect(useAppStore.getState().catalogStatus).toBe('error')
   expect(useAppStore.getState().catalogError).toBe('404')
 })
+
+test('setCommands 加载成功须清掉残留 catalogError（Task3 reviewer 发现的修复）', () => {
+  useAppStore.getState().setCatalogStatus('error', '404')
+  useAppStore.getState().setCommands([])
+  expect(useAppStore.getState().catalogStatus).toBe('ready')
+  expect(useAppStore.getState().catalogError).toBeUndefined()
+})

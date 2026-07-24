@@ -1,9 +1,21 @@
 import type { CommandManifest, CatalogSnapshot } from './types'
 
+export class CatalogError extends Error {}
+
+function assertSnapshot(x: unknown): CatalogSnapshot {
+  const s = x as any
+  if (s?.schemaVersion !== 1) throw new CatalogError(`schemaVersion 不支持：${s?.schemaVersion}`)
+  if (!Array.isArray(s.commands)) throw new CatalogError('commands 非数组')
+  for (const c of s.commands)
+    if (!c.command || !c.site || !c.name || !('access' in c) || !Array.isArray(c.args))
+      throw new CatalogError(`命令字段缺失：${c?.command ?? '?'}`)
+  return s as CatalogSnapshot
+}
+
 export async function loadCatalog(): Promise<CatalogSnapshot> {
   const res = await fetch('/catalog.snapshot.json')
-  if (!res.ok) throw new Error(`加载 catalog 失败：${res.status}`)
-  return (await res.json()) as CatalogSnapshot
+  if (!res.ok) throw new CatalogError(`加载 catalog 失败：${res.status}`)
+  return assertSnapshot(await res.json())
 }
 
 export function groupBySite(cmds: CommandManifest[]): Array<{ site: string; commands: CommandManifest[] }> {

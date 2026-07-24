@@ -1,5 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import App from '../App'
+import { useAppStore } from '../store/appStore'
+
+beforeEach(() => useAppStore.setState({ catalogStatus: 'ready' }))
 
 test('三栏 + 顶部健康 pill 显示演示模式', () => {
   render(<App />)

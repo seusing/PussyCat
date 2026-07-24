@@ -54,7 +54,7 @@ type AppState = {
 
 export const useAppStore = create<AppState>((set, get) => ({
   commands: [],
-  setCommands: (commands) => set({ commands, catalogStatus: 'ready' }),
+  setCommands: (commands) => set({ commands, catalogStatus: 'ready', catalogError: undefined }),
   catalogStatus: 'loading',
   catalogError: undefined,
   setCatalogStatus: (status, error) => set({ catalogStatus: status, catalogError: error }),
