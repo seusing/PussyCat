@@ -125,11 +125,19 @@ describe('preferences 切片', () => {
   })
 
   test('command 撤销恢复原 createdAt(原位)', () => {
-    useAppStore.getState().toggleCommandFavorite(cmd)
-    const orig = useAppStore.getState().preferences.favoriteCommands[0]
-    useAppStore.getState().toggleCommandFavorite(cmd)      // 取消
-    useAppStore.getState().undoLastFavorite()
-    expect(useAppStore.getState().preferences.favoriteCommands[0]).toEqual(orig)
+    // 注入时钟:同步执行两次 Date.now() 常落同一毫秒,旧实现(undo=重新 toggle)会巧合通过;
+    // mock 只给两次值,旧实现 undo 的第三次取钟得 undefined → 确定性红
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000)
+    try {
+      useAppStore.getState().toggleCommandFavorite(cmd)      // createdAt=1000
+      const orig = useAppStore.getState().preferences.favoriteCommands[0]
+      expect(orig.createdAt).toBe(1000)
+      useAppStore.getState().toggleCommandFavorite(cmd)      // 取消(now=2000 被移除分支忽略)
+      useAppStore.getState().undoLastFavorite()              // restore 路径不取时钟
+      expect(useAppStore.getState().preferences.favoriteCommands[0]).toEqual(orig)
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   test('beginRun 追加 recent(运行开始即记)', () => {
