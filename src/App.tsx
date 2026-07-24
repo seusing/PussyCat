@@ -3,6 +3,7 @@ import AppShell from './components/AppShell'
 import { SiteCommandNav } from './features/nav/SiteCommandNav'
 import { CommandConfig } from './features/config/CommandConfig'
 import { RunPanel } from './features/runs/RunPanel'
+import { UndoToast } from './components/UndoToast'
 import { useAppStore } from './store/appStore'
 import { loadCatalog } from './data/catalog'
 import { buildArgv } from './data/command'
@@ -42,6 +43,8 @@ export default function App({
     // fetchCatalog 每次渲染重建，但只在 host 身份变化时需要重新接线/拉取一次，行为与原版 [host, setCommands] 等价
   }, [host, mode, setCommands, setCatalogStatus, setMode])
 
+  useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
+
   const onRun = () => {
     const s = useAppStore.getState()
     if (!s.selected) return
@@ -70,6 +73,7 @@ export default function App({
         catalogError={catalogError}
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
       />
+      <UndoToast />
     </div>
   )
 }

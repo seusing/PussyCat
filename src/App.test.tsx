@@ -47,3 +47,9 @@ test('runId 是 UUID（非 run-N 序列），且 host.startCommand 与 store.cur
   expect(runId2).toMatch(UUID_RE)
   expect(runId2).not.toBe(runId)
 })
+
+test('挂载时 hydratePreferences 从 localStorage 载入收藏', () => {
+  localStorage.setItem('opencli-app:prefs:v1', JSON.stringify({ schemaVersion: 1, favoriteSites: [{ site: 'seeded', order: 0, createdAt: 1 }], favoriteCommands: [], recent: [] }))
+  render(<App />)
+  expect(useAppStore.getState().preferences.favoriteSites[0].site).toBe('seeded')
+})

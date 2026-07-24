@@ -1,0 +1,22 @@
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { UndoToast } from './UndoToast'
+import { useAppStore } from '../store/appStore'
+
+const initialState = useAppStore.getState()
+beforeEach(() => { useAppStore.setState(initialState, true); localStorage.clear() })
+
+test('lastUndo 为空时不渲染', () => {
+  render(<UndoToast />)
+  expect(screen.queryByTestId('undo-toast')).not.toBeInTheDocument()
+})
+
+test('取消站点收藏后显示 toast,点撤销回滚', async () => {
+  useAppStore.getState().toggleSiteFavorite('x')   // 收藏
+  useAppStore.getState().toggleSiteFavorite('x')   // 取消 → lastUndo
+  render(<UndoToast />)
+  expect(screen.getByTestId('undo-toast')).toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('undo-button'))
+  expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])
+  expect(screen.queryByTestId('undo-toast')).not.toBeInTheDocument()
+})
