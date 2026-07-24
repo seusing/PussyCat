@@ -98,6 +98,21 @@ test('staleKeys 空 manifest → 空 stale(无法判定,不误灰)', () => {
   expect(staleKeys(p, []).sites.size).toBe(0)
 })
 
+test('元素结构校验:无效项丢弃、有效项保留、不再抛', () => {
+  const s = fakeStorage()
+  s.setItem(PREFS_KEY, JSON.stringify({
+    schemaVersion: 1,
+    favoriteSites: [null, { site: 'x', order: 0, createdAt: 1 }, {}, { site: 7, order: 0, createdAt: 1 }],
+    favoriteCommands: [{ command: 'x/go', site: 'x', order: 0, createdAt: 1 }, { command: 'no-site' }, 42],
+    recent: [{ command: 'x/go', at: 1 }, null, { command: 'x/go' }, { at: 2 }],
+  }))
+  const p = loadPreferences(s)
+  expect(p.favoriteSites).toEqual([{ site: 'x', order: 0, createdAt: 1 }])
+  expect(p.favoriteCommands).toEqual([{ command: 'x/go', site: 'x', order: 0, createdAt: 1 }])
+  expect(p.recent).toEqual([{ command: 'x/go', at: 1 }])
+  expect(isSiteFavorited(p, 'x')).toBe(true)   // 不抛且判定正确
+})
+
 test('localStorage 属性访问抛 SecurityError → load/save 降级不抛', () => {
   const desc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('SecurityError: denied') } })

@@ -28,6 +28,20 @@ function resolveStorage(storage?: Storage): Storage | undefined {
   }
 }
 
+const isFiniteNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+function isFavSite(x: unknown): x is FavoriteSite {
+  const o = x as FavoriteSite
+  return !!o && typeof o === 'object' && typeof o.site === 'string' && isFiniteNum(o.order) && isFiniteNum(o.createdAt)
+}
+function isFavCommand(x: unknown): x is FavoriteCommand {
+  const o = x as FavoriteCommand
+  return !!o && typeof o === 'object' && typeof o.command === 'string' && typeof o.site === 'string' && isFiniteNum(o.order) && isFiniteNum(o.createdAt)
+}
+function isRecentEntry(x: unknown): x is RecentEntry {
+  const o = x as RecentEntry
+  return !!o && typeof o === 'object' && typeof o.command === 'string' && isFiniteNum(o.at)
+}
+
 export function loadPreferences(storage?: Storage): PreferencesSnapshot {
   const s = resolveStorage(storage)
   if (!s) return emptyPreferences()
@@ -39,7 +53,12 @@ export function loadPreferences(storage?: Storage): PreferencesSnapshot {
     if (!Array.isArray(p.favoriteSites) || !Array.isArray(p.favoriteCommands) || !Array.isArray(p.recent)) {
       return emptyPreferences()
     }
-    return { schemaVersion: 1, favoriteSites: p.favoriteSites, favoriteCommands: p.favoriteCommands, recent: p.recent }
+    return {
+      schemaVersion: 1,
+      favoriteSites: p.favoriteSites.filter(isFavSite),
+      favoriteCommands: p.favoriteCommands.filter(isFavCommand),
+      recent: p.recent.filter(isRecentEntry),
+    }
   } catch {
     return emptyPreferences()
   }
