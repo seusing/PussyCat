@@ -44,7 +44,7 @@ test('填写后点运行触发 onRun', async () => {
 test('命令预览随输入更新', async () => {
   render(<CommandConfig onRun={() => {}} />)
   await userEvent.type(screen.getByTestId('field-url'), 'abc')
-  expect(screen.getByText('opencli x go --url abc')).toBeInTheDocument()
+  expect(screen.getByText('opencli x go --url abc -f json')).toBeInTheDocument()
 })
 
 test('切换命令后旧字段错误不残留', async () => {
