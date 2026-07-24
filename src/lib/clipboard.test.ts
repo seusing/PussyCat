@@ -27,3 +27,10 @@ test('两路全败 → false', async () => {
   ;(document as Document & { execCommand?: () => boolean }).execCommand = () => { throw new Error('nope') }
   expect(await copyText('hi')).toBe(false)
 })
+
+test('fallback 抛错也不得在 DOM 泄漏复制内容(三轮复审 F3)', async () => {
+  vi.stubGlobal('navigator', {})
+  ;(document as Document & { execCommand?: () => boolean }).execCommand = () => { throw new Error('nope') }
+  expect(await copyText('secret')).toBe(false)
+  expect(document.querySelectorAll('textarea')).toHaveLength(0)
+})

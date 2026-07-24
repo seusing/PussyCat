@@ -12,10 +12,12 @@ export async function copyText(text: string): Promise<boolean> {
     ta.style.position = 'fixed'
     ta.style.opacity = '0'
     document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    ta.remove()
-    return ok
+    try {
+      ta.select()
+      return document.execCommand('copy')
+    } finally {
+      ta.remove()   // select/execCommand 抛错也必须清掉含敏感内容的节点(三轮复审 F3)
+    }
   } catch {
     return false
   }
