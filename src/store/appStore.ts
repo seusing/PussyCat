@@ -43,6 +43,22 @@ function isTerminal(s: RunState): boolean {
   return s === 'succeeded' || s === 'failed' || s === 'cancelled'
 }
 
+// 刷新后 selection 校正(块 B 阻塞3):A 同 key→新 manifest+活值∩新参数保留+新参补默认;
+// B key 删→清空;currentRun 永不改写(历史运行快照)
+function reconcileSelection(
+  selected: CommandManifest | undefined,
+  values: Record<string, unknown>,
+  commands: CommandManifest[],
+): { selected?: CommandManifest; values: Record<string, unknown> } {
+  if (!selected) return { selected: undefined, values: {} }
+  const next = commands.find((c) => c.command === selected.command)
+  if (!next) return { selected: undefined, values: {} }
+  const merged = defaultsOf(next)
+  const argNames = new Set(next.args.map((a) => a.name))
+  for (const [k, v] of Object.entries(values)) if (argNames.has(k)) merged[k] = v
+  return { selected: next, values: merged }
+}
+
 type AppState = {
   commands: CommandManifest[]
   setCommands: (cmds: CommandManifest[]) => void
@@ -76,6 +92,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCommands: (commands) => set((s) => ({
     commands, catalogStatus: 'ready', catalogError: undefined,
     stale: staleKeys(s.preferences, commands),
+    ...reconcileSelection(s.selected, s.values, commands),
   })),
   catalogStatus: 'loading',
   catalogError: undefined,

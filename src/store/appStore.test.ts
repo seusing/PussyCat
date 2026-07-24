@@ -187,3 +187,45 @@ describe('preferences 切片', () => {
     expect(useAppStore.getState().lastUndo).toBeUndefined()
   })
 })
+
+describe('setCommands selection reconcile(块 B 阻塞3)', () => {
+  beforeEach(() => { useAppStore.setState(initialState, true); localStorage.clear() })
+  const mk = (over: Partial<CommandManifest> = {}): CommandManifest => ({
+    command: 'x/login', site: 'x', name: 'login', description: '', access: 'read', browser: false,
+    args: [
+      { name: 'user', type: 'str', required: true },
+      { name: 'limit', type: 'int', default: 10 },
+    ],
+    ...over,
+  })
+
+  test('A: 同 key 仍在 → selected 换新 manifest,活值保留+新参补默认+消失参数丢弃', () => {
+    useAppStore.getState().selectCommand(mk())
+    useAppStore.getState().setValue('user', 'alice')          // 活值
+    const next = mk({ description: 'v2', args: [
+      { name: 'user', type: 'str', required: true },          // 保留
+      { name: 'page', type: 'int', default: 1 },              // 新参数
+      // limit 已删除
+    ] })
+    useAppStore.getState().setCommands([next])
+    const s = useAppStore.getState()
+    expect(s.selected?.description).toBe('v2')                // 新 manifest
+    expect(s.values).toEqual({ user: 'alice', page: 1 })      // 活值+新默认;limit 丢弃
+  })
+
+  test('B: 同 key 已删 → 清空 selected/values', () => {
+    useAppStore.getState().selectCommand(mk())
+    useAppStore.getState().setCommands([mk({ command: 'y/other', site: 'y', name: 'other' })])
+    expect(useAppStore.getState().selected).toBeUndefined()
+    expect(useAppStore.getState().values).toEqual({})
+  })
+
+  test('C: currentRun 不随刷新改写(历史快照)', () => {
+    useAppStore.getState().selectCommand(mk())
+    useAppStore.getState().beginRun('r-keep')
+    const before = useAppStore.getState().currentRun
+    useAppStore.getState().setCommands([])                    // 命令全删
+    expect(useAppStore.getState().currentRun).toBe(before)    // 引用不变
+    expect(useAppStore.getState().selected).toBeUndefined()
+  })
+})
