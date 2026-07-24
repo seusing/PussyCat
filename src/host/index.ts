@@ -23,4 +23,3 @@ export function createHostSelection({ search = '', env = {} }: { search?: string
   }
   return { host: createMockHost(), mode: 'demo' }
 }
-

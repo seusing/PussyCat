@@ -1,7 +1,7 @@
 # P0-B：真实 Node Host 最小安全闭环
 
-**状态：** 已确认  
-**首条真机命令：** `opencli 36kr news -f json`  
+**状态：** 已确认
+**首条真机命令：** `opencli 36kr news -f json`
 **基线：** P0-A `main@b3061ac`，catalog 快照来自 OpenCLI `1.8.6`
 
 ## 1. 目标

@@ -12,4 +12,3 @@ test('environment and query select connected node host', () => {
   const fromQuery = createHostSelection({ search: '?host=node', env: { VITE_HOST_MODE: 'mock' } })
   expect(fromQuery.mode).toBe('connected')
 })
-
