@@ -102,7 +102,8 @@ test('点击重试后 catalog 恢复 ready 且错误清除', async () => {
   // 全局默认 fetch 挂起不 resolve（见 vitest.setup.ts），这里单独让重试路径拿到一次真实成功响应
   vi.stubGlobal('fetch', vi.fn(async () => ({
     ok: true, status: 200,
-    json: async () => ({ schemaVersion: 1, generatedAt: 0, opencliVersion: '', source: '', listSha256: '', manifestSha256: '', commands: [] }),
+    // commands 非空(三轮复审 F2 深校验拒绝空 catalog；此处只关心重试清错行为，给一条合法命令即可)
+    json: async () => ({ schemaVersion: 1, generatedAt: 0, opencliVersion: '', source: '', listSha256: '', manifestSha256: '', commands: [cmd] }),
   })))
   await userEvent.click(screen.getByTestId('catalog-retry'))
   await waitFor(() => expect(useAppStore.getState().catalogStatus).toBe('ready'))

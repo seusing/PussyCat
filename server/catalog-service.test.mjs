@@ -111,6 +111,15 @@ describe('CatalogService', () => {
     await expect(p).rejects.toMatchObject({ statusCode: 500 })
   })
 
+  it('schema 深校验失败(args:[null]) → 500(三轮复审 F2)', async () => {
+    const { service, children } = setup()
+    const p = service.refresh()
+    emitSuccess(children[0], JSON.stringify([
+      { command: 'a/ok', site: 'a', name: 'ok', description: '', access: 'read', strategy: 'public', browser: false, args: [null] },
+    ]))
+    await expect(p).rejects.toMatchObject({ statusCode: 500 })
+  })
+
   it('close() kill 在途子进程,之后 refresh 拒绝', async () => {
     const { service, children } = setup()
     const p = service.refresh()

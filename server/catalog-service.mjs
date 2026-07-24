@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { stripBom, mergeManifestFields } from '../src/data/normalize.ts'
+import { assertCatalogCommands } from '../src/data/catalogSchema.ts'
 import { buildExecutionPolicy } from './policy.mjs'
 
 export class CatalogServiceError extends Error {
@@ -115,7 +116,11 @@ export function createCatalogService({
       throw new CatalogServiceError(500, 'Failed to read cli-manifest.json', error instanceof Error ? error.message : String(error))
     }
     const commands = mergeManifestFields(list, manifest)
-    assertCommands(commands)
+    try {
+      assertCatalogCommands(commands)
+    } catch (e) {
+      throw new CatalogServiceError(500, e instanceof Error ? e.message : 'Catalog schema invalid')
+    }
     const snapshot = {
       schemaVersion: 1,
       generatedAt: now(),
@@ -144,17 +149,5 @@ export function createCatalogService({
       activeChild = undefined
       failActive?.(new CatalogServiceError(500, 'Catalog service is closed'))
     },
-  }
-}
-
-function assertCommands(commands) {
-  if (!Array.isArray(commands) || commands.length === 0) {
-    throw new CatalogServiceError(500, 'Catalog has no commands')
-  }
-  for (const c of commands) {
-    if (!c || typeof c.command !== 'string' || typeof c.site !== 'string' || typeof c.name !== 'string'
-      || !('access' in c) || !Array.isArray(c.args)) {
-      throw new CatalogServiceError(500, `Catalog command is malformed: ${c && c.command ? c.command : '?'}`)
-    }
   }
 }

@@ -1,14 +1,16 @@
 import type { CommandManifest, CatalogSnapshot } from './types'
+import { assertCatalogCommands } from './catalogSchema'
 
 export class CatalogError extends Error {}
 
 export function assertSnapshot(x: unknown): CatalogSnapshot {
   const s = x as any
   if (s?.schemaVersion !== 1) throw new CatalogError(`schemaVersion 不支持：${s?.schemaVersion}`)
-  if (!Array.isArray(s.commands)) throw new CatalogError('commands 非数组')
-  for (const c of s.commands)
-    if (!c.command || !c.site || !c.name || !('access' in c) || !Array.isArray(c.args))
-      throw new CatalogError(`命令字段缺失：${c?.command ?? '?'}`)
+  try {
+    assertCatalogCommands(s.commands)
+  } catch (e) {
+    throw new CatalogError(e instanceof Error ? e.message : String(e))   // 保持对外契约仍抛 CatalogError
+  }
   return s as CatalogSnapshot
 }
 
