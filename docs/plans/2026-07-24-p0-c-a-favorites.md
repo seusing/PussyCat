@@ -761,7 +761,7 @@ import type { CommandManifest } from '../../data/types'
 function NavCommandButton({ label, cmd, stale, active, onClick }: {
   label: string; cmd?: CommandManifest; stale: boolean; active: boolean; onClick: () => void
 }) {
-  const disabled = !cmd
+  const disabled = !cmd || stale   // 失效项(缺 manifest 或被 stale 标记)一律禁用,与「灰显+禁用」契约一致
   return (
     <button
       onClick={onClick}
