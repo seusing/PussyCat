@@ -82,6 +82,7 @@ export const RECENT_CAP = 20
 export function emptyPreferences(): PreferencesSnapshot
 // 解析 localStorage；schemaVersion 不符 / JSON 坏 / 缺字段 → 回退 emptyPreferences（永不抛）
 // 数组元素逐项校验（string 字段 + Number.isFinite 数值），坏项丢弃好项保留（复审 F3）
+// 三数组统一 uniqueBy 唯一键归一化（首见保留；二轮复审 P2），recent 另截断 RECENT_CAP（M1）——载入端完整恢复 §3 数据不变量
 export function loadPreferences(storage?: Storage): PreferencesSnapshot
 export function savePreferences(prefs: PreferencesSnapshot, storage?: Storage): void  // storage 不可用则 no-op
 
@@ -226,5 +227,6 @@ dismissUndo: () => void               // 清 lastUndo
 | F2[P2] | `resolveStorage` 在 try 外，浏览器封锁存储时访问 localStorage 属性本身抛 SecurityError → hydrate/收藏全断 | resolveStorage 内 try/catch 永不抛（§5） |
 | F3[P2] | 持久化只验数组外壳，`[null]` 载入后 `isSiteFavorited` 抛 TypeError 可炸渲染 | 元素级校验，坏项丢弃好项保留（§5） |
 | F4[🟡用户拍板] | undo=重新 toggle 刷新 createdAt，项落列表末尾 | `lastUndo` 存完整被删记录，`restoreFavorite*` 原位回插（§5/§6/§7.3） |
+| 二轮P2 | 收藏数组载入未按唯一键去重（合法同键元素 2/2 载入 → 重复 React key / toggle 删全部重复 / undo 只恢复一项，违 §3 唯一键规则） | `uniqueBy` 首见保留统一归一化三数组（§5）；类型上须显式 `unknown[]` 注解（JSON.parse 的 any 使泛型推断失效） |
 
 流程教训：块 A 的 whole-branch 评审点名过 F1/F3 但按「spec 措辞宽松/唯一写方」裁轻、未量真实数据幅度；F2 全漏。**裁「可接受」必须有真实数据量级，不能靠对 spec 措辞的解释。**
