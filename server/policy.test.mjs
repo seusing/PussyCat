@@ -57,3 +57,23 @@ describe('P0-B execution policy', () => {
     expect(() => validateCancelRequest({ runId: '../bad' })).toThrow(/Invalid runId/)
   })
 })
+
+import { buildExecutionPolicy } from './policy.mjs'
+
+it('buildExecutionPolicy: 纯函数过滤 read+public+browser=false', () => {
+  const policy = buildExecutionPolicy({
+    opencliVersion: '9.9.9',
+    commands: [
+      { command: 'a/ok', access: 'read', strategy: 'public', browser: false },
+      { command: 'a/write', access: 'write', strategy: 'public', browser: false },
+      { command: 'a/priv', access: 'read', strategy: 'private', browser: false },
+      { command: 'a/br', access: 'read', strategy: 'public', browser: true },
+    ],
+  })
+  expect([...policy.allowedCommands]).toEqual(['a/ok'])
+  expect(policy.opencliVersion).toBe('9.9.9')
+})
+
+it('buildExecutionPolicy: commands 非数组 → throw', () => {
+  expect(() => buildExecutionPolicy({})).toThrow()
+})

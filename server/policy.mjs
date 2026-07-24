@@ -9,8 +9,7 @@ export class RequestPolicyError extends Error {
   }
 }
 
-export function loadExecutionPolicy(catalogPath) {
-  const snapshot = JSON.parse(readFileSync(catalogPath, 'utf8').replace(/^\uFEFF/, ''))
+export function buildExecutionPolicy(snapshot) {
   if (!Array.isArray(snapshot.commands)) {
     throw new Error('Catalog snapshot has no commands array')
   }
@@ -30,6 +29,11 @@ export function loadExecutionPolicy(catalogPath) {
     allowedCommands,
     description: 'catalog: access=read, strategy=public, browser=false',
   }
+}
+
+export function loadExecutionPolicy(catalogPath) {
+  const snapshot = JSON.parse(readFileSync(catalogPath, 'utf8').replace(/^\uFEFF/, ''))
+  return buildExecutionPolicy(snapshot)
 }
 
 function assertPlainObject(value) {
