@@ -42,3 +42,58 @@ test('loadPreferences:缺字段→empty', () => {
   const s = fakeStorage(); s.setItem(PREFS_KEY, JSON.stringify({ schemaVersion: 1, favoriteSites: [] }))  // 缺 favoriteCommands/recent
   expect(loadPreferences(s)).toEqual(emptyPreferences())
 })
+
+import { isSiteFavorited, isCommandFavorited, toggleFavoriteSite, toggleFavoriteCommand, pushRecent, staleKeys, RECENT_CAP } from './preferences'
+import type { CommandManifest } from './types'
+
+const mkCmd = (site: string, name: string): CommandManifest => ({
+  command: `${site}/${name}`, site, name, description: '', access: 'read', browser: false, args: [],
+})
+
+test('toggleFavoriteSite 幂等往返 + order 递增 + 注入 now', () => {
+  let p = emptyPreferences()
+  p = toggleFavoriteSite(p, 'x', 100)
+  expect(isSiteFavorited(p, 'x')).toBe(true)
+  expect(p.favoriteSites[0]).toEqual({ site: 'x', order: 0, createdAt: 100 })
+  p = toggleFavoriteSite(p, 'y', 200)
+  expect(p.favoriteSites[1].order).toBe(1)          // order = max+1
+  p = toggleFavoriteSite(p, 'x', 300)               // 再 toggle → 移除
+  expect(isSiteFavorited(p, 'x')).toBe(false)
+  expect(p.favoriteSites.map((f) => f.site)).toEqual(['y'])
+})
+
+test('toggleFavoriteCommand 存 command+site 两键', () => {
+  let p = toggleFavoriteCommand(emptyPreferences(), 'x/go', 'x', 5)
+  expect(isCommandFavorited(p, 'x/go')).toBe(true)
+  expect(p.favoriteCommands[0]).toEqual({ command: 'x/go', site: 'x', order: 0, createdAt: 5 })
+  p = toggleFavoriteCommand(p, 'x/go', 'x', 9)
+  expect(isCommandFavorited(p, 'x/go')).toBe(false)
+})
+
+test('pushRecent 去重置顶 + 上限 RECENT_CAP', () => {
+  let p = emptyPreferences()
+  for (let i = 0; i < RECENT_CAP + 5; i++) p = pushRecent(p, `s/c${i}`, i)
+  expect(p.recent).toHaveLength(RECENT_CAP)
+  expect(p.recent[0].command).toBe(`s/c${RECENT_CAP + 4}`)   // 最近在前
+  p = pushRecent(p, 's/c0', 999)                              // 重复命令 → 移除旧、置顶
+  expect(p.recent.filter((r) => r.command === 's/c0')).toHaveLength(1)
+  expect(p.recent[0]).toEqual({ command: 's/c0', at: 999 })
+})
+
+test('staleKeys 标记已失效收藏', () => {
+  const commands = [mkCmd('x', 'go'), mkCmd('y', 'list')]
+  let p = toggleFavoriteSite(emptyPreferences(), 'x', 1)
+  p = toggleFavoriteSite(p, 'ghost', 2)
+  p = toggleFavoriteCommand(p, 'y/list', 'y', 3)
+  p = toggleFavoriteCommand(p, 'dead/none', 'dead', 4)
+  const stale = staleKeys(p, commands)
+  expect(stale.sites.has('ghost')).toBe(true)
+  expect(stale.sites.has('x')).toBe(false)
+  expect(stale.commands.has('dead/none')).toBe(true)
+  expect(stale.commands.has('y/list')).toBe(false)
+})
+
+test('staleKeys 空 manifest → 空 stale(无法判定,不误灰)', () => {
+  const p = toggleFavoriteSite(emptyPreferences(), 'x', 1)
+  expect(staleKeys(p, []).sites.size).toBe(0)
+})

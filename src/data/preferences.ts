@@ -1,3 +1,5 @@
+import type { CommandManifest } from './types'
+
 export const PREFS_KEY = 'opencli-app:prefs:v1'
 export const RECENT_CAP = 20
 
@@ -46,4 +48,44 @@ export function savePreferences(prefs: PreferencesSnapshot, storage?: Storage): 
   } catch {
     /* 配额满 / 隐私模式:静默降级,内存态仍有效 */
   }
+}
+
+export function isSiteFavorited(prefs: PreferencesSnapshot, site: string): boolean {
+  return prefs.favoriteSites.some((f) => f.site === site)
+}
+
+export function isCommandFavorited(prefs: PreferencesSnapshot, command: string): boolean {
+  return prefs.favoriteCommands.some((f) => f.command === command)
+}
+
+function nextOrder(items: ReadonlyArray<{ order: number }>): number {
+  return items.reduce((m, x) => Math.max(m, x.order), -1) + 1
+}
+
+export function toggleFavoriteSite(prefs: PreferencesSnapshot, site: string, now: number): PreferencesSnapshot {
+  if (isSiteFavorited(prefs, site)) {
+    return { ...prefs, favoriteSites: prefs.favoriteSites.filter((f) => f.site !== site) }
+  }
+  return { ...prefs, favoriteSites: [...prefs.favoriteSites, { site, order: nextOrder(prefs.favoriteSites), createdAt: now }] }
+}
+
+export function toggleFavoriteCommand(prefs: PreferencesSnapshot, command: string, site: string, now: number): PreferencesSnapshot {
+  if (isCommandFavorited(prefs, command)) {
+    return { ...prefs, favoriteCommands: prefs.favoriteCommands.filter((f) => f.command !== command) }
+  }
+  return { ...prefs, favoriteCommands: [...prefs.favoriteCommands, { command, site, order: nextOrder(prefs.favoriteCommands), createdAt: now }] }
+}
+
+export function pushRecent(prefs: PreferencesSnapshot, command: string, at: number): PreferencesSnapshot {
+  const rest = prefs.recent.filter((r) => r.command !== command)
+  return { ...prefs, recent: [{ command, at }, ...rest].slice(0, RECENT_CAP) }
+}
+
+export function staleKeys(prefs: PreferencesSnapshot, commands: CommandManifest[]): { sites: Set<string>; commands: Set<string> } {
+  if (commands.length === 0) return { sites: new Set<string>(), commands: new Set<string>() }
+  const liveSites = new Set(commands.map((c) => c.site))
+  const liveCommands = new Set(commands.map((c) => c.command))
+  const sites = new Set(prefs.favoriteSites.filter((f) => !liveSites.has(f.site)).map((f) => f.site))
+  const cmds = new Set(prefs.favoriteCommands.filter((f) => !liveCommands.has(f.command)).map((f) => f.command))
+  return { sites, commands: cmds }
 }
