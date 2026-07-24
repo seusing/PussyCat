@@ -66,11 +66,15 @@ export function loadPreferences(storage?: Storage): PreferencesSnapshot {
     // 载入端把持久化当不可信边界:类型校验(F3)之外,还须恢复唯一键不变量——三数组统一
     // uniqueBy 首见保留(写端 toggle/restore 有幂等检查,但手工损坏/未来迁移可注入重复键;二轮复审 P2);
     // recent 另与 pushRecent 对齐 RECENT_CAP 截断(M1)
+    // 显式 unknown[] 注解:JSON.parse 的 any 会让 uniqueBy 泛型推断失效,unknown[] 上守卫过滤才正确收窄
+    const rawSites: unknown[] = p.favoriteSites
+    const rawCommands: unknown[] = p.favoriteCommands
+    const rawRecent: unknown[] = p.recent
     return {
       schemaVersion: 1,
-      favoriteSites: uniqueBy(p.favoriteSites.filter(isFavSite), (f) => f.site),
-      favoriteCommands: uniqueBy(p.favoriteCommands.filter(isFavCommand), (f) => f.command),
-      recent: uniqueBy(p.recent.filter(isRecentEntry), (r) => r.command).slice(0, RECENT_CAP),
+      favoriteSites: uniqueBy(rawSites.filter(isFavSite), (f) => f.site),
+      favoriteCommands: uniqueBy(rawCommands.filter(isFavCommand), (f) => f.command),
+      recent: uniqueBy(rawRecent.filter(isRecentEntry), (r) => r.command).slice(0, RECENT_CAP),
     }
   } catch {
     return emptyPreferences()
