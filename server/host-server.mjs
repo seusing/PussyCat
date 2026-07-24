@@ -97,11 +97,13 @@ async function readJson(request, maxBodyBytes) {
 export function createHostServer({
   opencliEntry,
   policy,
+  catalogService,
   allowedOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173'],
   maxBodyBytes = 64 * 1024,
   runManagerOptions = {},
 } = {}) {
   if (!policy) throw new Error('policy is required')
+  const activePolicy = () => catalogService?.current()?.policy ?? policy
   const origins = new Set(allowedOrigins)
   const broker = new SseBroker()
   const runManager = new RunManager({
@@ -122,8 +124,8 @@ export function createHostServer({
         }
         writeJson(response, 200, {
           status: 'ok',
-          opencliVersion: policy.opencliVersion,
-          executionPolicy: policy.description,
+          opencliVersion: activePolicy().opencliVersion,
+          executionPolicy: activePolicy().description,
           activeRuns: runManager.active.size,
         })
         return
@@ -148,6 +150,28 @@ export function createHostServer({
         return
       }
 
+      if (url.pathname === '/catalog' && request.method === 'GET') {
+        if (!catalogService) {
+          writeJson(response, 404, { error: 'Catalog refresh is not enabled' })
+          return
+        }
+        try {
+          const snapshot = await catalogService.refresh()
+          writeJson(response, 200, snapshot)      // 只在原子替换完成后返回:目录与生效 policy 恒一致
+        } catch (error) {
+          const statusCode = (error && typeof error === 'object' && Number.isInteger(error.statusCode))
+            ? error.statusCode
+            : 500
+          writeJson(response, statusCode, {
+            error: {
+              summary: error instanceof Error ? error.message : 'Catalog refresh failed',
+              ...(error && typeof error === 'object' && error.detail ? { detail: error.detail } : {}),
+            },
+          })
+        }
+        return
+      }
+
       if (url.pathname === '/events' && request.method === 'GET') {
         response.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',
@@ -163,7 +187,7 @@ export function createHostServer({
 
       if (url.pathname === '/start' && request.method === 'POST') {
         const body = await readJson(request, maxBodyBytes)
-        const command = validateStartRequest(body, policy)
+        const command = validateStartRequest(body, activePolicy())
         const result = runManager.start(command)
         writeJson(response, 202, result)
         return
@@ -208,6 +232,7 @@ export function createHostServer({
       })
     },
     async close() {
+      catalogService?.close()
       runManager.close()
       broker.close()
       if (!server.listening) return

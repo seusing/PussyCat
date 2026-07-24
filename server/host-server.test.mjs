@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', realFetch)
 })
 
-async function setup() {
+async function setup(extra = {}) {
   const children = []
   const app = createHostServer({
     opencliEntry: 'C:\\fixture\\dist\\src\\main.js',
@@ -44,6 +44,7 @@ async function setup() {
       },
       commandTimeoutMs: 60_000,
     },
+    ...extra,
   })
   openApps.add(app)
   const address = await app.listen({ port: 0 })
@@ -167,5 +168,67 @@ describe('Node Host HTTP/SSE', () => {
     expect(wrongType.status).toBe(415)
     expect((await post(baseUrl, '/cancel', { runId: 'not-running' })).status).toBe(204)
     expect((await post(baseUrl, '/cancel', { runId: 'not-running' })).status).toBe(204)
+  })
+})
+
+describe('GET /catalog + 动态 policy', () => {
+  function stubCatalogService() {
+    const snapshot = {
+      schemaVersion: 1, generatedAt: 123, opencliVersion: '9.9.9',
+      source: 'live: opencli list -f json', listSha256: 'x', manifestSha256: 'y',
+      commands: [
+        { command: 'newsite/hello', site: 'newsite', name: 'hello', description: '', access: 'read', strategy: 'public', browser: false, args: [] },
+      ],
+    }
+    const policy = {
+      opencliVersion: '9.9.9',
+      description: 'refreshed',
+      allowedCommands: new Set(['newsite/hello']),
+    }
+    let state
+    return {
+      snapshot,
+      refresh: async () => { state = { snapshot, policy }; return snapshot },
+      current: () => state,
+      close: () => {},
+    }
+  }
+
+  it('刷新前旧 policy 拒绝新命令;刷新后放行、旧命令 403(漂移闭环)', async () => {
+    const service = stubCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const startNew = () => post(baseUrl, '/start', {
+      runId: 'r-new-1', commandKey: 'newsite/hello', argv: ['newsite', 'hello', '-f', 'json'],
+    })
+    const startOld = () => post(baseUrl, '/start', {
+      runId: 'r-old-1', commandKey: '36kr/news', argv: ['36kr', 'news', '-f', 'json'],
+    })
+    expect((await startNew()).status).toBe(403)               // 刷新前:初始 policy 无 newsite/hello
+    const refreshed = await fetch(`${baseUrl}/catalog`, { headers: { Origin: origin } })
+    expect(refreshed.status).toBe(200)
+    expect((await refreshed.json()).commands[0].command).toBe('newsite/hello')
+    expect((await startNew()).status).toBe(202)               // 刷新后:动态 policy 放行
+    expect((await startOld()).status).toBe(403)               // 已删命令被拒
+  })
+
+  it('刷新失败 → 透传 CatalogServiceError.statusCode,不改 policy', async () => {
+    const service = {
+      refresh: async () => { const e = new Error('timed out'); e.statusCode = 504; e.name = 'CatalogServiceError'; throw e },
+      current: () => undefined,
+      close: () => {},
+    }
+    const { baseUrl } = await setup({ catalogService: service })
+    const res = await fetch(`${baseUrl}/catalog`, { headers: { Origin: origin } })
+    expect(res.status).toBe(504)
+    const body = await res.json()
+    expect(body.error.summary).toMatch(/timed out/)
+    // 原 policy 未被破坏:白名单内命令仍可 start
+    expect((await post(baseUrl, '/start', { runId: 'r-ok-1', commandKey: '36kr/news', argv: ['36kr', 'news', '-f', 'json'] })).status).toBe(202)
+  })
+
+  it('未配置 catalogService → GET /catalog 404', async () => {
+    const { baseUrl } = await setup()
+    const res = await fetch(`${baseUrl}/catalog`, { headers: { Origin: origin } })
+    expect(res.status).toBe(404)
   })
 })

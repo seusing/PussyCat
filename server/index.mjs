@@ -1,8 +1,9 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHostServer } from './host-server.mjs'
-import { resolveOpenCliEntry } from './opencli-entry.mjs'
+import { resolveOpenCliEntry, resolveManifestPath } from './opencli-entry.mjs'
 import { loadExecutionPolicy } from './policy.mjs'
+import { createCatalogService } from './catalog-service.mjs'
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const catalogPath = resolve(projectRoot, 'public/catalog.snapshot.json')
@@ -16,9 +17,14 @@ const allowedOrigins = (process.env.OPENCLI_HOST_ALLOWED_ORIGINS
 
 const policy = loadExecutionPolicy(catalogPath)
 const opencliEntry = resolveOpenCliEntry()
+const catalogService = createCatalogService({
+  opencliEntry,
+  manifestPath: resolveManifestPath(opencliEntry),
+})
 const app = createHostServer({
   opencliEntry,
   policy,
+  catalogService,
   allowedOrigins,
   runManagerOptions: {
     cancelGraceMs: Number.parseInt(process.env.OPENCLI_HOST_CANCEL_GRACE_MS ?? '2000', 10),
