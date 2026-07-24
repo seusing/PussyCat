@@ -18,10 +18,14 @@ function normalizeHostError(e: unknown): { summary: string; detail?: string } {
   }
 }
 
-export default function App({ host: injectedHost }: { host?: HostBridge } = {}) {
+export default function App({
+  host: injectedHost,
+  mode = 'demo',
+}: { host?: HostBridge; mode?: 'demo' | 'connected' } = {}) {
   const host = useMemo(() => injectedHost ?? createMockHost(), [injectedHost])
   const setCommands = useAppStore((s) => s.setCommands)
   const setCatalogStatus = useAppStore((s) => s.setCatalogStatus)
+  const setMode = useAppStore((s) => s.setMode)
   const catalogStatus = useAppStore((s) => s.catalogStatus)
   const catalogError = useAppStore((s) => s.catalogError)
 
@@ -32,12 +36,13 @@ export default function App({ host: injectedHost }: { host?: HostBridge } = {}) 
   }
 
   useEffect(() => {
+    setMode(mode)
     const offOut = host.onOutput((e) => useAppStore.getState().appendOutput(e))
     const offDone = host.onDone((e) => useAppStore.getState().finishRun(e))
     fetchCatalog()
     return () => { offOut(); offDone() }
     // fetchCatalog 每次渲染重建，但只在 host 身份变化时需要重新接线/拉取一次，行为与原版 [host, setCommands] 等价
-  }, [host, setCommands, setCatalogStatus])
+  }, [host, mode, setCommands, setCatalogStatus, setMode])
 
   const onRun = () => {
     const s = useAppStore.getState()

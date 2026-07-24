@@ -46,6 +46,8 @@ test('beginRun→appendOutput→finishRun 驱动状态与日志', () => {
 
 test('mode 默认 demo', () => {
   expect(useAppStore.getState().mode).toBe('demo')
+  useAppStore.getState().setMode('connected')
+  expect(useAppStore.getState().mode).toBe('connected')
 })
 
 test('appendOutput：按 seq 去重且乱序插入有序', () => {

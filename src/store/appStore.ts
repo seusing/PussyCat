@@ -50,6 +50,7 @@ type AppState = {
   finishRun: (e: DoneEvent) => void
   markCancelling: () => void
   mode: 'demo' | 'connected'
+  setMode: (mode: 'demo' | 'connected') => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -89,4 +90,5 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'CANCEL' }) } }
   }),
   mode: 'demo',
+  setMode: (mode) => set({ mode }),
 }))
