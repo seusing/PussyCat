@@ -115,12 +115,14 @@ stale: { sites: Set<string>; commands: Set<string> }   // 派生，不持久化
 hydratePreferences: () => void        // = loadPreferences() → set；App 挂载时调一次
 toggleSiteFavorite: (site: string) => void      // 调 toggleFavoriteSite → set → savePreferences
 toggleCommandFavorite: (cmd: CommandManifest) => void  // 调 toggleFavoriteCommand(cmd.command, cmd.site)
-reconcilePreferences: () => void      // = staleKeys(prefs, commands) → set({ stale })；setCommands 后调
+undoLastFavorite: () => void          // 用 lastUndo 里的项再 toggle 回去（幂等）
+dismissUndo: () => void               // 清 lastUndo
+// 注：stale 派生不单列 reconcile action，内联进 setCommands / toggleSite/Command / hydratePreferences 的 set（单次原子，避免二次 set 读到旧 commands）
 ```
 
 修改点（最小侵入）：
 - `beginRun(runId)`：在现有逻辑末尾追加 `pushRecent(preferences, selected.command, Date.now())` → set → 落盘。**决策②**：最近记录发生在**运行开始**（beginRun），不是成功之后——运行过即算「最近用过」。
-- `setCommands`：成功 setCommands 后触发 `reconcilePreferences()`（manifest 到齐才能算 stale）。
+- `setCommands`：成功 setCommands 后内联 `staleKeys(preferences, commands)` 写入 `stale`（manifest 到齐才能算 stale；同一次 set 原子完成）。
 
 **并发/顺序：** 内存先更新（set），再同步 `savePreferences`（localStorage 同步 API，P0 无需异步队列）。
 

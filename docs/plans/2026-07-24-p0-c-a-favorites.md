@@ -330,7 +330,7 @@ git commit -m "feat(prefs): 收藏/最近/失效纯操作——toggle 幂等 + p
 
 **Interfaces:**
 - Consumes: Task 1/2 全部导出;现有 `CommandManifest`。
-- Produces(store 新增): state `preferences`、`stale`、`lastUndo`;actions `hydratePreferences()`、`toggleSiteFavorite(site)`、`toggleCommandFavorite(cmd)`、`reconcilePreferences()`、`undoLastFavorite()`、`dismissUndo()`;`beginRun` 追加 recent;`setCommands` 派生 stale。
+- Produces(store 新增): state `preferences`、`stale`、`lastUndo`;actions `hydratePreferences()`、`toggleSiteFavorite(site)`、`toggleCommandFavorite(cmd)`、`undoLastFavorite()`、`dismissUndo()`;`beginRun` 追加 recent;`setCommands` 派生 stale。
 
 - [ ] **Step 1: 追加失败测试**(接在 `appStore.test.ts` 末尾)
 
@@ -475,7 +475,6 @@ type AppState = {
   hydratePreferences: () => void
   toggleSiteFavorite: (site: string) => void
   toggleCommandFavorite: (cmd: CommandManifest) => void
-  reconcilePreferences: () => void
   undoLastFavorite: () => void
   dismissUndo: () => void
 }
@@ -530,7 +529,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastUndo: undefined,
   hydratePreferences: () => set((s) => {
     const preferences = loadPreferences()
-    return { preferences, stale: staleKeys(preferences, s.commands) }
+    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
   }),
   toggleSiteFavorite: (site) => set((s) => {
     const wasFav = isSiteFavorited(s.preferences, site)
@@ -544,7 +543,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     savePreferences(preferences)
     return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: wasFav ? { kind: 'command', command: cmd.command, site: cmd.site } : undefined }
   }),
-  reconcilePreferences: () => set((s) => ({ stale: staleKeys(s.preferences, s.commands) })),
   undoLastFavorite: () => set((s) => {
     const u = s.lastUndo
     if (!u) return s
