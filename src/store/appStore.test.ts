@@ -167,6 +167,20 @@ describe('preferences 切片', () => {
     expect(useAppStore.getState().stale.commands.has('x/login')).toBe(true)
   })
 
+  test('含重复键快照 hydrate 归一化;toggle→undo 状态保持(二轮复审 P2 影响链闭合)', () => {
+    localStorage.setItem('opencli-app:prefs:v1', JSON.stringify({
+      schemaVersion: 1,
+      favoriteSites: [{ site: 'x', order: 0, createdAt: 1 }, { site: 'x', order: 2, createdAt: 5 }],
+      favoriteCommands: [], recent: [],
+    }))
+    useAppStore.getState().hydratePreferences()
+    expect(useAppStore.getState().preferences.favoriteSites).toHaveLength(1)   // 归一化为单条
+    const before = useAppStore.getState().preferences
+    useAppStore.getState().toggleSiteFavorite('x')   // 取消(单条,不再"删全部重复")
+    useAppStore.getState().undoLastFavorite()        // lastUndo 存的就是那唯一一条
+    expect(useAppStore.getState().preferences).toEqual(before)
+  })
+
   test('hydratePreferences 清空遗留 lastUndo(M3 防御)', () => {
     useAppStore.setState({ lastUndo: { kind: 'site', item: { site: 'z', order: 0, createdAt: 1 } } })
     useAppStore.getState().hydratePreferences()

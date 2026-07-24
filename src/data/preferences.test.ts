@@ -124,6 +124,19 @@ test('元素结构校验:无效项丢弃、有效项保留、不再抛', () => {
   expect(isSiteFavorited(p, 'x')).toBe(true)   // 不抛且判定正确
 })
 
+test('loadPreferences: 收藏数组按唯一键去重(首见保留;二轮复审 P2)', () => {
+  const s = fakeStorage()
+  s.setItem(PREFS_KEY, JSON.stringify({
+    schemaVersion: 1,
+    favoriteSites: [{ site: 'x', order: 0, createdAt: 1 }, { site: 'x', order: 5, createdAt: 9 }, { site: 'y', order: 1, createdAt: 2 }],
+    favoriteCommands: [{ command: 'x/go', site: 'x', order: 0, createdAt: 1 }, { command: 'x/go', site: 'x', order: 3, createdAt: 7 }],
+    recent: [],
+  }))
+  const p = loadPreferences(s)
+  expect(p.favoriteSites).toEqual([{ site: 'x', order: 0, createdAt: 1 }, { site: 'y', order: 1, createdAt: 2 }])
+  expect(p.favoriteCommands).toEqual([{ command: 'x/go', site: 'x', order: 0, createdAt: 1 }])
+})
+
 test('loadPreferences: recent 去重+RECENT_CAP 截断(载入端与 pushRecent 不变量对齐)', () => {
   const s = fakeStorage()
   const many = Array.from({ length: RECENT_CAP + 5 }, (_, i) => ({ command: `s/c${i}`, at: i }))

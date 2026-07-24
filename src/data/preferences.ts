@@ -42,6 +42,16 @@ function isRecentEntry(x: unknown): x is RecentEntry {
   return !!o && typeof o === 'object' && typeof o.command === 'string' && isFiniteNum(o.at)
 }
 
+function uniqueBy<T>(items: T[], keyOf: (x: T) => string): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const it of items) {
+    const k = keyOf(it)
+    if (!seen.has(k)) { seen.add(k); out.push(it) }
+  }
+  return out
+}
+
 export function loadPreferences(storage?: Storage): PreferencesSnapshot {
   const s = resolveStorage(storage)
   if (!s) return emptyPreferences()
@@ -53,20 +63,14 @@ export function loadPreferences(storage?: Storage): PreferencesSnapshot {
     if (!Array.isArray(p.favoriteSites) || !Array.isArray(p.favoriteCommands) || !Array.isArray(p.recent)) {
       return emptyPreferences()
     }
-    // recent 载入端与 pushRecent 不变量对齐:去重(首见=最近)+RECENT_CAP 截断(评审 M1 硬化)
-    const recent: RecentEntry[] = []
-    const seenCommands = new Set<string>()
-    for (const r of p.recent.filter(isRecentEntry)) {
-      if (seenCommands.has(r.command)) continue
-      seenCommands.add(r.command)
-      recent.push(r)
-      if (recent.length >= RECENT_CAP) break
-    }
+    // 载入端把持久化当不可信边界:类型校验(F3)之外,还须恢复唯一键不变量——三数组统一
+    // uniqueBy 首见保留(写端 toggle/restore 有幂等检查,但手工损坏/未来迁移可注入重复键;二轮复审 P2);
+    // recent 另与 pushRecent 对齐 RECENT_CAP 截断(M1)
     return {
       schemaVersion: 1,
-      favoriteSites: p.favoriteSites.filter(isFavSite),
-      favoriteCommands: p.favoriteCommands.filter(isFavCommand),
-      recent,
+      favoriteSites: uniqueBy(p.favoriteSites.filter(isFavSite), (f) => f.site),
+      favoriteCommands: uniqueBy(p.favoriteCommands.filter(isFavCommand), (f) => f.command),
+      recent: uniqueBy(p.recent.filter(isRecentEntry), (r) => r.command).slice(0, RECENT_CAP),
     }
   } catch {
     return emptyPreferences()
