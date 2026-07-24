@@ -150,4 +150,10 @@ describe('preferences 切片', () => {
     useAppStore.getState().hydratePreferences()
     expect(useAppStore.getState().stale.commands.has('x/login')).toBe(true)
   })
+
+  test('hydratePreferences 清空遗留 lastUndo(M3 防御)', () => {
+    useAppStore.setState({ lastUndo: { kind: 'site', site: 'z' } })
+    useAppStore.getState().hydratePreferences()
+    expect(useAppStore.getState().lastUndo).toBeUndefined()
+  })
 })

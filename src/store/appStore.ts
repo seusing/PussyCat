@@ -67,7 +67,6 @@ type AppState = {
   hydratePreferences: () => void
   toggleSiteFavorite: (site: string) => void
   toggleCommandFavorite: (cmd: CommandManifest) => void
-  reconcilePreferences: () => void
   undoLastFavorite: () => void
   dismissUndo: () => void
 }
@@ -122,7 +121,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastUndo: undefined,
   hydratePreferences: () => set((s) => {
     const preferences = loadPreferences()
-    return { preferences, stale: staleKeys(preferences, s.commands) }
+    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
   }),
   toggleSiteFavorite: (site) => set((s) => {
     const wasFav = isSiteFavorited(s.preferences, site)
@@ -136,7 +135,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     savePreferences(preferences)
     return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: wasFav ? { kind: 'command', command: cmd.command, site: cmd.site } : undefined }
   }),
-  reconcilePreferences: () => set((s) => ({ stale: staleKeys(s.preferences, s.commands) })),
   undoLastFavorite: () => set((s) => {
     const u = s.lastUndo
     if (!u) return s
