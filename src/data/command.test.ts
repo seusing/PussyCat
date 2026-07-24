@@ -11,10 +11,16 @@ test('buildArgv：站点+命令在前，flag 带值', () => {
   expect(buildArgv(c, { timeout: 300 })).toEqual(['xiaohongshu', 'download', '--timeout', '300'])
 })
 
-test('buildArgv：布尔 true 只加 flag，false 省略', () => {
+test('buildArgv：布尔 true 发 --flag true，false 且无默认省略', () => {
   const c = cmd([{ name: 'images-only', type: 'boolean' }])
-  expect(buildArgv(c, { 'images-only': true })).toEqual(['xiaohongshu', 'download', '--images-only'])
+  expect(buildArgv(c, { 'images-only': true })).toEqual(['xiaohongshu', 'download', '--images-only', 'true'])
   expect(buildArgv(c, { 'images-only': false })).toEqual(['xiaohongshu', 'download'])
+})
+// 新增：default=true 关闭 → --flag false（核心 bug）
+test('buildArgv：default=true 的布尔被关闭 → --flag false（非省略）', () => {
+  const c = cmd([{ name: 'wait', type: 'boolean', default: true }])
+  expect(buildArgv(c, { wait: false })).toEqual(['xiaohongshu', 'download', '--wait', 'false'])
+  expect(buildArgv(c, { wait: true })).toEqual(['xiaohongshu', 'download']) // 与默认同 → 省略
 })
 
 test('buildArgv：positional 按顺序在 flag 之前，无 -- 前缀', () => {
@@ -35,4 +41,9 @@ test('commandPreview：opencli 前缀 + 含空格的值加引号', () => {
   const c = cmd([{ name: 'out', type: 'str' }])
   expect(commandPreview(c, { out: 'my dir' })).toBe('opencli xiaohongshu download --out "my dir"')
   expect(commandPreview(c, { out: 'plain' })).toBe('opencli xiaohongshu download --out plain')
+})
+// 新增：preview token 边界（值以 -- 开头不被误当 flag）
+test('commandPreview：值以 -- 开头仍加引号，不误判为 flag', () => {
+  const c = cmd([{ name: 'out', type: 'str' }])
+  expect(commandPreview(c, { out: '--foo bar' })).toBe('opencli xiaohongshu download --out "--foo bar"')
 })
