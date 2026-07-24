@@ -3,7 +3,7 @@ import type { CommandManifest } from '../data/types'
 import type { OutputEvent, DoneEvent } from '../host/types'
 import { transition, type RunState } from './runMachine'
 
-const SENSITIVE = /pass|token|secret|cookie|key/i
+const SENSITIVE = /password|passcode|secret|token|cookie/i
 
 // cmd 暂未参与判定（脱敏仅按字段名正则），但按 brief 接口签名保留形参供未来按 arg 类型细化
 export function redactValues(_cmd: CommandManifest, values: Record<string, unknown>): Record<string, unknown> {
@@ -30,9 +30,16 @@ function defaultsOf(cmd: CommandManifest): Record<string, unknown> {
   return v
 }
 
+function isTerminal(s: RunState): boolean {
+  return s === 'succeeded' || s === 'failed' || s === 'cancelled'
+}
+
 type AppState = {
   commands: CommandManifest[]
   setCommands: (cmds: CommandManifest[]) => void
+  catalogStatus: 'loading' | 'ready' | 'error'
+  catalogError?: string
+  setCatalogStatus: (status: 'loading' | 'ready' | 'error', error?: string) => void
   selected?: CommandManifest
   values: Record<string, unknown>
   selectCommand: (cmd: CommandManifest) => void
@@ -47,7 +54,10 @@ type AppState = {
 
 export const useAppStore = create<AppState>((set, get) => ({
   commands: [],
-  setCommands: (commands) => set({ commands }),
+  setCommands: (commands) => set({ commands, catalogStatus: 'ready' }),
+  catalogStatus: 'loading',
+  catalogError: undefined,
+  setCatalogStatus: (status, error) => set({ catalogStatus: status, catalogError: error }),
   selected: undefined,
   values: {},
   selectCommand: (cmd) => set({ selected: cmd, values: defaultsOf(cmd) }),
@@ -65,11 +75,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     })
   },
   appendOutput: (e) => set((s) => {
-    if (!s.currentRun || s.currentRun.id !== e.runId) return s
-    return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'OUTPUT' }), lines: [...s.currentRun.lines, e] } }
+    if (!s.currentRun || s.currentRun.id !== e.runId || isTerminal(s.currentRun.state)) return s
+    if (s.currentRun.lines.some((l) => l.seq === e.seq)) return s
+    const lines = [...s.currentRun.lines, e].sort((a, b) => a.seq - b.seq)
+    return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'OUTPUT' }), lines } }
   }),
   finishRun: (e) => set((s) => {
-    if (!s.currentRun || s.currentRun.id !== e.runId) return s
+    if (!s.currentRun || s.currentRun.id !== e.runId || isTerminal(s.currentRun.state)) return s
     return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'DONE', outcome: e.outcome }), endedAt: e.at, result: e.result, error: e.error } }
   }),
   markCancelling: () => set((s) => {
