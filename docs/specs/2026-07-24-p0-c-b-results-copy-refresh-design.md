@@ -46,8 +46,9 @@
 `src/host/index.ts` 扩展（**不碰 `HostBridge` 接口本身**）：
 
 ```ts
+export type CatalogLoadResult = { snapshot: CatalogSnapshot; degraded?: string }  // degraded=live 失败降级 snapshot 的原因
 export type CatalogSource = {
-  load(): Promise<CatalogSnapshot>     // 首载与手动刷新共用
+  load(): Promise<CatalogLoadResult>   // 首载与手动刷新共用
   kind: 'snapshot' | 'live'
 }
 export type HostSelection = {
@@ -56,6 +57,8 @@ export type HostSelection = {
   mode: 'demo' | 'connected'
 }
 ```
+
+> `degraded` 的必要性：决策⑥的静默降级若不带标记，connected 模式手动刷新在 Host 挂掉时会**伪装成刷新成功**（返回的是本地快照），与补全7「失败可见提示」矛盾。载入侧：首载 degraded 仅 console.warn；手动刷新 degraded 在按钮旁显示「已降级：本地快照」（目录仍更新）。两路都失败才走 catch（刷新失败提示 / 首载错误屏）。
 
 - demo：`snapshotCatalogSource()` — `fetch('/catalog.snapshot.json', { cache: 'no-store' })` + 现有 `assertSnapshot` 校验（复用 `loadCatalog` 逻辑，`cache` 参数化）。
 - connected：`liveCatalogSource(baseUrl)` — `fetch(`${baseUrl}/catalog`)`（同一 baseUrl 由 `createHostSelection` 解析一次，与 `createNodeBridgeHost` 共享；默认 `http://127.0.0.1:43117`）→ `assertSnapshot`；**失败降级** snapshot 源并 `console.warn`（决策⑥）。
