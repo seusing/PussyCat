@@ -43,7 +43,7 @@ test('loadPreferences:缺字段→empty', () => {
   expect(loadPreferences(s)).toEqual(emptyPreferences())
 })
 
-import { isSiteFavorited, isCommandFavorited, toggleFavoriteSite, toggleFavoriteCommand, pushRecent, staleKeys, RECENT_CAP } from './preferences'
+import { isSiteFavorited, isCommandFavorited, toggleFavoriteSite, toggleFavoriteCommand, pushRecent, staleKeys, RECENT_CAP, restoreFavoriteSite } from './preferences'
 import type { CommandManifest } from './types'
 
 const mkCmd = (site: string, name: string): CommandManifest => ({
@@ -96,6 +96,17 @@ test('staleKeys 标记已失效收藏', () => {
 test('staleKeys 空 manifest → 空 stale(无法判定,不误灰)', () => {
   const p = toggleFavoriteSite(emptyPreferences(), 'x', 1)
   expect(staleKeys(p, []).sites.size).toBe(0)
+})
+
+test('restoreFavorite* 原记录原位回插且幂等', () => {
+  let p = toggleFavoriteSite(emptyPreferences(), 'a', 100)
+  p = toggleFavoriteSite(p, 'b', 200)
+  const removed = p.favoriteSites[0]
+  p = toggleFavoriteSite(p, 'a', 300)          // 取消 a
+  p = restoreFavoriteSite(p, removed)
+  const order = [...p.favoriteSites].sort((x, y) => x.createdAt - y.createdAt).map((f) => f.site)
+  expect(order).toEqual(['a', 'b'])            // a 凭原 createdAt=100 回到 b 前
+  expect(restoreFavoriteSite(p, removed)).toEqual(p)
 })
 
 test('元素结构校验:无效项丢弃、有效项保留、不再抛', () => {

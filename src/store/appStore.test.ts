@@ -110,7 +110,7 @@ describe('preferences 切片', () => {
   test('取消收藏设置 lastUndo,undoLastFavorite 回滚', () => {
     useAppStore.getState().toggleSiteFavorite('x')       // 收藏
     useAppStore.getState().toggleSiteFavorite('x')       // 取消 → lastUndo
-    expect(useAppStore.getState().lastUndo).toEqual({ kind: 'site', site: 'x' })
+    expect(useAppStore.getState().lastUndo).toMatchObject({ kind: 'site', item: { site: 'x' } })
     useAppStore.getState().undoLastFavorite()
     expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])
     expect(useAppStore.getState().lastUndo).toBeUndefined()
@@ -119,9 +119,17 @@ describe('preferences 切片', () => {
   test('收藏(新增)不设 lastUndo;dismissUndo 清除', () => {
     useAppStore.getState().toggleSiteFavorite('x')
     expect(useAppStore.getState().lastUndo).toBeUndefined()
-    useAppStore.setState({ lastUndo: { kind: 'site', site: 'z' } })
+    useAppStore.setState({ lastUndo: { kind: 'site', item: { site: 'z', order: 0, createdAt: 1 } } })
     useAppStore.getState().dismissUndo()
     expect(useAppStore.getState().lastUndo).toBeUndefined()
+  })
+
+  test('command 撤销恢复原 createdAt(原位)', () => {
+    useAppStore.getState().toggleCommandFavorite(cmd)
+    const orig = useAppStore.getState().preferences.favoriteCommands[0]
+    useAppStore.getState().toggleCommandFavorite(cmd)      // 取消
+    useAppStore.getState().undoLastFavorite()
+    expect(useAppStore.getState().preferences.favoriteCommands[0]).toEqual(orig)
   })
 
   test('beginRun 追加 recent(运行开始即记)', () => {
@@ -152,7 +160,7 @@ describe('preferences 切片', () => {
   })
 
   test('hydratePreferences 清空遗留 lastUndo(M3 防御)', () => {
-    useAppStore.setState({ lastUndo: { kind: 'site', site: 'z' } })
+    useAppStore.setState({ lastUndo: { kind: 'site', item: { site: 'z', order: 0, createdAt: 1 } } })
     useAppStore.getState().hydratePreferences()
     expect(useAppStore.getState().lastUndo).toBeUndefined()
   })

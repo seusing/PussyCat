@@ -113,3 +113,14 @@ export function staleKeys(prefs: PreferencesSnapshot, commands: CommandManifest[
   const cmds = new Set(prefs.favoriteCommands.filter((f) => !liveCommands.has(f.command)).map((f) => f.command))
   return { sites, commands: cmds }
 }
+
+// 撤销回插:原记录原样回插(保 createdAt/order → UI 按 createdAt 排序自然回到原位);已存在则不动(幂等)
+export function restoreFavoriteSite(prefs: PreferencesSnapshot, item: FavoriteSite): PreferencesSnapshot {
+  if (isSiteFavorited(prefs, item.site)) return prefs
+  return { ...prefs, favoriteSites: [...prefs.favoriteSites, item] }
+}
+
+export function restoreFavoriteCommand(prefs: PreferencesSnapshot, item: FavoriteCommand): PreferencesSnapshot {
+  if (isCommandFavorited(prefs, item.command)) return prefs
+  return { ...prefs, favoriteCommands: [...prefs.favoriteCommands, item] }
+}

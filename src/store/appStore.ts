@@ -4,8 +4,8 @@ import type { OutputEvent, DoneEvent } from '../host/types'
 import { transition, type RunState } from './runMachine'
 import {
   emptyPreferences, loadPreferences, savePreferences,
-  toggleFavoriteSite, toggleFavoriteCommand, isSiteFavorited, isCommandFavorited,
-  pushRecent, staleKeys, type PreferencesSnapshot,
+  toggleFavoriteSite, toggleFavoriteCommand, restoreFavoriteSite, restoreFavoriteCommand,
+  pushRecent, staleKeys, type PreferencesSnapshot, type FavoriteSite, type FavoriteCommand,
 } from '../data/preferences'
 
 const SENSITIVE = /password|passcode|secret|token|cookie/i
@@ -30,8 +30,8 @@ export type CommandRun = {
 }
 
 export type LastUndo =
-  | { kind: 'site'; site: string }
-  | { kind: 'command'; command: string; site: string }
+  | { kind: 'site'; item: FavoriteSite }
+  | { kind: 'command'; item: FavoriteCommand }
 
 function defaultsOf(cmd: CommandManifest): Record<string, unknown> {
   const v: Record<string, unknown> = {}
@@ -124,23 +124,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
   }),
   toggleSiteFavorite: (site) => set((s) => {
-    const wasFav = isSiteFavorited(s.preferences, site)
+    const removed = s.preferences.favoriteSites.find((f) => f.site === site)
     const preferences = toggleFavoriteSite(s.preferences, site, Date.now())
     savePreferences(preferences)
-    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: wasFav ? { kind: 'site', site } : undefined }
+    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: removed ? { kind: 'site', item: removed } : undefined }
   }),
   toggleCommandFavorite: (cmd) => set((s) => {
-    const wasFav = isCommandFavorited(s.preferences, cmd.command)
+    const removed = s.preferences.favoriteCommands.find((f) => f.command === cmd.command)
     const preferences = toggleFavoriteCommand(s.preferences, cmd.command, cmd.site, Date.now())
     savePreferences(preferences)
-    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: wasFav ? { kind: 'command', command: cmd.command, site: cmd.site } : undefined }
+    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: removed ? { kind: 'command', item: removed } : undefined }
   }),
   undoLastFavorite: () => set((s) => {
     const u = s.lastUndo
     if (!u) return s
     const preferences = u.kind === 'site'
-      ? toggleFavoriteSite(s.preferences, u.site, Date.now())
-      : toggleFavoriteCommand(s.preferences, u.command, u.site, Date.now())
+      ? restoreFavoriteSite(s.preferences, u.item)
+      : restoreFavoriteCommand(s.preferences, u.item)
     savePreferences(preferences)
     return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
   }),

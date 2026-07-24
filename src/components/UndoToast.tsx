@@ -16,8 +16,8 @@ export function UndoToast() {
 
   if (!lastUndo) return null
   const label = lastUndo.kind === 'site'
-    ? `已取消收藏站点 ${lastUndo.site}`
-    : `已取消收藏命令 ${lastUndo.command}`
+    ? `已取消收藏站点 ${lastUndo.item.site}`
+    : `已取消收藏命令 ${lastUndo.item.command}`
 
   return (
     <div
