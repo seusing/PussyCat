@@ -120,3 +120,18 @@ test('latest-wins:慢速首载响应不得覆盖已成功的手动刷新(三轮�
   expect(useAppStore.getState().commands[0]?.command).toBe('c/d')            // 未被覆盖
   expect(screen.queryByTestId('refresh-degraded')).not.toBeInTheDocument()   // 未错误显示降级
 })
+
+test('世代接管归位 refreshing:依赖变化顶掉在途刷新后按钮不卡死(评审 P3)', async () => {
+  let calls = 0
+  const sourceA: CatalogSource = {
+    kind: 'live',
+    load: () => { calls += 1; return calls === 1 ? Promise.resolve({ snapshot: SNAP() }) : new Promise(() => {}) },
+  }
+  const { rerender } = render(<App catalogSource={sourceA} />)
+  await screen.findByTestId('refresh-catalog')
+  await userEvent.click(screen.getByTestId('refresh-catalog'))          // 在途刷新:悬挂
+  expect(screen.getByTestId('refresh-catalog')).toBeDisabled()
+  const sourceB: CatalogSource = { kind: 'live', load: async () => ({ snapshot: SNAP({ generatedAt: 3000 }) }) }
+  rerender(<App catalogSource={sourceB} />)                             // catalogSource 变化 → fetchCatalog 世代顶掉在途刷新
+  await waitFor(() => expect(screen.getByTestId('refresh-catalog')).not.toBeDisabled())
+})

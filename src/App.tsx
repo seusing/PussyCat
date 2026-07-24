@@ -39,11 +39,13 @@ export default function App({
       .then(({ snapshot, degraded }) => {
         if (gen !== loadGen.current) return
         setCommands(snapshot.commands)
-        setRefresh((r) => ({ ...r, generatedAt: snapshot.generatedAt, degraded }))
+        // 世代接管即整块归位:被顶掉的在途手动刷新留下的 refreshing/error 残留一并清掉,按钮不卡死(评审 P3)
+        setRefresh({ state: 'idle', generatedAt: snapshot.generatedAt, degraded })
         if (degraded) console.warn('[catalog]', degraded)
       })
       .catch((err) => {
         if (gen !== loadGen.current) return
+        setRefresh((r) => (r.state === 'refreshing' ? { ...r, state: 'idle' } : r))   // 同上:失败也不许卡 refreshing
         setCatalogStatus('error', err instanceof Error ? err.message : String(err))
       })
   }
