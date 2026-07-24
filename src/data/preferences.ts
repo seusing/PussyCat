@@ -20,7 +20,12 @@ export function emptyPreferences(): PreferencesSnapshot {
 
 function resolveStorage(storage?: Storage): Storage | undefined {
   if (storage) return storage
-  return typeof localStorage !== 'undefined' ? localStorage : undefined
+  try {
+    // 浏览器封锁存储时,访问 localStorage 属性本身会抛 SecurityError
+    return typeof localStorage !== 'undefined' ? localStorage : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export function loadPreferences(storage?: Storage): PreferencesSnapshot {

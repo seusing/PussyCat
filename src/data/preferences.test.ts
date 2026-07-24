@@ -97,3 +97,15 @@ test('staleKeys 空 manifest → 空 stale(无法判定,不误灰)', () => {
   const p = toggleFavoriteSite(emptyPreferences(), 'x', 1)
   expect(staleKeys(p, []).sites.size).toBe(0)
 })
+
+test('localStorage 属性访问抛 SecurityError → load/save 降级不抛', () => {
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('SecurityError: denied') } })
+  try {
+    expect(loadPreferences()).toEqual(emptyPreferences())
+    expect(() => savePreferences(emptyPreferences())).not.toThrow()
+  } finally {
+    if (desc) Object.defineProperty(globalThis, 'localStorage', desc)
+    else delete (globalThis as { localStorage?: unknown }).localStorage
+  }
+})
