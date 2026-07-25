@@ -9,6 +9,8 @@ const serverEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'index.mjs'
 function startHost(env = {}) {
   const child = spawn(process.execPath, [serverEntry], {
     env: { ...process.env, OPENCLI_HOST_PORT: '0', ...env },
+    // stdin 显式 pipe:父进程存活通道(stdin EOF 看门狗)的用例要拿到写端才能关它。
+    stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
     windowsHide: true,
   })
@@ -58,5 +60,33 @@ describe('readiness 协议', () => {
     expect(typeof ready.error.summary).toBe('string')
     const code = await new Promise((r) => child.once('exit', r))
     expect(code).not.toBe(0)
+  }, 30000)
+})
+
+describe('父进程存活通道(stdin EOF 看门狗)', () => {
+  it('开关打开:stdin 关闭 → 5s 内优雅退出,退出码 0', async () => {
+    const { child, firstJson } = startHost({ OPENCLI_HOST_PARENT_WATCH: '1' })
+    try {
+      const ready = await firstJson
+      expect(ready.opencliHostReady).toBe(true)
+      const exited = new Promise((r) => child.once('exit', (code) => r(code)))
+      const timedOut = new Promise((r) => setTimeout(() => r('未在 5s 内退出'), 5000))
+      // 模拟父进程消亡:关掉写端(supervisor 全程只持有、从不写入)。
+      child.stdin.end()
+      expect(await Promise.race([exited, timedOut])).toBe(0)
+    } finally { child.kill('SIGKILL') }
+  }, 30000)
+
+  it('开关不设(默认):stdin 关闭后进程照活——看门狗由开关控制,dev:server 行为不变', async () => {
+    const { child, firstJson } = startHost()
+    try {
+      await firstJson
+      let observedExit = '仍在运行'
+      child.once('exit', (code) => { observedExit = `已退出(${code})` })
+      child.stdin.end()
+      await new Promise((r) => setTimeout(r, 1500))
+      expect(observedExit).toBe('仍在运行')
+      expect(child.killed).toBe(false)
+    } finally { child.kill('SIGKILL') }
   }, 30000)
 })

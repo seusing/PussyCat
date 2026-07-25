@@ -18,16 +18,19 @@
     "sync-catalog": "node scripts/sync-catalog.mjs",
     "bench:append": "node scripts/bench-append-output.mjs",
     "build:host": "node scripts/build-host-runtime.mjs",
-    "verify:host": "node scripts/verify-host-closure.mjs"
+    "verify:host": "node scripts/verify-host-closure.mjs",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@jackwener/opencli": "1.8.6",
+    "@tauri-apps/api": "^2.11.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/cli": "^2.11.4",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",

@@ -76,6 +76,23 @@ try {
 
   process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)) })
   process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)) })
+
+  // 父进程存活通道(spec §5 通道 2):Tauri 保留本进程 stdin 的写端且**从不写入**;
+  // 父进程一旦消亡(含崩溃/被强杀),写端关闭 → 这里收到 EOF → 自行优雅退出。
+  // 这条不依赖 Job Object,正是用来覆盖 Job 分配失败的场景。
+  // 开关默认关闭:不设 OPENCLI_HOST_PARENT_WATCH 时一切行为与今天完全一致(npm run dev:server 不受影响)。
+  if (process.env.OPENCLI_HOST_PARENT_WATCH === '1') {
+    let parentGone = false
+    const exitOnParentGone = () => {
+      // end 与 close 都会来;只认第一次,避免 shutdown 未完成就被第二次调用抢跑 process.exit。
+      if (parentGone) return
+      parentGone = true
+      void shutdown().finally(() => process.exit(0))
+    }
+    process.stdin.resume()
+    process.stdin.on('end', exitOnParentGone)
+    process.stdin.on('close', exitOnParentGone)
+  }
 } catch (error) {
   failReady(
     error instanceof Error ? error.message : 'Host failed to start',

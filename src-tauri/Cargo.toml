@@ -1,0 +1,39 @@
+[package]
+name = "opencli-app-clone"
+version = "0.1.0"
+description = "OpenCLI App Clone — Tauri shell over a managed Node host"
+authors = ["opencli-app-clone"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# `_lib` 后缀看着冗余,但 Windows 上 lib 名与 bin 名同名会冲突(rust-lang/cargo#8519)。
+name = "opencli_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3" }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3" }
+tauri-plugin-log = "2"
+# 单实例:必须**最先**注册,早于任何 Host bootstrap(spec §5)——否则第二实例会先拉起第二个 Node 再被劝退。
+tauri-plugin-single-instance = "2"
+
+# Job Object 进程连坐(spec §5 通道 1)。版本对齐 tauri 依赖树里已有的 windows 0.61,
+# 免得同一个大 crate 编两份。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  # CreateJobObjectW 的签名带 SECURITY_ATTRIBUTES,windows-rs 把它 gate 在 Win32_Security 后面。
+  "Win32_Security",
+] }
