@@ -74,6 +74,8 @@ type AppState = {
   appendOutput: (e: OutputEvent) => void
   finishRun: (e: DoneEvent) => void
   markCancelling: () => void
+  runPanelCollapsed: boolean
+  setRunPanelCollapsed: (v: boolean) => void
   mode: 'demo' | 'connected'
   setMode: (mode: 'demo' | 'connected') => void
   // —— preferences 切片 ——
@@ -109,6 +111,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     savePreferences(preferences)
     set({
       preferences,
+      runPanelCollapsed: false,
       currentRun: {
         id: runId, command: cmd, values: redactValues(cmd, get().values),
         state: transition(transition('idle', { type: 'RUN' }), { type: 'VALID' }), // →starting
@@ -118,9 +121,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   appendOutput: (e) => set((s) => {
     if (!s.currentRun || s.currentRun.id !== e.runId || isTerminal(s.currentRun.state)) return s
-    if (s.currentRun.lines.some((l) => l.seq === e.seq)) return s
-    const lines = [...s.currentRun.lines, e].sort((a, b) => a.seq - b.seq)
-    return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'OUTPUT' }), lines } }
+    const lines = s.currentRun.lines
+    const last = lines[lines.length - 1]
+    // 快路径:seq 单调(P0-B 硬前提#3)时免 some/sort——数组恒有序,尾后新 seq 不可能重复。
+    // 口径:剔除 some/sort 的常数优化(基准 8-13×@≤10k,spec §4),渐近仍 O(n²) 复制;不可变约定保留。
+    let next: OutputEvent[]
+    if (!last || e.seq > last.seq) {
+      next = [...lines, e]
+    } else if (lines.some((l) => l.seq === e.seq)) {
+      return s
+    } else {
+      next = [...lines, e].sort((a, b) => a.seq - b.seq)
+    }
+    return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'OUTPUT' }), lines: next } }
   }),
   finishRun: (e) => set((s) => {
     if (!s.currentRun || s.currentRun.id !== e.runId || isTerminal(s.currentRun.state)) return s
@@ -130,6 +143,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!s.currentRun) return s
     return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'CANCEL' }) } }
   }),
+  runPanelCollapsed: false,
+  setRunPanelCollapsed: (v) => set({ runPanelCollapsed: v }),
   mode: 'demo',
   setMode: (mode) => set({ mode }),
   // —— preferences 切片 ——

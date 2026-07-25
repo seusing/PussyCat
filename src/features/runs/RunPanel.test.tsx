@@ -14,6 +14,7 @@ beforeEach(() => {
   useAppStore.setState({
     commands: [cmd], selected: cmd, values: {}, currentRun: undefined,
     catalogStatus: 'ready', catalogError: undefined,   // 绕开真实 catalog 加载，直接进 ready 三栏
+    runPanelCollapsed: false,   // collapsed 提升进 store 后不再随组件卸载自动重置，按现有惯例显式复位
   })
 })
 

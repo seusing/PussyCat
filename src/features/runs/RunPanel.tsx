@@ -11,7 +11,8 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
   const selected = useAppStore((s) => s.selected)
   const values = useAppStore((s) => s.values)
   const [tab, setTab] = useState<'result' | 'log'>('log')
-  const [collapsed, setCollapsed] = useState(false)   // ⑦b 纯视图 flag，与 run.state 无关；不调 cancel、不改状态机
+  const collapsed = useAppStore((s) => s.runPanelCollapsed)
+  const setCollapsed = useAppStore((s) => s.setRunPanelCollapsed)
   const [detailOpen, setDetailOpen] = useState(false)
   useEffect(() => { setDetailOpen(false) }, [run?.id])
   if (!run) return <div className="p-3 text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无任务</div>
@@ -46,7 +47,7 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
               {rerunLabel}
             </button>
           )}
-          <button data-testid="collapse-panel" onClick={() => setCollapsed((c) => !c)}
+          <button data-testid="collapse-panel" onClick={() => setCollapsed(!collapsed)}
             aria-label={collapsed ? '展开面板' : '收起面板'}
             className="rounded-lg px-2 py-1 text-sm leading-none" style={{ color: 'var(--color-fg-dim)' }}>
             {collapsed ? '▾' : '×'}

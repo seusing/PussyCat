@@ -229,3 +229,29 @@ describe('setCommands selection reconcile(块 B 阻塞3)', () => {
     expect(useAppStore.getState().selected).toBeUndefined()
   })
 })
+
+describe('runPanelCollapsed 提升(块 C)', () => {
+  beforeEach(() => { useAppStore.setState(initialState, true); localStorage.clear() })
+  test('beginRun 自动展开(新 run 重置收起态)', () => {
+    useAppStore.getState().setRunPanelCollapsed(true)
+    useAppStore.getState().selectCommand(cmd)
+    useAppStore.getState().beginRun('r-x')
+    expect(useAppStore.getState().runPanelCollapsed).toBe(false)
+  })
+  test('setRunPanelCollapsed 独立于 run 状态机', () => {
+    useAppStore.getState().selectCommand(cmd)
+    useAppStore.getState().beginRun('r-y')
+    useAppStore.getState().setRunPanelCollapsed(true)
+    expect(useAppStore.getState().currentRun?.state).toBe('starting')   // 纯视图 flag,不碰状态机
+  })
+})
+
+test('appendOutput 单调快路径:100 事件顺序与内容等价', () => {
+  useAppStore.getState().selectCommand(cmd); useAppStore.getState().beginRun('r-fast')
+  for (let i = 0; i < 100; i++) {
+    useAppStore.getState().appendOutput({ runId: 'r-fast', seq: i, at: i, stream: 'stdout', text: `l${i}` })
+  }
+  const lines = useAppStore.getState().currentRun!.lines
+  expect(lines).toHaveLength(100)
+  expect(lines.map((l) => l.seq)).toEqual(Array.from({ length: 100 }, (_, i) => i))
+})
