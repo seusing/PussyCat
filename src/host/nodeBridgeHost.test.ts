@@ -89,7 +89,9 @@ test('HTTP errors include server details and cancel posts JSON', async () => {
     .mockResolvedValueOnce(response(400, { error: 'bad request', detail: 'invalid argv' }))
     .mockResolvedValueOnce(response(204, undefined))
   const host = createNodeBridgeHost({ eventSourceFactory: () => eventSource, fetchImpl })
-  await expect(host.startCommand({ runId: 'r', commandKey: 'x/c', argv: [] })).rejects.toThrow('bad request: invalid argv')
+  await expect(host.startCommand({ runId: 'r', commandKey: 'x/c', argv: [] })).rejects.toMatchObject({
+    name: 'HostRequestError', summary: 'bad request', detail: 'invalid argv', status: 400,
+  })
   await host.cancelCommand('r')
   expect(fetchImpl).toHaveBeenLastCalledWith('http://127.0.0.1:43117/cancel', expect.objectContaining({ body: '{"runId":"r"}' }))
 })

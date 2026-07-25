@@ -1,4 +1,5 @@
 import type { DoneEvent, HostBridge, OutputEvent, RunRequest } from './types'
+import { HostRequestError } from './errors'
 
 export interface EventSourceLike {
   readonly readyState?: number
@@ -28,7 +29,7 @@ function eventMessage(event: Event): string | undefined {
   return typeof data === 'string' ? data : undefined
 }
 
-function responseError(status: number, payload: unknown): Error {
+function responseError(status: number, payload: unknown): HostRequestError {
   let summary = ''
   let detail = ''
   if (payload && typeof payload === 'object') {
@@ -43,8 +44,7 @@ function responseError(status: number, payload: unknown): Error {
     else if (typeof body.message === 'string') summary = body.message
     if (typeof body.detail === 'string') detail = body.detail
   }
-  const suffix = [summary, detail].filter(Boolean).join(': ')
-  return new Error(`HTTP ${status}${suffix ? `: ${suffix}` : ''}`)
+  return new HostRequestError(summary || `HTTP ${status}`, detail || undefined, status)
 }
 
 function isOutputEvent(value: unknown): value is OutputEvent {

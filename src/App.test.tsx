@@ -137,6 +137,7 @@ test('世代接管归位 refreshing:依赖变化顶掉在途刷新后按钮不�
 })
 
 import { normalizeHostError } from './App'
+import { HostRequestError } from './host/errors'
 
 describe('normalizeHostError 契约(块 C)', () => {
   test('Error → message+stack;空 message 用 context fallback', () => {
@@ -151,6 +152,10 @@ describe('normalizeHostError 契约(块 C)', () => {
   test('其余类型 → context fallback + String(e)', () => {
     expect(normalizeHostError(42, 'cancel')).toEqual({ summary: '取消请求失败', detail: '42' })
     expect(normalizeHostError(42, 'start')).toEqual({ summary: '任务启动失败', detail: '42' })
+  })
+  test('HostRequestError → summary/detail 结构化透传(复审 F2)', () => {
+    const e = new HostRequestError('策略拒绝', 'Command is outside policy', 403)
+    expect(normalizeHostError(e, 'start')).toEqual({ summary: '策略拒绝', detail: 'Command is outside policy' })
   })
 })
 
@@ -257,4 +262,23 @@ test('AltGr(Ctrl+Alt) 与 Ctrl+Shift 组合不被热键劫持(终审 M-1)', asyn
   expect(document.activeElement).not.toBe(search)
   fireEvent.keyDown(window, { key: 'K', ctrlKey: true, shiftKey: true })
   expect(document.activeElement).not.toBe(search)
+})
+
+test('跨层集成:Host 拒绝 → currentRun.error 保留 summary/detail 分离(复审 F2)', async () => {
+  const host: HostBridge = {
+    startCommand: () => Promise.reject(new HostRequestError('Command is outside the P0-B execution policy', 'x/y', 403)),
+    cancelCommand: async () => {},
+    onOutput: () => () => {},
+    onDone: () => () => {},
+  }
+  useAppStore.setState({ catalogStatus: 'ready' })
+  render(<App host={host} />)
+  await screen.findByTestId('nav-search')
+  const ok: CommandManifest = { command: 'x/y', site: 'x', name: 'y', description: '', access: 'read', browser: false, args: [] }
+  act(() => { useAppStore.setState({ commands: [ok] }); useAppStore.getState().selectCommand(ok) })
+  fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+  await waitFor(() => expect(useAppStore.getState().currentRun?.error).toBeDefined())
+  const err = useAppStore.getState().currentRun!.error!
+  expect(err.summary).toBe('Command is outside the P0-B execution policy')   // 常显=服务端 summary
+  expect(err.detail).toBe('x/y')                                             // 按需=服务端 detail(非 JS stack)
 })

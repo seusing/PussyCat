@@ -10,9 +10,11 @@ import { createMockHost } from './host/mockHost'
 import { snapshotCatalogSource, type CatalogSource } from './host'
 import { validate } from './features/config/validation'
 import type { HostBridge } from './host/types'
+import { HostRequestError } from './host/errors'
 
 export function normalizeHostError(e: unknown, context: 'start' | 'cancel'): { summary: string; detail?: string } {
   const fallback = context === 'cancel' ? '取消请求失败' : '任务启动失败'
+  if (e instanceof HostRequestError) return { summary: e.summary || fallback, detail: e.detail }   // 结构化透传(复审 F2)
   if (e && typeof e === 'object' && !(e instanceof Error)) {
     const o = e as { summary?: unknown; detail?: unknown }
     if (typeof o.summary === 'string') {
