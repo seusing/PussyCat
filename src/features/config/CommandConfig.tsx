@@ -25,22 +25,27 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
     return () => registerSubmit(null)
   }, [registerSubmit])
 
-  if (!selected) { handleRunRef.current = null; return <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>从左侧选择一个服务和命令</div> }
-
-  const running = currentRun?.state === 'starting' || currentRun?.state === 'running' || currentRun?.state === 'cancelling'
-
   const handleRun = () => {
-    if (running) return          // 与实体按钮 disabled 等价:运行中不校验、不写 errors、不抢焦点(复审 F3)
-    const errs = validate(selected, values)
+    const cmd = useAppStore.getState().selected
+    if (!cmd) return          // 无 selected 时安全 no-op(替代原早退里的 handleRunRef.current = null,P1 硬性要求③)
+    const live = useAppStore.getState().currentRun
+    // 读实时 store 而非渲染期闭包快照:与 executeSelected 的权威守卫同源,消除 commit 前的陈旧窗口(M-2)
+    if (live && (live.state === 'starting' || live.state === 'running' || live.state === 'cancelling')) return
+    const errs = validate(cmd, values)
     setErrors(errs)
     if (Object.keys(errs).length > 0) {
-      const first = selected.args.find((a) => errs[a.name])
+      const first = cmd.args.find((a) => errs[a.name])
       if (first) document.querySelector<HTMLElement>(`[data-testid="field-${first.name}"]`)?.focus()
       return
     }
     onRun()
   }
-  handleRunRef.current = handleRun
+
+  useEffect(() => { handleRunRef.current = selected ? handleRun : null })   // commit 后赋值,消除渲染期 ref 副作用(M-2);无依赖数组=每次 commit 后同步最新闭包
+
+  if (!selected) { return <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>从左侧选择一个服务和命令</div> }
+
+  const running = currentRun?.state === 'starting' || currentRun?.state === 'running' || currentRun?.state === 'cancelling'
 
   return (
     <div>

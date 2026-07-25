@@ -201,6 +201,14 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     expect(useAppStore.getState().currentRun!.id).toBe(firstId)        // 无第二个 run
   })
 
+  test('无选中命令时 Ctrl+Enter 安全 no-op(M-2 重构回归护栏)', async () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+    await screen.findByTestId('nav-search')
+    expect(() => keydown({ key: 'Enter', ctrlKey: true })).not.toThrow()
+    expect(useAppStore.getState().currentRun).toBeUndefined()
+  })
+
   test('Esc 链:聚焦→blur;展开→收起;已收起→no-op 不重开(P1-1)', async () => {
     useAppStore.setState({ catalogStatus: 'ready' })
     render(<App />)
