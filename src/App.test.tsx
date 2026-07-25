@@ -6,6 +6,8 @@ import type { CommandManifest } from './data/types'
 import type { HostBridge, RunRequest } from './host/types'
 import type { CatalogSource } from './host'
 import { createNodeBridgeHost, type EventSourceLike } from './host/nodeBridgeHost'
+import { normalizeHostError } from './App'
+import { HostRequestError } from './host/errors'
 
 const initialState = useAppStore.getState()
 beforeEach(() => { useAppStore.setState(initialState, true) })  // true = replace，每个用例前恢复初始态
@@ -136,9 +138,6 @@ test('世代接管归位 refreshing:依赖变化顶掉在途刷新后按钮不�
   rerender(<App catalogSource={sourceB} />)                             // catalogSource 变化 → fetchCatalog 世代顶掉在途刷新
   await waitFor(() => expect(screen.getByTestId('refresh-catalog')).not.toBeDisabled())
 })
-
-import { normalizeHostError } from './App'
-import { HostRequestError } from './host/errors'
 
 describe('normalizeHostError 契约(块 C)', () => {
   test('Error → message+stack;空 message 用 context fallback', () => {
