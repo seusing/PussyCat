@@ -1,6 +1,8 @@
 // appendOutput 快路径基准:对比「现实现(每事件 some+sort)」与「快路径(单调时不可变追加,免 some/sort)」。
 // 用法:node scripts/bench-append-output.mjs [N...]   例:node scripts/bench-append-output.mjs 2000 10000
 // 口径:两者渐近同为 O(n²)(不可变复制),快路径只剔除 some/sort 常数——见 docs/specs/2026-07-25-p0-c-c-robustness-design.md §4
+// ⚠️ 本脚本是 src/store/appStore.ts `appendOutput`(快路径分支)的**手抄副本**,不 import 真实 reducer
+// (它耦合 store/状态机)。改动 appendOutput 时请同步本文件,否则基准会静默漂移(评审 M-3)。
 function bench(N, impl) {
   let lines = []
   const t0 = process.hrtime.bigint()

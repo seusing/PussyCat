@@ -75,10 +75,25 @@ type DoneEvent = {
 }
 ```
 
+```ts
+// 第三种事件（P0-C 块 C 清理时新增，加法式扩展，旧客户端忽略未知类型即向后兼容）
+type GapEvent = {
+  reason: 'evicted' | 'restart'   // 缓冲驱逐 / 服务端重启(客户端游标超前，丢失区间未知)
+  from: number
+  to: number | null               // restart 时为 null
+}
+```
+
 - 每个 run 的 `seq` 从 0 开始严格递增，stdout/stderr 共用序列。
 - 每个 run 恰好一个 `done`。
-- SSE 带全局 event id，并保留有限内存重放缓冲；EventSource 重连时按
+- SSE 带全局 event id，并保留有限内存重放缓冲（默认 2048）；EventSource 重连时按
   `Last-Event-ID` 补发，前端按 `runId + seq` 去重。
+- **补发缺口显式化**：若续传位置早于缓冲最老事件（驱逐）或客户端游标 ≥ `nextId`（重启），
+  先发一条 `gap` 事件再补发残存事件。`gap` 帧**不带 `id:` 行**——按 HTML 规范，
+  无 `id:` 的帧不重置 last event ID buffer，故不打乱客户端续传游标。
+  **当前射程（诚实标注）**：服务端可观测（wire 有帧 + `console.warn`）；
+  `nodeBridgeHost` 只监听 `output`/`done`，**gap 在客户端仍是死信** ——
+  App 层「不再静默丢事件」尚未成立，客户端消费（如 RunPanel 显示「输出有缺口 N–M」）列为 P1。
 - `nodeBridgeHost.startCommand` 在 SSE `open` 后才发送 `/start`，消除首包竞态。
 
 ### `POST /start`
