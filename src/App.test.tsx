@@ -219,6 +219,18 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     keydown({ key: 'Escape', isComposing: true })
     expect(document.activeElement).toBe(search)                        // ① 未 blur
   })
+
+  test('IME composing 时 Ctrl+Enter 不起跑(复审 F1)', async () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+    await screen.findByTestId('nav-search')
+    const ok: CommandManifest = { command: 'k/ime', site: 'k', name: 'ime', description: '', access: 'read', browser: false, args: [] }
+    act(() => { useAppStore.setState({ commands: [ok] }); useAppStore.getState().selectCommand(ok) })
+    keydown({ key: 'Enter', ctrlKey: true, isComposing: true })
+    expect(useAppStore.getState().currentRun).toBeUndefined()
+    keydown({ key: 'Enter', ctrlKey: true })                     // 非 composing 仍可起跑(反向护栏)
+    await waitFor(() => expect(useAppStore.getState().currentRun).toBeDefined())
+  })
 })
 
 test('AltGr(Ctrl+Alt) 与 Ctrl+Shift 组合不被热键劫持(终审 M-1)', async () => {

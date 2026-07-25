@@ -72,6 +72,7 @@ export default function App({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.altKey) return   // AltGr(=Ctrl+Alt)是欧洲键盘真实字符输入,任何热键不得劫持(终审 M-1)
+      if (event.isComposing) return   // IME 组合输入中:三键全部让路(选词回车不得误起跑;复审 F1)
       const mod = event.ctrlKey || event.metaKey
       if (mod && !event.shiftKey && (event.key === 'k' || event.key === 'K')) {   // 排除 Ctrl+Shift+K(浏览器 DevTools);'K' 保留给 CapsLock
         event.preventDefault()                                   // 压掉浏览器默认(地址栏搜索)
@@ -84,7 +85,6 @@ export default function App({
         return
       }
       if (event.key === 'Escape') {
-        if (event.isComposing) return                            // ① IME
         const el = document.activeElement as HTMLElement | null
         const editable = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
         if (editable) { el.blur(); return }                      // ② 取消聚焦
