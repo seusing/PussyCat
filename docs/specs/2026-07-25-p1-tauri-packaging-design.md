@@ -138,7 +138,11 @@ dist-host/
 
 ## 6. 前端唯一 baseUrl（解 P1-3）
 
-- `createHostSelection({ search, env, boot })` 返回 **`{ host, catalogSource, mode, baseUrl }`**；`boot` 来自 Rust 注入的 `window.__OPENCLI_BOOT__`（优先级：boot > URL query > env > 默认 43117）。
+- `createHostSelection({ search, env, boot })` 返回 **`{ host, catalogSource, mode, baseUrl }`**；`boot` 来自 Rust 注入的 `window.__OPENCLI_BOOT__`。
+  > **优先级需拆两条（T7 实现期澄清，spec 早期措辞把两者混为一谈）**：`?host=node` 只切 **mode**、从不携带 URL。
+  > - **baseUrl**：`boot.baseUrl` > `env.VITE_NODE_HOST_URL` > 默认 43117
+  > - **mode**：`boot` 存在即 `connected`（Tauri 打包形态）；否则沿用既有 `query > env > mock`
+  > 与"生产 Tauri 包默认 `vite build` 不加载 `.env.node`"的事实自洽。
 - `baseUrl` 经 **props** 一路传：`main.tsx → App → AppShell → HealthPill`（HealthPill 删除自读 env/常量的分支）。
 - 验收断言：**`/health`、`/catalog`、`/events`、`/start`、`/cancel` 五端点全部命中同一随机端口**（测试注入 baseUrl 后断言各 fetch/EventSource 的 URL 前缀一致）。
 
