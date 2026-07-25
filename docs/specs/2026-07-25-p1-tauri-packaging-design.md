@@ -92,8 +92,9 @@ dist-host/
 - 端口：沿用 **`OPENCLI_HOST_PORT=0`**（不引入 `--port`，避免两套入口）；listen 后取实际端口。
 - **成功**：向 stdout 打印**恰一行**机器可读 JSON，随后照常人读日志：
   ```json
-  {"opencliHostReady":true,"port":54321,"pid":1234,"opencliVersion":"1.8.6","policyCommands":277}
+  {"opencliHostReady":true,"port":54321,"pid":1234,"opencliVersion":"1.8.6","policyCommands":277,"parentWatch":true}
   ```
+  （`parentWatch` = Host 是否真的挂上了 stdin EOF 看门狗；供 supervisor 判 fail-closed，见 §5 第 3 条。）
 - **失败**（catalog 缺失/opencli 解析失败/listen 失败等）：打印一行
   ```json
   {"opencliHostReady":false,"error":{"summary":"...","detail":"..."}}
@@ -112,6 +113,13 @@ dist-host/
 | ③ | **协议内失败** | 收到合法 `{"opencliHostReady":false,"error":{...}}` | 直接展示服务端 `summary`/`detail`（Host 自知的失败，如 catalog 缺失、端口占用） |
 | ④ | readiness 超时 | 默认 15s 未收到判定行 | 「Host 启动超时」+ 已排空的 stderr 尾部 |
 | ⑤ | 进程异常 | 子进程提前退出，或输出的 JSON 非法/缺字段 | 「Host 异常退出」+ 退出码 + stderr 尾部 |
+| ⑥ | **托管不可用**（T5 实现期新增，评审接受） | Job Object 不可用**且** Host 未装 stdin 看门狗（`parentWatch:false`）→ 无法保证进程回收 → **fail-closed 不启动**；亦收资源目录解析失败 | 「无法安全托管 Host」+ 原因 |
+
+> ⑥ 是 §5「fail-closed」在错误面上的落点：把它塞进 ⑤ 会把"我们拒绝托管"伪装成"Host 挂了"，诊断被污染。**T6 的错误视图路由必须覆盖全部六个 `kind`**（漏 `supervision-unavailable` 会让 fail-closed 变白屏）。
+>
+> **实际 `kind` 字符串（实现即契约，T6 已按此路由；本表早期草稿写过 `host-failed`/`timeout`，以下为准）**：
+> `node-missing` / `node-too-old` / `host-reported-failure` / `readiness-timeout` / `process-failed` / `supervision-unavailable`。
+> 路由由三重保证：Rust 侧穷尽 `match`（编译期）+ 测试断言六个 kind 都是页面分派表的 key + 未知 kind 兜底视图（永不白屏）。
 
 ## 5. Rust supervisor（解 P2-5）
 
@@ -120,7 +128,8 @@ dist-host/
 
 1. **主路径 · Job Object**：`CreateJobObject` + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，**spawn 后立即 `AssignProcessToJobObject`**。主进程消亡（含**崩溃/强杀**）时由**内核**连坐整棵子树 —— 不依赖任何代码还能运行。
 2. **并行路径 · 父进程存活通道（stdin EOF 看门狗，恒开）**：Rust 保留 Host 的 stdin 管道写端且不写入；Host 侧监听 `process.stdin` 的 `end`/`close` → **自行优雅退出**（先 `app.close()` 收 SSE 与在途 run，再 exit）。父进程一旦消失，写端关闭 → 子进程立刻收到 EOF。这条**不依赖 Job**，覆盖 Job 分配失败的场景。
-3. **Job 分配失败 → 记录降级并继续（依赖通道 2）**；若**通道 2 也不可用**（stdin 不可用等）→ **fail-closed**：不启动 Host，直接错误视图，绝不留无主子进程。
+3. **Job 分配失败 → 记录降级并继续（依赖通道 2）**；若**通道 2 也不可用** → **fail-closed**：不启动 Host，直接错误视图（`kind=supervision-unavailable`），绝不留无主子进程。
+   > **「通道 2 可用」必须是验证而非断言（T5 评审 I-1）**：Rust 侧「设了 `OPENCLI_HOST_PARENT_WATCH=1`」不等于 Host 真装了看门狗（`dist-host/` 是构建产物，可能版本漂移；且 `Stdio::piped()` 后 `child.stdin` 恒为 `Some`，光判它永远为真、fail-closed 形同虚设）。判据改为 **readiness JSON 里 Host 自报的 `parentWatch:true`**，即 `job.is_none() && !parent_watch` 才 fail-closed。
 4. `taskkill /T /F` 仅用于**正常退出路径**的最后收尾（主进程尚活着，能执行）；不再把它当崩溃兜底。
 5. 优雅退出顺序：窗口关闭 → 关 stdin（触发通道 2）→ 等待至多 2s → 未退则 `taskkill /T /F` → Job 关闭作最终保险。
 
@@ -167,6 +176,10 @@ dist-host/
 
 | 风险 | 处置 |
 |---|---|
+| **窗口先建 + setup 在主线程 → 启动失败路径会冻结白窗**（T5 评审 C1，读 tauri-2.11.5 `app.rs:2521` 实证：配置窗口先建、用户 `setup` 由 `Ready` 事件在主线程事件循环内触发） | `probe_node` 必须有超时；**T6 硬性要求**：`tauri.conf.json` 的窗口改 `create:false`（或 `windows: []`）+ **boot 移出主线程**，就绪后再建窗 |
+| **Tauri 资源路径是 verbatim 形式（`\\?\C:\…`），node 不认** —— T6 `cargo run` 真跑抓出的 P0：Host 当场 `EISDIR: lstat 'C:'` 退出，三门全绿但打包后永远起不来 | 调用方用 `dunce::simplified()` 归一化后再传给 node（`node_friendly()` + 回归测试）。**教训：跨进程传路径必须按对端的路径方言归一化，编译与单测都看不见这层** |
+| **启动期约 1 秒无任何窗口**（失败路径最坏 15s 才出错误窗） | 这是"不冻结白窗"的直接代价（窗口 `create:false` + boot 在后台线程）。未加 splash：关 splash 会让窗口表变空触发 `ExitRequested`，属新增竞态。**T9 验收时"启动 1s 无窗"是预期行为，不是缺陷** |
+| **I2（父进程猝死→Host 靠 stdin EOF 自退）端到端未被证过** | 现有两条测试用的是 `child.stdin.end()`（**活着的**父进程优雅关写端），不等价于父进程猝死；本机沙箱自身会连坐回收子树，探针无法证伪（评审三级探针实测，含零假设对照组）。**只能由 §9 的 T9 人工门（`taskkill /F` 强杀主进程后查子树）兜住——不得把那两条绿测当作 I2 已验证** |
 | 安装后 exe / MSI / NSIS 启动器仍可能踩 SxS | 列为发布门（§9），未过不宣称通过；兜底方案=以 `tauri dev` 形态自用 |
 | 30MB opencli 内置使升级需重发应用 | 决策②已接受；版本号写进 readiness JSON 便于诊断 |
 | 生产 WebView Origin 与预期不符 | 安装包实测捕获后再定值，不猜 |
