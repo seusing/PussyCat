@@ -15,7 +15,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "sync-catalog": "node scripts/sync-catalog.mjs"
+    "sync-catalog": "node scripts/sync-catalog.mjs",
+    "bench:append": "node scripts/bench-append-output.mjs"
   },
   "dependencies": {
     "@jackwener/opencli": "1.8.6",

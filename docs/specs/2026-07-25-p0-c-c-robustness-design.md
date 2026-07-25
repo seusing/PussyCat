@@ -69,6 +69,8 @@ if (Object.keys(validate(s.selected, s.values)).length > 0) return false
 
 **裁决**：采「不可变追加快路径」——`e.seq > last.seq` 时 `[...lines, e]`（数组恒有序,尾后新 seq 不可能重复,免 `some` 免 `sort`）;乱序/重复走现有慢路径。**诚实口径：这是剔除 some/sort 的常数优化（实测 8-13×@真实量级）,渐近仍 O(n²) 复制;不可变/Zustand 快照约定保留;原地 push 否决;chunk 日志结构留档 P2**（真实 run 事件量 <<10k）。
 
+> 复现：`npm run bench:append`（可传档位，如 `npm run bench:append -- 2000 10000`）。单次运行受 GC 噪声影响（20k 档比值偏低即此），结论不依赖单点数值——快路径恒 ≤ 现实现（每事件少一次 O(n) some 与一次 O(n log n) sort）。
+
 ## 5. server 杂项
 
 ### 5.1 run-manager `seen` 有界
