@@ -59,8 +59,10 @@ fn boot_host(app: &tauri::AppHandle) -> Result<HostHandle, HostStartError> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        // 单实例**必须最先注册**:晚于 Host bootstrap 的话,第二个实例会先拉起第二个 Node
-        // 再被劝退,徒留一个抢端口的孤儿(spec §5)。
+        // 单实例插件挂在 **Builder** 上:插件的 initialize 在 `Builder::build()` 里跑完,
+        // 才轮到下面的 `.setup()` 钩子 —— 而 `boot_host` 在 setup 里。所以第二个实例
+        // 一定在拉起第二个 Node 之前就被劝退,不会留下抢端口的孤儿(spec §5)。
+        // (顺序保证来自"插件初始化早于 setup 钩子",**不是**来自 `.plugin()` 之间的先后。)
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -68,26 +70,39 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        // 日志**无条件注册**(release 也要):supervisor 把 Host 的 stdout/stderr 全量排空
+        // 后转成 log 记录(spec §4),没有 logger 的话这些 `log::` 调用全是空操作 ——
+        // 发布版一旦出问题就彻底没有诊断信息,而发布版恰恰是最需要它的地方。
+        // 同样挂在 Builder 上,保证它先于 setup 里的 boot_host 就位。
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    // 落文件:发布版没有控制台,日志目录是唯一能事后翻的地方。
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
+                ])
+                .level(if cfg!(debug_assertions) {
+                    log::LevelFilter::Debug
+                } else {
+                    log::LevelFilter::Info
+                })
+                .build(),
+        )
         .manage(HostState::default())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
             // T6 接手这里:成功 → 用 state.port() 注入 boot 配置并建主窗;
             // 失败 → 按 error.kind() 路由到对应错误视图。本 task 只保证判定与托管正确。
             let state = app.state::<HostState>();
             match boot_host(app.handle()) {
                 Ok(handle) => {
                     log::info!(
-                        "[supervisor] Host 就绪:http://127.0.0.1:{} (pid={}, 通道1={})",
+                        "[supervisor] Host 就绪:http://127.0.0.1:{} (pid={}, 通道1={}, 通道2={})",
                         handle.port,
                         handle.pid,
-                        handle.job_attached()
+                        handle.job_attached(),
+                        handle.parent_watch_attached()
                     );
                     state.set_handle(handle);
                 }
