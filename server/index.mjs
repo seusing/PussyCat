@@ -14,7 +14,8 @@ if (nodeMajor < 20) {
 }
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
-const catalogPath = resolve(projectRoot, 'public/catalog.snapshot.json')
+// OPENCLI_HOST_CATALOG_PATH 是测试注入点(供 readiness.test.mjs 制造协议内失败);默认行为不变。
+const catalogPath = process.env.OPENCLI_HOST_CATALOG_PATH ?? resolve(projectRoot, 'public/catalog.snapshot.json')
 const host = process.env.OPENCLI_HOST_ADDRESS ?? '127.0.0.1'
 const port = Number.parseInt(process.env.OPENCLI_HOST_PORT ?? '43117', 10)
 const allowedOrigins = (process.env.OPENCLI_HOST_ALLOWED_ORIGINS
@@ -23,36 +24,61 @@ const allowedOrigins = (process.env.OPENCLI_HOST_ALLOWED_ORIGINS
   .map((value) => value.trim())
   .filter(Boolean)
 
-const policy = loadExecutionPolicy(catalogPath)
-const opencliEntry = resolveOpenCliEntry()
-const catalogService = createCatalogService({
-  opencliEntry,
-  resolveManifest: () => resolveManifestPath(opencliEntry),
-})
-const app = createHostServer({
-  opencliEntry,
-  policy,
-  catalogService,
-  allowedOrigins,
-  runManagerOptions: {
-    cancelGraceMs: Number.parseInt(process.env.OPENCLI_HOST_CANCEL_GRACE_MS ?? '2000', 10),
-    commandTimeoutMs: Number.parseInt(process.env.OPENCLI_HOST_COMMAND_TIMEOUT_MS ?? '90000', 10),
-    maxConcurrentRuns: Number.parseInt(process.env.OPENCLI_HOST_MAX_CONCURRENT_RUNS ?? '1', 10),
-  },
-})
-
-const address = await app.listen({ host, port })
-const printableAddress = typeof address === 'object' && address ? `${address.address}:${address.port}` : `${host}:${port}`
-console.log(`[opencli-host] listening on http://${printableAddress}`)
-console.log(`[opencli-host] OpenCLI ${policy.opencliVersion}: ${opencliEntry}`)
-console.log(`[opencli-host] policy: ${policy.description} (${policy.allowedCommands.size} commands)`)
-
-let closing = false
-async function shutdown() {
-  if (closing) return
-  closing = true
-  await app.close()
+// 机器可读启动判定(供 Tauri supervisor 消费):
+// 协议内失败是 Host 自知的合法响应形态,与"进程异常/非法 JSON"是不同分支——这里只负责把它说清楚。
+function failReady(summary, detail) {
+  process.stdout.write(`${JSON.stringify({ opencliHostReady: false, error: { summary, detail } })}\n`)
+  process.exit(1)
 }
 
-process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)) })
-process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)) })
+try {
+  const policy = loadExecutionPolicy(catalogPath)
+  const opencliEntry = resolveOpenCliEntry()
+  const catalogService = createCatalogService({
+    opencliEntry,
+    resolveManifest: () => resolveManifestPath(opencliEntry),
+  })
+  const app = createHostServer({
+    opencliEntry,
+    policy,
+    catalogService,
+    allowedOrigins,
+    runManagerOptions: {
+      cancelGraceMs: Number.parseInt(process.env.OPENCLI_HOST_CANCEL_GRACE_MS ?? '2000', 10),
+      commandTimeoutMs: Number.parseInt(process.env.OPENCLI_HOST_COMMAND_TIMEOUT_MS ?? '90000', 10),
+      maxConcurrentRuns: Number.parseInt(process.env.OPENCLI_HOST_MAX_CONCURRENT_RUNS ?? '1', 10),
+    },
+  })
+
+  const address = await app.listen({ host, port })
+
+  // listen 成功后第一时间打印判定行,先于任何人读日志——消费方(Tauri supervisor)只认含 opencliHostReady 的行。
+  const actualPort = typeof address === 'object' && address ? address.port : port
+  process.stdout.write(`${JSON.stringify({
+    opencliHostReady: true,
+    port: actualPort,
+    pid: process.pid,
+    opencliVersion: policy.opencliVersion,
+    policyCommands: policy.allowedCommands.size,
+  })}\n`)
+
+  const printableAddress = typeof address === 'object' && address ? `${address.address}:${address.port}` : `${host}:${port}`
+  console.log(`[opencli-host] listening on http://${printableAddress}`)
+  console.log(`[opencli-host] OpenCLI ${policy.opencliVersion}: ${opencliEntry}`)
+  console.log(`[opencli-host] policy: ${policy.description} (${policy.allowedCommands.size} commands)`)
+
+  let closing = false
+  async function shutdown() {
+    if (closing) return
+    closing = true
+    await app.close()
+  }
+
+  process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)) })
+  process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)) })
+} catch (error) {
+  failReady(
+    error instanceof Error ? error.message : 'Host failed to start',
+    error instanceof Error ? (error.stack ?? error.message) : String(error),
+  )
+}
