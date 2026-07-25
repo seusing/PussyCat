@@ -47,6 +47,8 @@ describe('readiness 协议', () => {
       expect(ready.pid).toBe(child.pid)
       expect(typeof ready.opencliVersion).toBe('string')
       expect(ready.policyCommands).toBeGreaterThan(0)
+      // 没设开关 → 看门狗没挂 → 必须如实上报 false(supervisor 靠这个字段决定要不要 fail-closed)
+      expect(ready.parentWatch).toBe(false)
       // 端口真的在监听:能连上 /health
       const res = await fetch(`http://127.0.0.1:${ready.port}/health`, { headers: { Origin: 'http://127.0.0.1:5173' } })
       expect(res.status).toBe(200)
@@ -69,6 +71,8 @@ describe('父进程存活通道(stdin EOF 看门狗)', () => {
     try {
       const ready = await firstJson
       expect(ready.opencliHostReady).toBe(true)
+      // 判定行必须在**看门狗已挂上之后**才打印,parentWatch 才是事实而非意图。
+      expect(ready.parentWatch).toBe(true)
       const exited = new Promise((r) => child.once('exit', (code) => r(code)))
       const timedOut = new Promise((r) => setTimeout(() => r('未在 5s 内退出'), 5000))
       // 模拟父进程消亡:关掉写端(supervisor 全程只持有、从不写入)。
@@ -80,7 +84,8 @@ describe('父进程存活通道(stdin EOF 看门狗)', () => {
   it('开关不设(默认):stdin 关闭后进程照活——看门狗由开关控制,dev:server 行为不变', async () => {
     const { child, firstJson } = startHost()
     try {
-      await firstJson
+      const ready = await firstJson
+      expect(ready.parentWatch).toBe(false)
       let observedExit = '仍在运行'
       child.once('exit', (code) => { observedExit = `已退出(${code})` })
       child.stdin.end()

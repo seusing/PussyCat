@@ -199,11 +199,17 @@ fn raw_process_handle(_child: &Child) -> *mut core::ffi::c_void {
 
 /// 已就绪的 Host。**字段顺序即析构顺序**:先 stdin(通道 2)、再 child、最后 job 句柄
 /// (通道 1 作最终保险)。即便调用方忘了 `shutdown`,drop 也不会留下无主进程。
+///
+/// ⚠️ 但**直接 drop 不等于优雅退出**:drop 只是关 stdin 后立刻关 job 句柄,内核当场硬杀,
+/// Host 来不及 `app.close()` —— 在途 run 与 SSE 连接会被直接斩断。想要优雅收尾必须走
+/// [`shutdown`],它会先给 Host 2s 自己走完。drop 是**兜底**,不是等价路径。
 pub struct HostHandle {
     pub port: u16,
     pub pid: u32,
     pub opencli_version: Option<String>,
     pub policy_commands: Option<u64>,
+    /// Host 自报的通道 2 事实(readiness 行里的 `parentWatch`)。
+    parent_watch: bool,
     /// **永不写入**(I2):它的存在本身就是"父进程还活着"的信号。
     stdin: Option<ChildStdin>,
     child: Child,
@@ -215,6 +221,11 @@ impl HostHandle {
     /// 通道 1 是否真的生效(false = 已降级为 stdin EOF 单通道)。
     pub fn job_attached(&self) -> bool {
         self.job.is_some()
+    }
+
+    /// 通道 2 是否真的生效:我们握着写端 **且** Host 自报看门狗已挂上。
+    pub fn parent_watch_attached(&self) -> bool {
+        self.stdin.is_some() && self.parent_watch
     }
 
     /// 最近若干行 stderr —— Host 启动后崩了也能诊断。
@@ -255,6 +266,9 @@ enum Verdict {
         reported_pid: Option<u32>,
         opencli_version: Option<String>,
         policy_commands: Option<u64>,
+        /// Host **自报**的通道 2 事实:stdin EOF 看门狗是否真的挂上了。
+        /// 缺字段一律当 false —— 老版本 Host(没这个字段)就是没有看门狗,不能乐观默认。
+        parent_watch: bool,
     },
     /// 协议内失败(分支③)。
     Failed { summary: String, detail: Option<String> },
@@ -292,6 +306,10 @@ fn parse_verdict(line: &str) -> Verdict {
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
                     policy_commands: value.get("policyCommands").and_then(serde_json::Value::as_u64),
+                    parent_watch: value
+                        .get("parentWatch")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
                 },
                 None => Verdict::Malformed {
                     reason: "readiness 行 ready:true 但 port 缺失或不是合法端口".to_string(),
@@ -450,18 +468,9 @@ pub fn start_host(resource_dir: &Path) -> Result<HostHandle, HostStartError> {
         }
     };
 
-    // ── I2/I3:两条通道至少要有一条,否则 fail-closed —— 宁可不启动,也不留无主子进程。
+    // ── I2:握住写端。**通道 2 是否真成立要等 readiness 才知道**(见下面的 fail-closed):
+    // 我们这边有写端只是必要条件,Host 那边真挂上看门狗才是充分条件。
     let stdin = child.stdin.take();
-    if job.is_none() && stdin.is_none() {
-        let detail = "Job Object 与 stdin 管道双双不可用：主进程一旦消亡将留下无主的 node 子进程"
-            .to_string();
-        log::error!("[supervisor] fail-closed: {detail}");
-        abandon(child, None);
-        return Err(HostStartError::SupervisionUnavailable { detail });
-    }
-    if job.is_none() {
-        log::warn!("[supervisor] 已降级为单通道(stdin EOF);主进程被强杀时 Host 仍会自退,但不再有内核连坐");
-    }
 
     let stderr_tail = StderrTail::default();
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
@@ -521,12 +530,42 @@ pub fn start_host(resource_dir: &Path) -> Result<HostHandle, HostStartError> {
             reported_pid,
             opencli_version,
             policy_commands,
+            parent_watch,
         } => {
             if reported_pid.is_some_and(|reported| reported != pid) {
                 log::warn!("[supervisor] Host 自报 pid {reported_pid:?} 与 spawn 得到的 {pid} 不一致");
             }
+
+            // ── I3 fail-closed:到这一步两条通道的成立与否**都是已验证的事实**了。
+            // 通道 2 = 我们握着写端(stdin.is_some) **且** Host 自报看门狗已挂上(parent_watch)。
+            // 只设过 OPENCLI_HOST_PARENT_WATCH=1 不算数:dist-host/ 是 gitignore 的构建产物,
+            // 可能是没有看门狗的旧版本(本 task 就真踩到过一次)。
+            let channel_2 = stdin.is_some() && parent_watch;
+            if !supervision_ok(job.is_some(), stdin.is_some(), parent_watch) {
+                let detail = format!(
+                    "两条清理通道都不成立（Job Object 未生效；stdin 写端={}，Host 自报看门狗={}）：\
+                     主进程一旦消亡将留下无主的 node/opencli 进程",
+                    stdin.is_some(),
+                    parent_watch
+                );
+                log::error!("[supervisor] fail-closed,已杀掉刚起的 Host: {detail}");
+                abandon(child, stdin);
+                return Err(HostStartError::SupervisionUnavailable { detail });
+            }
+            if job.is_none() {
+                log::warn!("[supervisor] 降级为单通道(stdin EOF):主进程被强杀时 Host 仍会自退,但没有内核连坐");
+            }
+            if !channel_2 {
+                log::warn!(
+                    "[supervisor] 降级为单通道(Job Object):stdin 写端={} Host 自报看门狗={} —— \
+                     dist-host 可能是旧版本,建议重跑 npm run build:host",
+                    stdin.is_some(),
+                    parent_watch
+                );
+            }
+
             log::info!(
-                "[supervisor] Host 就绪 port={port} pid={pid} opencli={opencli_version:?} 通道1={}",
+                "[supervisor] Host 就绪 port={port} pid={pid} opencli={opencli_version:?} 通道1={} 通道2={channel_2}",
                 job.is_some()
             );
             Ok(HostHandle {
@@ -534,6 +573,7 @@ pub fn start_host(resource_dir: &Path) -> Result<HostHandle, HostStartError> {
                 pid,
                 opencli_version,
                 policy_commands,
+                parent_watch,
                 stdin,
                 child,
                 job,
@@ -647,6 +687,16 @@ impl WaitOutcome {
     }
 }
 
+/// I3 的裁决:**至少一条清理通道成立**才允许把 Host 留在世上。
+///
+/// 抽成纯函数是为了它能被直接测 —— 埋在 `start_host` 里就只能靠"读代码相信它",
+/// 而这条分支恰恰是最难在真机上触发、又最不能出错的一条。
+/// * 通道 1 = Job Object 已 assign(内核连坐,覆盖崩溃/强杀)
+/// * 通道 2 = 我们握着 stdin 写端 **且** Host 自报看门狗已挂上(缺一不可)
+fn supervision_ok(job_attached: bool, stdin_held: bool, parent_watch: bool) -> bool {
+    job_attached || (stdin_held && parent_watch)
+}
+
 /// 在后台线程里把一个管道读到 EOF,整段文本从 channel 送回。
 fn collect_to_end<R: Read + Send + 'static>(source: R) -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel();
@@ -737,13 +787,20 @@ mod tests {
     #[test]
     fn verdict_branches_stay_distinguishable() {
         let ready = parse_verdict(
-            r#"{"opencliHostReady":true,"port":54321,"pid":1234,"opencliVersion":"1.8.6","policyCommands":277}"#,
+            r#"{"opencliHostReady":true,"port":54321,"pid":1234,"opencliVersion":"1.8.6","policyCommands":277,"parentWatch":true}"#,
         );
         match ready {
-            Verdict::Ready { port, policy_commands, .. } => {
+            Verdict::Ready { port, policy_commands, parent_watch, .. } => {
                 assert_eq!(port, 54321);
                 assert_eq!(policy_commands, Some(277));
+                assert!(parent_watch);
             }
+            _ => panic!("应判定为 Ready"),
+        }
+
+        // 缺 parentWatch(老版本 dist-host)必须当 false —— 乐观默认会让 fail-closed 形同虚设。
+        match parse_verdict(r#"{"opencliHostReady":true,"port":1}"#) {
+            Verdict::Ready { parent_watch, .. } => assert!(!parent_watch, "缺字段不能当 true"),
             _ => panic!("应判定为 Ready"),
         }
 
@@ -816,6 +873,21 @@ mod tests {
         let entry = host_entry(Path::new("C:/app/resources"));
         let text = entry.to_string_lossy().replace('\\', "/");
         assert!(text.ends_with("host/server/index.mjs"), "got {text}");
+    }
+
+    /// I3:fail-closed 的真值表。**"设过环境变量"不是证据** —— 只有 Host 自报
+    /// `parentWatch:true` 才算通道 2 成立(dist-host 是 gitignore 产物,可能是没看门狗的旧版本)。
+    #[test]
+    fn supervision_requires_at_least_one_real_channel() {
+        // 通道 1 在,其余随便
+        assert!(supervision_ok(true, false, false));
+        assert!(supervision_ok(true, true, true));
+        // 只有通道 2,且两个条件齐备
+        assert!(supervision_ok(false, true, true));
+        // 通道 2 缺任一半 → 无通道 → 必须 fail-closed
+        assert!(!supervision_ok(false, true, false), "只设了环境变量、Host 没挂看门狗 → 不算通道");
+        assert!(!supervision_ok(false, false, true), "没握写端 → 不算通道");
+        assert!(!supervision_ok(false, false, false));
     }
 
     /// C1:探测必须有时限。`probe_node` 的全部时限就来自 `wait_for_exit(_, PROBE_TIMEOUT)`,

@@ -52,21 +52,6 @@ try {
 
   const address = await app.listen({ host, port })
 
-  // listen 成功后第一时间打印判定行,先于任何人读日志——消费方(Tauri supervisor)只认含 opencliHostReady 的行。
-  const actualPort = typeof address === 'object' && address ? address.port : port
-  process.stdout.write(`${JSON.stringify({
-    opencliHostReady: true,
-    port: actualPort,
-    pid: process.pid,
-    opencliVersion: policy.opencliVersion,
-    policyCommands: policy.allowedCommands.size,
-  })}\n`)
-
-  const printableAddress = typeof address === 'object' && address ? `${address.address}:${address.port}` : `${host}:${port}`
-  console.log(`[opencli-host] listening on http://${printableAddress}`)
-  console.log(`[opencli-host] OpenCLI ${policy.opencliVersion}: ${opencliEntry}`)
-  console.log(`[opencli-host] policy: ${policy.description} (${policy.allowedCommands.size} commands)`)
-
   let closing = false
   async function shutdown() {
     if (closing) return
@@ -81,6 +66,10 @@ try {
   // 父进程一旦消亡(含崩溃/被强杀),写端关闭 → 这里收到 EOF → 自行优雅退出。
   // 这条不依赖 Job Object,正是用来覆盖 Job 分配失败的场景。
   // 开关默认关闭:不设 OPENCLI_HOST_PARENT_WATCH 时一切行为与今天完全一致(npm run dev:server 不受影响)。
+  //
+  // **必须挂在打印判定行之前**:判定行要如实上报 parentWatch,supervisor 靠它决定
+  // "通道 2 到底有没有"。先打印再挂 = 上报的是意图不是事实,fail-closed 就成了自欺。
+  let parentWatch = false
   if (process.env.OPENCLI_HOST_PARENT_WATCH === '1') {
     let parentGone = false
     const exitOnParentGone = () => {
@@ -92,7 +81,27 @@ try {
     process.stdin.resume()
     process.stdin.on('end', exitOnParentGone)
     process.stdin.on('close', exitOnParentGone)
+    parentWatch = true
   }
+
+  // listen 成功后第一时间打印判定行,先于任何人读日志——消费方(Tauri supervisor)只认含 opencliHostReady 的行。
+  const actualPort = typeof address === 'object' && address ? address.port : port
+  process.stdout.write(`${JSON.stringify({
+    opencliHostReady: true,
+    port: actualPort,
+    pid: process.pid,
+    opencliVersion: policy.opencliVersion,
+    policyCommands: policy.allowedCommands.size,
+    // 通道 2 的**事实**(监听已注册),不是"我们设过环境变量"的意图。
+    // dist-host/ 是 gitignore 的构建产物,版本会漂移——supervisor 不能拿自己设的环境变量当证据。
+    parentWatch,
+  })}\n`)
+
+  const printableAddress = typeof address === 'object' && address ? `${address.address}:${address.port}` : `${host}:${port}`
+  console.log(`[opencli-host] listening on http://${printableAddress}`)
+  console.log(`[opencli-host] OpenCLI ${policy.opencliVersion}: ${opencliEntry}`)
+  console.log(`[opencli-host] policy: ${policy.description} (${policy.allowedCommands.size} commands)`)
+  console.log(`[opencli-host] parent-watch(stdin EOF): ${parentWatch ? 'on' : 'off'}`)
 } catch (error) {
   failReady(
     error instanceof Error ? error.message : 'Host failed to start',
