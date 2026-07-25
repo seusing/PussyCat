@@ -436,6 +436,12 @@ CommandConfig.tsx:props 加 `registerSubmit`;**hooks 必须在 `if (!selected) r
 ```
 早退分支置空:`if (!selected) { handleRunRef.current = null; return <div ...>…</div> }`;`handleRun` 定义后一行 `handleRunRef.current = handleRun`(渲染期给 ref 赋值,合法)。
 
+> **⚠️ 最终修订(P3 清理轮,以此为准——勿按上一段恢复反模式)**:渲染期写 ref 是 React 反模式(评审 M-2),已改为
+> `useEffect(() => { handleRunRef.current = selected ? handleRun : null })`(无依赖数组,commit 后同步最新闭包),
+> 早退分支不再置 null(改由 `handleRun` 内 `if (!cmd) return` 兜安全 no-op);同时 `handleRun` **单快照读实时 store**
+> (`const s = useAppStore.getState()`,`cmd`/`values`/`currentRun` 同源取),不再依赖渲染期闭包。
+> 现行实现见 `src/features/config/CommandConfig.tsx`,契约理由见块 C spec 与 ledger 的 P3 清理章节。
+
 - [ ] **Step 4: 全绿+三门**  - [ ] **Step 5: 提交**
 ```bash
 git add src/App.tsx src/App.test.tsx src/features/nav/SiteCommandNav.tsx src/features/config/CommandConfig.tsx
