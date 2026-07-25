@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenCLI App Clone — 启动失败</title>
+    <!--
+      启动失败视图。**整页内嵌进 exe**(lib.rs 的 include_str!),经自定义 URI scheme 提供,
+      既不走 frontendDist 也不走 resources —— 因为它要显示的失败里就包含「资源目录解析失败」,
+      让错误页自己依赖资源,等于在最需要它的那条路径上白屏。
+
+      数据从 query string 来(kind / summary / detail / logDir),全部用 textContent 渲染:
+      detail 里装的是 Host 的 stderr 尾部,是不可信文本,绝不进 innerHTML。
+    -->
+    <style>
+      /* 配色对齐 src/index.css 的 @theme:失败时看到的仍然是同一个应用,不是一张陌生的报错纸 */
+      :root {
+        color-scheme: dark;
+        --canvas: #0f1115;
+        --panel: #171a21;
+        --line: #262c38;
+        --fg: #e6e9ef;
+        --dim: #9aa4b2;
+        --danger: #f85149;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 32px 24px;
+        background: var(--canvas);
+        color: var(--fg);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.65;
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+      }
+      .kind {
+        display: inline-block;
+        padding: 2px 8px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--dim);
+        font: 12px/1.4 ui-monospace, Consolas, monospace;
+      }
+      h1 {
+        margin: 14px 0 8px;
+        color: var(--danger);
+        font-size: 20px;
+      }
+      .summary {
+        margin: 0 0 14px;
+        font-size: 15px;
+      }
+      .hint {
+        margin: 0 0 16px;
+        color: var(--dim);
+      }
+      pre {
+        margin: 0 0 16px;
+        padding: 12px;
+        max-height: 300px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.5 ui-monospace, Consolas, monospace;
+      }
+      footer {
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+        color: var(--dim);
+        font-size: 12px;
+      }
+      footer p {
+        margin: 4px 0;
+      }
+      code {
+        font: 12px ui-monospace, Consolas, monospace;
+        color: var(--fg);
+        user-select: all;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="kind" id="kind"></span>
+      <h1 id="title"></h1>
+      <p class="summary" id="summary"></p>
+      <p class="hint" id="hint"></p>
+      <pre id="detail" hidden></pre>
+      <footer>
+        <p>修好后重新打开本应用即可 —— 本页不会自动重试。</p>
+        <p id="log-line" hidden>完整日志：<code id="log-dir"></code></p>
+      </footer>
+    </main>
+    <script>
+      // 六个 key 与 Rust 侧 HostStartError::kind()(src/host_supervisor.rs)一一对应。
+      // 少一个,对应的失败路径就是白屏 —— lib.rs 里有测试断言这六个 'kind': 字面量都在本文件内,
+      // 改名/删项会让 cargo test 直接红。
+      var VIEWS = {
+        'node-missing': {
+          title: '未找到可用的 Node 运行时',
+          hint: '本应用把 OpenCLI Host 跑在系统的 Node 上。请安装 Node（最低 20，推荐当前 LTS 22 / 24），确认 node 已在 PATH 中后重新打开本应用；刚装完通常要重开终端或重新登录一次，PATH 才会生效。',
+        },
+        'node-too-old': {
+          title: 'Node 版本过低',
+          hint: '请升级 Node（最低 20，推荐当前 LTS 22 / 24）后重新打开本应用。若机器上装了多个 Node（nvm / fnm / Volta），注意本应用继承的是系统 PATH 里的那一个。',
+        },
+        'host-reported-failure': {
+          title: 'Host 报告启动失败',
+          hint: '这是 Host 自己诊断出来的失败（例如命令目录数据缺失、端口被占用），上面的说明来自 Host 本身，不是进程崩溃。',
+        },
+        'readiness-timeout': {
+          title: 'Host 启动超时',
+          hint: 'Host 进程还活着，但在时限内没有报告就绪。常见原因是首次加载命令目录过慢，或被安全软件拦下；下面是它这段时间的错误输出。',
+        },
+        'process-failed': {
+          title: 'Host 异常退出',
+          hint: 'Host 在报告就绪之前就退出了，或者输出了无法解析的就绪信息。下面是它退出前的错误输出。',
+        },
+        'supervision-unavailable': {
+          title: '无法安全托管 Host，已拒绝启动',
+          hint: '应用无法保证在自己消失后回收 Host 进程（内核连坐与父进程存活通道都不可用），为避免留下无主的后台进程，这里主动拒绝了启动 —— 不是 Host 挂了。',
+        },
+      }
+
+      // 兜底:未登记的分类也必须有页面可看。白屏是最坏的失败展示方式。
+      var UNKNOWN = {
+        title: '启动失败',
+        hint: '这是一个未登记的失败分类。请把上面的分类标识与下面的详情一并反馈。',
+      }
+
+      ;(function () {
+        var params = new URLSearchParams(window.location.search)
+        var kind = params.get('kind') || ''
+        // hasOwnProperty 守卫:query 里塞 'constructor' 之类的原型键不会翻出一个假视图
+        var view = Object.prototype.hasOwnProperty.call(VIEWS, kind) ? VIEWS[kind] : UNKNOWN
+
+        function fill(id, value) {
+          document.getElementById(id).textContent = value
+        }
+
+        fill('kind', kind || '(未提供分类)')
+        fill('title', view.title)
+        fill('summary', params.get('summary') || '')
+        fill('hint', view.hint)
+
+        var detail = params.get('detail')
+        if (detail) {
+          fill('detail', detail)
+          document.getElementById('detail').hidden = false
+        }
+        var logDir = params.get('logDir')
+        if (logDir) {
+          fill('log-dir', logDir)
+          document.getElementById('log-line').hidden = false
+        }
+        document.title = 'OpenCLI App Clone — ' + view.title
+      })()
+    </script>
+  </body>
+</html>
