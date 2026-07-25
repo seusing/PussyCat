@@ -31,6 +31,13 @@ class SseBroker {
   subscribe(response, lastEventId) {
     const lastId = Number.parseInt(lastEventId ?? '0', 10)
     if (Number.isFinite(lastId) && lastId > 0) {
+      const oldest = this.events[0]
+      // 缺口检测:请求续传的位置早于缓冲最老事件 → 中间那段已被驱逐,必须显式告知而非静默丢失
+      if (oldest && oldest.id > lastId + 1) {
+        const gap = { from: lastId + 1, to: oldest.id - 1 }
+        response.write(`event: gap\ndata: ${JSON.stringify(gap)}\n\n`)   // 无 id 行:不打乱续传游标
+        console.warn(`[opencli-host] SSE replay gap: events ${gap.from}-${gap.to} were evicted (bufferSize=${this.bufferSize})`)
+      }
       for (const event of this.events) {
         if (event.id > lastId) this.#write(response, event)
       }
@@ -101,11 +108,12 @@ export function createHostServer({
   allowedOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173'],
   maxBodyBytes = 64 * 1024,
   runManagerOptions = {},
+  sseOptions = {},
 } = {}) {
   if (!policy) throw new Error('policy is required')
   const activePolicy = () => catalogService?.current()?.policy ?? policy
   const origins = new Set(allowedOrigins)
-  const broker = new SseBroker()
+  const broker = new SseBroker(sseOptions)
   const runManager = new RunManager({
     opencliEntry,
     emitEvent: (type, event) => broker.publish(type, event),

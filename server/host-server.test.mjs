@@ -93,6 +93,7 @@ async function readSseUntilDone(response) {
 }
 
 // 读满 n 条事件即返回并 cancel(模拟客户端在收到第 n 条后断线);解析 `id:` 行供补发断言用。
+// id 行可选(扩展支持 gap 帧——按 SSE 规范无 id 行是合法的,故只要求 event:+data: 齐全即计数)。
 async function readSseEvents(response, n) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -109,8 +110,8 @@ async function readSseEvents(response, n) {
       const id = block.match(/^id: (\d+)$/m)?.[1]
       const type = block.match(/^event: (.+)$/m)?.[1]
       const data = block.match(/^data: (.+)$/m)?.[1]
-      if (id && type && data) {
-        events.push({ id: Number(id), type, data: JSON.parse(data) })
+      if (type && data) {
+        events.push({ id: id ? Number(id) : undefined, type, data: JSON.parse(data), raw: block })
       }
     }
   }
@@ -236,6 +237,43 @@ describe('Node Host HTTP/SSE', () => {
     const allIds = [...firstEvents, ...resent].map((event) => event.id).sort((a, b) => a - b)
     expect(new Set(allIds).size).toBe(allIds.length)              // 无重
     expect(allIds).toEqual([1, 2, 3, 4])                          // 无漏,完整全集(3 output + 1 done)
+  })
+
+  it('SSE 补发缺口:被驱逐的事件段以 gap 事件显式告知(不再静默丢失)', async () => {
+    // bufferSize=2:一个 run 产生 4 个事件(3 output + 1 done,id 1..4)后,环形缓冲只剩最后 2 个(id 3,4);
+    // id 1、2 已被驱逐——重连时若不显式告知,客户端将静默漏收这段。
+    const { baseUrl, children } = await setup({ sseOptions: { bufferSize: 2 } })
+
+    const started = await post(baseUrl, '/start', {
+      runId: 'run-gap-1',
+      commandKey: '36kr/news',
+      argv: ['36kr', 'news', '-f', 'json'],
+    })
+    expect(started.status).toBe(202)
+
+    children[0].stdout.write('{"line":1}\n')
+    children[0].stdout.write('{"line":2}\n')
+    children[0].stdout.write('{"line":3}\n')
+    children[0].emit('close', 0, null)
+
+    const reconnect = await fetch(`${baseUrl}/events`, {
+      headers: { Origin: origin, 'Last-Event-ID': '1' },
+    })
+    expect(reconnect.status).toBe(200)
+    const events = await readSseEvents(reconnect, 3)   // gap + 补发 output(id3) + done(id4)
+
+    // ① gap 事件正确:from===lastId+1(=2),to===缓冲最老 id-1(缓冲最老为 id3,故 to=2)
+    expect(events[0].type).toBe('gap')
+    expect(events[0].data).toEqual({ from: 2, to: 2 })
+    // ② gap 帧不含 id: 行(不打乱续传游标)
+    expect(events[0].id).toBeUndefined()
+    expect(events[0].raw).not.toMatch(/^id: /m)
+
+    // ③ 补发事件 id 均严格 > lastId(=1) 且严格递增
+    const resent = events.slice(1)
+    expect(resent.map((e) => e.type)).toEqual(['output', 'done'])
+    for (const event of resent) expect(event.id).toBeGreaterThan(1)
+    for (let i = 1; i < resent.length; i += 1) expect(resent[i].id).toBeGreaterThan(resent[i - 1].id)
   })
 })
 
