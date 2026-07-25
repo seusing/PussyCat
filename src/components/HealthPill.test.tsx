@@ -81,3 +81,17 @@ test('卸载 abort 在途 ping(spec §8 明列,终审 I-1)', () => {
   unmount()
   expect(captured?.aborted).toBe(true)
 })
+
+test('ping 超过 2s 无响应 → abort 后转 Host 离线(补测 timeout 路径)', async () => {
+  vi.useFakeTimers()
+  try {
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => new Promise((_res, rej) => {
+      (init?.signal as AbortSignal)?.addEventListener('abort', () => rej(new Error('AbortError')))
+    })))
+    useAppStore.setState({ mode: 'connected' })
+    render(<HealthPill />)
+    expect(screen.getByTestId('health-pill')).toHaveTextContent('检查中…')
+    await act(async () => { vi.advanceTimersByTime(2100) })       // 越过 PING_TIMEOUT_MS
+    expect(screen.getByTestId('health-pill')).toHaveTextContent('Host 离线')
+  } finally { vi.useRealTimers() }
+})
