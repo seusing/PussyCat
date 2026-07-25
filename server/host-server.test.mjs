@@ -239,6 +239,33 @@ describe('Node Host HTTP/SSE', () => {
     expect(allIds).toEqual([1, 2, 3, 4])                          // 无漏,完整全集(3 output + 1 done)
   })
 
+  it('SSE 重启补发:gap 之后必须补发新进程已缓存的全部事件(评审 P1——旧实现全过滤掉)', async () => {
+    // restart 成立时恒有 event.id <= nextId-1 <= lastId,若回放仍只发 event.id > lastId,
+    // 新进程已缓存的 output/done 会被全部过滤 → 客户端只拿到 gap、丢光真数据。
+    // 上一条空缓冲用例按构造覆盖不到这条主路径(我的测试设计缺陷),故本用例先造非空缓冲。
+    const { baseUrl, children } = await setup()
+    const started = await post(baseUrl, '/start', {
+      runId: 'run-restart-1',
+      commandKey: '36kr/news',
+      argv: ['36kr', 'news', '-f', 'json'],
+    })
+    expect(started.status).toBe(202)
+    children[0].stdout.write('{"line":1}\n')
+    children[0].emit('close', 0, null)                 // 缓冲:output(id1) + done(id2),nextId=3
+
+    const reconnect = await fetch(`${baseUrl}/events`, {
+      headers: { Origin: origin, 'Last-Event-ID': '99' },   // 旧进程游标,远超新 nextId
+    })
+    expect(reconnect.status).toBe(200)
+    const events = await readSseEvents(reconnect, 3)
+    expect(events[0].type).toBe('gap')
+    expect(events[0].data).toMatchObject({ reason: 'restart' })
+    // 关键:gap 之后补发新进程的全部缓存事件,而非一条不发
+    expect(events.slice(1).map((e) => e.type)).toEqual(['output', 'done'])
+    expect(events[1].id).toBe(1)
+    expect(events[2].id).toBe(2)
+  })
+
   it('SSE 补发缺口:服务端重启(客户端游标超前)同样告知 reason=restart(评审 I-3)', async () => {
     // 新 server 的 nextId=1;客户端带着上个进程的 Last-Event-ID 重连 → 游标超前 = 重启丢段。
     // 原实现只查「驱逐」(需 events 非空),这一支会静默漏报——而重启恰是生产里最常见的丢段场景。

@@ -45,7 +45,9 @@ class SseBroker {
         console.warn(`[opencli-host] SSE replay gap (${gap.reason}): client resumed at ${lastId}, lost ${gap.from}-${gap.to ?? '?'} (bufferSize=${this.bufferSize})`)
       }
       for (const event of this.events) {
-        if (event.id > lastId) this.#write(response, event)
+        // restart 时客户端游标属于旧进程的 id 空间,与新进程不可比:必须无条件补发当前缓冲,
+        // 否则 event.id <= nextId-1 <= lastId 会把新进程的全部事件过滤光(评审 P1)
+        if (restarted || event.id > lastId) this.#write(response, event)
       }
     }
     this.clients.add(response)
