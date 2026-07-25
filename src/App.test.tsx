@@ -135,3 +135,21 @@ test('世代接管归位 refreshing:依赖变化顶掉在途刷新后按钮不�
   rerender(<App catalogSource={sourceB} />)                             // catalogSource 变化 → fetchCatalog 世代顶掉在途刷新
   await waitFor(() => expect(screen.getByTestId('refresh-catalog')).not.toBeDisabled())
 })
+
+import { normalizeHostError } from './App'
+
+describe('normalizeHostError 契约(块 C)', () => {
+  test('Error → message+stack;空 message 用 context fallback', () => {
+    const e = new Error('boom')
+    expect(normalizeHostError(e, 'start')).toEqual({ summary: 'boom', detail: e.stack })
+    expect(normalizeHostError(new Error(''), 'cancel').summary).toBe('取消请求失败')
+  })
+  test('结构化 {summary,detail} 透传,不再退化 [object Object]', () => {
+    expect(normalizeHostError({ summary: '策略拒绝', detail: 'HTTP 403' }, 'start'))
+      .toEqual({ summary: '策略拒绝', detail: 'HTTP 403' })
+  })
+  test('其余类型 → context fallback + String(e)', () => {
+    expect(normalizeHostError(42, 'cancel')).toEqual({ summary: '取消请求失败', detail: '42' })
+    expect(normalizeHostError(42, 'start')).toEqual({ summary: '任务启动失败', detail: '42' })
+  })
+})

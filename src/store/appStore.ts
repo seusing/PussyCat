@@ -39,7 +39,7 @@ function defaultsOf(cmd: CommandManifest): Record<string, unknown> {
   return v
 }
 
-function isTerminal(s: RunState): boolean {
+export function isTerminal(s: RunState): boolean {
   return s === 'succeeded' || s === 'failed' || s === 'cancelled'
 }
 

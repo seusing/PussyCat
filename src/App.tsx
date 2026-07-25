@@ -4,18 +4,23 @@ import { SiteCommandNav } from './features/nav/SiteCommandNav'
 import { CommandConfig } from './features/config/CommandConfig'
 import { RunPanel } from './features/runs/RunPanel'
 import { UndoToast } from './components/UndoToast'
-import { useAppStore } from './store/appStore'
+import { useAppStore, isTerminal } from './store/appStore'
 import { buildArgv } from './data/command'
 import { createMockHost } from './host/mockHost'
 import { snapshotCatalogSource, type CatalogSource } from './host'
 import { validate } from './features/config/validation'
 import type { HostBridge } from './host/types'
 
-function normalizeHostError(e: unknown): { summary: string; detail?: string } {
-  return {
-    summary: e instanceof Error ? e.message : '任务启动失败',
-    detail: e instanceof Error ? e.stack : String(e),
+export function normalizeHostError(e: unknown, context: 'start' | 'cancel'): { summary: string; detail?: string } {
+  const fallback = context === 'cancel' ? '取消请求失败' : '任务启动失败'
+  if (e && typeof e === 'object' && !(e instanceof Error)) {
+    const o = e as { summary?: unknown; detail?: unknown }
+    if (typeof o.summary === 'string') {
+      return { summary: o.summary, detail: typeof o.detail === 'string' ? o.detail : undefined }
+    }
   }
+  if (e instanceof Error) return { summary: e.message || fallback, detail: e.stack }
+  return { summary: fallback, detail: String(e) }
 }
 
 export default function App({
@@ -78,13 +83,15 @@ export default function App({
 
   const executeSelected = (): boolean => {
     const s = useAppStore.getState()
+    if (s.catalogStatus !== 'ready') return false
+    if (s.currentRun && !isTerminal(s.currentRun.state)) return false   // 键盘路径绕过按钮 disabled,权威兜底
     if (!s.selected) return false
     if (Object.keys(validate(s.selected, s.values)).length > 0) return false   // 权威再验(阻塞4)
     const runId = crypto.randomUUID()
     s.beginRun(runId)
     const argv = buildArgv(s.selected, s.values)
     void host.startCommand({ runId, commandKey: s.selected.command, argv })
-      .catch((err) => useAppStore.getState().finishRun({ runId, at: Date.now(), outcome: 'error', error: normalizeHostError(err) }))
+      .catch((err) => useAppStore.getState().finishRun({ runId, at: Date.now(), outcome: 'error', error: normalizeHostError(err, 'start') }))
     return true
   }
 
@@ -93,7 +100,7 @@ export default function App({
     if (!run) return
     useAppStore.getState().markCancelling()   // ⑥ 立即进入 cancelling，×不改状态
     void host.cancelCommand(run.id)
-      .catch((err) => useAppStore.getState().finishRun({ runId: run.id, at: Date.now(), outcome: 'error', error: normalizeHostError(err) }))
+      .catch((err) => useAppStore.getState().finishRun({ runId: run.id, at: Date.now(), outcome: 'error', error: normalizeHostError(err, 'cancel') }))
   }
 
   return (
