@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sync-catalog": "node scripts/sync-catalog.mjs",
-    "bench:append": "node scripts/bench-append-output.mjs"
+    "bench:append": "node scripts/bench-append-output.mjs",
+    "build:host": "node scripts/build-host-runtime.mjs"
   },
   "dependencies": {
     "@jackwener/opencli": "1.8.6",

@@ -1,0 +1,7 @@
+{
+  "name": "opencli-app-host-runtime",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Pinned OpenCLI production tree bundled into the desktop app (see docs/specs/2026-07-25-p1-tauri-packaging-design.md §3)",
+  "dependencies": { "@jackwener/opencli": "1.8.6" }
+}
