@@ -15,10 +15,21 @@
 //!   (`SupervisionUnavailable` 是第六个变体,专收 I3 的 fail-closed —— 它不属于 readiness 判定的
 //!   五分支,单列是为了不把"我们拒绝托管"伪装成"Host 挂了"。)
 
+// 本模块的进程清理保证**只在 Windows 成立**,这不是"暂未适配",是硬约束:
+// 通道 1(Job Object KILL_ON_JOB_CLOSE)是 Windows 内核语义,别的平台没有等价物;
+// `kill_tree` 也只有 taskkill 一种实现。放一个恒返回 Err 的空壳去"支持"其它平台,
+// 结果是 Host 崩了以后 opencli 孙进程成真孤儿 —— 那比编译不过危险得多。
+// 要支持别的平台,先实现等价的进程组/子树回收(POSIX 上是 setsid + killpg),再删这条。
+#[cfg(not(windows))]
+compile_error!(
+    "host_supervisor 仅支持 Windows：Job Object 连坐与 taskkill 收树都没有跨平台等价物，\
+     缺了它们 opencli 孙进程会成为无主孤儿。先实现等价的子树回收再放开本平台。"
+);
+
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{BufRead, BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -166,31 +177,9 @@ mod job {
     }
 }
 
-#[cfg(not(windows))]
-mod job {
-    /// 非 Windows 没有 Job Object 语义;保持类型存在以便调用点无需 cfg 分叉。
-    /// 通道 1 在这些平台恒不可用,托管完全落在通道 2(stdin EOF)上。
-    pub struct KillOnCloseJob;
-
-    impl KillOnCloseJob {
-        pub fn create() -> Result<Self, String> {
-            Err("Job Object 仅 Windows 可用".to_string())
-        }
-        pub fn assign(&self, _process: *mut core::ffi::c_void) -> Result<(), String> {
-            Err("Job Object 仅 Windows 可用".to_string())
-        }
-    }
-}
-
-#[cfg(windows)]
 fn raw_process_handle(child: &Child) -> *mut core::ffi::c_void {
     use std::os::windows::io::AsRawHandle;
     child.as_raw_handle()
-}
-
-#[cfg(not(windows))]
-fn raw_process_handle(_child: &Child) -> *mut core::ffi::c_void {
-    core::ptr::null_mut()
 }
 
 // ---------------------------------------------------------------------------
@@ -344,10 +333,12 @@ fn parse_verdict(line: &str) -> Verdict {
 // 公开 API
 // ---------------------------------------------------------------------------
 
-/// 打包后 Host 入口的约定位置。`dist-host/` 镜像仓内相对拓扑,整棵树原样放进 `<resources>/host/`。
-pub fn host_entry(resource_dir: &Path) -> PathBuf {
-    resource_dir.join("host").join("server").join("index.mjs")
-}
+/// Host 入口相对 **resource 根**的位置。`dist-host/` 镜像仓内相对拓扑,整棵树原样放进
+/// `<resources>/host/`。
+///
+/// 只给出相对路径,由调用方用 `BaseDirectory::Resource` 解析(spec §8:不手工拼 resource 路径)——
+/// resource 根在 dev / 打包 / 各平台下位置不同,自己 join 迟早在某个形态上错。
+pub const HOST_ENTRY_RESOURCE: &str = "host/server/index.mjs";
 
 /// 预探测 `node --version`(分支①②)。
 ///
@@ -430,12 +421,14 @@ fn parse_major(version: &str) -> Option<u32> {
 }
 
 /// 拉起 Host 并等它自报端口。成功即代表**至少一条清理通道生效**(I3)。
-pub fn start_host(resource_dir: &Path) -> Result<HostHandle, HostStartError> {
-    let entry = host_entry(resource_dir);
+///
+/// `entry` 是 Host 入口的**绝对路径**,由调用方经 `BaseDirectory::Resource` 解析
+/// [`HOST_ENTRY_RESOURCE`] 得到 —— supervisor 不关心 resource 根长什么样。
+pub fn start_host(entry: &Path) -> Result<HostHandle, HostStartError> {
     log::info!("[supervisor] 启动 Host: node {}", entry.display());
 
     let mut cmd = Command::new("node");
-    cmd.arg(&entry)
+    cmd.arg(entry)
         .env("OPENCLI_HOST_PORT", "0")
         // 通道 2 开关(I2):Host 见到它才装 stdin EOF 看门狗;不设时行为与 npm run dev:server 一致。
         .env("OPENCLI_HOST_PARENT_WATCH", "1")
@@ -752,7 +745,7 @@ fn abandon(mut child: Child, stdin: Option<ChildStdin>) {
     terminate(&mut child, &outcome);
 }
 
-#[cfg(windows)]
+/// 按 pid 收整棵树。**只在确认进程仍在运行时调用**(见 [`WaitOutcome`]):pid 会被系统复用。
 fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     let status = Command::new("taskkill")
@@ -766,9 +759,6 @@ fn kill_tree(pid: u32) {
         log::warn!("[supervisor] taskkill pid={pid} 执行失败: {e}");
     }
 }
-
-#[cfg(not(windows))]
-fn kill_tree(_pid: u32) {}
 
 #[cfg(test)]
 mod tests {
@@ -951,12 +941,15 @@ mod tests {
         );
     }
 
-    /// dist-host 必须镜像仓内相对拓扑(server 用相对 import,拍平必断)。
+    /// dist-host 必须镜像仓内相对拓扑(server 用相对 import 引 ../src/shared/*.mjs,拍平必断);
+    /// 且必须是**相对** resource 根的路径,否则 BaseDirectory::Resource 解析会被绝对路径旁路掉。
     #[test]
-    fn host_entry_mirrors_dist_host_topology() {
-        let entry = host_entry(Path::new("C:/app/resources"));
-        let text = entry.to_string_lossy().replace('\\', "/");
-        assert!(text.ends_with("host/server/index.mjs"), "got {text}");
+    fn host_entry_resource_is_relative_and_mirrors_topology() {
+        assert_eq!(HOST_ENTRY_RESOURCE, "host/server/index.mjs");
+        assert!(
+            !Path::new(HOST_ENTRY_RESOURCE).is_absolute(),
+            "必须是相对路径,交给 BaseDirectory::Resource 解析"
+        );
     }
 
     /// I3:fail-closed 的真值表。**"设过环境变量"不是证据** —— 只有 Host 自报

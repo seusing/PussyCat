@@ -47,13 +47,21 @@ impl HostState {
 fn boot_host(app: &tauri::AppHandle) -> Result<HostHandle, HostStartError> {
     let node_version = host_supervisor::probe_node()?;
     log::info!("[supervisor] node {node_version}");
-    let resource_dir =
-        app.path()
-            .resource_dir()
-            .map_err(|e| HostStartError::SupervisionUnavailable {
-                detail: format!("无法解析 resource_dir: {e}"),
-            })?;
-    host_supervisor::start_host(&resource_dir)
+    // 用 BaseDirectory::Resource 解析,不手工拼 resource 路径(spec §8)——
+    // resource 根在 dev / 打包下位置不同,自己 join 迟早在某个形态上错。
+    let entry = app
+        .path()
+        .resolve(
+            host_supervisor::HOST_ENTRY_RESOURCE,
+            tauri::path::BaseDirectory::Resource,
+        )
+        .map_err(|e| HostStartError::SupervisionUnavailable {
+            detail: format!(
+                "无法解析 Host 入口资源 {}: {e}",
+                host_supervisor::HOST_ENTRY_RESOURCE
+            ),
+        })?;
+    host_supervisor::start_host(&entry)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

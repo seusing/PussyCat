@@ -9,7 +9,8 @@ const serverEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'index.mjs'
 function startHost(env = {}) {
   const child = spawn(process.execPath, [serverEntry], {
     env: { ...process.env, OPENCLI_HOST_PORT: '0', ...env },
-    // stdin 显式 pipe:父进程存活通道(stdin EOF 看门狗)的用例要拿到写端才能关它。
+    // 三条 pipe 本就是 Node 的默认值,这里写出来是**把前提摆到明面**:父进程存活通道的用例
+    // 依赖 stdin 是管道(才有写端可关)。别让这个前提靠"默认值恰好如此"隐式成立。
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
     windowsHide: true,
