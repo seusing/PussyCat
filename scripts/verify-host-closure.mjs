@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, parse, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -83,11 +83,60 @@ async function waitForDone(baseUrl, runId) {
   throw new Error('等待 done 事件超时')
 }
 
-// 隔离根可覆盖:默认 os.tmpdir(),但本机 tmpdir 位于 C:\Users\<user>\AppData\...,
-// 其祖先 C:\Users\<user>\node_modules 在 Node 的向上解析路径上——闸门的前提应结构性成立,
-// 不能指望"碰巧那个 node_modules 里没有 opencli"。用 OPENCLI_CLOSURE_ROOT=C:/ 可拿到真隔离。
-const isolationBase = process.env.OPENCLI_CLOSURE_ROOT ?? tmpdir()
-const tmpRoot = mkdtempSync(join(isolationBase, 'opencli-closure-'))
+// 隔离根**自动挑选**:闸门的前提是"无任何祖先 node_modules",而 os.tmpdir() 通常在
+// C:\Users\<user>\AppData\... 之下,C:\Users\<user>\node_modules 就在 Node 的向上解析路径上
+// (本机就是如此)。要人肉记得带 OPENCLI_CLOSURE_ROOT 才 8/8 的闸门等于半废——
+// 裸跑必红会训练出"这条红是正常的"的坏习惯,红灯就此失去意义。
+// 依次尝试:显式覆盖 → tmpdir → tmpdir 的各级祖先 → 仓库所在盘根;取第一个既满足条件又可写的。
+function ancestorWithNodeModules(dir) {
+  let cur = resolve(dir)
+  for (let i = 0; i < 32; i += 1) {
+    try { if (statSync(join(cur, 'node_modules')).isDirectory()) return cur } catch { /* 无则继续上溯 */ }
+    const parent = dirname(cur)
+    if (parent === cur) break
+    cur = parent
+  }
+  return null
+}
+
+function candidateRoots() {
+  const out = []
+  if (process.env.OPENCLI_CLOSURE_ROOT) out.push(process.env.OPENCLI_CLOSURE_ROOT)
+  out.push(tmpdir())
+  let cur = resolve(tmpdir())
+  for (let i = 0; i < 32; i += 1) {
+    const parent = dirname(cur)
+    if (parent === cur) break
+    cur = parent
+    out.push(cur)
+  }
+  out.push(parse(resolve(root)).root)
+  return [...new Set(out.map((p) => resolve(p)))]
+}
+
+let tmpRoot = null
+let isolationBase = null
+const rejectedRoots = []
+for (const base of candidateRoots()) {
+  const blocker = ancestorWithNodeModules(base)
+  if (blocker) { rejectedRoots.push(`${base} → 祖先 node_modules: ${blocker}`); continue }
+  try {
+    tmpRoot = mkdtempSync(join(base, 'opencli-closure-'))
+    isolationBase = base
+    break
+  } catch (error) {
+    rejectedRoots.push(`${base} → 不可写(${error.code ?? error.message})`)
+  }
+}
+if (!tmpRoot) {
+  console.error('❌ 找不到无祖先 node_modules 且可写的隔离根;试过:')
+  for (const line of rejectedRoots) console.error(`   - ${line}`)
+  console.error('   用 OPENCLI_CLOSURE_ROOT=<某个干净目录> 显式指定。')
+  process.exit(1)
+}
+// 被跳过的候选要说出来:显式设了 OPENCLI_CLOSURE_ROOT 却被跳过时,静默忽略最坑人。
+for (const line of rejectedRoots) console.log(`[closure] 跳过候选 ${line}`)
+console.log(`[closure] 隔离根:${isolationBase}`)
 const isolated = join(tmpRoot, 'host')
 let child
 
@@ -106,17 +155,11 @@ try {
 
   // 1) 复制到无祖先 node_modules 的隔离目录
   cpSync(distHost, isolated, { recursive: true })
-  const ancestorHasNodeModules = (() => {
-    let dir = tmpRoot
-    for (let i = 0; i < 8; i += 1) {
-      try { if (statSync(join(dir, 'node_modules')).isDirectory()) return dir } catch { /* 无则继续上溯 */ }
-      const parent = dirname(dir)
-      if (parent === dir) break
-      dir = parent
-    }
-    return null
-  })()
-  check('隔离目录无祖先 node_modules', ancestorHasNodeModules === null, ancestorHasNodeModules ?? isolated)
+  // 复制之后**再查一遍**:选根时干净不代表现在干净(选根与复制之间隔着 I/O)。
+  // 这条依然是真检查,不是走过场——它证的是"这次跑的隔离前提确实成立"。
+  const ancestorHasNodeModules = ancestorWithNodeModules(tmpRoot)
+  check('隔离目录无祖先 node_modules', ancestorHasNodeModules === null,
+    ancestorHasNodeModules ? `被 ${ancestorHasNodeModules} 污染` : `根=${isolationBase}${rejectedRoots.length ? `(跳过 ${rejectedRoots.length} 个候选)` : ''}`)
 
   // 2) 起 Host
   const started = startHost(join(isolated, 'server', 'index.mjs'))
