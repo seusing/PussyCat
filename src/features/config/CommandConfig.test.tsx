@@ -87,3 +87,29 @@ test('preview 旁复制命令按钮,text=commandPreview', async () => {
   await userEvent.click(screen.getByTestId('copy-command'))
   expect(writeText).toHaveBeenCalledWith(commandPreview(cmd, {}))
 })
+
+// 锁住 handleRun 的 running 守卫存在(评审 ⚠️ 指出它在键盘/按钮两条路径上都被别的机制兜住,
+// 从无直接覆盖)。用**无必填字段**的 cmdB:删掉守卫后校验不会拦截,onRun 必被调用 → 该测试才有鉴别力。
+// 诚实边界:本测试锁「守卫存在」,**锁不住「守卫读实时 store 而非渲染期闭包」**——
+// out-of-act 的 store 写入仍被 React 及时 flush,造不出未提交窗口(已实测两种实现均绿)。
+// 「读实时 store/单快照」与「ref 不在渲染期赋值」同属结构性不变式,由代码注释+评审把关,不谎称有护栏。
+test('运行中经 ref 提交:running 守卫拦住 onRun(F3 直接覆盖)', () => {
+  const onRun = vi.fn()
+  let submit: (() => void) | null = null
+  useAppStore.setState({ selected: cmdB, values: {}, currentRun: undefined })   // cmdB 无必填 → 校验不会误拦
+  render(<CommandConfig onRun={onRun} registerSubmit={(fn) => { submit = fn }} />)
+  act(() => {
+    useAppStore.setState({ currentRun: { id: 'r', command: cmdB, values: {}, state: 'running', startedAt: 0, lines: [] } })
+  })
+  act(() => { submit!() })
+  expect(onRun).not.toHaveBeenCalled()
+})
+
+test('空闲时经 ref 提交:守卫放行,onRun 被调用(反向护栏,防守卫写死 return)', () => {
+  const onRun = vi.fn()
+  let submit: (() => void) | null = null
+  useAppStore.setState({ selected: cmdB, values: {}, currentRun: undefined })
+  render(<CommandConfig onRun={onRun} registerSubmit={(fn) => { submit = fn }} />)
+  act(() => { submit!() })
+  expect(onRun).toHaveBeenCalledTimes(1)
+})

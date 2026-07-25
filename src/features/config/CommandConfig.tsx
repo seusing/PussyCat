@@ -26,12 +26,15 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
   }, [registerSubmit])
 
   const handleRun = () => {
-    const cmd = useAppStore.getState().selected
+    // 单快照读实时 store:selected 与 values 由 selectCommand 原子写入,必须同源取——
+    // 混用「实时 cmd + 渲染期 values」会在未提交窗口里让新命令配上旧命令的值(评审 I-1)
+    const s = useAppStore.getState()
+    const cmd = s.selected
     if (!cmd) return          // 无 selected 时安全 no-op(替代原早退里的 handleRunRef.current = null,P1 硬性要求③)
-    const live = useAppStore.getState().currentRun
+    const live = s.currentRun
     // 读实时 store 而非渲染期闭包快照:与 executeSelected 的权威守卫同源,消除 commit 前的陈旧窗口(M-2)
     if (live && (live.state === 'starting' || live.state === 'running' || live.state === 'cancelling')) return
-    const errs = validate(cmd, values)
+    const errs = validate(cmd, s.values)
     setErrors(errs)
     if (Object.keys(errs).length > 0) {
       const first = cmd.args.find((a) => errs[a.name])
