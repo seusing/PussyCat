@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "sync-catalog": "node scripts/sync-catalog.mjs",
     "bench:append": "node scripts/bench-append-output.mjs",
-    "build:host": "node scripts/build-host-runtime.mjs"
+    "build:host": "node scripts/build-host-runtime.mjs",
+    "verify:host": "node scripts/verify-host-closure.mjs"
   },
   "dependencies": {
     "@jackwener/opencli": "1.8.6",
