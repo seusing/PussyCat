@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { commandPreview } from '../../data/command'
 import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
@@ -6,7 +6,7 @@ import { validate } from './validation'
 import { DynamicField } from './DynamicField'
 import { CopyButton } from '../../components/CopyButton'
 
-export function CommandConfig({ onRun }: { onRun: () => void }) {
+export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; registerSubmit?: (fn: (() => void) | null) => void }) {
   const selected = useAppStore((s) => s.selected)
   const values = useAppStore((s) => s.values)
   const setValue = useAppStore((s) => s.setValue)
@@ -15,10 +15,17 @@ export function CommandConfig({ onRun }: { onRun: () => void }) {
   const preferences = useAppStore((s) => s.preferences)
   const toggleSiteFavorite = useAppStore((s) => s.toggleSiteFavorite)
   const toggleCommandFavorite = useAppStore((s) => s.toggleCommandFavorite)
+  const handleRunRef = useRef<(() => void) | null>(null)
 
   useEffect(() => { setErrors({}) }, [selected])   // ⑦a 切换命令后清掉上一条命令残留的字段错误
 
-  if (!selected) return <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>从左侧选择一个服务和命令</div>
+  useEffect(() => {
+    if (!registerSubmit) return
+    registerSubmit(() => handleRunRef.current?.())
+    return () => registerSubmit(null)
+  }, [registerSubmit])
+
+  if (!selected) { handleRunRef.current = null; return <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>从左侧选择一个服务和命令</div> }
 
   const running = currentRun?.state === 'starting' || currentRun?.state === 'running' || currentRun?.state === 'cancelling'
 
@@ -32,6 +39,7 @@ export function CommandConfig({ onRun }: { onRun: () => void }) {
     }
     onRun()
   }
+  handleRunRef.current = handleRun
 
   return (
     <div>

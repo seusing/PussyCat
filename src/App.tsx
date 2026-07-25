@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AppShell from './components/AppShell'
 import { SiteCommandNav } from './features/nav/SiteCommandNav'
 import { CommandConfig } from './features/config/CommandConfig'
@@ -37,6 +37,9 @@ export default function App({
   const catalogError = useAppStore((s) => s.catalogError)
   const [refresh, setRefresh] = useState<{ state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }>({ state: 'idle' })
   const loadGen = useRef(0)   // 请求世代:latest-wins,过期响应(首载或刷新)一律丢弃(三轮复审 F1)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const submitFormRef = useRef<(() => void) | null>(null)
+  const registerSubmit = useCallback((fn: (() => void) | null) => { submitFormRef.current = fn }, [])
 
   const fetchCatalog = () => {
     const gen = ++loadGen.current
@@ -65,6 +68,33 @@ export default function App({
   }, [host, catalogSource, mode, setCommands, setCatalogStatus, setMode])
 
   useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey
+      if (mod && (event.key === 'k' || event.key === 'K')) {
+        event.preventDefault()                                   // 压掉浏览器默认(地址栏搜索)
+        searchInputRef.current?.focus()
+        return
+      }
+      if (mod && event.key === 'Enter') {
+        event.preventDefault()
+        submitFormRef.current?.()                                // 完整提交流程:字段错误显示+聚焦首错(P1-2)
+        return
+      }
+      if (event.key === 'Escape') {
+        if (event.isComposing) return                            // ① IME
+        const el = document.activeElement as HTMLElement | null
+        const editable = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+        if (editable) { el.blur(); return }                      // ② 取消聚焦
+        const s = useAppStore.getState()
+        if (s.currentRun && !s.runPanelCollapsed) s.setRunPanelCollapsed(true)   // ③ 只收起(P1-1)
+        // ④ 已收起/无 run:no-op —— 永不 toggle、永不展开
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const onRefreshCatalog = () => {
     const gen = ++loadGen.current
@@ -106,8 +136,8 @@ export default function App({
   return (
     <div data-testid="app-root" className="h-full">
       <AppShell
-        nav={<SiteCommandNav />}
-        config={<CommandConfig onRun={executeSelected} />}
+        nav={<SiteCommandNav searchRef={searchInputRef} />}
+        config={<CommandConfig onRun={executeSelected} registerSubmit={registerSubmit} />}
         runs={<RunPanel onCancel={onCancel} onRerun={executeSelected} />}
         catalogStatus={catalogStatus}
         catalogError={catalogError}

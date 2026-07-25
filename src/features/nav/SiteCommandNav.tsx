@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode, type Ref } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { searchCommands, groupBySite } from '../../data/catalog'
 import type { CommandManifest } from '../../data/types'
@@ -30,7 +30,7 @@ function NavSection({ title, testid, children }: { title: string; testid: string
   )
 }
 
-export function SiteCommandNav() {
+export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement> } = {}) {
   const commands = useAppStore((s) => s.commands)
   const selected = useAppStore((s) => s.selected)
   const selectCommand = useAppStore((s) => s.selectCommand)
@@ -55,6 +55,7 @@ export function SiteCommandNav() {
       <div className="p-3">
         <input
           data-testid="nav-search"
+          ref={searchRef}
           value={q}
           onChange={(e) => { setQ(e.target.value); setSiteFilter(null) }}
           placeholder="搜索服务或命令"

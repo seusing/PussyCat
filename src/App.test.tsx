@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
 import { useAppStore } from './store/appStore'
@@ -151,5 +151,72 @@ describe('normalizeHostError 契约(块 C)', () => {
   test('其余类型 → context fallback + String(e)', () => {
     expect(normalizeHostError(42, 'cancel')).toEqual({ summary: '取消请求失败', detail: '42' })
     expect(normalizeHostError(42, 'start')).toEqual({ summary: '任务启动失败', detail: '42' })
+  })
+})
+
+describe('键盘层(RE/04 三键,块 C)', () => {
+  const CMD_REQ: CommandManifest = {
+    command: 'k/run', site: 'k', name: 'run', description: '', access: 'read', browser: false,
+    args: [{ name: 'must', type: 'str', required: true }],
+  }
+  const keydown = (init: KeyboardEventInit) => fireEvent.keyDown(window, init)
+
+  // 注:src/vitest.setup.ts 全局桩 fetch 为永不 settle 的 Promise(见其注释),
+  // 故 catalogStatus 必须在 render 前用 store 摆好为 'ready',nav-search(SiteCommandNav)
+  // 才会同步出现在首帧——同现有各用例摆状态的惯例一致(不依赖真实 catalog 落地)。
+  test('Ctrl+K 聚焦搜索框(ref 路径)', async () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+    await screen.findByTestId('nav-search')
+    keydown({ key: 'k', ctrlKey: true })
+    expect(document.activeElement).toBe(screen.getByTestId('nav-search'))
+  })
+
+  test('Ctrl+Enter 非法表单 → 显示字段错误(与点运行一致),不静默', async () => {
+    useAppStore.setState({ commands: [CMD_REQ], catalogStatus: 'ready' })
+    useAppStore.getState().selectCommand(CMD_REQ)
+    render(<App />)
+    await screen.findByTestId('nav-search')
+    keydown({ key: 'Enter', ctrlKey: true })
+    expect(await screen.findByText('此字段必填')).toBeInTheDocument()
+    expect(useAppStore.getState().currentRun).toBeUndefined()          // 未起跑
+  })
+
+  test('Ctrl+Enter 合法表单 → 起跑;活跃 run 期间再按 → 不二次起跑(守卫)', async () => {
+    const ok: CommandManifest = { ...CMD_REQ, args: [] }
+    useAppStore.setState({ commands: [ok], catalogStatus: 'ready' })
+    useAppStore.getState().selectCommand(ok)
+    render(<App />)
+    await screen.findByTestId('nav-search')
+    keydown({ key: 'Enter', ctrlKey: true })
+    await waitFor(() => expect(useAppStore.getState().currentRun).toBeDefined())
+    const firstId = useAppStore.getState().currentRun!.id
+    keydown({ key: 'Enter', ctrlKey: true })                           // running 中
+    expect(useAppStore.getState().currentRun!.id).toBe(firstId)        // 无第二个 run
+  })
+
+  test('Esc 链:聚焦→blur;展开→收起;已收起→no-op 不重开(P1-1)', async () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+    const search = await screen.findByTestId('nav-search')
+    search.focus()
+    keydown({ key: 'Escape' })
+    expect(document.activeElement).not.toBe(search)                    // ② blur
+    const ok: CommandManifest = { command: 'k/r2', site: 'k', name: 'r2', description: '', access: 'read', browser: false, args: [] }
+    act(() => { useAppStore.setState({ commands: [ok] }); useAppStore.getState().selectCommand(ok); useAppStore.getState().beginRun('r-esc') })
+    expect(useAppStore.getState().runPanelCollapsed).toBe(false)       // beginRun 自动展开
+    keydown({ key: 'Escape' })
+    expect(useAppStore.getState().runPanelCollapsed).toBe(true)        // ③ 收起
+    keydown({ key: 'Escape' })
+    expect(useAppStore.getState().runPanelCollapsed).toBe(true)        // ④ no-op,永不重开
+  })
+
+  test('IME composing 时 Esc 忽略', async () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+    const search = await screen.findByTestId('nav-search')
+    search.focus()
+    keydown({ key: 'Escape', isComposing: true })
+    expect(document.activeElement).toBe(search)                        // ① 未 blur
   })
 })
