@@ -74,7 +74,10 @@ export default function App({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.altKey) return   // AltGr(=Ctrl+Alt)是欧洲键盘真实字符输入,任何热键不得劫持(终审 M-1)
-      if (event.isComposing || event.keyCode === 229) return   // IME 组合输入中:三键全部让路(229 是 IME 合成键的历史约定,配 isComposing 双保险;复审 F1+P3)
+      // IME 组合输入中三键全部让路。三重保险:isComposing(标准) / key==='Process'(标准,替代已废弃的 keyCode)
+      // / keyCode===229(VK_PROCESSKEY 历史约定,部分旧 WebKit/IME 只置它)。桌面无可打印键映射到 229;
+      // 已知唯一误伤面是 Chrome on Android 软键盘对所有 keydown 报 229 —— 本项目是桌面 WebView,出射程(评审 M-1)
+      if (event.isComposing || event.key === 'Process' || event.keyCode === 229) return   // IME 组合输入中:三键全部让路(229 是 IME 合成键的历史约定,配 isComposing 双保险;复审 F1+P3)
       const mod = event.ctrlKey || event.metaKey
       if (mod && !event.shiftKey && (event.key === 'k' || event.key === 'K')) {   // 排除 Ctrl+Shift+K(浏览器 DevTools);'K' 保留给 CapsLock
         event.preventDefault()                                   // 压掉浏览器默认(地址栏搜索)
