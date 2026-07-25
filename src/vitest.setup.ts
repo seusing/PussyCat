@@ -27,7 +27,13 @@ function makeMemoryStorage(): Storage {
 // 本机 Node 25 原生 globalThis.localStorage 是坏桩（typeof object 但 setItem 不可用，
 // 且遮蔽 jsdom 实现），任何裸 localStorage.* 都会抛。用内存 Storage 桩替换，
 // 每个用例一份干净实例；afterEach 的 unstubAllGlobals 恢复。
+// 两个桩都只服务 **jsdom 组件测试**;`@vitest-environment node` 的 server 测试(真 spawn Host、
+// 真 HTTP)必须拿到真实 fetch,否则永不 settle 的桩会让它们静默卡死——`host-server.test.mjs` 与
+// `readiness.test.mjs` 此前各自 stubGlobal/unstubAllGlobals 绕过,属仓库级隐藏耦合,在此按环境收窄根治。
+const isJsdomEnv = typeof window !== 'undefined'
+
 beforeEach(() => {
+  if (!isJsdomEnv) return
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
   vi.stubGlobal('localStorage', makeMemoryStorage())
 })
