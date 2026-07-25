@@ -1,19 +1,17 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHostServer } from './host-server.mjs'
+import { resolveOpenCliEntry, resolveManifestPath } from './opencli-entry.mjs'
+import { loadExecutionPolicy } from './policy.mjs'
+import { createCatalogService } from './catalog-service.mjs'
 
-// Node >= 23 硬前提:catalog-service.mjs 运行时 import ../src/data/normalize.ts(type-stripping)。
-// 注意不能用静态 import 引本地模块链——ESM 会在任何模块体执行前解析整张依赖图,
-// 老 Node 在本断言运行前就抛 ERR_UNKNOWN_FILE_EXTENSION(静默不启)。先断言、再动态 import。
+// Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
+// 注:20 已 EOL,是"最低可运行"而非推荐;推荐当前 LTS(22/24)。
 const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '0', 10)
-if (nodeMajor < 23) {
-  console.error(`[opencli-host] Node >= 23 required (.ts type-stripping in catalog service); got ${process.versions.node}`)
+if (nodeMajor < 20) {
+  console.error(`[opencli-host] Node >= 20 required; got ${process.versions.node}`)
   process.exit(1)
 }
-
-const { createHostServer } = await import('./host-server.mjs')
-const { resolveOpenCliEntry, resolveManifestPath } = await import('./opencli-entry.mjs')
-const { loadExecutionPolicy } = await import('./policy.mjs')
-const { createCatalogService } = await import('./catalog-service.mjs')
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const catalogPath = resolve(projectRoot, 'public/catalog.snapshot.json')

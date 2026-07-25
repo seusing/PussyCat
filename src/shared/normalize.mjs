@@ -1,23 +1,9 @@
-import type { CommandManifest } from './types'
-
-export type RawManifestCmd = {
-  site: string
-  name: string
-  navigateBefore?: boolean | string
-  defaultWindowMode?: string
-  type?: string
-  modulePath?: string
-}
-
-export function stripBom(s: string): string {
+export function stripBom(s) {
   return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s
 }
 
-export function mergeManifestFields(
-  list: CommandManifest[],
-  manifest: RawManifestCmd[],
-): CommandManifest[] {
-  const byKey = new Map<string, RawManifestCmd>()
+export function mergeManifestFields(list, manifest) {
+  const byKey = new Map()
   for (const m of manifest) byKey.set(`${m.site}/${m.name}`, m)
   return list.map((cmd) => {
     const m = byKey.get(`${cmd.site}/${cmd.name}`)

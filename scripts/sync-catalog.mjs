@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { stripBom, mergeManifestFields } from '../src/data/normalize.ts'
+import { stripBom, mergeManifestFields } from '../src/shared/normalize.mjs'
 
 const manifestPath = join(
   homedir(),

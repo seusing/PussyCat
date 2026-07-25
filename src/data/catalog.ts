@@ -1,5 +1,5 @@
 import type { CommandManifest, CatalogSnapshot } from './types'
-import { assertCatalogCommands } from './catalogSchema'
+import { assertCatalogCommands } from '../shared/catalogSchema.mjs'
 
 export class CatalogError extends Error {}
 

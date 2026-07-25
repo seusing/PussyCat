@@ -1,5 +1,5 @@
-import { stripBom, mergeManifestFields } from './normalize'
-import type { CommandManifest } from './types'
+import { stripBom, mergeManifestFields } from './normalize.mjs'
+import type { CommandManifest } from '../data/types'
 
 test('stripBom 去除开头 BOM', () => {
   expect(stripBom('﻿[]')).toBe('[]')

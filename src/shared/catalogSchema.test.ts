@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { assertCatalogCommands, CatalogSchemaError } from './catalogSchema'
+import { assertCatalogCommands, CatalogSchemaError } from './catalogSchema.mjs'
 
 const ok = (over: object = {}) => ({ command: 'a/b', site: 'a', name: 'b', description: '', access: 'read', browser: false, args: [], ...over })
 

@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import { stripBom, mergeManifestFields } from '../src/data/normalize.ts'
-import { assertCatalogCommands } from '../src/data/catalogSchema.ts'
+import { stripBom, mergeManifestFields } from '../src/shared/normalize.mjs'
+import { assertCatalogCommands } from '../src/shared/catalogSchema.mjs'
 import { buildExecutionPolicy } from './policy.mjs'
 
 export class CatalogServiceError extends Error {
