@@ -23,6 +23,16 @@
 | P2-5 进程清理未决 | → §5 **Job Object + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 为主路径**，spawn 后立即 assign；`taskkill /T` 仅异常兜底；single-instance **必须在 Host bootstrap 之前**生效 |
 | P2-6 CSP/Origin | → §7 随机端口进 `connect-src`；生产 WebView 真实 `Origin` **由安装包实测捕获**后精确加白，禁止「猜测+同时放宽多个」 |
 
+**二轮设计复审吸收（3 P1 + 2 P2，同样全部经核实）**：
+| 复审项 | 吸收 |
+|---|---|
+| P1-1 布局矛盾 + 任务图有环 | §3 `dist-host/` **镜像仓内相对拓扑**（`dist-host/src/shared/`，因 server 用相对 import）；§11 依赖序重排，闭包验证从"T0"改为 **T4 硬闸**（它消费 T1-T3 产物） |
+| P1-2 production tree 不可复现 | §3 独立 **runtime lockfile 提交进 git** + `npm ci --omit=dev` + 全树 **SHA-256 清单**并校验 |
+| P1-3 Job 失败/崩溃无兜底 | §5 **双通道**：Job Object（内核连坐，覆盖崩溃）+ **stdin EOF 看门狗**（恒开，覆盖 Job 分配失败）；两者皆不可用 → **fail-closed**；`taskkill /T` 降级为正常退出收尾;**强杀主进程后子树消亡**列为必测 |
+| P2-4 resources 映射 | §8 `frontendDist` 载前端、`bundle.resources` **map 形式** `{"../dist-host/":"host/"}`（数组形式会落成 `_up_/…`），Rust 用 `BaseDirectory::Resource` 解析 |
+| P2-5 readiness 分支 + 回归 | §4 `ready:false` 升为**协议内独立分支**（与"提前退出/非法 JSON"分开）；§9 发布门加**收藏重启持久化**与**启动→SSE→取消→cancelled** 两条原始需求回归 |
+| Node 20 EOL | §2 下限 20 保留，但**推荐**写当前 LTS（22/24） |
+
 **措辞收紧（照复审）**：
 - SxS：**裸 Tauri GUI exe 在当前机器非豁免路径通过，风险显著下降**；MSI/NSIS 启动器与安装后 exe **仍是发布门**，未通过前不得宣称"解除"。
 - 术语：Node Host 是 **受管子进程（managed child process）**，**不是** Tauri `externalBin` 意义的 sidecar——文档与配置命名一律区分，避免误配 bundler。
@@ -45,22 +55,31 @@ Tauri 主进程 (Rust)
 └─ WebviewWindowBuilder 建窗（注入 boot 配置）→ 前端走 nodeBridgeHost 连 127.0.0.1:<随机端口>
 ```
 
-- **Node 外置**：目标机需 `node >= 20`（安装 opencli 的前提本就如此）；启动时**探测版本**，不达标 → 引导视图（写明所需版本与当前版本）。
+- **Node 外置**：功能下限 `node >= 20`（与 opencli `engines` 持平，安装 opencli 的前提本就如此）；启动时**探测版本**，不达标 → 引导视图（写明**检测到的版本**与下限）。**注意：Node 20 已 EOL**——引导页/README 的**推荐**运行时写当前 LTS（22/24），只把 20 表述为"最低可运行"，不得表述为"推荐"（二轮复审）。
 - **OpenCLI 内置**：资源目录自带 production tree，`createRequire` 天然解析到它——与决策②一致，无发现协议。
 
 ## 3. 自包含 Host runtime（解 P1-1）
 
 新增 `scripts/build-host-runtime.mjs`，产出 `dist-host/`（Tauri `resources` 打包它）：
 
+**布局铁律：`dist-host/` 必须镜像仓内相对拓扑**——`server/catalog-service.mjs` 用相对路径 `../src/shared/*.mjs` 引共享模块，拍平成 `dist-host/shared/` 会当场断链（二轮复审 P1-1）：
+
 ```
 dist-host/
-├─ server/*.mjs                     # 原样拷贝
-├─ shared/*.mjs + *.d.mts           # 见下「消除 .ts import」
+├─ server/*.mjs                     # 原样拷贝（相对 import 得以成立）
+├─ src/shared/*.mjs + *.d.mts       # 与仓内同路径,见下「消除 .ts import」
 ├─ public/catalog.snapshot.json     # 首载 policy 来源
-└─ node_modules/@jackwener/opencli@1.8.6 + prod 依赖
+├─ node_modules/@jackwener/opencli@1.8.6 + prod 依赖
+└─ runtime-manifest.json            # 见下：全树 SHA-256 清单
 ```
 
-生成方式：`npm install @jackwener/opencli@1.8.6 --omit=dev --prefix dist-host`（锁定版本，产出 production tree）+ 文件拷贝。**闭包由 T0 spike 在隔离目录实证**（§9），不靠推断。
+**可复现闭包（二轮复审 P1-2）**：`npm install pkg@1.8.6` 只钉顶层，其生产依赖仍走 semver 范围 → 不可复现。定稿做法：
+
+1. 仓内提交**独立 runtime lockfile**：`host-runtime/package.json`（只声明 `@jackwener/opencli@1.8.6`）+ `host-runtime/package-lock.json`（提交进 git）。
+2. 生成用 **`npm ci --omit=dev`**（非 `npm install`）产出 staging tree —— lockfile 决定每一层版本。
+3. 对最终 tree 生成 **`runtime-manifest.json`**（每文件 SHA-256 + 总文件数），并在 CI/构建脚本里**校验**；清单变更必须随 lockfile 变更一起 review。
+
+闭包本身**由隔离验证任务实证**（§9 硬闸），不靠推断。
 
 **消除运行时 `.ts` import（决策③）**：
 - `src/data/normalize.ts` / `src/data/catalogSchema.ts` 改为 **`.mjs` + 手写 `.d.mts`**（纯函数，无框架依赖），移到 `src/shared/`（前端与 server 共用同一份，单一事实源）。
@@ -84,14 +103,29 @@ dist-host/
 **Rust 侧**读取契约：
 - 逐行读 stdout，**首个含 `opencliHostReady` 的 JSON 行**即判定；
 - **持续排空 stdout/stderr 直到进程退出**（不得读到首行就停 —— 管道满会背压死锁子进程）；排空内容转 Tauri 日志。
-- 四类失败分支各自映射错误视图：① spawn 失败（node 不存在/不可执行）② 版本不达标（探测 `node --version` < 20）③ readiness 超时（默认 15s）④ 子进程提前退出或输出非法 JSON。
+- **五类分支**各自映射错误视图（二轮复审 P2-5：`ready:false` 是**协议内的合法失败**，必须与"进程异常"分开诊断，文案与日志不得混为一谈）：
+
+| # | 分支 | 判定 | 用户可见 |
+|---|---|---|---|
+| ① | spawn 失败 | 创建进程即错（node 不存在/不可执行） | 「未找到 Node」引导页 |
+| ② | 版本不达标 | 预探测 `node --version` < 20 | 「Node 版本过低」引导页（写明检测到的版本；推荐当前 LTS） |
+| ③ | **协议内失败** | 收到合法 `{"opencliHostReady":false,"error":{...}}` | 直接展示服务端 `summary`/`detail`（Host 自知的失败，如 catalog 缺失、端口占用） |
+| ④ | readiness 超时 | 默认 15s 未收到判定行 | 「Host 启动超时」+ 已排空的 stderr 尾部 |
+| ⑤ | 进程异常 | 子进程提前退出，或输出的 JSON 非法/缺字段 | 「Host 异常退出」+ 退出码 + stderr 尾部 |
 
 ## 5. Rust supervisor（解 P2-5）
 
 - **single-instance 插件最先注册**，早于任何 Host bootstrap —— 否则第二实例会先拉起第二个 Node 再被劝退。参考同机 `usage-island/app/src-tauri/src/lib.rs`。
-- **Job Object 主路径**：`CreateJobObject` + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，**spawn 后立即 `AssignProcessToJobObject`**；主进程消亡（含崩溃）时内核连坐整棵子树。
-- `taskkill /T /F` **仅作异常兜底**（Job 分配失败时）。优雅退出仍先发信号让 Host 自己 close。
+**双通道清理（二轮复审 P1-3：主进程崩溃时 `taskkill` 无人执行，兜底形同虚设）**：
+
+1. **主路径 · Job Object**：`CreateJobObject` + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，**spawn 后立即 `AssignProcessToJobObject`**。主进程消亡（含**崩溃/强杀**）时由**内核**连坐整棵子树 —— 不依赖任何代码还能运行。
+2. **并行路径 · 父进程存活通道（stdin EOF 看门狗，恒开）**：Rust 保留 Host 的 stdin 管道写端且不写入；Host 侧监听 `process.stdin` 的 `end`/`close` → **自行优雅退出**（先 `app.close()` 收 SSE 与在途 run，再 exit）。父进程一旦消失，写端关闭 → 子进程立刻收到 EOF。这条**不依赖 Job**，覆盖 Job 分配失败的场景。
+3. **Job 分配失败 → 记录降级并继续（依赖通道 2）**；若**通道 2 也不可用**（stdin 不可用等）→ **fail-closed**：不启动 Host，直接错误视图，绝不留无主子进程。
+4. `taskkill /T /F` 仅用于**正常退出路径**的最后收尾（主进程尚活着，能执行）；不再把它当崩溃兜底。
+5. 优雅退出顺序：窗口关闭 → 关 stdin（触发通道 2）→ 等待至多 2s → 未退则 `taskkill /T /F` → Job 关闭作最终保险。
+
 - 本机既有教训（`machine-sxs-new-exe-blocked`）：wscript/WMI 的 kill-on-close job 会秒杀子树 —— 我们**主动**使用同一机制，方向相反、正好利用。
+- **验收必测**：`taskkill /F` 强杀 Tauri 主进程（不给它执行任何清理代码的机会）后，`node` 与 opencli 后代**全部消失**（§9）。
 
 ## 6. 前端唯一 baseUrl（解 P1-3）
 
@@ -107,15 +141,27 @@ dist-host/
 
 ## 8. 打包产物
 
-- `tauri build` 出 **NSIS + MSI**；`resources` 指向 `dist-host/` 与前端 `dist/`。
+- `tauri build` 出 **NSIS + MSI**。
+- **前端与 Host 走两条不同机制,不可混用（二轮复审 P2-4）**：
+  - `build.frontendDist` 承载前端 `dist/`（webview 内容）；
+  - `bundle.resources` **只**承载 Host runtime，且**必须用 map 形式**把它落到运行时 `host/`：
+    ```json
+    "resources": { "../dist-host/": "host/" }
+    ```
+    原因：Tauri 的 `resources` **保留相对路径**，写成数组形式的 `"../dist-host/**"` 会被落成 `_up_/dist-host/...`，设计图里的 `resources/host/server/index.mjs` 直接落空。
+  - Rust 侧一律用 **`BaseDirectory::Resource`** 解析（`path().resolve("host/server/index.mjs", BaseDirectory::Resource)`），不手工拼路径。
 - `identifier` 用独立反域名（避免与 usage-island 等同机 Tauri 应用撞）。
 - 不打包 Node 二进制（决策①代价的一部分：装机门槛 = 系统 Node>=20）。
 
 ## 9. 测试与验收
 
-- **T0 隔离闭包 spike（开工第一步，先验证再造）**：把生成的 `dist-host/` 拷到**无任何祖先 `node_modules`** 的临时目录，用系统 node 起 Host → 断言 readiness JSON、`/health`、`/catalog`（真 spawn opencli list）、`/start`（36kr/news 真出结果）。**闭包不通过就不进后续 task。**
-- 自动化测试：readiness JSON 解析与四分支（Rust 单测 + Node 侧输出格式测试）；Job Object 清理（集成测试观察子进程消亡）；前端 baseUrl 单一事实源（五端点同端口断言）；`build-host-runtime` 产物清单校验。
-- **真机发布门（人工）**：装 MSI 与 NSIS 两种包 → 启动 → 目录渲染 1278 命令 → 跑 `36kr/news` 出真结果 → 关窗口后**进程树验收：`node` 与 opencli 后代全部消失**。SxS 结论以此门为准。
+- **隔离闭包硬闸（T4；二轮复审 P1-1 修正了它的位置——它消费 T1-T3 的产物，不可能排在它们之前）**：把生成的 `dist-host/` 拷到**无任何祖先 `node_modules`** 的临时目录，用系统 node 起 Host → 断言 ①readiness JSON 合法 ②`/health` ③`/catalog`（真 spawn opencli list，1278 命令）④`/start` 跑 `36kr/news` 出真结果 ⑤`runtime-manifest.json` 校验通过。**此闸不过，T5 及以后一律不开工**（Rust/前端/打包全部依赖闭包成立）。
+- 自动化测试：readiness JSON 解析与**五分支**（Rust 单测 + Node 侧输出格式测试）；进程清理**两通道**（Job Object 正常退出 + **强杀 Tauri 后子树消亡**）；前端 baseUrl 单一事实源（五端点同端口断言）；`build-host-runtime` 产物 SHA-256 清单校验。
+- **真机发布门（人工）**：装 MSI 与 NSIS 两种包 → 启动 → 目录渲染 1278 命令 → 跑 `36kr/news` 出真结果 → 关窗口后**进程树验收：`node` 与 opencli 后代全部消失**；再 `taskkill /F` 强杀主进程复验一次子树消亡。**外加两条原始需求回归（二轮复审 P2-5）**：
+  - **收藏重启后持久化**：收藏站点/命令 → 完全退出应用 → 重开 → 收藏仍在（验证 WebView 的 localStorage 分区在打包形态下真的持久）。
+  - **运行闭环**：启动 → SSE 输出可见 → 取消 → 终态为 `cancelled`（`done` 事件收口）。
+
+  SxS 结论以此门为准。
 
 ## 10. 风险与未决
 
@@ -129,13 +175,18 @@ dist-host/
 
 ## 11. 任务切分（供 writing-plans）
 
+**依赖序已修正（二轮复审 P1-1：原 T0 消费 T1/T2 产物却排在其前，任务图有环）**：
+
 ```
-T0  隔离 runtime-closure spike（先验证闭包，红则回设计）
-T1  消除 .ts import（shared/*.mjs + .d.mts + 全消费点）+ Node 门槛降 20
-T2  build-host-runtime 脚本 + 固定版 OpenCLI production tree
-T3  readiness JSON 协议 + 四失败分支（Host 侧）
-T4  Rust supervisor：Job Object + single-instance + 窗口时机 + boot 注入
-T5  前端唯一 baseUrl（HostSelection→App→AppShell→HealthPill）+ 五端点同端口断言
-T6  资源/CSP/CORS/installer 配置
-T7  MSI+NSIS 真机闭环与进程树验收（人工门）
+T1  消除 .ts import（src/shared/*.mjs + .d.mts + 全消费点）+ Node 门槛 23→20
+T2  readiness JSON 协议 + 五分支（Host 侧，纯 Node，可独立测）
+T3  host-runtime lockfile（npm ci --omit=dev）+ build-host-runtime 脚本 + SHA-256 清单
+T4  🔴 隔离闭包硬闸：无祖先 node_modules 的临时目录跑通 readiness/health/catalog/start + 清单校验
+    ——不过则回 T1-T3，T5+ 一律不开工
+T5  Rust supervisor：Job Object + stdin EOF 看门狗 + fail-closed + single-instance（早于 bootstrap）
+T6  Rust 窗口时机 + boot 配置注入 + 五类错误视图
+T7  前端唯一 baseUrl（HostSelection→App→AppShell→HealthPill）+ 五端点同端口断言
+T8  资源 map（`{"../dist-host/":"host/"}`）/ CSP connect-src / CORS 真实 Origin 捕获 / installer 配置
+T9  MSI+NSIS 真机门（人工）：安装→目录 1278→跑 36kr/news→关窗口进程树净→强杀复验→
+    收藏重启持久化→启动/SSE/取消 done:cancelled
 ```
