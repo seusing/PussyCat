@@ -77,7 +77,7 @@ if (Object.keys(validate(s.selected, s.values)).length > 0) return false
 - 测试：cap 设为「小于最大并发数」(如 cap=1, maxConcurrentRuns=2),启动 2 个活跃 run（第 1 个 id 已被驱逐出 seen）→ 重复启动第 1 个 → 仍 409（靠 active.has 拦住）;驱逐语义测试（cap=2 塞 3 个,最旧 id 可重用,文档写明:重放保护有界,UUID runId 下碰撞理论级）。
 
 ### 5.2 manifest 惰性解析（块 B 终审 M3）
-- `createCatalogService` 的 `manifestPath: string` 改为 `resolveManifestPath: () => string`（thunk）;index.mjs 传 `() => resolveManifestPath(opencliEntry)`,启动期**不再**急切求值——manifest 缺失只废刷新（500）,Host 照常启动。
+- `createCatalogService` 的 `manifestPath: string` 改为 `resolveManifest: () => string`（thunk;参数名与 opencli-entry 导出的 `resolveManifestPath` 函数区分,避免撞名——实现即此口径）;index.mjs 传 `resolveManifest: () => resolveManifestPath(opencliEntry)`,启动期**不再**急切求值——manifest 缺失只废刷新（500）,Host 照常启动。
 - **每次 `refresh()` 都调用 resolver,失败不缓存**——文件事后出现即自动恢复。测试：resolver 先 throw（refresh 500,current() 不动）→ 改为返回有效路径 → 再 refresh 成功。
 
 ### 5.3 同步 spawn throw → 502

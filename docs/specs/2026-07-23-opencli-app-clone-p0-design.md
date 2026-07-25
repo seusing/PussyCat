@@ -58,7 +58,7 @@
 
 ### P0-B：尽早验证真实执行（不等 UI 全完成）
 轻量 Node Host：启动真实 `opencli`、流式 stdout/stderr、取消进程、超时、exitCode/错误归一化。
-先跑通 **一条 PUBLIC 只读命令**，再验证 **一条依赖 BrowserBridge 的命令**。
+先跑通 **一条 PUBLIC 只读命令**。~~再验证一条依赖 BrowserBridge 的命令~~——**口径修正（块 C 消歧）**：BrowserBridge 验证已由 P0-B 专项规格（`2026-07-24-p0-b-node-host.md`）明确后置到后续阶段（含 COOKIE/INTERCEPT/UI 命令与 write/login 授权确认机制），P0-B 实际交付以专项规格为准（policy 白名单即排除 browser=true 命令）。
 
 ### P0-C：产品化补齐
 两级收藏 + 持久化、最近使用、`columns` 表格/日志切换、重跑/复制命令/复制结果、catalog 刷新、错误详情与重试、基础键盘操作。
@@ -287,7 +287,7 @@ function inputKind(arg: ManifestArg): InputKind {
 - **纯逻辑单测（Vitest）**：`inputKind` 映射、argv 构建、命令预览转义、catalog 归一化/补字段/分组、状态机迁移、（P0-C）收藏持久化。
 - **HostBridge 契约测试**：对每个实现验证 §5 的 7 条语义（done-once、cancel 幂等、竞态、seq 单调、失败模型、脱敏）。mock 的三固定场景（成/败/取消）由测试显式选择，取消随机终态。
 - **UI 冒烟**：Vite dev + 浏览器预览——真实 catalog 能渲染 1278 命令 / 175 站点导航；跑一条 mock 命令走完整状态机。
-- **P0-B 真机验证**：一条 PUBLIC 只读命令 + 一条 BrowserBridge 命令真跑通过。
+- **P0-B 真机验证**：一条 PUBLIC 只读命令真跑通过（已达成:36kr/news）。BrowserBridge 命令验证随其后置（见 §3 口径修正）。
 
 ---
 
