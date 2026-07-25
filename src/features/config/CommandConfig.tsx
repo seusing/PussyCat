@@ -30,6 +30,7 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
   const running = currentRun?.state === 'starting' || currentRun?.state === 'running' || currentRun?.state === 'cancelling'
 
   const handleRun = () => {
+    if (running) return          // 与实体按钮 disabled 等价:运行中不校验、不写 errors、不抢焦点(复审 F3)
     const errs = validate(selected, values)
     setErrors(errs)
     if (Object.keys(errs).length > 0) {

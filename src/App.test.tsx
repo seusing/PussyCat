@@ -231,6 +231,22 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     keydown({ key: 'Enter', ctrlKey: true })                     // 非 composing 仍可起跑(反向护栏)
     await waitFor(() => expect(useAppStore.getState().currentRun).toBeDefined())
   })
+
+  test('活跃 run 期间 Ctrl+Enter 无副作用:不写字段错误、不抢焦点(复审 F3)', async () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+    await screen.findByTestId('nav-search')
+    const req: CommandManifest = {
+      command: 'k/req', site: 'k', name: 'req', description: '', access: 'read', browser: false,
+      args: [{ name: 'must', type: 'str', required: true }],
+    }
+    act(() => { useAppStore.setState({ commands: [req] }); useAppStore.getState().selectCommand(req) })
+    act(() => { useAppStore.getState().beginRun('r-active') })    // 造活跃 run(starting)
+    const before = document.activeElement
+    keydown({ key: 'Enter', ctrlKey: true })
+    expect(screen.queryByText('此字段必填')).not.toBeInTheDocument()   // 无字段错误
+    expect(document.activeElement).toBe(before)                        // 未抢焦点
+  })
 })
 
 test('AltGr(Ctrl+Alt) 与 Ctrl+Shift 组合不被热键劫持(终审 M-1)', async () => {
