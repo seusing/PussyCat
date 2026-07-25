@@ -4,6 +4,7 @@ import { liveCatalogSource, snapshotCatalogSource, type CatalogSource } from './
 import type { HostBridge } from './types'
 
 export * from './types'
+export * from './errors'      // HostRequestError 是 Host 公共错误契约(spec §6.1)
 export * from './mockHost'
 export * from './nodeBridgeHost'
 export * from './catalogSource'

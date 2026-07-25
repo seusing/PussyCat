@@ -5,7 +5,9 @@ export class HostRequestError extends Error {
   readonly detail?: string
   readonly status?: number
   constructor(summary: string, detail?: string, status?: number) {
-    super(detail ? `${summary}: ${detail}` : summary)   // message 仅为调试可读,消费方读 summary/detail
+    // message 恒等于 summary:不得把 detail 拼进 message,否则通用 Error.message 消费者
+    // (日志/第三方)会把「按需详情」重新变成常显,正是本类要消除的缺陷(复审 P3)
+    super(summary)
     this.name = 'HostRequestError'
     this.summary = summary
     this.detail = detail

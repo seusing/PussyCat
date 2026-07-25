@@ -5,6 +5,7 @@ import { useAppStore } from './store/appStore'
 import type { CommandManifest } from './data/types'
 import type { HostBridge, RunRequest } from './host/types'
 import type { CatalogSource } from './host'
+import { createNodeBridgeHost, type EventSourceLike } from './host/nodeBridgeHost'
 
 const initialState = useAppStore.getState()
 beforeEach(() => { useAppStore.setState(initialState, true) })  // true = replace，每个用例前恢复初始态
@@ -264,21 +265,55 @@ test('AltGr(Ctrl+Alt) 与 Ctrl+Shift 组合不被热键劫持(终审 M-1)', asyn
   expect(document.activeElement).not.toBe(search)
 })
 
-test('跨层集成:Host 拒绝 → currentRun.error 保留 summary/detail 分离(复审 F2)', async () => {
-  const host: HostBridge = {
-    startCommand: () => Promise.reject(new HostRequestError('Command is outside the P0-B execution policy', 'x/y', 403)),
-    cancelCommand: async () => {},
-    onOutput: () => () => {},
-    onDone: () => () => {},
+// 真跨层集成:注入**真实** createNodeBridgeHost(不手工构造 HostRequestError),
+// 让 HTTP 错误体走完 responseError → startCommand reject → App.catch → normalizeHostError
+// → finishRun → RunPanel 渲染 整条链。二轮复审 P2 教训:测试名叫「跨层」不等于链路真跨层,
+// 必须检查被测对象是否实例化了相邻层的真实实现——上一版手写 HostBridge 绕过了半条链。
+class FakeES implements EventSourceLike {
+  readyState = 1   // 已 open:ensureOpen 立即 resolve
+  private readonly listeners = new Map<string, Set<(e: Event) => void>>()
+  addEventListener(type: string, listener: (e: Event) => void) {
+    const set = this.listeners.get(type) ?? new Set<(e: Event) => void>()
+    set.add(listener)
+    this.listeners.set(type, set)
   }
+  removeEventListener(type: string, listener: (e: Event) => void) { this.listeners.get(type)?.delete(listener) }
+  close() { this.readyState = 2 }
+}
+
+test('真跨层集成:真实 NodeBridge 收 403 错误体 → RunPanel summary 常显、detail 按需(非 JS stack)(二轮复审 P2)', async () => {
+  // 服务端 /start 错误体的真实形状(host-server.mjs 扁平 {error, detail};
+  // policy.mjs 的 RequestPolicyError(403, '...', commandKey) 即产此内容)
+  const fetchImpl = vi.fn().mockResolvedValue({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: 'Command is outside the P0-B execution policy', detail: 'x/y' }),
+  } as Response)
+  const host = createNodeBridgeHost({ eventSourceFactory: () => new FakeES(), fetchImpl })
+
   useAppStore.setState({ catalogStatus: 'ready' })
   render(<App host={host} />)
   await screen.findByTestId('nav-search')
   const ok: CommandManifest = { command: 'x/y', site: 'x', name: 'y', description: '', access: 'read', browser: false, args: [] }
   act(() => { useAppStore.setState({ commands: [ok] }); useAppStore.getState().selectCommand(ok) })
-  fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+  await userEvent.click(screen.getByTestId('run-button'))
+
+  // ① store 层:summary/detail 分离(原断言保留)
   await waitFor(() => expect(useAppStore.getState().currentRun?.error).toBeDefined())
   const err = useAppStore.getState().currentRun!.error!
-  expect(err.summary).toBe('Command is outside the P0-B execution policy')   // 常显=服务端 summary
-  expect(err.detail).toBe('x/y')                                             // 按需=服务端 detail(非 JS stack)
+  expect(err.summary).toBe('Command is outside the P0-B execution policy')
+  expect(err.detail).toBe('x/y')
+  expect(err.detail).not.toContain('at ')                                   // 不是 JS stack
+
+  // ② DOM 层:summary 常显且不含 detail
+  const summary = await screen.findByText('Command is outside the P0-B execution policy')
+  expect(summary).toBeInTheDocument()
+  expect(summary.textContent).not.toContain('x/y')
+
+  // ③ DOM 层:detail 初始隐藏,展开后是服务端 detail(非堆栈)
+  expect(screen.queryByTestId('error-detail')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('error-detail-toggle'))
+  const detail = screen.getByTestId('error-detail')
+  expect(detail).toHaveTextContent('x/y')
+  expect(detail.textContent).not.toContain('HostRequestError')              // 不是 JS stack
 })

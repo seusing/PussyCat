@@ -111,15 +111,17 @@ function normalizeHostError(e: unknown, context: 'start' | 'cancel'): { summary:
 
 ```ts
 export class HostRequestError extends Error {
-  readonly summary: string      // 常显：服务端摘要
+  readonly summary: string      // 常显：服务端摘要；**`message` 恒等于它**
   readonly detail?: string      // 按需：服务端详情；服务端未给时回填 `HTTP <status>`（保排障抓手）
   readonly status?: number
 }
 ```
 
-- **Host 实现（含未来 `tauriHost`）拒绝请求时必须抛 `HostRequestError`，不得把结构拼进 message。** `message` 仅为调试可读；消费方读 `summary`/`detail`。
+- **Host 实现（含未来 `tauriHost`）拒绝请求时必须抛 `HostRequestError`，不得把结构拼进 message。** `super(summary)`——`message === summary` 有测试锁死（`errors.test.ts`）：若把 detail 拼进 message，任何通用 `Error.message` 消费者（日志/第三方）都会把「按需详情」重新变成常显，正是本类要消除的缺陷（二轮复审 P3）。消费方读 `summary`/`detail`。
+- 从 `src/host/index.ts` 导出——它是 Host 公共契约的一部分，不是 nodeBridgeHost 的内部细节。
 - `normalizeHostError` 的 `HostRequestError` 分支必须排在 `instanceof Error` 分支**之前**（它继承 Error，放后面即死代码）。
-- 全链锚点：`nodeBridgeHost.responseError` → `startCommand` reject → `App.executeSelected.catch` → `normalizeHostError` → `finishRun` → `RunPanel`（summary 无条件常显 / detail 在 `error-detail-toggle`）。**跨层集成测试是本契约的护栏**（`App.test.tsx` NodeBridge→App→`currentRun.error`）。
+- 全链锚点：`nodeBridgeHost.responseError` → `startCommand` reject → `App.executeSelected.catch` → `normalizeHostError` → `finishRun` → `RunPanel`（summary 无条件常显 / detail 在 `error-detail-toggle`）。
+- **护栏必须是「真」跨层测试**：App 测试注入**真实 `createNodeBridgeHost`**（fake EventSource + fetchImpl 返回真实 HTTP 错误体），断言直到 RunPanel DOM（summary 常显且不含 detail / detail 初始隐藏 / 展开为服务端 detail 而非 JS stack）。**二轮复审 P3 教训：测试名叫「跨层」不等于链路真跨层——上一版手写 HostBridge 并手工构造 `HostRequestError`，绕过了 `responseError` 半条链，按构造就侦测不到「退回普通 Error」这一变异；现版本经变异验证确认会红。** 验收新 Host 实现时，必须检查测试是否实例化了相邻层的真实实现。
 - done 事件路径（mockHost / 真实 run-manager）本就是 `{summary, detail}`，直接进 `finishRun`，不经此函数，无需同等处理。
 
 ## 7. 文档消歧（自做,不派 worker）
