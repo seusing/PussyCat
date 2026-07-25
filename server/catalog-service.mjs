@@ -19,7 +19,7 @@ export class CatalogServiceError extends Error {
 // → buildExecutionPolicy → 全部成功后单引用原子替换 {snapshot, policy};任一失败旧值不动。
 export function createCatalogService({
   opencliEntry,
-  manifestPath,
+  resolveManifest,
   spawnImpl = spawn,
   readFileImpl = readFileSync,
   now = Date.now,
@@ -33,10 +33,16 @@ export function createCatalogService({
   let closed = false
 
   const runList = () => new Promise((resolvePromise, rejectPromise) => {
-    const child = spawnImpl(process.execPath, [opencliEntry, 'list', '-f', 'json'], {
-      shell: false,
-      windowsHide: true,
-    })
+    let child
+    try {
+      child = spawnImpl(process.execPath, [opencliEntry, 'list', '-f', 'json'], {
+        shell: false,
+        windowsHide: true,
+      })
+    } catch (error) {
+      rejectPromise(new CatalogServiceError(502, 'Failed to spawn opencli list', error instanceof Error ? error.message : String(error)))
+      return
+    }
     activeChild = child
     const stdout = []
     const stderr = []
@@ -86,7 +92,7 @@ export function createCatalogService({
     })
   })
 
-  const readOpencliVersion = () => {
+  const readOpencliVersion = (manifestPath) => {
     try {
       const raw = readFileImpl(join(dirname(manifestPath), 'package.json'), 'utf8')
       const version = JSON.parse(stripBom(String(raw))).version
@@ -107,6 +113,12 @@ export function createCatalogService({
       throw new CatalogServiceError(500, 'opencli list output is not valid JSON')
     }
     if (!Array.isArray(list)) throw new CatalogServiceError(500, 'opencli list output is not an array')
+    let manifestPath
+    try {
+      manifestPath = resolveManifest()          // 每次 refresh 现解析,失败不缓存(验收条件②)
+    } catch (error) {
+      throw new CatalogServiceError(500, 'Failed to resolve cli-manifest.json', error instanceof Error ? error.message : String(error))
+    }
     let manifestRaw
     let manifest
     try {
@@ -124,7 +136,7 @@ export function createCatalogService({
     const snapshot = {
       schemaVersion: 1,
       generatedAt: now(),
-      opencliVersion: readOpencliVersion(),
+      opencliVersion: readOpencliVersion(manifestPath),
       source: 'live: opencli list -f json',
       listSha256: createHash('sha256').update(listRaw).digest('hex'),
       manifestSha256: createHash('sha256').update(manifestRaw).digest('hex'),

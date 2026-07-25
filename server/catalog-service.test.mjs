@@ -22,7 +22,7 @@ function setup(overrides = {}) {
   const spawnCalls = []
   const service = createCatalogService({
     opencliEntry: 'C:/fixture/dist/src/main.js',
-    manifestPath: 'C:/fixture/cli-manifest.json',
+    resolveManifest: () => 'C:/fixture/cli-manifest.json',
     spawnImpl: (cmd, argv, opts) => {
       spawnCalls.push({ cmd, argv, opts })
       const child = fakeChild()
@@ -127,5 +127,21 @@ describe('CatalogService', () => {
     expect(children[0].kills.length).toBeGreaterThan(0)
     await expect(p).rejects.toBeInstanceOf(CatalogServiceError)
     await expect(service.refresh()).rejects.toMatchObject({ statusCode: 500 })
+  })
+
+  it('manifest 惰性:resolver 每次 refresh 调用,失败不缓存,文件出现后自愈(验收条件②)', async () => {
+    let available = false
+    const { service, children } = setup({ resolveManifest: () => { if (!available) throw new Error('ENOENT'); return 'C:/fixture/cli-manifest.json' } })
+    const p1 = service.refresh(); emitSuccess(children[0])
+    await expect(p1).rejects.toMatchObject({ statusCode: 500 })
+    expect(service.current()).toBeUndefined()                       // 失败不缓存也不落状态
+    available = true
+    const p2 = service.refresh(); emitSuccess(children[1])
+    await expect(p2).resolves.toMatchObject({ schemaVersion: 1 })   // 自愈
+  })
+
+  it('同步 spawn throw → 502(状态码矩阵补齐)', async () => {
+    const { service } = setup({ spawnImpl: () => { throw new Error('EPERM sync') } })
+    await expect(service.refresh()).rejects.toMatchObject({ statusCode: 502 })
   })
 })

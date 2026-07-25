@@ -92,6 +92,32 @@ async function readSseUntilDone(response) {
   }
 }
 
+// 读满 n 条事件即返回并 cancel(模拟客户端在收到第 n 条后断线);解析 `id:` 行供补发断言用。
+async function readSseEvents(response, n) {
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let pending = ''
+  const events = []
+  while (events.length < n) {
+    const { value, done } = await reader.read()
+    if (done) break
+    pending += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+    let splitAt
+    while (events.length < n && (splitAt = pending.indexOf('\n\n')) >= 0) {
+      const block = pending.slice(0, splitAt)
+      pending = pending.slice(splitAt + 2)
+      const id = block.match(/^id: (\d+)$/m)?.[1]
+      const type = block.match(/^event: (.+)$/m)?.[1]
+      const data = block.match(/^data: (.+)$/m)?.[1]
+      if (id && type && data) {
+        events.push({ id: Number(id), type, data: JSON.parse(data) })
+      }
+    }
+  }
+  await reader.cancel()
+  return events
+}
+
 describe('Node Host HTTP/SSE', () => {
   it('reports health and rejects disallowed origins', async () => {
     const { baseUrl } = await setup()
@@ -168,6 +194,48 @@ describe('Node Host HTTP/SSE', () => {
     expect(wrongType.status).toBe(415)
     expect((await post(baseUrl, '/cancel', { runId: 'not-running' })).status).toBe(204)
     expect((await post(baseUrl, '/cancel', { runId: 'not-running' })).status).toBe(204)
+  })
+
+  it('SSE Last-Event-ID 断线中间重连:补发严格 id>Last-Event-ID、有序、无重无漏(验收条件③)', async () => {
+    const { baseUrl, children } = await setup()
+
+    // 1) 首连接先建立(live client),POST /start,FakeChild 依次 emit 3 段 stdout + close(0)
+    //    → broker 依次积累 output×3 + done×1(id 1..4)。
+    const firstConnection = await fetch(`${baseUrl}/events`, { headers: { Origin: origin } })
+    expect(firstConnection.status).toBe(200)
+    const firstEventsPromise = readSseEvents(firstConnection, 2)
+
+    const started = await post(baseUrl, '/start', {
+      runId: 'run-sse-1',
+      commandKey: '36kr/news',
+      argv: ['36kr', 'news', '-f', 'json'],
+    })
+    expect(started.status).toBe(202)
+
+    children[0].stdout.write('{"line":1}\n')
+    children[0].stdout.write('{"line":2}\n')
+    children[0].stdout.write('{"line":3}\n')
+    children[0].emit('close', 0, null)
+
+    // 2) 只读前 2 个事件,记 lastId,cancel 断开(readSseEvents 内部已 cancel)。
+    const firstEvents = await firstEventsPromise
+    expect(firstEvents).toHaveLength(2)
+    const lastId = firstEvents[firstEvents.length - 1].id
+
+    // 3) 带 Last-Event-ID 重连 → 补发剩余事件,读到 done 为止(剩余恰好 2 条:output seq2 + done)。
+    const reconnect = await fetch(`${baseUrl}/events`, {
+      headers: { Origin: origin, 'Last-Event-ID': String(lastId) },
+    })
+    expect(reconnect.status).toBe(200)
+    const resent = await readSseEvents(reconnect, 2)
+    expect(resent[resent.length - 1].type).toBe('done')          // 确实读到了 done
+
+    // 4) 断言:补发全部 id > lastId;id 严格递增;断前 2 条 ∪ 补发 = 完整全集,无重无漏。
+    for (const event of resent) expect(event.id).toBeGreaterThan(lastId)
+    for (let i = 1; i < resent.length; i += 1) expect(resent[i].id).toBeGreaterThan(resent[i - 1].id)
+    const allIds = [...firstEvents, ...resent].map((event) => event.id).sort((a, b) => a - b)
+    expect(new Set(allIds).size).toBe(allIds.length)              // 无重
+    expect(allIds).toEqual([1, 2, 3, 4])                          // 无漏,完整全集(3 output + 1 done)
   })
 })
 

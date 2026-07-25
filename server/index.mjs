@@ -29,7 +29,7 @@ const policy = loadExecutionPolicy(catalogPath)
 const opencliEntry = resolveOpenCliEntry()
 const catalogService = createCatalogService({
   opencliEntry,
-  manifestPath: resolveManifestPath(opencliEntry),
+  resolveManifest: () => resolveManifestPath(opencliEntry),
 })
 const app = createHostServer({
   opencliEntry,
