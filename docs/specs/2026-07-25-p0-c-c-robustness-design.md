@@ -103,6 +103,25 @@ function normalizeHostError(e: unknown, context: 'start' | 'cancel'): { summary:
 ```
 结构化 `{summary,detail}` 透传不再退化 `"[object Object]"`;App 两处调用带 context。测试三路：start Error / cancel Error / 结构化 rejection。
 
+### 6.1 `HostRequestError` 跨层错误契约（合并后复审 F2 补，**冻结面新增**）
+
+**问题**：`nodeBridgeHost.responseError` 曾把服务端 `{summary, detail}` 拼进 `Error.message`，App 见 `Error` 就把整条当 summary、把 **JS stack** 当 detail —— 服务端 detail 常显、前端堆栈藏进 toggle，与块 B「summary 常显 / detail 按需」意图**反转**。根因是块 B 只做 App 层单测、无 NodeBridge→App 跨层集成测试，两侧各自自洽却整体错位。
+
+**契约**（`src/host/errors.ts`）：
+
+```ts
+export class HostRequestError extends Error {
+  readonly summary: string      // 常显：服务端摘要
+  readonly detail?: string      // 按需：服务端详情；服务端未给时回填 `HTTP <status>`（保排障抓手）
+  readonly status?: number
+}
+```
+
+- **Host 实现（含未来 `tauriHost`）拒绝请求时必须抛 `HostRequestError`，不得把结构拼进 message。** `message` 仅为调试可读；消费方读 `summary`/`detail`。
+- `normalizeHostError` 的 `HostRequestError` 分支必须排在 `instanceof Error` 分支**之前**（它继承 Error，放后面即死代码）。
+- 全链锚点：`nodeBridgeHost.responseError` → `startCommand` reject → `App.executeSelected.catch` → `normalizeHostError` → `finishRun` → `RunPanel`（summary 无条件常显 / detail 在 `error-detail-toggle`）。**跨层集成测试是本契约的护栏**（`App.test.tsx` NodeBridge→App→`currentRun.error`）。
+- done 事件路径（mockHost / 真实 run-manager）本就是 `{summary, detail}`，直接进 `finishRun`，不经此函数，无需同等处理。
+
 ## 7. 文档消歧（自做,不派 worker）
 
 - master 设计 `2026-07-23-opencli-app-clone-p0-design.md` §3：BrowserBridge 验证从 P0-B 移出,口径对齐 P0-B 专项规格（后置到后续阶段）。

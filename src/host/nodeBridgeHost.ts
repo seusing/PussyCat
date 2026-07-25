@@ -44,7 +44,9 @@ function responseError(status: number, payload: unknown): HostRequestError {
     else if (typeof body.message === 'string') summary = body.message
     if (typeof body.detail === 'string') detail = body.detail
   }
-  return new HostRequestError(summary || `HTTP ${status}`, detail || undefined, status)
+  // detail 兜底回填 HTTP 状态码:服务端给了 summary 时状态码原本在 UI/复制载荷里彻底不可见,
+  // 500/代理错误会失去排障抓手(评审观察 1)
+  return new HostRequestError(summary || `HTTP ${status}`, detail || (summary ? `HTTP ${status}` : undefined), status)
 }
 
 function isOutputEvent(value: unknown): value is OutputEvent {

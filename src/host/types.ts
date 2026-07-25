@@ -27,6 +27,9 @@ export type DoneEvent = {
   error?: { summary: string; detail?: string }
 }
 
+// 错误契约：Host 实现（nodeBridgeHost / 未来 tauriHost）在请求被拒时抛 `HostRequestError`
+// （见 ./errors.ts 与块 C spec §6.1），携带结构化 summary/detail —— 不得拼进 Error.message，
+// 否则 App 会把整条当 summary、把 JS stack 当 detail（复审 F2 的原缺陷）。
 export interface HostBridge {
   startCommand(req: RunRequest): Promise<{ runId: string }>
   cancelCommand(runId: string): Promise<void>

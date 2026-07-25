@@ -116,3 +116,23 @@ test('a failed SSE open is closed and the next start retries with a fresh connec
   sources[1].emit('open', {})
   await expect(second).resolves.toEqual({ runId: 'r2' })
 })
+
+test('无 detail 时回填 HTTP 状态码(排障抓手不丢;评审观察 1)', async () => {
+  const eventSource = new FakeEventSource('http://host/events')
+  eventSource.readyState = 1
+  const fetchImpl = vi.fn().mockResolvedValue(response(403, { error: 'Command is outside the P0-B execution policy' }))
+  const host = createNodeBridgeHost({ eventSourceFactory: () => eventSource, fetchImpl })
+  await expect(host.startCommand({ runId: 'r', commandKey: 'x/c', argv: [] })).rejects.toMatchObject({
+    summary: 'Command is outside the P0-B execution policy', detail: 'HTTP 403', status: 403,
+  })
+})
+
+test('body 不可解析 → summary 回落 HTTP <status>,detail 留空(fallback 缺口补测;评审观察 2)', async () => {
+  const eventSource = new FakeEventSource('http://host/events')
+  eventSource.readyState = 1
+  const fetchImpl = vi.fn().mockResolvedValue(response(502, undefined))
+  const host = createNodeBridgeHost({ eventSourceFactory: () => eventSource, fetchImpl })
+  await expect(host.startCommand({ runId: 'r', commandKey: 'x/c', argv: [] })).rejects.toMatchObject({
+    summary: 'HTTP 502', detail: undefined, status: 502,
+  })
+})

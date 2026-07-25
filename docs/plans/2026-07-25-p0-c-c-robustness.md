@@ -244,6 +244,8 @@ git commit -m "feat(health): 三态 checking/online/offline+ping 世代 latest-w
 
 ### Task 3: App——normalizeHostError 契约 + executeSelected 三守卫
 
+> **合并后复审 F2 补记**：本 task 的三分支之上另加 `HostRequestError` 分支（**必须排在 `instanceof Error` 之前**，它继承 Error，放后即死代码）——Host 实现拒绝请求时抛 `HostRequestError` 携结构化 summary/detail，不得拼进 message。契约见 spec §6.1，护栏是 NodeBridge→App→`currentRun.error` 跨层集成测试（本 task 当时只做 App 层单测，是缺口根因）。
+
 **Files:** Modify `src/App.tsx`;Test `src/App.test.tsx`(末尾追加)
 
 **Interfaces:** Produces `export function normalizeHostError(e: unknown, context: 'start' | 'cancel')`(导出供测);executeSelected 守卫(T4 键盘消费);Consumes `isTerminal` 需从 store 导出或本地实现——**appStore.ts 的 `isTerminal` 当前未导出:在 appStore.ts 给它加 `export`**,App import。
