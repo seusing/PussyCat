@@ -66,6 +66,7 @@ export class RunManager {
     commandTimeoutMs = 90_000,
     maxConcurrentRuns = 1,
     maxCapturedBytes = 8 * 1024 * 1024,
+    maxSeenRunIds = 1000,
   }) {
     if (!opencliEntry) throw new Error('opencliEntry is required')
     if (typeof emitEvent !== 'function') throw new Error('emitEvent is required')
@@ -77,18 +78,23 @@ export class RunManager {
     this.commandTimeoutMs = commandTimeoutMs
     this.maxConcurrentRuns = maxConcurrentRuns
     this.maxCapturedBytes = maxCapturedBytes
+    this.maxSeenRunIds = maxSeenRunIds
     this.active = new Map()
     this.seen = new Set()
   }
 
   start(request) {
-    if (this.seen.has(request.runId)) {
+    if (this.active.has(request.runId) || this.seen.has(request.runId)) {
       throw new RunManagerError(409, `Duplicate runId: ${request.runId}`)
     }
     if (this.active.size >= this.maxConcurrentRuns) {
       throw new RunManagerError(429, 'Maximum concurrent runs reached')
     }
     this.seen.add(request.runId)
+    // 有界最近集:插入序驱逐最旧(Set 迭代序=插入序);在途 run 由 active.has 兜底,驱逐不影响其去重
+    if (this.seen.size > this.maxSeenRunIds) {
+      this.seen.delete(this.seen.values().next().value)
+    }
 
     const record = {
       request,

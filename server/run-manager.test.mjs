@@ -162,4 +162,31 @@ describe('RunManager', () => {
     expect(() => manager.start(request)).toThrow(RunManagerError)
     expect(() => manager.start({ ...request, runId: 'run-2' })).toThrow(/Maximum concurrent/)
   })
+
+  it('seen 有界:cap 内驱逐最旧,被驱逐 id 可重用(重放保护有界,UUID 下碰撞理论级)', () => {
+    const { child, manager } = setup({ maxSeenRunIds: 2 })
+    manager.start({ ...request, runId: 'run-1' })
+    child.emit('close', 0, null)
+    manager.start({ ...request, runId: 'run-2' })
+    child.emit('close', 0, null)
+    manager.start({ ...request, runId: 'run-3' })
+    child.emit('close', 0, null)
+    // run-1 已被驱逐出 seen(cap=2,插入序最旧);重启同 id 不应再抛 409
+    expect(manager.start({ ...request, runId: 'run-1' })).toEqual({ runId: 'run-1' })
+  })
+
+  it('cap 小于并发数:活跃 run 即使被驱逐出 seen 也不能重复启动(active.has 兜底)', () => {
+    const { manager } = setup({ maxSeenRunIds: 1, maxConcurrentRuns: 2 })
+    manager.start({ ...request, runId: 'run-a' })
+    manager.start({ ...request, runId: 'run-b' }) // seen 插入 run-b 后 size(2) > cap(1),驱逐最旧 run-a;run-a 仍在 active(未 close)
+    let caught
+    try {
+      manager.start({ ...request, runId: 'run-a' })
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(RunManagerError)
+    expect(caught.statusCode).toBe(409)
+    expect(caught.message).toBe('Duplicate runId: run-a')
+  })
 })
