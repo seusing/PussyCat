@@ -32,6 +32,11 @@ pub const NODE_REQUIRED: &str = ">= 20（推荐当前 LTS 22 / 24）";
 
 const READY_MARKER: &str = "opencliHostReady";
 const READINESS_TIMEOUT: Duration = Duration::from_secs(15);
+/// `node --version` 的时限。它跑在 setup 钩子里,**没有时限就等于可能永久白窗**;
+/// READINESS_TIMEOUT 只管 start_host,管不到探测这一步。
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// 进程已退出后再等排空线程交货的兜底窗口(正常是零等待)。
+const PIPE_COLLECT_TIMEOUT: Duration = Duration::from_secs(1);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const STDERR_TAIL_LINES: usize = 40;
 
@@ -342,20 +347,48 @@ pub fn probe_node() -> Result<String, HostStartError> {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output().map_err(|e| HostStartError::NodeMissing {
+    // 不用 `cmd.output()`:它**没有时限**,而 READINESS_TIMEOUT 只管 start_host,管不到这里。
+    // node 被安全软件拦截、装在不可达的网络盘上、或是个坏 shim 时,output() 会永久阻塞 ——
+    // 而这段跑在 setup 钩子里,一卡就是永久白窗(窗口都建不出来,用户连错误页都看不到)。
+    let mut child = cmd.spawn().map_err(|e| HostStartError::NodeMissing {
         detail: format!("`node --version` 无法执行: {e}"),
     })?;
-    if !output.status.success() {
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let outcome = wait_for_exit(&mut child, Duration::from_millis(0));
+        terminate(&mut child, &outcome);
+        return Err(HostStartError::NodeMissing {
+            detail: "`node --version` 的输出管道不可用".to_string(),
+        });
+    };
+    // 后台排空两个管道(I4 的同一条道理:探测虽只有一行输出,也不能让主线程边等边读)。
+    let out_rx = collect_to_end(stdout);
+    let err_rx = collect_to_end(stderr);
+
+    let outcome = wait_for_exit(&mut child, PROBE_TIMEOUT);
+    let Some(status) = outcome.exited() else {
+        terminate(&mut child, &outcome);
+        return Err(HostStartError::NodeMissing {
+            detail: format!(
+                "`node --version` 在 {}s 内没有返回（node 可能被安全软件拦截、装在不可达的网络盘上，或是个坏 shim）",
+                PROBE_TIMEOUT.as_secs()
+            ),
+        });
+    };
+    // 进程已退出 → 管道已 EOF → 排空线程马上会送出结果;给个短窗口兜底,拿不到就当空串。
+    let stdout_text = out_rx.recv_timeout(PIPE_COLLECT_TIMEOUT).unwrap_or_default();
+    let stderr_text = err_rx.recv_timeout(PIPE_COLLECT_TIMEOUT).unwrap_or_default();
+
+    if !status.success() {
         return Err(HostStartError::NodeMissing {
             detail: format!(
                 "`node --version` 退出码 {:?}: {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr).trim()
+                status.code(),
+                stderr_text.trim()
             ),
         });
     }
 
-    let found = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let found = stdout_text.trim().to_string();
     let major = parse_major(&found).ok_or_else(|| HostStartError::NodeMissing {
         detail: format!("无法解析 node 版本输出: {found:?}"),
     })?;
@@ -513,7 +546,9 @@ pub fn start_host(resource_dir: &Path) -> Result<HostHandle, HostStartError> {
             Err(HostStartError::HostReportedFailure { summary, detail })
         }
         Verdict::Malformed { reason, line } => {
-            let code = wait_for_exit(&mut child, SHUTDOWN_GRACE).and_then(|s| s.code());
+            let code = wait_for_exit(&mut child, SHUTDOWN_GRACE)
+                .exited()
+                .and_then(|s| s.code());
             abandon(child, stdin);
             Err(HostStartError::ProcessFailed {
                 code,
@@ -521,7 +556,9 @@ pub fn start_host(resource_dir: &Path) -> Result<HostHandle, HostStartError> {
             })
         }
         Verdict::StdoutClosed => {
-            let code = wait_for_exit(&mut child, SHUTDOWN_GRACE).and_then(|s| s.code());
+            let code = wait_for_exit(&mut child, SHUTDOWN_GRACE)
+                .exited()
+                .and_then(|s| s.code());
             abandon(child, stdin);
             Err(HostStartError::ProcessFailed {
                 code,
@@ -545,17 +582,17 @@ pub fn shutdown(handle: HostHandle) {
     drop(stdin);
 
     // 2) 给它 2s 走完优雅路径。
-    match wait_for_exit(&mut child, SHUTDOWN_GRACE) {
+    let outcome = wait_for_exit(&mut child, SHUTDOWN_GRACE);
+    match outcome.exited() {
         Some(status) => log::info!("[supervisor] Host pid={pid} 已优雅退出({status})"),
         None => {
             // 3) 只有"主进程还活着"的正常退出路径才轮得到 taskkill —— 它从来不是崩溃兜底。
+            //    按 pid 收树只在"确认仍在运行"时做(terminate 内部把关,防 pid 复用误杀)。
             log::warn!(
-                "[supervisor] Host pid={pid} 未在 {}ms 内退出,taskkill /T /F",
+                "[supervisor] Host pid={pid} 未在 {}ms 内退出,强制收尾",
                 SHUTDOWN_GRACE.as_millis()
             );
-            kill_tree(pid);
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate(&mut child, &outcome);
         }
     }
 
@@ -590,34 +627,79 @@ fn drain_lines<R: Read>(source: R, mut on_line: impl FnMut(String)) {
     }
 }
 
-fn wait_for_exit(child: &mut Child, budget: Duration) -> Option<ExitStatus> {
+/// 等待结果。**必须区分"确认还在跑"与"状态不可知"**:`kill_tree` 是按 **pid** 下手的
+/// (`taskkill /PID`),而 pid 会被系统复用 —— 只有确认进程仍在运行时才允许用 pid 杀,
+/// `try_wait` 报错时拿 pid 去 taskkill 有误杀无关进程的风险。
+enum WaitOutcome {
+    Exited(ExitStatus),
+    /// 预算耗尽,确认仍在运行 —— 可以按 pid 收树。
+    StillRunning,
+    /// `try_wait` 报错,进程状态不可知 —— **不许**按 pid 杀,只能用句柄杀。
+    Unknown,
+}
+
+impl WaitOutcome {
+    fn exited(&self) -> Option<ExitStatus> {
+        match self {
+            Self::Exited(status) => Some(*status),
+            _ => None,
+        }
+    }
+}
+
+/// 在后台线程里把一个管道读到 EOF,整段文本从 channel 送回。
+fn collect_to_end<R: Read + Send + 'static>(source: R) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut text = String::new();
+        drain_lines(source, |line| {
+            text.push_str(&line);
+            text.push('\n');
+        });
+        let _ = tx.send(text);
+    });
+    rx
+}
+
+fn wait_for_exit(child: &mut Child, budget: Duration) -> WaitOutcome {
     let deadline = Instant::now() + budget;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
+            Ok(Some(status)) => return WaitOutcome::Exited(status),
             Ok(None) => {}
             Err(e) => {
-                log::warn!("[supervisor] try_wait 失败: {e}");
-                return None;
+                log::warn!("[supervisor] try_wait 失败,进程状态不可知: {e}");
+                return WaitOutcome::Unknown;
             }
         }
         if Instant::now() >= deadline {
-            return None;
+            return WaitOutcome::StillRunning;
         }
         thread::sleep(Duration::from_millis(25));
     }
 }
 
+/// 收尸:句柄杀恒可用(不受 pid 复用影响);只有**确认仍在运行**才追加按 pid 的 taskkill 收树。
+fn terminate(child: &mut Child, outcome: &WaitOutcome) {
+    match outcome {
+        WaitOutcome::Exited(_) => {}
+        WaitOutcome::StillRunning => {
+            kill_tree(child.id());
+            let _ = child.kill();
+        }
+        WaitOutcome::Unknown => {
+            let _ = child.kill();
+        }
+    }
+    let _ = child.wait();
+}
+
 /// 错误路径的统一收尾。`Child` 的 drop **不**杀进程,任何提前 return 都必须先走这里,
 /// 否则就正好制造出 I3 要杜绝的无主子进程。
 fn abandon(mut child: Child, stdin: Option<ChildStdin>) {
-    let pid = child.id();
     drop(stdin);
-    if wait_for_exit(&mut child, SHUTDOWN_GRACE).is_none() {
-        kill_tree(pid);
-        let _ = child.kill();
-    }
-    let _ = child.wait();
+    let outcome = wait_for_exit(&mut child, SHUTDOWN_GRACE);
+    terminate(&mut child, &outcome);
 }
 
 #[cfg(windows)]
@@ -717,13 +799,11 @@ mod tests {
 
         drop(job); // 关掉最后一个 job 句柄 = 触发连坐
 
-        let terminated = wait_for_exit(&mut child, Duration::from_secs(5)).is_some();
+        let outcome = wait_for_exit(&mut child, Duration::from_secs(5));
+        let terminated = outcome.exited().is_some();
         // 连坐没生效时这个 node 会一直活着,`child.wait()` 就会**永久悬挂**——
         // 断言失败必须失败得干脆,不能变成挂死的假绿(先收尸再断言)。
-        if !terminated {
-            let _ = child.kill();
-        }
-        let _ = child.wait();
+        terminate(&mut child, &outcome);
         assert!(
             terminated,
             "job 句柄关闭后 5s 内子进程仍在跑 —— KILL_ON_JOB_CLOSE 没生效,I1 是假的"
@@ -736,5 +816,48 @@ mod tests {
         let entry = host_entry(Path::new("C:/app/resources"));
         let text = entry.to_string_lossy().replace('\\', "/");
         assert!(text.ends_with("host/server/index.mjs"), "got {text}");
+    }
+
+    /// C1:探测必须有时限。`probe_node` 的全部时限就来自 `wait_for_exit(_, PROBE_TIMEOUT)`,
+    /// 这里拿一个永不自退的进程验证两件事:预算到点必返回 `StillRunning`(不是无限等),
+    /// 且 `terminate` 真收得掉尸。原来的 `cmd.output()` 在这种进程上会永久阻塞 —— 而它跑在
+    /// setup 钩子里,阻塞 = 永久白窗,连错误页都渲染不出来。
+    #[cfg(windows)]
+    #[test]
+    fn wait_for_exit_is_bounded_and_terminate_reaps() {
+        let mut child = Command::new("node")
+            .args(["-e", "setInterval(() => {}, 1000)"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn node");
+        let pid = child.id();
+
+        let started = Instant::now();
+        let outcome = wait_for_exit(&mut child, Duration::from_millis(300));
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(outcome, WaitOutcome::StillRunning),
+            "永不自退的进程应判定为 StillRunning"
+        );
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "预算 300ms 却等了 {elapsed:?} —— 时限没生效"
+        );
+
+        terminate(&mut child, &outcome);
+        assert!(!process_alive(pid), "terminate 之后 pid={pid} 仍在");
+    }
+
+    /// 真去问系统,不靠 `Child` 自己的记账 —— 验证"孙进程/被 taskkill 的进程"必须这样查。
+    #[cfg(windows)]
+    fn process_alive(pid: u32) -> bool {
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .expect("tasklist");
+        String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
     }
 }
