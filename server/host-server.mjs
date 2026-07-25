@@ -162,6 +162,10 @@ export function createHostServer({
       }
 
       if (!applyCors(request, response, origins)) {
+        // 打出被拒的 Origin:CORS 失败在浏览器端只表现为"请求没成功",不打日志就只能靠猜——
+        // 而猜 origin 的代价是"猜不准就放宽多个",直接削弱 DNS-rebinding 防线。
+        // (P1 T8 正是靠这行实测捕获生产 WebView 的真实 Origin。)
+        console.warn(`[opencli-host] rejected Origin: ${requestOrigin(request) ?? '(none)'} (allowed: ${[...origins].join(', ')})`)
         writeJson(response, 403, { error: 'Origin is required and must be allowed' })
         return
       }

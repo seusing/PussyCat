@@ -431,7 +431,17 @@ pub fn start_host(entry: &Path) -> Result<HostHandle, HostStartError> {
     cmd.arg(entry)
         .env("OPENCLI_HOST_PORT", "0")
         // 通道 2 开关(I2):Host 见到它才装 stdin EOF 看门狗;不设时行为与 npm run dev:server 一致。
-        .env("OPENCLI_HOST_PARENT_WATCH", "1")
+        .env("OPENCLI_HOST_PARENT_WATCH", "1");
+
+    // CORS 白名单(spec §7):**只放实测到的那一个 origin**,不猜、不"多写几个保险"——
+    // 放宽 origin 会直接削弱 P0-B 的 DNS-rebinding 防线。
+    // 生产 WebView 的 origin 由 T8 用打包产物实测捕获:`http://tauri.localhost`
+    // (证据:日志 `rejected Origin: http://tauri.localhost`)。
+    // 调试构建走 devUrl(http://localhost:5173),沿用 Host 自身的默认白名单,两种形态不混用。
+    #[cfg(not(debug_assertions))]
+    cmd.env("OPENCLI_HOST_ALLOWED_ORIGINS", "http://tauri.localhost");
+
+    cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
