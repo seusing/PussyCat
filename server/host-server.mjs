@@ -32,11 +32,17 @@ class SseBroker {
     const lastId = Number.parseInt(lastEventId ?? '0', 10)
     if (Number.isFinite(lastId) && lastId > 0) {
       const oldest = this.events[0]
-      // 缺口检测:请求续传的位置早于缓冲最老事件 → 中间那段已被驱逐,必须显式告知而非静默丢失
-      if (oldest && oldest.id > lastId + 1) {
-        const gap = { from: lastId + 1, to: oldest.id - 1 }
+      // 缺口检测两支(评审 I-3:原版只查驱逐,漏了生产里更常见的重启):
+      //  ① evicted —— 续传位置早于缓冲最老事件,中间那段已被 shift 驱逐
+      //  ② restart —— 客户端游标 >= nextId,即服务端重启后 id 归 1(缓冲空亦落此支);此时丢失区间未知
+      const restarted = lastId >= this.nextId
+      const evicted = !restarted && !!oldest && oldest.id > lastId + 1
+      if (restarted || evicted) {
+        const gap = restarted
+          ? { reason: 'restart', from: 1, to: null }
+          : { reason: 'evicted', from: lastId + 1, to: oldest.id - 1 }
         response.write(`event: gap\ndata: ${JSON.stringify(gap)}\n\n`)   // 无 id 行:不打乱续传游标
-        console.warn(`[opencli-host] SSE replay gap: events ${gap.from}-${gap.to} were evicted (bufferSize=${this.bufferSize})`)
+        console.warn(`[opencli-host] SSE replay gap (${gap.reason}): client resumed at ${lastId}, lost ${gap.from}-${gap.to ?? '?'} (bufferSize=${this.bufferSize})`)
       }
       for (const event of this.events) {
         if (event.id > lastId) this.#write(response, event)

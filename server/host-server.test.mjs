@@ -239,6 +239,21 @@ describe('Node Host HTTP/SSE', () => {
     expect(allIds).toEqual([1, 2, 3, 4])                          // 无漏,完整全集(3 output + 1 done)
   })
 
+  it('SSE 补发缺口:服务端重启(客户端游标超前)同样告知 reason=restart(评审 I-3)', async () => {
+    // 新 server 的 nextId=1;客户端带着上个进程的 Last-Event-ID 重连 → 游标超前 = 重启丢段。
+    // 原实现只查「驱逐」(需 events 非空),这一支会静默漏报——而重启恰是生产里最常见的丢段场景。
+    const { baseUrl } = await setup()
+    const reconnect = await fetch(`${baseUrl}/events`, {
+      headers: { Origin: origin, 'Last-Event-ID': '99' },
+    })
+    expect(reconnect.status).toBe(200)
+    const events = await readSseEvents(reconnect, 1)
+    expect(events[0].type).toBe('gap')
+    expect(events[0].data).toEqual({ reason: 'restart', from: 1, to: null })
+    expect(events[0].id).toBeUndefined()               // 同样不带 id,不打乱续传游标
+    expect(events[0].raw).not.toMatch(/^id: /m)
+  })
+
   it('SSE 补发缺口:被驱逐的事件段以 gap 事件显式告知(不再静默丢失)', async () => {
     // bufferSize=2:一个 run 产生 4 个事件(3 output + 1 done,id 1..4)后,环形缓冲只剩最后 2 个(id 3,4);
     // id 1、2 已被驱逐——重连时若不显式告知,客户端将静默漏收这段。
@@ -264,7 +279,7 @@ describe('Node Host HTTP/SSE', () => {
 
     // ① gap 事件正确:from===lastId+1(=2),to===缓冲最老 id-1(缓冲最老为 id3,故 to=2)
     expect(events[0].type).toBe('gap')
-    expect(events[0].data).toEqual({ from: 2, to: 2 })
+    expect(events[0].data).toEqual({ reason: 'evicted', from: 2, to: 2 })
     // ② gap 帧不含 id: 行(不打乱续传游标)
     expect(events[0].id).toBeUndefined()
     expect(events[0].raw).not.toMatch(/^id: /m)
