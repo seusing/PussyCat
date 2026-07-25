@@ -234,6 +234,15 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     expect(document.activeElement).toBe(search)                        // ① 未 blur
   })
 
+  test('keyCode 229(IME 合成键)同样让路(P3 防御)', async () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+    const search = await screen.findByTestId('nav-search')
+    search.focus()
+    keydown({ key: 'Escape', keyCode: 229 })
+    expect(document.activeElement).toBe(search)     // 未 blur
+  })
+
   test('IME composing 时 Ctrl+Enter 不起跑(复审 F1)', async () => {
     useAppStore.setState({ catalogStatus: 'ready' })
     render(<App />)

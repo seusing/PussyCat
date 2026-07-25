@@ -74,7 +74,7 @@ export default function App({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.altKey) return   // AltGr(=Ctrl+Alt)是欧洲键盘真实字符输入,任何热键不得劫持(终审 M-1)
-      if (event.isComposing) return   // IME 组合输入中:三键全部让路(选词回车不得误起跑;复审 F1)
+      if (event.isComposing || event.keyCode === 229) return   // IME 组合输入中:三键全部让路(229 是 IME 合成键的历史约定,配 isComposing 双保险;复审 F1+P3)
       const mod = event.ctrlKey || event.metaKey
       if (mod && !event.shiftKey && (event.key === 'k' || event.key === 'K')) {   // 排除 Ctrl+Shift+K(浏览器 DevTools);'K' 保留给 CapsLock
         event.preventDefault()                                   // 压掉浏览器默认(地址栏搜索)
