@@ -29,7 +29,8 @@ export default function App({
   host: injectedHost,
   catalogSource: injectedSource,
   mode = 'demo',
-}: { host?: HostBridge; catalogSource?: CatalogSource; mode?: 'demo' | 'connected' } = {}) {
+  baseUrl,
+}: { host?: HostBridge; catalogSource?: CatalogSource; mode?: 'demo' | 'connected'; baseUrl?: string } = {}) {
   const host = useMemo(() => injectedHost ?? createMockHost(), [injectedHost])
   const catalogSource = useMemo(() => injectedSource ?? snapshotCatalogSource(), [injectedSource])
   const setCommands = useAppStore((s) => s.setCommands)
@@ -149,6 +150,7 @@ export default function App({
         catalogError={catalogError}
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
         headerActions={<CatalogRefresh refresh={refresh} onRefresh={onRefreshCatalog} />}
+        baseUrl={baseUrl}
       />
       <UndoToast />
     </div>

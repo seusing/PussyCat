@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { HealthPill } from './HealthPill'
 
-export default function AppShell({ nav, config, runs, catalogStatus, catalogError, onRetryCatalog, headerActions }: {
+export default function AppShell({ nav, config, runs, catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl }: {
   nav: ReactNode
   config: ReactNode
   runs: ReactNode
@@ -9,6 +9,7 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
   catalogError?: string
   onRetryCatalog: () => void
   headerActions?: ReactNode
+  baseUrl?: string
 }) {
   return (
     <div className="flex h-screen flex-col">
@@ -16,7 +17,7 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
         <div className="font-semibold">OpenCLI App</div>
         <div className="flex items-center gap-3">
           {headerActions}
-          <HealthPill />
+          <HealthPill baseUrl={baseUrl} />
         </div>
       </header>
 

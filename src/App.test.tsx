@@ -4,7 +4,7 @@ import App from './App'
 import { useAppStore } from './store/appStore'
 import type { CommandManifest } from './data/types'
 import type { HostBridge, RunRequest } from './host/types'
-import type { CatalogSource } from './host'
+import { liveCatalogSource, type CatalogSource } from './host'
 import { createNodeBridgeHost, type EventSourceLike } from './host/nodeBridgeHost'
 import { normalizeHostError } from './App'
 import { HostRequestError } from './host/errors'
@@ -332,4 +332,54 @@ test('真跨层集成:真实 NodeBridge 收 403 错误体 → RunPanel summary �
   const detail = screen.getByTestId('error-detail')
   expect(detail).toHaveTextContent('x/y')
   expect(detail.textContent).not.toContain('HostRequestError')              // 不是 JS stack
+})
+
+// P1 Task7 验收命门:boot 注入的 baseUrl 必须经 props 贯穿 host/catalogSource/HealthPill 全线,
+// 而不是 HealthPill 自己另读 env 回落 43117(那正是"目录能加载、顶栏却显示离线"的假离线 bug 根因)。
+class RecordingEventSource implements EventSourceLike {
+  readyState = 1   // 立即 open:ensureOpen 同步落定(同 nodeBridgeHost.test.ts 既有惯例)
+  constructor(public url: string) {}
+  addEventListener() {}
+  removeEventListener() {}
+  close() {}
+}
+
+test('五端点同端口:注入的 baseUrl 经 props 贯穿到 host/catalogSource/HealthPill,/health /catalog /events /start /cancel 全部同源(P1 Task7 验收命门,不得弱化)', async () => {
+  const baseUrl = 'http://127.0.0.1:54321'
+  const urls: string[] = []
+
+  const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    urls.push(url)
+    if (url.endsWith('/health')) return Promise.resolve({ ok: true } as Response)
+    // commands 含 cmd(x/go):setCommands 内部 reconcileSelection 按新列表核对 selected,
+    // 列表不含 x/go 会把 selected 顶成 undefined(appStore.ts reconcileSelection),run-button 消失
+    if (url.endsWith('/catalog')) return Promise.resolve({ ok: true, json: async () => SNAP({ commands: [cmd] }) } as Response)
+    if (url.endsWith('/start')) {
+      const body = init?.body ? (JSON.parse(String(init.body)) as { runId?: string }) : {}
+      return Promise.resolve({ ok: true, status: 202, json: async () => ({ runId: body.runId }) } as Response)
+    }
+    if (url.endsWith('/cancel')) return Promise.resolve({ ok: true, status: 204, json: async () => undefined } as Response)
+    return Promise.resolve({ ok: false, status: 404, json: async () => undefined } as Response)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  const host = createNodeBridgeHost({
+    baseUrl,
+    eventSourceFactory: (url) => { urls.push(url); return new RecordingEventSource(url) },
+  })
+  const catalogSource = liveCatalogSource(baseUrl)
+
+  useAppStore.setState({ catalogStatus: 'ready', selected: cmd, values: {}, currentRun: undefined })
+  render(<App host={host} catalogSource={catalogSource} mode="connected" baseUrl={baseUrl} />)
+
+  await userEvent.click(screen.getByTestId('run-button'))
+  await waitFor(() => expect(screen.getByTestId('cancel-button')).toBeInTheDocument())
+  await userEvent.click(screen.getByTestId('cancel-button'))
+
+  const endpoints = ['/health', '/catalog', '/events', '/start', '/cancel']
+  await waitFor(() => {
+    endpoints.forEach((ep) => expect(urls.some((u) => u.startsWith(`${baseUrl}${ep}`))).toBe(true))
+  })
+  // 命门断言:五端点全部同一 baseUrl,零例外——弱化此断言即放过"假离线"回归
+  urls.forEach((u) => expect(u.startsWith(`${baseUrl}/`)).toBe(true))
 })

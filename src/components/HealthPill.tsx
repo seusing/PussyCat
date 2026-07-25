@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store/appStore'
+import { DEFAULT_BASE_URL } from '../host/nodeBridgeHost'
 
-const DEFAULT_NODE_HOST_URL = 'http://127.0.0.1:43117'
 const PING_INTERVAL_MS = 5000
 const PING_TIMEOUT_MS = 2000
 
 type HealthState = 'checking' | 'online' | 'offline'
 
-export function HealthPill() {
+// baseUrl 单一事实源经 props 贯穿(main.tsx → App → AppShell → HealthPill);不再自读
+// import.meta.env——那是"目录能加载、顶栏却显示离线"假离线 bug 的根因(随机端口下 env 与
+// 真实 boot 端口不一致)。缺省仍回落 DEFAULT_BASE_URL,供 demo 模式与既有测试。
+export function HealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   const mode = useAppStore((s) => s.mode)
   const demo = mode === 'demo'
   // 三态:首 ping 落定前显「检查中…」,消灭乐观默认的假「已连接」窗口(块 C 设计 §3)
@@ -17,7 +20,7 @@ export function HealthPill() {
   useEffect(() => {
     if (mode !== 'connected') return
     setState('checking')
-    const base = (import.meta.env.VITE_NODE_HOST_URL as string | undefined) ?? DEFAULT_NODE_HOST_URL
+    const base = baseUrl ?? DEFAULT_BASE_URL
     let inflight: AbortController | undefined
 
     const ping = () => {
@@ -39,7 +42,7 @@ export function HealthPill() {
       inflight?.abort()
       clearInterval(id)
     }
-  }, [mode])
+  }, [mode, baseUrl])
 
   const label = demo ? '演示模式' : state === 'checking' ? '检查中…' : state === 'online' ? '已连接' : 'Host 离线'
   const color = demo ? 'var(--color-warning)' : state === 'checking' ? 'var(--color-fg-dim)' : state === 'online' ? 'var(--color-success)' : 'var(--color-danger)'
