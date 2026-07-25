@@ -220,3 +220,13 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     expect(document.activeElement).toBe(search)                        // ① 未 blur
   })
 })
+
+test('AltGr(Ctrl+Alt) 与 Ctrl+Shift 组合不被热键劫持(终审 M-1)', async () => {
+  useAppStore.setState({ catalogStatus: 'ready' })
+  render(<App />)
+  const search = await screen.findByTestId('nav-search')
+  fireEvent.keyDown(window, { key: 'k', ctrlKey: true, altKey: true })
+  expect(document.activeElement).not.toBe(search)
+  fireEvent.keyDown(window, { key: 'K', ctrlKey: true, shiftKey: true })
+  expect(document.activeElement).not.toBe(search)
+})

@@ -54,3 +54,30 @@ test('a11y:role=status + aria-live=polite', () => {
   expect(pill).toHaveAttribute('role', 'status')
   expect(pill).toHaveAttribute('aria-live', 'polite')
 })
+
+test('ping 返回非 2xx(ok:false) → Host 离线(终审 I-1 护栏恢复)', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+  useAppStore.setState({ mode: 'connected' })
+  render(<HealthPill />)
+  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('Host 离线'))
+})
+
+test('demo 模式不发 ping(终审 I-1 护栏恢复)', () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  render(<HealthPill />)   // mode 默认 demo
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+test('卸载 abort 在途 ping(spec §8 明列,终审 I-1)', () => {
+  let captured: AbortSignal | undefined
+  vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => {
+    captured = init?.signal as AbortSignal
+    return new Promise(() => {})
+  }))
+  useAppStore.setState({ mode: 'connected' })
+  const { unmount } = render(<HealthPill />)
+  expect(captured?.aborted).toBe(false)
+  unmount()
+  expect(captured?.aborted).toBe(true)
+})

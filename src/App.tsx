@@ -71,13 +71,14 @@ export default function App({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey) return   // AltGr(=Ctrl+Alt)是欧洲键盘真实字符输入,任何热键不得劫持(终审 M-1)
       const mod = event.ctrlKey || event.metaKey
-      if (mod && (event.key === 'k' || event.key === 'K')) {
+      if (mod && !event.shiftKey && (event.key === 'k' || event.key === 'K')) {   // 排除 Ctrl+Shift+K(浏览器 DevTools);'K' 保留给 CapsLock
         event.preventDefault()                                   // 压掉浏览器默认(地址栏搜索)
         searchInputRef.current?.focus()
         return
       }
-      if (mod && event.key === 'Enter') {
+      if (mod && !event.shiftKey && event.key === 'Enter') {
         event.preventDefault()
         submitFormRef.current?.()                                // 完整提交流程:字段错误显示+聚焦首错(P1-2)
         return
