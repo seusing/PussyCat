@@ -867,6 +867,90 @@ mod tests {
         );
     }
 
+    /// I1 的**真实形状**:spec §5 断言的是"内核连坐**整棵子树**",而真实链路是
+    /// Tauri → node(Host) → opencli(孙)。只验直接子进程会漏掉最要命的一种残留:
+    /// Host 死了、它派生的 opencli 还在跑。
+    ///
+    /// 关键时序:**先把父进程 assign 进 job,再让它派生孙进程** —— job 成员派生的子进程
+    /// 自动进同一个 job,这正是我们依赖的内核语义。所以父进程要等 stdin 上的信号才开工,
+    /// 免得它抢在 assign 之前就把孙生出来(那样孙确实会漏,但那是竞态不是语义)。
+    ///
+    /// 孙进程必须 `detached: true` + `unref()`:**实测本机上普通孙进程在父进程被杀时会跟着死**
+    /// (与 job 无关)。用普通孙进程写这个测试是**假绿** —— 它连"孙根本没进 job"都照样通过
+    /// (变异验证实证)。detached 孙进程能活过父之死(control 已验),于是"它死了"就只能是 job 干的。
+    #[cfg(windows)]
+    #[test]
+    fn kill_on_job_close_terminates_the_whole_subtree() {
+        use std::io::Write;
+
+        let job = job::KillOnCloseJob::create().expect("创建 job");
+        let script = "process.stdin.once('data', () => { \
+             const { spawn } = require('child_process'); \
+             const g = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: true }); \
+             g.unref(); \
+             console.log(g.pid); \
+             }); setInterval(() => {}, 1000)";
+        let mut child = Command::new("node")
+            .args(["-e", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn 父 node");
+        let child_pid = child.id();
+        job.assign(raw_process_handle(&child)).expect("assign 到 job");
+
+        // assign 完成后才放行:此刻起派生的孙进程一定在 job 里
+        let mut stdin = child.stdin.take().expect("stdin");
+        stdin.write_all(b"go\n").expect("write");
+        stdin.flush().ok();
+
+        let stdout = child.stdout.take().expect("stdout");
+        let (tx, rx) = mpsc::channel::<String>();
+        thread::spawn(move || {
+            drain_lines(stdout, |line| {
+                let _ = tx.send(line);
+            })
+        });
+        let grandchild_pid: u32 = rx
+            .recv_timeout(Duration::from_secs(15))
+            .expect("没等到孙进程 pid")
+            .trim()
+            .parse()
+            .expect("孙进程 pid 不是数字");
+        assert!(
+            process_alive(grandchild_pid),
+            "孙进程 {grandchild_pid} 还没起来,后面的断言证明不了任何事"
+        );
+
+        drop(job); // 关句柄 = 连坐
+
+        let outcome = wait_for_exit(&mut child, Duration::from_secs(5));
+        let child_gone = outcome.exited().is_some();
+        let mut grandchild_gone = false;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if !process_alive(grandchild_pid) {
+                grandchild_gone = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        // 先收尸再断言:连坐没生效时这俩会永远活着,别把失败变成悬挂 + 泄漏进程
+        terminate(&mut child, &outcome);
+        if !grandchild_gone {
+            kill_tree(grandchild_pid);
+        }
+
+        assert!(child_gone, "job 关闭后父进程 {child_pid} 仍在跑");
+        assert!(
+            grandchild_gone,
+            "job 关闭后**孙进程** {grandchild_pid} 仍在跑 —— 连坐没覆盖整棵子树,\
+             真实链路里这就是 Host 死了 opencli 还在跑"
+        );
+    }
+
     /// dist-host 必须镜像仓内相对拓扑(server 用相对 import,拍平必断)。
     #[test]
     fn host_entry_mirrors_dist_host_topology() {
