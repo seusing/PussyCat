@@ -104,6 +104,12 @@ export function createCatalogService({
 
   const doRefresh = async () => {
     if (closed) throw new CatalogServiceError(500, 'Catalog service is closed')
+    let manifestPath
+    try {
+      manifestPath = resolveManifest()   // fail-fast:缺 manifest 立即报,不必等 opencli list 跑满 15s(复审 F5)
+    } catch (error) {
+      throw new CatalogServiceError(500, 'Failed to resolve cli-manifest.json', error instanceof Error ? error.message : String(error))
+    }
     const listRaw = await runList()
     if (closed) throw new CatalogServiceError(500, 'Catalog service is closed')
     let list
@@ -113,12 +119,6 @@ export function createCatalogService({
       throw new CatalogServiceError(500, 'opencli list output is not valid JSON')
     }
     if (!Array.isArray(list)) throw new CatalogServiceError(500, 'opencli list output is not an array')
-    let manifestPath
-    try {
-      manifestPath = resolveManifest()          // 每次 refresh 现解析,失败不缓存(验收条件②)
-    } catch (error) {
-      throw new CatalogServiceError(500, 'Failed to resolve cli-manifest.json', error instanceof Error ? error.message : String(error))
-    }
     let manifestRaw
     let manifest
     try {

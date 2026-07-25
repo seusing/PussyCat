@@ -131,12 +131,13 @@ describe('CatalogService', () => {
 
   it('manifest 惰性:resolver 每次 refresh 调用,失败不缓存,文件出现后自愈(验收条件②)', async () => {
     let available = false
-    const { service, children } = setup({ resolveManifest: () => { if (!available) throw new Error('ENOENT'); return 'C:/fixture/cli-manifest.json' } })
-    const p1 = service.refresh(); emitSuccess(children[0])
+    const { service, children, spawnCalls } = setup({ resolveManifest: () => { if (!available) throw new Error('ENOENT'); return 'C:/fixture/cli-manifest.json' } })
+    const p1 = service.refresh()                                    // resolver 失败于 spawn 之前,本轮无子进程可 emit(复审 F5)
     await expect(p1).rejects.toMatchObject({ statusCode: 500 })
     expect(service.current()).toBeUndefined()                       // 失败不缓存也不落状态
+    expect(spawnCalls).toHaveLength(0)   // fail-fast:resolver 失败时根本没 spawn opencli list(复审 F5)
     available = true
-    const p2 = service.refresh(); emitSuccess(children[1])
+    const p2 = service.refresh(); emitSuccess(children[0])          // 本轮才是第一次真正 spawn
     await expect(p2).resolves.toMatchObject({ schemaVersion: 1 })   // 自愈
   })
 
