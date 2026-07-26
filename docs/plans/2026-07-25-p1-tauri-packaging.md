@@ -541,16 +541,22 @@ git commit -m "fix(tauri): 生产 WebView Origin 实测捕获后精确加白(不
 
 ### Task 9: 真机发布门（人工，controller 执行）
 
-**不写代码**。装 **MSI** 与 **NSIS** 两种包，逐条验并记录进 ledger：
+**不写代码**。装 **MSI** 与 **NSIS** 两种包，**每种包各跑一遍全表**，逐条验并记录进 ledger。
+
+**取证纪律（评审要求）**：每次验收都记下 ① 实际安装到的 exe 绝对路径 ② 主进程与 Host 的 pid **及各自 CommandLine**（`Get-CimInstance Win32_Process`）③ 退出码。只凭 pid 判存活会被 **pid 复用**骗，只凭"进程名没了"会被**上一轮残留**骗——两者都会把失败读成通过。
 
 - [ ] 安装后启动成功（**SxS 结论以此为准**）
 - [ ] 目录渲染 1278 命令 / 175 站点
 - [ ] 跑 `36kr/news` 出真实结果表
 - [ ] 关窗口 → 进程树验收：`node` 与 opencli 后代**全部消失**
-- [ ] `taskkill /F` 强杀主进程 → 复验子树同样消失（Job Object 通道）
+- [ ] `taskkill /F` 强杀主进程 → 复验子树同样消失
+      ⚠️ **这一条只证"猝死时子树确实消失"这个结果，证不了是哪条通道干的**——正常路径里 Job Object 与 stdin EOF 同时在场。stdin EOF 通道的证据在 `scripts/verify-parent-watch.mjs`（T8.5，带零假设对照组），本门不重复承担。
+- [ ] `node scripts/verify-parent-watch.mjs` → 对照组存活 + 实验组自退（对**将要发的那份 dist-host** 复跑一次）
 - [ ] **收藏重启持久化**：收藏站点/命令 → 完全退出 → 重开 → 收藏仍在
 - [ ] **运行闭环**：启动 → SSE 输出可见 → 取消 → 终态 `cancelled`
 - [ ] Node 缺失/过低场景（临时改 PATH）→ 引导视图正确显示
+
+**预期行为，不要记成缺陷**：启动期约 1s 无窗口（spec §10）。
 
 ## Self-review 记录
 
