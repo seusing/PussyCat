@@ -68,8 +68,10 @@ impl HostState {
 
 /// 预探测 node → 拉起 Host。两步的错误都落在同一个五(+1)分支枚举上(I5)。
 fn boot_host(app: &tauri::AppHandle) -> Result<HostHandle, HostStartError> {
-    let node_version = host_supervisor::probe_node()?;
-    log::info!("[supervisor] node {node_version}");
+    // 解析到的 node 绝对路径要**传给 start_host 复用**:探测一个 node、启动另一个 node
+    // 既是 M-10 的另一副面孔,也是诊断噩梦。
+    let (node, node_version) = host_supervisor::probe_node()?;
+    log::info!("[supervisor] node {node_version} @ {}", node.display());
     // 用 BaseDirectory::Resource 解析,不手工拼 resource 路径(spec §8)——
     // resource 根在 dev / 打包下位置不同,自己 join 迟早在某个形态上错。
     let entry = app
@@ -84,7 +86,7 @@ fn boot_host(app: &tauri::AppHandle) -> Result<HostHandle, HostStartError> {
                 host_supervisor::HOST_ENTRY_RESOURCE
             ),
         })?;
-    host_supervisor::start_host(&node_friendly(entry))
+    host_supervisor::start_host(&node, &node_friendly(entry))
 }
 
 /// tauri 的 resource 解析交回来的是 Windows **verbatim 路径**(`\\?\C:\…`),而 node 的模块

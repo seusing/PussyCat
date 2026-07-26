@@ -205,3 +205,9 @@ per-user 安装，安装目录与应用本体同属当前用户可写；能投�
 经校验的绝对路径，并让版本探测与 Host 启动复用同一个解析结果；回归测试需放置同目录诱饵
 `node.exe`，证明它不再被命中。同轮一并审计生产路径里的未限定系统命令（当前还有
 `Command::new("taskkill")`），避免只修 Node 而留下同类搜索序入口。
+
+> **后续（2026-07-26 同日）**：上述处置未等到签名/更新阶段，已在分支 `p1b/security-unqualified-commands` 实施。
+> 生产路径共三处未限定命令（`node` ×2 + `taskkill` ×1，其余 `node`/`tasklist` 均在 `cfg(test)` 内），一并修完：
+> Node 经 `resolve_program` 只从 PATH 解析成绝对路径并由 `probe_node` → `start_host` 复用同一结果；
+> `taskkill` 解析到 System32 绝对路径。同目录诱饵回归测试已就位并变异验证（摘掉应用目录跳过 → 断言「应用目录里的诱饵被选中了」如期变红）。
+> 本节其余内容保留为当时的裁决记录，不改写。

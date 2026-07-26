@@ -27,9 +27,10 @@ compile_error!(
 );
 
 use std::collections::VecDeque;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{BufRead, BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -340,12 +341,68 @@ fn parse_verdict(line: &str) -> Verdict {
 /// resource 根在 dev / 打包 / 各平台下位置不同,自己 join 迟早在某个形态上错。
 pub const HOST_ENTRY_RESOURCE: &str = "host/server/index.mjs";
 
+#[cfg(windows)]
+const NODE_EXE: &str = "node.exe";
+#[cfg(not(windows))]
+const NODE_EXE: &str = "node";
+
+/// 把外部程序名解析成**绝对路径**,再交给 `Command`。
+///
+/// 未限定的名字会走 Windows 的搜索序,而那个序里**应用自身目录排在 PATH 之前**——
+/// 2026-07-26 用最小 Rust 程序实证过(`docs/releases/2026-07-26-p1-a-tauri-packaging-t9.md` §9):
+/// 与 launcher 同目录的 `node.exe` 确实顶掉了 `C:\Program Files\nodejs\node.exe`。
+/// per-user NSIS 装在 `%LOCALAPPDATA%`,安装目录与应用本体同属当前用户可写,所以这不是理论问题。
+///
+/// 本函数只认 PATH 里的条目,并且:
+/// * **只接受绝对路径候选** —— 这一条是承重的。Windows 把 PATH 里的空项(`;;`、首尾分号)
+///   当作"当前目录",空项拼出来的候选是相对路径 `node.exe`,在这里当场出局;
+///   驱动器相对写法(`C:node.exe`)同理。相对路径交给 `Command` 等于没修。
+///   (原本还写了一条"跳过空条目"的显式分支,变异实测证明它被本条完全覆盖 —— 删掉了:
+///    没有任何测试能区分的"防御"只会烂掉。)
+/// * **跳过应用自身目录** —— 纵深防御:哪怕它真出现在 PATH 里也不采信。
+fn resolve_program(exe: &str, path_var: &OsStr, app_dir: Option<&Path>) -> Option<PathBuf> {
+    for dir in std::env::split_paths(path_var) {
+        if app_dir.is_some_and(|app| app == dir) {
+            continue;
+        }
+        let candidate = dir.join(exe);
+        if candidate.is_absolute() && candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn app_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok()?.parent().map(Path::to_path_buf)
+}
+
+/// 解析系统 Node。找不到即分支①(`NodeMissing`),与探测失败共用同一种文案。
+fn resolve_node() -> Result<PathBuf, HostStartError> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    resolve_program(NODE_EXE, &path, app_dir().as_deref()).ok_or_else(|| HostStartError::NodeMissing {
+        detail: format!("PATH 里找不到 {NODE_EXE}(应用自身目录不参与解析,见 M-10)"),
+    })
+}
+
+/// 系统自带工具 → System32 绝对路径。
+///
+/// 这里信任 `SystemRoot` 环境变量。取舍写明:能改我们进程环境的攻击者本来就能改 PATH,
+/// 那是比 M-10(往应用目录丢一个文件)**更强**的能力;而 M-10 这条路已被绝对化彻底堵死。
+/// 为了再挡住更强的那种能力而引入一段 `GetSystemDirectoryW` 的 unsafe FFI,收益不抵复杂度。
+#[cfg(windows)]
+fn system_tool(exe: &str) -> PathBuf {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| OsString::from(r"C:\Windows"));
+    Path::new(&root).join("System32").join(exe)
+}
+
 /// 预探测 `node --version`(分支①②)。
 ///
-/// 返回探测到的版本串(计划里写的是 `Result<(), _>`;返回版本是无损超集,启动日志与
-/// T6 的诊断都要它)。
-pub fn probe_node() -> Result<String, HostStartError> {
-    let mut cmd = Command::new("node");
+/// 返回**解析到的 node 绝对路径**与版本串。路径要一并返回,是为了让 `start_host` 复用同一个
+/// 解析结果 —— 探测一个 node、启动另一个 node,既是 M-10 的另一副面孔,也是诊断噩梦。
+pub fn probe_node() -> Result<(PathBuf, String), HostStartError> {
+    let node = resolve_node()?;
+    let mut cmd = Command::new(&node);
     cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -407,7 +464,7 @@ pub fn probe_node() -> Result<String, HostStartError> {
             required: NODE_REQUIRED,
         });
     }
-    Ok(found)
+    Ok((node, found))
 }
 
 fn parse_major(version: &str) -> Option<u32> {
@@ -427,6 +484,10 @@ fn parse_major(version: &str) -> Option<u32> {
 /// Host 会读的**全部**环境变量,与 `server/` 里的 `process.env.OPENCLI_HOST_*` 一一对应。
 /// 由 `host_env_surface_is_fully_pinned` 扫源码守护:将来在 server 里新增读取点却忘了在这里
 /// 决定它,那条测试会红 —— 手写清单不加守护迟早腐烂。
+///
+/// 只被守卫测试消费,故 `cfg(test)`;放在 `configure_host_env` 旁边而不是塞进 tests 模块,
+/// 是为了改那个函数的人一眼看见这份契约清单。
+#[cfg(test)]
 const HOST_ENV_KEYS: &[&str] = &[
     "OPENCLI_HOST_PORT",
     "OPENCLI_HOST_ADDRESS",
@@ -472,10 +533,12 @@ fn configure_host_env(cmd: &mut Command) {
         .env_remove("OPENCLI_HOST_MAX_CONCURRENT_RUNS");
 }
 
-pub fn start_host(entry: &Path) -> Result<HostHandle, HostStartError> {
-    log::info!("[supervisor] 启动 Host: node {}", entry.display());
+/// `node` 必须是 [`probe_node`] 解析出来的**绝对路径**:探测一个 node、启动另一个 node
+/// 既是 M-10 的另一副面孔,也是诊断噩梦。
+pub fn start_host(node: &Path, entry: &Path) -> Result<HostHandle, HostStartError> {
+    log::info!("[supervisor] 启动 Host: {} {}", node.display(), entry.display());
 
-    let mut cmd = Command::new("node");
+    let mut cmd = Command::new(node);
     cmd.arg(entry);
     configure_host_env(&mut cmd);
 
@@ -800,7 +863,10 @@ fn abandon(mut child: Child, stdin: Option<ChildStdin>) {
 /// 按 pid 收整棵树。**只在确认进程仍在运行时调用**(见 [`WaitOutcome`]):pid 会被系统复用。
 fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
-    let status = Command::new("taskkill")
+    // 绝对路径(M-10):`taskkill` 是收尸路径 —— 被同目录同名 exe 顶掉的话,不只是执行了
+    // 别人的代码,还会让进程清理**静默失败**(假 taskkill 返回成功、孤儿留在原地),
+    // 正好架空 I1/I2 这两条整个阶段绕着建的不变式。
+    let status = Command::new(system_tool("taskkill.exe"))
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1113,6 +1179,76 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    fn test_node() -> std::path::PathBuf {
+        resolve_node().expect("测试机上必须有可解析的 node")
+    }
+
+    /// M-10:未限定的程序名会走 Windows 搜索序,**应用自身目录排在 PATH 之前**(已实证)。
+    /// 解析器只认 PATH 条目,且必须挡住两条把"目录劫持"请回来的暗门。
+    #[test]
+    fn resolve_program_only_trusts_absolute_path_entries() {
+        let root = std::env::temp_dir().join("opencli-resolve-tests");
+        let real = root.join("real");
+        let app = root.join("app");
+        let decoy_only = root.join("empty");
+        for dir in [&real, &app, &decoy_only] {
+            std::fs::create_dir_all(dir).expect("建目录");
+        }
+        std::fs::write(real.join(NODE_EXE), b"").expect("写真 node");
+        std::fs::write(app.join(NODE_EXE), b"").expect("写应用目录里的诱饵");
+
+        let join = |dirs: &[&Path]| {
+            std::env::join_paths(dirs.iter().map(|d| d.as_os_str())).expect("拼 PATH")
+        };
+
+        // ① 正常命中,且必须是绝对路径。
+        let found = resolve_program(NODE_EXE, &join(&[&decoy_only, &real]), None).expect("该找到");
+        assert_eq!(found, real.join(NODE_EXE));
+        assert!(found.is_absolute());
+
+        // ② **空条目**:Windows 把 PATH 里的空项当作"当前目录"。承重的是"只接受绝对候选":
+        //    空项拼出来的是相对路径 `node.exe`,当场出局。
+        let mut with_empty = OsString::from(";");
+        with_empty.push(real.as_os_str());
+        let found = resolve_program(NODE_EXE, &with_empty, None).expect("该找到");
+        assert!(found.is_absolute(), "空 PATH 条目被当成了当前目录: {found:?}");
+        assert_eq!(found, real.join(NODE_EXE));
+        // 只有空条目时必须是 None,而不是回落到某个相对路径。
+        assert!(resolve_program(NODE_EXE, OsStr::new(";;"), None).is_none());
+        // 驱动器相对写法(`C:node.exe`)同样不是绝对路径,不能采信。
+        assert!(resolve_program(NODE_EXE, OsStr::new("C:"), None).is_none());
+        //
+        // 诚实标注:这两条断言在**当前工作目录恰好放着 node.exe** 时才具备完全的判别力
+        //(相对候选会真的命中)。制造那个条件要改进程级 CWD,而 CWD 是全进程共享的 ——
+        // 并行跑的其他用例正靠它解析 `Command::new("node")`,改了会互相污染。
+        // 故此处不追求"摘掉 is_absolute 必红",承重逻辑靠上面 ① 的绝对性断言 + 代码注释锁定。
+
+        // ③ 纵深防御:应用自身目录即便真的排在 PATH 前面也不采信。
+        let found = resolve_program(NODE_EXE, &join(&[&app, &real]), Some(&app)).expect("该找到");
+        assert_eq!(found, real.join(NODE_EXE), "应用目录里的诱饵被选中了");
+
+        // ④ 找不到就是找不到,不许回落到某个相对路径。
+        assert!(resolve_program(NODE_EXE, &join(&[&decoy_only]), None).is_none());
+    }
+
+    /// 系统自带工具必须解析到 System32 绝对路径 —— `taskkill` 是收尸路径,
+    /// 被同名 exe 顶掉会让进程清理**静默失败**,直接架空 I1/I2。
+    #[test]
+    #[cfg(windows)]
+    fn system_tools_resolve_under_system32() {
+        let taskkill = system_tool("taskkill.exe");
+        assert!(taskkill.is_absolute());
+        assert!(taskkill.is_file(), "System32 下没找到 taskkill.exe: {taskkill:?}");
+        assert!(
+            taskkill
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("system32"),
+            "{taskkill:?} 不在 System32 下"
+        );
+    }
+
     /// `abandon` 的**隔离**测试:错误路径的收尸逻辑本身,不借 Job Object 的力。
     ///
     /// 为什么必须单独测:下面那三条 `start_host` 分支测试**证不了 `abandon`**。实测变异过——
@@ -1214,7 +1350,7 @@ mod tests {
             "malformed.mjs",
             "process.stdout.write('opencliHostReady 但这不是 JSON\\n')\nsetInterval(() => {}, 1000)",
         );
-        let error = start_host(&entry).err().expect("畸形判定行必须失败");
+        let error = start_host(&test_node(), &entry).err().expect("畸形判定行必须失败");
         assert_eq!(error.kind(), "process-failed");
         assert_reaped(fake_host_pid(&entry), "畸形判定行");
     }
@@ -1223,7 +1359,7 @@ mod tests {
     #[cfg(windows)]
     fn start_host_reports_process_failed_when_host_exits_early() {
         let entry = fake_host_entry("early-exit.mjs", "process.exit(3)");
-        let error = start_host(&entry).err().expect("Host 提前退出必须失败");
+        let error = start_host(&test_node(), &entry).err().expect("Host 提前退出必须失败");
         assert_eq!(error.kind(), "process-failed");
         // 这一支进程本就已经死了,但仍要确认 supervisor 没把它当活的留着。
         assert_reaped(fake_host_pid(&entry), "提前退出");
@@ -1237,7 +1373,7 @@ mod tests {
             "process.stdout.write(JSON.stringify({ opencliHostReady: false, error: { summary: 'boom', detail: 'd' } }) + '\\n')\n\
              setInterval(() => {}, 1000)",
         );
-        let error = start_host(&entry).err().expect("协议内失败必须失败");
+        let error = start_host(&test_node(), &entry).err().expect("协议内失败必须失败");
         assert_eq!(error.kind(), "host-reported-failure");
         // 真 Host 打完这行会自退;这个假 Host **故意赖着不走**,以此证明收尸是 supervisor 做的。
         assert_reaped(fake_host_pid(&entry), "协议内失败");
