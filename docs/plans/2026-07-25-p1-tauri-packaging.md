@@ -545,16 +545,19 @@ git commit -m "fix(tauri): 生产 WebView Origin 实测捕获后精确加白(不
 
 **取证纪律（评审要求）**：每次验收都记下 ① 实际安装到的 exe 绝对路径 ② 主进程与 Host 的 pid **及各自 CommandLine**（`Get-CimInstance Win32_Process`）③ 退出码。只凭 pid 判存活会被 **pid 复用**骗，只凭"进程名没了"会被**上一轮残留**骗——两者都会把失败读成通过。
 
-- [ ] 安装后启动成功（**SxS 结论以此为准**）
-- [ ] 目录渲染 1278 命令 / 175 站点
-- [ ] 跑 `36kr/news` 出真实结果表
-- [ ] 关窗口 → 进程树验收：`node` 与 opencli 后代**全部消失**
-- [ ] `taskkill /F` 强杀主进程 → 复验子树同样消失
+**验收报告（证据全文）**：`docs/releases/2026-07-26-p1-a-tauri-packaging-t9.md`
+
+- [x] 安装后启动成功（**SxS 结论以此为准**）—— 用户从资源管理器真实安装，主进程与 Host 全部解析到真实 `%LOCALAPPDATA%`，命中容器路径的进程 0 个
+- [x] 目录渲染 1278 命令 / 175 站点 —— **Host 层已证**（`/catalog` 真刷新）；**UI 目视待补**
+- [x] 跑 `36kr/news` 出真实结果表 —— **Host 层已证**（142 output → `success`，真实条目）；**UI 表目视待补**
+- [x] 关窗口 → 进程树验收：`node` 与 opencli 后代**全部消失**
+- [x] `taskkill /F` 强杀主进程 → 复验子树同样消失（含 opencli 孙进程，10ms 内逮到后当场强杀）
       ⚠️ **这一条只证"猝死时子树确实消失"这个结果，证不了是哪条通道干的**——正常路径里 Job Object 与 stdin EOF 同时在场。stdin EOF 通道的证据在 `scripts/verify-parent-watch.mjs`（T8.5，带零假设对照组），本门不重复承担。
-- [ ] `node scripts/verify-parent-watch.mjs` → 对照组存活 + 实验组自退（对**将要发的那份 dist-host** 复跑一次）
-- [ ] **收藏重启持久化**：收藏站点/命令 → 完全退出 → 重开 → 收藏仍在
-- [ ] **运行闭环**：启动 → SSE 输出可见 → 取消 → 终态 `cancelled`
-- [ ] Node 缺失/过低场景（临时改 PATH）→ 引导视图正确显示
+- [x] `node scripts/verify-parent-watch.mjs` → 对照组存活 + 实验组自退（对**将要发的那份 dist-host** 复跑一次）
+- [ ] **收藏重启持久化**：收藏站点/命令 → 完全退出 → 重开 → 收藏仍在 —— 需 UI 操作
+- [x] **运行闭环**：启动 → SSE 输出可见 → 取消 → 终态 `cancelled`（Host 层；UI 目视待补）
+- [ ] Node 缺失/过低场景（临时改 PATH）→ 引导视图正确显示 —— 需 UI 目视
+- [ ] **MSI 包安装 + 全表复跑** —— `msiexec /qn` 返 1603 / Error 1925，per-machine 包需提权，非包缺陷
 
 **预期行为，不要记成缺陷**：启动期约 1s 无窗口（spec §10）。
 
