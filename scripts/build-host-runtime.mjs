@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { listHostSourceFiles } from './host-runtime-sources.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const out = join(root, 'dist-host')
@@ -23,10 +24,14 @@ cpSync(join(root, 'host-runtime/package-lock.json'), join(out, 'package-lock.jso
 execSync('npm ci --omit=dev', { cwd: out, stdio: 'inherit' })
 
 // 2) 镜像拓扑拷贝(server + src/shared + public 快照)
-cpSync(join(root, 'server'), join(out, 'server'), { recursive: true, filter: (p) => !p.endsWith('.test.mjs') })
-cpSync(join(root, 'src/shared'), join(out, 'src/shared'), { recursive: true, filter: (p) => !p.includes('.test.') })
-mkdirSync(join(out, 'public'), { recursive: true })
-cpSync(join(root, 'public/catalog.snapshot.json'), join(out, 'public/catalog.snapshot.json'))
+// 逐文件拷而不是 cpSync(recursive+filter):拷哪些文件由 host-runtime-sources.mjs 唯一定义,
+// verify-host-closure 照同一份定义反查 dist-host 是否与源码同步。两边各写一份过滤规则的话,
+// 规则一改就会让那道校验悄悄失效 —— 等于用一个假绿换掉另一个假绿。
+for (const { source, mirrored } of listHostSourceFiles(root)) {
+  const dest = join(out, mirrored)
+  mkdirSync(dirname(dest), { recursive: true })
+  cpSync(source, dest)
+}
 
 // 3) 全树 SHA-256 清单(校验用)
 function walk(dir, acc = []) {

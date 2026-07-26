@@ -8,6 +8,7 @@ import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from
 import { tmpdir } from 'node:os'
 import { dirname, join, parse, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { listHostSourceFiles } from './host-runtime-sources.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const distHost = join(root, 'dist-host')
@@ -152,6 +153,23 @@ try {
   }
   check('runtime-manifest 文件数一致', files.length === manifest.fileCount, `实际 ${files.length} / 清单 ${manifest.fileCount}`)
   check('runtime-manifest SHA-256 全部匹配', mismatch === 0, `不匹配 ${mismatch} 个`)
+
+  // 0.5) dist-host 是否**与仓内源码同步**。
+  // 上面两条只证"生成之后没被篡改",证不了"它跟源码是同一版" —— 对着一份陈旧的 dist-host
+  // 裸跑,上面照样全绿。发布路径有 beforeBuildCommand 兜着,但闸门本身能陈旧地绿就是下一个坑。
+  const byMirrored = new Map(manifest.files.map((e) => [e.path, e.sha256]))
+  const drifted = []
+  for (const { source, mirrored } of listHostSourceFiles(root)) {
+    const actual = createHash('sha256').update(readFileSync(source)).digest('hex')
+    const recorded = byMirrored.get(mirrored)
+    if (recorded === undefined) drifted.push(`${mirrored}(dist-host 里没有)`)
+    else if (recorded !== actual) drifted.push(mirrored)
+  }
+  check(
+    'dist-host 与仓内源码同步',
+    drifted.length === 0,
+    drifted.length ? `漂移 ${drifted.length} 个: ${drifted.slice(0, 5).join(', ')}${drifted.length > 5 ? ' …' : ''} —— 跑 npm run build:host` : '',
+  )
 
   // 1) 复制到无祖先 node_modules 的隔离目录
   cpSync(distHost, isolated, { recursive: true })
