@@ -127,7 +127,9 @@ taskkill /F 27456 (不带 /T) exit=0
 
 桌面控制权限（computer-use）曾申请，**用户拒绝**，未重试。
 
-**重要**：第 2–4 节的证据取自 `6af23ea` 时的安装包。终审修复（`1952bb5`）改动了运行时行为（`configure_host_env` 封死 Host 环境面），**安装包已从 HEAD 重新构建**（NSIS 5 336 448 B / MSI 9 640 146 B）；上表剩余项应在**新包**上完成。
+**重要**：第 2–4 节的证据取自 `6af23ea` 时的安装包；第 6 节取自终审修复
+`1952bb5`。M-10 与闭包同步闸随后又修改了运行时及打包输入。当前唯一候选包已在第 10 节
+从 `eecb23f` 重建；上表剩余项必须使用第 10 节记录的 SHA-256 对应产物。
 
 ---
 
@@ -211,3 +213,29 @@ per-user 安装，安装目录与应用本体同属当前用户可写；能投�
 > Node 经 `resolve_program` 只从 PATH 解析成绝对路径并由 `probe_node` → `start_host` 复用同一结果；
 > `taskkill` 解析到 System32 绝对路径。同目录诱饵回归测试已就位并变异验证（摘掉应用目录跳过 → 断言「应用目录里的诱饵被选中了」如期变红）。
 > 本节其余内容保留为当时的裁决记录，不改写。
+
+## 10. 第五轮：安全收口后的最终候选包（HEAD `eecb23f`）
+
+M-10 收口（`d14238c`）与 dist-host/源码同步硬闸（`eecb23f`）已合入 `main`。为保证
+人工发布门验证的正是最终代码，2026-07-26 重新执行：
+
+```text
+npm run tauri build
+```
+
+构建链包含前端 `tsc + vite build`、`build-host-runtime`、Rust release、NSIS 与 MSI；
+命令成功退出，总耗时约 228.3 秒。构建前后 Git 工作区均干净，Tauri CLI 没有写回跟踪文件。
+
+完整 provenance：
+
+```text
+Git HEAD: eecb23f9d0973961e445e351bc89e7acada854d9
+```
+
+| 产物 | 字节数 | 生成时间（Asia/Shanghai） | SHA-256 |
+|---|---:|---|---|
+| `src-tauri/target/release/bundle/nsis/OpenCLI App Clone_0.1.0_x64-setup.exe` | 5,343,609 | 2026-07-26T19:22:48.0524334+08:00 | `163EBA7E1BE2BF70E516105FCEC75889E78281D4F36E3109342BE2C8448DA285` |
+| `src-tauri/target/release/bundle/msi/OpenCLI App Clone_0.1.0_x64_en-US.msi` | 9,648,338 | 2026-07-26T19:23:06.3130000+08:00 | `4746DAA8461F282799A61513C1DF001A5D00829C4E6E9B29E1E2BAF1444FB2A1` |
+
+第 5 节四项人工发布门只认本节两个哈希对应的包：MSI 安装、目录 UI 目视、结果表 UI
+目视、收藏后完全退出并重开确认星标。早期安装包与本节哈希不一致时，其目视结果不计入最终门。
