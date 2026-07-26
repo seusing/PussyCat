@@ -168,3 +168,40 @@ OPENCLI_HOST_MAX_CONCURRENT_RUNS=999
 ## 8. 不变式 I2 的证据边界
 
 `taskkill /F` 只证明「父进程猝死时子树确实消失」这个**结果**，证不了是哪条通道起的作用——正常路径里 Job Object 与 stdin EOF 同时在场。stdin EOF 通道由 `scripts/verify-parent-watch.mjs` 单独证明（不建 Job Object 的站位父进程 + 零假设对照组）。两者相加才构成完整链条；仍未被任何自动化覆盖的一环是「Rust 侧确实持有写端且从不写入」，由本报告第 2/3 节「应用活着时 Host 不退、应用消亡时 Host 退」间接佐证。
+
+## 9. M-10：`Command::new("node")` 的 Windows 搜索序实证
+
+终审把这一项列为「待确认」：supervisor 以未限定路径的
+`std::process::Command::new("node")` 探测并启动 Node；若 Windows 优先搜索应用自身目录，
+安装目录旁的同名 `node.exe` 会先于 PATH 中的系统 Node 被执行。
+
+2026-07-26 用 Rust 1.97.1 做最小对照实验：
+
+1. 编译 `launcher.exe`，内部只执行 `Command::new("node").arg("--version").output()`。
+2. 在 `launcher.exe` 同目录放一个实验用 `node.exe`，只打印
+   `FAKE_NODE_FROM_APPLICATION_DIR` 和自身绝对路径。
+3. 从 launcher 目录之外的兄弟目录启动；PATH 中的 Node 明确为
+   `C:\Program Files\nodejs\node.exe`。
+4. 同一进程调用 `where.exe node.exe`，返回的仍是
+   `C:\Program Files\nodejs\node.exe`，确认实验用文件没有进入 PATH。
+
+实际输出：
+
+```text
+launcher=...\app\launcher.exe
+cwd=...\cwd
+where=C:\Program Files\nodejs\node.exe
+status=exit code: 0
+stdout=FAKE_NODE_FROM_APPLICATION_DIR
+fake_exe=...\app\node.exe
+```
+
+**裁决：M-10 成立。** Rust 标准库在本机 Windows 上的实际行为确实让应用目录中的
+`node.exe` 胜过 PATH Node；`probe_node` 与 `start_host` 当前都受此搜索序影响。
+
+**本阶段处置：接受并进入 P1-B 安全 backlog，不阻塞 P1-A 合并。** 当前 NSIS 是未签名的
+per-user 安装，安装目录与应用本体同属当前用户可写；能投放同目录 `node.exe` 的主体也能替换
+应用本体，未新增更高权限边界。后续引入代码签名、自动更新或机器级安装前，应把 Node 解析为
+经校验的绝对路径，并让版本探测与 Host 启动复用同一个解析结果；回归测试需放置同目录诱饵
+`node.exe`，证明它不再被命中。同轮一并审计生产路径里的未限定系统命令（当前还有
+`Command::new("taskkill")`），避免只修 Node 而留下同类搜索序入口。
