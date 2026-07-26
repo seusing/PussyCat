@@ -64,6 +64,25 @@ describe('readiness 协议', () => {
     const code = await new Promise((r) => child.once('exit', r))
     expect(code).not.toBe(0)
   }, 30000)
+
+  it('协议内失败 + 看门狗已挂:判定行完整,且仍以 1 退出(不因等排空而挂死)', async () => {
+    // failReady 改成"等 stdout 写入回调再退"(避免管道异步写被 process.exit 截断)之后,
+    // 能否退出就取决于回调与兜底定时器。这里刻意把 PARENT_WATCH 打开:stdin.resume() 会把
+    // 事件循环 ref 住 —— 只设 process.exitCode 而不显式 exit 的写法会在这一支上永久挂死,
+    // 对 supervisor 表现为 readiness-timeout(比丢判定行更糟)。断言退出码严格等于 1:
+    // 写成 not.toBe(0) 的话,超时返回的字符串也能过,等于没测。
+    const { child, firstJson } = startHost({
+      OPENCLI_HOST_CATALOG_PATH: 'C:/definitely/not/here.json',
+      OPENCLI_HOST_PARENT_WATCH: '1',
+    })
+    const ready = await firstJson.catch((e) => e)
+    expect(ready.opencliHostReady).toBe(false)
+    // 能解析成对象本身就是"判定行没被截断"的证据。
+    expect(typeof ready.error.summary).toBe('string')
+    const exited = new Promise((r) => child.once('exit', (code) => r(code)))
+    const timedOut = new Promise((r) => setTimeout(() => r('未在 3s 内退出'), 3000))
+    expect(await Promise.race([exited, timedOut])).toBe(1)
+  }, 30000)
 })
 
 describe('父进程存活通道(stdin EOF 看门狗)', () => {

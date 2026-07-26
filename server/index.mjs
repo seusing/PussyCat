@@ -27,8 +27,48 @@ const allowedOrigins = (process.env.OPENCLI_HOST_ALLOWED_ORIGINS
 // 机器可读启动判定(供 Tauri supervisor 消费):
 // 协议内失败是 Host 自知的合法响应形态,与"进程异常/非法 JSON"是不同分支——这里只负责把它说清楚。
 function failReady(summary, detail) {
-  process.stdout.write(`${JSON.stringify({ opencliHostReady: false, error: { summary, detail } })}\n`)
-  process.exit(1)
+  const line = `${JSON.stringify({ opencliHostReady: false, error: { summary, detail } })}\n`
+  // process.exit() 会丢掉 stdout 里尚未排空的部分(管道写并非在所有平台都同步)。判定行是
+  // supervisor 唯一的结构化线索:丢了它,"协议内失败"会被误判成 process-failed —— 两者给用户的
+  // 文案与排障方向完全不同。故等写入回调再退;另挂一个 unref 的兜底定时器,免得"永远排不空"
+  // 把进程挂死 —— 挂死会退化成 readiness-timeout,比丢判定行更糟。
+  process.exitCode = 1
+  process.stdout.write(line, () => process.exit(1))
+  setTimeout(() => process.exit(1), 500).unref()
+}
+
+// app 在启动成功前一直是 null:父进程可能死在它建成之前,shutdown 必须能应付那一刻。
+let app = null
+let closing = false
+async function shutdown() {
+  if (closing) return
+  closing = true
+  await app?.close()
+}
+
+// 父进程存活通道(spec §5 通道 2):Tauri 保留本进程 stdin 的写端且**从不写入**;
+// 父进程一旦消亡(含崩溃/被强杀),写端关闭 → 这里收到 EOF → 自行优雅退出。
+// 这条不依赖 Job Object,正是用来覆盖 Job 分配失败的场景。
+// 开关默认关闭:不设 OPENCLI_HOST_PARENT_WATCH 时一切行为与今天完全一致(npm run dev:server 不受影响)。
+//
+// 注册点在**一切初始化之前**(评审 P1)。诚实交代:今天 listen 之前的启动路径恰好全是同步的,
+// 而同步块本就不可能被 EOF 事件抢占 —— 所以这次上移对当前代码是行为等价的,不为它编造行为测试。
+// 上移的理由是**拆掉这份偶然依赖**:哪天目录加载改成异步(比如去读远端 manifest),
+// "通道 2 从进程第一刻起就成立"这条不变式不该跟着悄无声息地破掉。
+// 它仍然在打印判定行之前:判定行要如实上报 parentWatch,supervisor 靠这个字段决定通道 2 到底有没有。
+let parentWatch = false
+if (process.env.OPENCLI_HOST_PARENT_WATCH === '1') {
+  let parentGone = false
+  const exitOnParentGone = () => {
+    // end 与 close 都会来;只认第一次,避免 shutdown 未完成就被第二次调用抢跑 process.exit。
+    if (parentGone) return
+    parentGone = true
+    void shutdown().finally(() => process.exit(0))
+  }
+  process.stdin.resume()
+  process.stdin.on('end', exitOnParentGone)
+  process.stdin.on('close', exitOnParentGone)
+  parentWatch = true
 }
 
 try {
@@ -38,7 +78,7 @@ try {
     opencliEntry,
     resolveManifest: () => resolveManifestPath(opencliEntry),
   })
-  const app = createHostServer({
+  app = createHostServer({
     opencliEntry,
     policy,
     catalogService,
@@ -52,37 +92,8 @@ try {
 
   const address = await app.listen({ host, port })
 
-  let closing = false
-  async function shutdown() {
-    if (closing) return
-    closing = true
-    await app.close()
-  }
-
   process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)) })
   process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)) })
-
-  // 父进程存活通道(spec §5 通道 2):Tauri 保留本进程 stdin 的写端且**从不写入**;
-  // 父进程一旦消亡(含崩溃/被强杀),写端关闭 → 这里收到 EOF → 自行优雅退出。
-  // 这条不依赖 Job Object,正是用来覆盖 Job 分配失败的场景。
-  // 开关默认关闭:不设 OPENCLI_HOST_PARENT_WATCH 时一切行为与今天完全一致(npm run dev:server 不受影响)。
-  //
-  // **必须挂在打印判定行之前**:判定行要如实上报 parentWatch,supervisor 靠它决定
-  // "通道 2 到底有没有"。先打印再挂 = 上报的是意图不是事实,fail-closed 就成了自欺。
-  let parentWatch = false
-  if (process.env.OPENCLI_HOST_PARENT_WATCH === '1') {
-    let parentGone = false
-    const exitOnParentGone = () => {
-      // end 与 close 都会来;只认第一次,避免 shutdown 未完成就被第二次调用抢跑 process.exit。
-      if (parentGone) return
-      parentGone = true
-      void shutdown().finally(() => process.exit(0))
-    }
-    process.stdin.resume()
-    process.stdin.on('end', exitOnParentGone)
-    process.stdin.on('close', exitOnParentGone)
-    parentWatch = true
-  }
 
   // listen 成功后第一时间打印判定行,先于任何人读日志——消费方(Tauri supervisor)只认含 opencliHostReady 的行。
   const actualPort = typeof address === 'object' && address ? address.port : port
