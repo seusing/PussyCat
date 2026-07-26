@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 const serverEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'index.mjs')
 
@@ -34,11 +34,16 @@ function startHost(env = {}) {
 }
 
 describe('readiness 协议', () => {
+  it('node 环境没有被 jsdom 那套全局桩污染', async () => {
+    // `src/vitest.setup.ts` 把 fetch/localStorage 的桩按 `typeof window` 收窄到 jsdom 环境
+    // (T2 顺手根治的仓库级耦合)。**那次收窄本身一直没有守卫**:把 `if (!isJsdomEnv) return`
+    // 删掉,246 条测试仍会全绿,因为各 server 测试文件当年各自加过 unstub 兜底——
+    // 于是收窄坏掉这件事会被这些兜底悄悄盖住。
+    // 探针:原生 fetch 打一个必然拒绝的地址会很快 reject;"永不 settle"的桩则会挂到超时。
+    await expect(fetch('http://127.0.0.1:1/')).rejects.toThrow()
+  }, 10000)
+
   it('成功:恰一行机器可读 JSON,含真实随机端口与 policy 计数', async () => {
-    // src/vitest.setup.ts 的全局 beforeEach 把 fetch 桩成永不 settle(给 jsdom 组件测试防抖用,
-    // 对 @vitest-environment node 的本文件同样生效)。本用例要用真实网络验证端口真的在监听,
-    // 这里显式解桩还原原生 fetch;afterEach 的 unstubAllGlobals 之后仍会照常收尾。
-    vi.unstubAllGlobals()
     const { child, firstJson } = startHost()
     try {
       const ready = await firstJson

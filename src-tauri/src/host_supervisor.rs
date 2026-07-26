@@ -424,22 +424,60 @@ fn parse_major(version: &str) -> Option<u32> {
 ///
 /// `entry` 是 Host 入口的**绝对路径**,由调用方经 `BaseDirectory::Resource` 解析
 /// [`HOST_ENTRY_RESOURCE`] 得到 —— supervisor 不关心 resource 根长什么样。
-pub fn start_host(entry: &Path) -> Result<HostHandle, HostStartError> {
-    log::info!("[supervisor] 启动 Host: node {}", entry.display());
+/// Host 会读的**全部**环境变量,与 `server/` 里的 `process.env.OPENCLI_HOST_*` 一一对应。
+/// 由 `host_env_surface_is_fully_pinned` 扫源码守护:将来在 server 里新增读取点却忘了在这里
+/// 决定它,那条测试会红 —— 手写清单不加守护迟早腐烂。
+const HOST_ENV_KEYS: &[&str] = &[
+    "OPENCLI_HOST_PORT",
+    "OPENCLI_HOST_ADDRESS",
+    "OPENCLI_HOST_PARENT_WATCH",
+    "OPENCLI_HOST_ALLOWED_ORIGINS",
+    "OPENCLI_HOST_CATALOG_PATH",
+    "OPENCLI_HOST_CANCEL_GRACE_MS",
+    "OPENCLI_HOST_COMMAND_TIMEOUT_MS",
+    "OPENCLI_HOST_MAX_CONCURRENT_RUNS",
+];
 
-    let mut cmd = Command::new("node");
-    cmd.arg(entry)
-        .env("OPENCLI_HOST_PORT", "0")
-        // 通道 2 开关(I2):Host 见到它才装 stdin EOF 看门狗;不设时行为与 npm run dev:server 一致。
+/// Host 的配置面必须**完全**由 supervisor 决定:凡 Host 会读的变量,这里要么显式设值,
+/// 要么显式移除(移除 = 回落到 Host 自己的默认值)。
+///
+/// `Command` 默认继承父环境,等于把配置面开放给任何能设环境变量的东西:
+/// * `OPENCLI_HOST_ADDRESS=0.0.0.0` → Host 绑到全网卡,**"回环 bind"这条冻结契约当场破掉**;
+/// * `OPENCLI_HOST_CATALOG_PATH`(T2 为造"协议内失败"加的测试注入点)→ 替换 policy 白名单的来源。
+///
+/// 威胁模型上需要攻击者已能设置该用户的环境变量,不算高危;但这是"一处收口就守住两条明文契约"
+/// 的事,没有理由留着。
+fn configure_host_env(cmd: &mut Command) {
+    cmd.env("OPENCLI_HOST_PORT", "0")
+        // 回环 bind 是冻结契约,不接受来自环境的改写。
+        .env("OPENCLI_HOST_ADDRESS", "127.0.0.1")
+        // 通道 2 开关(I2):Host 见到它才装 stdin EOF 看门狗。
         .env("OPENCLI_HOST_PARENT_WATCH", "1");
 
     // CORS 白名单(spec §7):**只放实测到的那一个 origin**,不猜、不"多写几个保险"——
     // 放宽 origin 会直接削弱 P0-B 的 DNS-rebinding 防线。
     // 生产 WebView 的 origin 由 T8 用打包产物实测捕获:`http://tauri.localhost`
     // (证据:日志 `rejected Origin: http://tauri.localhost`)。
-    // 调试构建走 devUrl(http://localhost:5173),沿用 Host 自身的默认白名单,两种形态不混用。
     #[cfg(not(debug_assertions))]
     cmd.env("OPENCLI_HOST_ALLOWED_ORIGINS", "http://tauri.localhost");
+    // 调试构建走 devUrl(http://localhost:5173),用 Host 自身的默认白名单。
+    // **显式移除**而不是放任继承:否则环境里的同名变量会在 dev 形态下悄悄放宽白名单。
+    #[cfg(debug_assertions)]
+    cmd.env_remove("OPENCLI_HOST_ALLOWED_ORIGINS");
+
+    // 其余一律回落到 Host 默认值(2000ms / 90000ms / 1 并发),不接受环境改写。
+    cmd.env_remove("OPENCLI_HOST_CATALOG_PATH")
+        .env_remove("OPENCLI_HOST_CANCEL_GRACE_MS")
+        .env_remove("OPENCLI_HOST_COMMAND_TIMEOUT_MS")
+        .env_remove("OPENCLI_HOST_MAX_CONCURRENT_RUNS");
+}
+
+pub fn start_host(entry: &Path) -> Result<HostHandle, HostStartError> {
+    log::info!("[supervisor] 启动 Host: node {}", entry.display());
+
+    let mut cmd = Command::new("node");
+    cmd.arg(entry);
+    configure_host_env(&mut cmd);
 
     cmd
         .stdin(Stdio::piped())
@@ -589,20 +627,24 @@ pub fn start_host(entry: &Path) -> Result<HostHandle, HostStartError> {
             Err(HostStartError::HostReportedFailure { summary, detail })
         }
         Verdict::Malformed { reason, line } => {
+            // 先关写端再等(评审 M-7):装了看门狗的 Host 见 EOF 会自退,不关就是白等满
+            // SHUTDOWN_GRACE,然后进 abandon 再等一遍 —— 失败路径平白多花一倍时间。
+            drop(stdin);
             let code = wait_for_exit(&mut child, SHUTDOWN_GRACE)
                 .exited()
                 .and_then(|s| s.code());
-            abandon(child, stdin);
+            abandon(child, None);
             Err(HostStartError::ProcessFailed {
                 code,
                 stderr_tail: format!("{reason}\n> {line}\n{}", stderr_tail.snapshot()),
             })
         }
         Verdict::StdoutClosed => {
+            drop(stdin);
             let code = wait_for_exit(&mut child, SHUTDOWN_GRACE)
                 .exited()
                 .and_then(|s| s.code());
-            abandon(child, stdin);
+            abandon(child, None);
             Err(HostStartError::ProcessFailed {
                 code,
                 stderr_tail: stderr_tail.snapshot(),
@@ -1008,6 +1050,197 @@ mod tests {
 
         terminate(&mut child, &outcome);
         assert!(!process_alive(pid), "terminate 之后 pid={pid} 仍在");
+    }
+
+    /// I-3:Host 的配置面必须**完全**由 supervisor 决定,一个变量都不能漏成"从父环境继承"。
+    #[test]
+    fn host_env_surface_is_fully_pinned() {
+        // ① 扫源码 —— 手写清单不加守护会腐烂:将来 server 里新增一个 process.env.OPENCLI_HOST_*
+        //    却忘了在 HOST_ENV_KEYS 里决定它,这一半立刻红。
+        let server_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../server");
+        let mut found = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&server_dir).expect("读 server/") {
+            let path = entry.expect("目录项").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("mjs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("读 .mjs");
+            for (i, _) in text.match_indices("process.env.OPENCLI_HOST_") {
+                let tail = &text[i + "process.env.".len()..];
+                let name: String = tail
+                    .chars()
+                    .take_while(|c| c.is_ascii_uppercase() || *c == '_')
+                    .collect();
+                found.insert(name);
+            }
+        }
+        // 扫描逻辑本身失效时(改了目录结构/写法),不能静默通过成"没有读取点所以全都合规"。
+        assert!(
+            !found.is_empty(),
+            "没扫到任何 OPENCLI_HOST_* 读取点 —— 是扫描逻辑失效了,不是 server 真没读环境变量"
+        );
+        for name in &found {
+            assert!(
+                HOST_ENV_KEYS.contains(&name.as_str()),
+                "{name} 是 Host 会读的,但 supervisor 没决定它 → 打包形态下会从父环境继承"
+            );
+        }
+
+        // ② 每个 key 都被显式设值或显式移除。
+        let mut cmd = Command::new("node");
+        configure_host_env(&mut cmd);
+        let envs: std::collections::HashMap<String, Option<String>> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|x| x.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        for key in HOST_ENV_KEYS {
+            assert!(envs.contains_key(*key), "{key} 未被 supervisor 显式决定");
+        }
+        assert_eq!(
+            envs["OPENCLI_HOST_ADDRESS"].as_deref(),
+            Some("127.0.0.1"),
+            "回环 bind 是冻结契约,不接受环境改写"
+        );
+        assert_eq!(envs["OPENCLI_HOST_PORT"].as_deref(), Some("0"));
+        assert_eq!(
+            envs["OPENCLI_HOST_CATALOG_PATH"], None,
+            "测试注入点必须在打包形态下被移除"
+        );
+    }
+
+    /// `abandon` 的**隔离**测试:错误路径的收尸逻辑本身,不借 Job Object 的力。
+    ///
+    /// 为什么必须单独测:下面那三条 `start_host` 分支测试**证不了 `abandon`**。实测变异过——
+    /// 把 `Failed` 分支的 `abandon` 换成两个 `drop`,测试照样绿,因为 `start_host` 返回时
+    /// 局部变量 `job` 析构触发 `KILL_ON_JOB_CLOSE`,内核替它把孩子收了。
+    /// 也就是说那三条守的是"用户可见的不变式(不留无主进程)",守不住"是谁收的"。
+    /// 而 `abandon` 的价值恰在 **Job 分配失败的降级路径**上,那时没有内核兜底。
+    #[test]
+    #[cfg(windows)]
+    fn abandon_reaps_a_child_that_ignores_stdin_eof() {
+        let spawn_stubborn = || {
+            let mut child = Command::new("node")
+                // 既不读 stdin 也不会自退:唯一能让它消失的就是被杀。
+                .args(["-e", "setInterval(() => {}, 1000)"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn node");
+            let stdin = child.stdin.take();
+            (child, stdin)
+        };
+
+        // ── 零假设对照:不调 abandon,只是把句柄丢掉 —— 它必须**活着**。
+        //    对照组要是也死了,说明是环境在收尸,下面的实验组毫无信息量。
+        let (control, control_stdin) = spawn_stubborn();
+        let control_pid = control.id();
+        drop(control_stdin);
+        drop(control);
+        thread::sleep(Duration::from_millis(1500));
+        assert!(
+            process_alive(control_pid),
+            "对照组自己就死了 —— 是环境在收尸,本测试证明不了 abandon"
+        );
+        kill_tree(control_pid);
+
+        // ── 实验组:同样的进程,交给 abandon。
+        let (child, stdin) = spawn_stubborn();
+        let pid = child.id();
+        abandon(child, stdin);
+        assert!(
+            !process_alive(pid),
+            "abandon 返回后 pid={pid} 仍在 —— 降级路径(Job 分配失败)会留无主进程"
+        );
+    }
+
+    /// 造一个假 Host 入口。**故意都不自退**,让"进程最后消失了"必须来自 supervisor 一侧
+    /// (是 `abandon` 还是 Job 析构由上面那条隔离测试区分)。
+    #[cfg(windows)]
+    fn fake_host_entry(name: &str, body: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("opencli-host-supervisor-tests");
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let path = dir.join(name);
+        let source = format!(
+            "import {{ writeFileSync }} from 'node:fs'\n\
+             writeFileSync(process.argv[1] + '.pid', String(process.pid))\n\
+             {body}\n"
+        );
+        std::fs::write(&path, source).expect("写假 Host");
+        path
+    }
+
+    #[cfg(windows)]
+    fn fake_host_pid(entry: &Path) -> u32 {
+        let pid_file = format!("{}.pid", entry.display());
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = text.trim().parse() {
+                    return pid;
+                }
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("假 Host 没写出 pid 文件: {pid_file}");
+    }
+
+    /// 进程退出不是瞬时的,给收尸留出窗口再判定。
+    #[cfg(windows)]
+    fn assert_reaped(pid: u32, context: &str) {
+        for _ in 0..40 {
+            if !process_alive(pid) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        panic!("{context}:start_host 返回后 pid={pid} 仍在 —— 错误路径漏了收尸");
+    }
+
+    /// I-2:`start_host` 的三条失败分支,每条都断言"kind 正确 **且** 子进程已被收掉"。
+    /// 此前 13 条测试全是纯函数,`start_host` 整个函数零覆盖。
+    ///
+    /// **诚实标注射程**:这三条守的是用户可见的不变式(错误路径不留无主进程)与分支归类,
+    /// **不隔离收尸来源** —— Job Object 析构同样会收,实测变异确认过。
+    /// 收尸机制本身由 `abandon_reaps_a_child_that_ignores_stdin_eof` 隔离守护。
+    #[test]
+    #[cfg(windows)]
+    fn start_host_reaps_child_when_readiness_line_is_malformed() {
+        let entry = fake_host_entry(
+            "malformed.mjs",
+            "process.stdout.write('opencliHostReady 但这不是 JSON\\n')\nsetInterval(() => {}, 1000)",
+        );
+        let error = start_host(&entry).err().expect("畸形判定行必须失败");
+        assert_eq!(error.kind(), "process-failed");
+        assert_reaped(fake_host_pid(&entry), "畸形判定行");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn start_host_reports_process_failed_when_host_exits_early() {
+        let entry = fake_host_entry("early-exit.mjs", "process.exit(3)");
+        let error = start_host(&entry).err().expect("Host 提前退出必须失败");
+        assert_eq!(error.kind(), "process-failed");
+        // 这一支进程本就已经死了,但仍要确认 supervisor 没把它当活的留着。
+        assert_reaped(fake_host_pid(&entry), "提前退出");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn start_host_reaps_child_when_host_reports_failure() {
+        let entry = fake_host_entry(
+            "ready-false.mjs",
+            "process.stdout.write(JSON.stringify({ opencliHostReady: false, error: { summary: 'boom', detail: 'd' } }) + '\\n')\n\
+             setInterval(() => {}, 1000)",
+        );
+        let error = start_host(&entry).err().expect("协议内失败必须失败");
+        assert_eq!(error.kind(), "host-reported-failure");
+        // 真 Host 打完这行会自退;这个假 Host **故意赖着不走**,以此证明收尸是 supervisor 做的。
+        assert_reaped(fake_host_pid(&entry), "协议内失败");
     }
 
     /// 真去问系统,不靠 `Child` 自己的记账 —— 验证"孙进程/被 taskkill 的进程"必须这样查。

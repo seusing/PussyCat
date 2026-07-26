@@ -182,7 +182,7 @@ dist-host/
 |---|---|
 | **窗口先建 + setup 在主线程 → 启动失败路径会冻结白窗**（T5 评审 C1，读 tauri-2.11.5 `app.rs:2521` 实证：配置窗口先建、用户 `setup` 由 `Ready` 事件在主线程事件循环内触发） | `probe_node` 必须有超时；**T6 硬性要求**：`tauri.conf.json` 的窗口改 `create:false`（或 `windows: []`）+ **boot 移出主线程**，就绪后再建窗 |
 | **Tauri 资源路径是 verbatim 形式（`\\?\C:\…`），node 不认** —— T6 `cargo run` 真跑抓出的 P0：Host 当场 `EISDIR: lstat 'C:'` 退出，三门全绿但打包后永远起不来 | 调用方用 `dunce::simplified()` 归一化后再传给 node（`node_friendly()` + 回归测试）。**教训：跨进程传路径必须按对端的路径方言归一化，编译与单测都看不见这层** |
-| **启动期约 1 秒无任何窗口**（失败路径最坏 15s 才出错误窗） | 这是"不冻结白窗"的直接代价（窗口 `create:false` + boot 在后台线程）。未加 splash：关 splash 会让窗口表变空触发 `ExitRequested`，属新增竞态。**T9 验收时"启动 1s 无窗"是预期行为，不是缺陷** |
+| **启动期约 1 秒无任何窗口**（失败路径最坏 **20s** 才出错误窗：`PROBE_TIMEOUT 5s` 探测 node + `READINESS_TIMEOUT 15s` 等判定行，两段串行；原文写 15s 是漏算了探测那段） | 这是"不冻结白窗"的直接代价（窗口 `create:false` + boot 在后台线程）。未加 splash：关 splash 会让窗口表变空触发 `ExitRequested`，属新增竞态。**T9 验收时"启动 1s 无窗"是预期行为，不是缺陷** |
 | ~~**I2（父进程猝死→Host 靠 stdin EOF 自退）端到端未被证过**~~ **已证（T8.5）** | 曾经的缺口：两条绿测用的是 `child.stdin.end()`（**活着的**父进程优雅关写端），不等价于父进程猝死。**T9 的 `taskkill /F` 也补不上这个缺口**——正常路径里 Job Object 与 stdin EOF 同时在场，Host 消失可能全是 `KILL_ON_JOB_CLOSE` 的功劳，看门狗坏掉那条测试照样绿（外部评审独立指出，与本仓"绿得不是地方"的一贯失效模式同源）。<br>证据改由 `scripts/verify-parent-watch.mjs` 提供：**不建 Job Object** 的 Node 站位父进程拉起真实 `dist-host`，`taskkill /F`（**不带 `/T`**）杀它。**先跑零假设对照组**（看门狗关）——Host 必须存活，否则是环境在收树、实验组的死毫无信息量，判 INVALID 而非 PASS。实测：对照组 6s 仍存活 / 实验组 ~643ms 自退，两组只差一个环境变量。身份判定用 pid+CreationDate，不被 pid 复用骗。<br>**未采纳**"注入 Job 分配失败"：那要在生产码里留一条从外部关闭清理机制的开关；`cfg(debug_assertions)` 圈起来又等于测的不是发的那个二进制。<br>**仍由 T9 兜的部分**：Rust 侧确实持有写端且从不写入（本脚本用 Node 站位父进程代替了 supervisor）。 |
 | 安装后 exe / MSI / NSIS 启动器仍可能踩 SxS | 列为发布门（§9），未过不宣称通过；兜底方案=以 `tauri dev` 形态自用 |
 | 30MB opencli 内置使升级需重发应用 | 决策②已接受；版本号写进 readiness JSON 便于诊断 |

@@ -389,14 +389,14 @@ mod tests {
         }
     }
 
-    /// 页面必须有兜底视图:哪怕来了个没登记的 kind 也得有东西可看,绝不留白屏。
-    #[test]
-    fn error_page_has_an_unknown_fallback() {
-        assert!(
-            ERROR_PAGE_HTML.contains("var UNKNOWN"),
-            "error.html 少了未知 kind 的兜底视图"
-        );
-    }
+    // 兜底视图(未登记的 kind 也得有东西可看)的守卫**不在这里**:
+    // 原先这里断言 `ERROR_PAGE_HTML.contains("var UNKNOWN")`,守的是源码字面量而非行为——
+    // 把 `var` 改成 `const` 会误红,保留 `var UNKNOWN` 但不再使用它则会假绿。两头都不对。
+    // 真正执行页面脚本的守卫在 `src/errorPage.test.ts`(jsdom `runScripts`),
+    // 兜底、原型链键、detail/logDir 显隐、文本转义都在那里按行为断言。
+    //
+    // 上面那条 `every_error_kind_is_routed_by_the_error_page` 保留:它守的是**跨语言配对**
+    // (Rust 的 kind() 字面量 ↔ HTML 的 VIEWS 键),这一层 JS 侧看不到,只能在 Rust 侧断。
 
     /// query 里装的是 Host 的 stderr —— 出现 `&` `#` `=` 换行是常态。
     /// 编码没做对,detail 就能把 query 拆散、伪造出第二个 `kind`,页面读到的是被污染的信息。
