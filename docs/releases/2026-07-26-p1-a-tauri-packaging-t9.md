@@ -4,18 +4,18 @@
 - 分支：`p1-tauri-packaging`（代码 HEAD 见文末）
 - 规格：`docs/specs/2026-07-25-p1-tauri-packaging-design.md`
 - 计划：`docs/plans/2026-07-25-p1-tauri-packaging.md` Task 9
-- 结论：**Release Candidate。** 自动门全绿；真机门 8 项通过、4 项待用户目视、1 项（MSI）未安装。
+- 结论：**Release Candidate。** 自动门全绿；真机门 10 项通过、3 项待用户目视、1 项（MSI）未安装。
 
 安装包本身不入库（体积）；本报告只记命令、路径、PID/CommandLine、退出码与结论。
 
 ---
 
-## 0. 自动化门（提交前复跑）
+## 0. 自动化门（数字为终审修复 `1952bb5` 之后的最新一轮）
 
 | 门 | 命令 | 结果 |
 |---|---|---|
-| 前端 + server 测试 | `npx vitest run` | 31 文件 / **246 通过** |
-| Rust | `cargo test`（`src-tauri`） | **13 通过** |
+| 前端 + server 测试 | `npx vitest run` | 32 文件 / **258 通过** |
+| Rust | `cargo test`（`src-tauri`） | **17 通过** |
 | 类型 | `npx tsc --noEmit` | 干净 |
 | 构建 | `npm run build` | 通过 |
 | Host 闭包硬闸 | `node scripts/verify-host-closure.mjs` | **8/8**，含真实 `36kr/news` 20 行 |
@@ -24,9 +24,11 @@
 
 ## 1. 产物
 
+出自 HEAD `1952bb5`（终审修复之后重新构建）：
+
 ```
-src-tauri/target/release/bundle/nsis/OpenCLI App Clone_0.1.0_x64-setup.exe   5.3 MB
-src-tauri/target/release/bundle/msi/OpenCLI App Clone_0.1.0_x64_en-US.msi    9.6 MB
+src-tauri/target/release/bundle/nsis/OpenCLI App Clone_0.1.0_x64-setup.exe   5 336 448 B
+src-tauri/target/release/bundle/msi/OpenCLI App Clone_0.1.0_x64_en-US.msi    9 640 146 B
 ```
 
 ---
@@ -97,24 +99,72 @@ taskkill /F 27456 (不带 /T) exit=0
 
 ---
 
-## 4. 未完成项
+## 4. 第三轮：启动失败引导视图（终审 I-1）
+
+终审指出六类错误视图**从未被执行过一次**：Rust 侧只对 `include_str!` 的 HTML 做子串匹配，从不执行页面脚本；真机侧该项挂着未做。若自定义 scheme 在打包形态下接不上，`open_error_window` 返 `Err` → `app.exit(1)` → **进程无声退出，比白屏更糟**。
+
+剥掉 PATH 里的 node 启动已安装的 exe：
+
+| 观测 | 值 |
+|---|---|
+| 启动前 `Get-Command node` | **False**（PATH 已只剩 `System32;Windows`） |
+| 主进程 | **存活** —— 没有走 `app.exit(1)` 静默退出 |
+| 窗口标题 | **`OpenCLI App Clone — 启动失败`**（错误窗专属，与主窗不同） |
+| 日志 | `[boot] Host 启动失败[node-missing]: 未找到可执行的 Node：node --version 无法执行: program not found` |
+
+**结论**：自定义 `opencli-error://` scheme 在打包形态下接得上，失败路径会真的开出一个窗，分类判定正确。
+
+**射程边界**（不夸大）：窗口标题由 Rust builder 设置，**证明的是"错误窗被创建"，不是"页面 DOM 画出来了"**。DOM 那一半由 `src/errorPage.test.ts` 用 jsdom `runScripts` 真执行页面脚本覆盖（11 用例：六类标题 / 兜底视图 / 无 kind / 原型链键 / detail·logDir 显隐 / 文本转义），并已变异验证（摘掉 `hasOwnProperty` 守卫 → 标题变空字符串，如期变红）。两者相加覆盖这条路径；未被任何自动化直接观测的一环是"自定义协议的响应体确实被 WebView 渲染成了那个 DOM"。
+
+## 5. 未完成项
 
 | 项 | 状态 | 原因 |
 |---|---|---|
 | 目录 UI 渲染目视 | ⏳ | 需人眼。Host 层已证 1278/175，但「渲染出来」是 UI 事实 |
 | 结果表 UI 目视 | ⏳ | 同上 |
 | 收藏重启持久化 | ⏳ | 需 UI 操作（点收藏 → 完全退出 → 重开） |
-| Node 缺失/过低引导视图 | ⏳ | 需临时改 PATH + 目视六类错误视图之一 |
 | MSI 安装 + 全表复跑 | ⏳ | 需管理员权限 |
 
 桌面控制权限（computer-use）曾申请，**用户拒绝**，未重试。
 
+**重要**：第 2–4 节的证据取自 `6af23ea` 时的安装包。终审修复（`1952bb5`）改动了运行时行为（`configure_host_env` 封死 Host 环境面），**安装包已从 HEAD 重新构建**（NSIS 5 336 448 B / MSI 9 640 146 B）；上表剩余项应在**新包**上完成。
+
 ---
 
-## 5. 记账纪律
+## 6. 第四轮：终审修复后的产物复验（HEAD `1952bb5`）
+
+跑的是 `src-tauri/target/release/opencli-app-clone.exe` —— 与打进两个安装包的是同一个二进制。
+
+### 6.1 环境注入被封死（I-3 的端到端证明）
+
+先在环境里塞进三个变量再启动应用：
+
+```
+OPENCLI_HOST_ADDRESS=0.0.0.0
+OPENCLI_HOST_CATALOG_PATH=C:\definitely\not\here.json
+OPENCLI_HOST_MAX_CONCURRENT_RUNS=999
+```
+
+| 观测 | 值 | 说明 |
+|---|---|---|
+| 窗口标题 | **`OpenCLI App Clone`** | 是主窗，不是「启动失败」。若 `CATALOG_PATH` 漏进去，Host 会读不到快照 → `host-reported-failure` → 弹错误窗。**注入生效与否在这里是两种完全不同的可见结果**，不是靠断言细节区分 |
+| Host 监听地址 | **`127.0.0.1:63169`** | `Get-NetTCPConnection`。注入的 `0.0.0.0` 没有生效，「回环 bind」这条冻结契约守住 |
+
+### 6.2 功能复验
+
+| 项 | 结果 |
+|---|---|
+| `/catalog` | HTTP 200，**1278 命令 / 175 站点** |
+| `36kr/news` | **144** 个 SSE `output` → `outcome=success` |
+| 取消闭环 | `/cancel` → **204** → `outcome=cancelled` |
+| 关窗口 | 主进程 1 → 0；**遗留 Host node = 0** |
+
+---
+
+## 7. 记账纪律
 
 所有「进程是否还活着」的判定均使用 **PID + CreationDate 双因子**：只认 PID 会被 PID 复用骗，只认进程名会被上一轮残留骗，两者都会把失败读成通过。本机同时装有被复刻的 `OpenCLIApp` 0.1.36，与 `OpenCLI App Clone` 是两个不同产品，取证时未混用。
 
-## 6. 不变式 I2 的证据边界
+## 8. 不变式 I2 的证据边界
 
 `taskkill /F` 只证明「父进程猝死时子树确实消失」这个**结果**，证不了是哪条通道起的作用——正常路径里 Job Object 与 stdin EOF 同时在场。stdin EOF 通道由 `scripts/verify-parent-watch.mjs` 单独证明（不建 Job Object 的站位父进程 + 零假设对照组）。两者相加才构成完整链条；仍未被任何自动化覆盖的一环是「Rust 侧确实持有写端且从不写入」，由本报告第 2/3 节「应用活着时 Host 不退、应用消亡时 Host 退」间接佐证。
