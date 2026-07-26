@@ -64,7 +64,13 @@
 两级收藏 + 持久化、最近使用、`columns` 表格/日志切换、重跑/复制命令/复制结果、catalog 刷新、错误详情与重试、基础键盘操作。
 
 ### P1：桌面化
-Tauri hello-world + **SxS 14001 专项验证**、`tauriHost` 替换 Node Host、`Ctrl+K` 命令面板、托盘/设置/更新/安装检测、多任务并发与历史。
+**口径修正（2026-07-26，评审消歧）**：本节原本把五件事打包成一个"P1"，实际只拆做了第一件。**"P1 打包完成" ≠ "P1 完成"**，下面按已交付／未交付分开写，避免用一个名字覆盖两种范围。
+
+**P1-A 　Tauri 打包（已交付，专项规格 `2026-07-25-p1-tauri-packaging-design.md`）**
+Tauri 壳 + **SxS 14001 专项验证**（真机发布门）、内置固定版 OpenCLI production tree、Node Host 作为受管子进程（Job Object + stdin EOF 双清理通道）、readiness 协议与六类启动失败引导视图、MSI/NSIS 双安装包。
+
+**P1-B 　桌面化其余部分（未做）**
+`tauriHost` 替换 Node Host（本阶段**明确排除**：Host 仍是 Node 子进程，见专项规格 §2）、`Ctrl+K` 命令面板、托盘/设置/**自动更新**/安装检测、多任务并发与历史。
 
 ### 非目标（P0 明确不做，YAGNI）
 真实站点图标、账户归档与全文搜索、认证刷新计划、web→markdown、Skills 管理中心、开机自启/保持唤醒、更新中心、多窗口。
