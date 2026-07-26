@@ -16,7 +16,7 @@ name = "opencli_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.3" }
+tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 serde_json = "1.0"
@@ -25,7 +25,7 @@ log = "0.4"
 # Windows verbatim 路径(`\\?\C:\…`)还原成普通路径:node 不认 verbatim,见 lib.rs `node_friendly`。
 # (已在依赖树里,tauri 自己也用它,不引入新的编译代价。)
 dunce = "1"
-tauri = { version = "2.11.3" }
+tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 # 单实例:必须**最先**注册,早于任何 Host bootstrap(spec §5)——否则第二实例会先拉起第二个 Node 再被劝退。
 tauri-plugin-single-instance = "2"
