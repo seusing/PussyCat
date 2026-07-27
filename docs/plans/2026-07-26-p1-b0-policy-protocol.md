@@ -713,6 +713,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildPolicyDecisions } from './policy.mjs'
+import { reviewShapeHash } from './policy-fingerprint.mjs'
 
 const snapshot = JSON.parse(readFileSync(resolve('public/catalog.snapshot.json'), 'utf8').replace(/^﻿/, ''))
 const byKey = (decisions) => new Map(decisions.map((d) => [d.commandKey, d]))
@@ -789,6 +790,52 @@ describe('准入算法', () => {
     const runnable = [...decisions.values()].filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
     expect(runnable.length).toBe(276 + 3)
   })
+
+  // 上一条的「全状态」是遍历**恰好出现的**状态,证明不了四个状态都能构造出来。
+  // 这条把它钉死:四个 state、四个 decisionSource 必须各自真的出现过。
+  it('四个 state 与四个 decisionSource 都真的出现,而非「恰好遇到的那几个」', () => {
+    expect(new Set([...decisions.values()].map((d) => d.state)))
+      .toEqual(new Set(['ready', 'acknowledgement-required', 'denied', 'unknown']))
+    expect(new Set([...decisions.values()].map((d) => d.decisionSource)))
+      .toEqual(new Set(['explicit-deny', 'legacy-baseline', 'tier-evaluation', 'unclassified']))
+  })
+})
+
+// ——— 注入夹具:覆盖真实三条记录**到不了**的算法出口 ————————————————
+// 三条人工记录全部落在 local-direct 允许集内部,所以第 6 步的两个 unknown 出口、
+// 第 7 步的 tier-threshold 出口(及其内部五个子条件)在真实数据下一条都走不到。
+// 宿主选 trae-solo/state-get:它在 local-direct tier 内、本身未审定,不影响其它用例。
+describe('准入算法 —— 真实数据到不了的出口(注入夹具)', () => {
+  const HOST = 'trae-solo/state-get'
+  const hostCommand = snapshot.commands.find((c) => c.command === HOST)
+  const hostShape = reviewShapeHash(hostCommand, snapshot.opencliVersion)
+  const BASE = {
+    executionPath: 'direct-node', authorities: [], exposure: 'public',
+    effects: [], credentialFlow: 'none', residues: [],
+  }
+  const decide = (patch) => byKey(buildPolicyDecisions(snapshot, {
+    records: new Map([[HOST, { reviewedAgainst: hostShape, metadata: { ...BASE, ...patch } }]]),
+  })).get(HOST)
+
+  it('夹具本身必须能走到 tier-evaluation —— 否则下面每条都在测空气', () => {
+    const d = decide({})
+    expect(d.decisionSource).toBe('tier-evaluation')
+    expect(d.state).toBe('ready')
+  })
+
+  it.each([
+    ['exposure=unknown 早于阈值判定', { exposure: 'unknown' }, 'unknown', 'exposure-unknown'],
+    ['residues=unknown 早于阈值判定', { residues: 'unknown' }, 'unknown', 'residue-unknown'],
+    ['authorities 越界', { authorities: ['live-local-app'] }, 'denied', 'tier-threshold'],
+    ['exposure 越界', { exposure: 'secret' }, 'denied', 'tier-threshold'],
+    ['effects 非空', { effects: ['local-file-write'] }, 'denied', 'tier-threshold'],
+    ['credentialFlow 非 none', { credentialFlow: 'consume' }, 'denied', 'tier-threshold'],
+    ['residues 非空', { residues: ['temp-file'] }, 'denied', 'tier-threshold'],
+  ])('%s → %s/%s', (_name, patch, state, reasonCode) => {
+    const d = decide(patch)
+    expect(d.state).toBe(state)
+    expect(d.reasonCode).toBe(reasonCode)
+  })
 })
 ```
 
@@ -837,7 +884,13 @@ function sameSet(a, b) {
   return a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|')
 }
 
-export function buildPolicyDecisions(snapshot) {
+// `records` 是**只给测试用的注入缝**,生产调用不传第二参。
+// 为什么必须开这道缝:真实的三条人工记录全部落在 local-direct 允许集**内部**
+// (exposure ∈ {public,personal}、effects/residues 皆 []、credentialFlow=none),
+// 于是第 6 步的两个 unknown 出口、第 7 步的 tier-threshold 出口(及其内部五个子条件)
+// 在真实数据下**一条都走不到**。不开缝的话这几个分支交付即死代码,
+// 而且 Step 5 的变异②(删 residues 检查)根本无从验证——删了也没有任何用例会红。
+export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = {}) {
   const version = snapshot.opencliVersion
   return snapshot.commands.map((command) => {
     const commandKey = command.command
@@ -853,6 +906,11 @@ export function buildPolicyDecisions(snapshot) {
     const shape = reviewShapeHash(command, version)
 
     // 2. legacy 基线:命中且形状未漂移 → ready,不下发 metadata/fingerprint
+    //
+    // **这一行就是 legacy 完整性的第二层。** 闸门(check:legacy)只管 key 集合的增删,
+    // 管不了「同一个 key 的 hash 被改成别的值」;真正兜住那一面的是这里的等值比较——
+    // 入库哈希与当前形状对不上,该命令自动退出基线落入 unknown。
+    // 两层缺一不可,**任何一层被当成单独兜底都是误解**(spec §4.1.2 L1 / L2)。
     if (LEGACY_BASELINE.entries[commandKey] === shape) {
       return { ...base, state: 'ready', decisionSource: 'legacy-baseline' }
     }
@@ -863,7 +921,7 @@ export function buildPolicyDecisions(snapshot) {
     }
 
     // 4. 审定记录完整性
-    const record = REVIEWED_RECORDS.get(commandKey)
+    const record = records.get(commandKey)
     if (!isCompleteRecord(record)) {
       return { ...base, state: 'unknown', decisionSource: 'unclassified', reasonCode: 'metadata-missing' }
     }
@@ -889,6 +947,12 @@ export function buildPolicyDecisions(snapshot) {
                metadata: m, reasonCode: 'tier-threshold' }
     }
 
+    // matchedDenyRule 在本里程碑**恒为 null**,这是算法结构决定的:命中 deny 的命令在
+    // 第 1 步就 return 了,能走到这里的必然没命中任何 deny 规则。参数不是多余——它给的是
+    // 「确认因该命令自己的 deny 规则变动而失效」这条语义(对照:用全局 denyRevision 会让
+    // 无关命令的 deny 变动作废全部确认)。但**今天没有任何路径能让它非空**,
+    // 也就没有任何测试覆盖它非空时的行为。这一点必须写进 Task 4 报告,
+    // 别让后人以为它已被验证过。真要用上它,得等覆盖表出现「非 deny 的规则类型」。
     const fingerprint = decisionFingerprint({
       policySchemaVersion: POLICY_SCHEMA_VERSION,
       reviewShapeHash: shape,
@@ -925,13 +989,21 @@ export function buildPolicyDecisions(snapshot) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run server/policy-decisions.test.mjs server/policy.test.mjs`
-Expected: 10 + 13 tests PASS（既有 policy.test.mjs 不得回归）
+Expected: 19 + 13 tests PASS（`policy-decisions` = 11 条真实数据 + 8 条注入夹具；既有 `policy.test.mjs` 13 条不得回归）
 
-- [ ] **Step 5: 变异验证（三处，逐个做完还原）**
+- [ ] **Step 5: 变异验证（五处，逐个做完还原）**
 
-1. 把第 6 步移到第 7 步之后 → 「审定过期」与「exposure unknown」相关用例变红；
-2. 从 `withinLocalDirect` 删掉 `residues` 检查 → 用变异夹具（构造一条 `residues:['temp-file']` 的记录）必须变红；
-3. 交换第 8、9 步 → `mercury/reimbursement-plan` 用例变红。
+每处都要确认**只有预期的用例变红**；施加变异后先 grep 确认改动真的落盘再跑。
+
+| # | 变异 | 预期变红 |
+|---|---|---|
+| 1 | 第 6 步整体移到第 7 步之后 | `exposure=unknown`、`residues=unknown` 两条夹具用例（它们会先被判成 `denied/tier-threshold`） |
+| 2 | `withinLocalDirect` 删掉 `residues` 检查 | 仅 `residues 非空` 一条 |
+| 3 | `withinLocalDirect` 删掉 `credentialFlow` 检查 | 仅 `credentialFlow 非 none` 一条 |
+| 4 | 交换第 8、9 步 | `mercury/reimbursement-plan`（会被挂上多余弹窗 → `acknowledgement-required`） |
+| 5 | 第 2 步的等值比较改成 `commandKey in LEGACY_BASELINE.entries` | 「legacy 形状漂移 → 退出基线」变红（这是 legacy 完整性第二层的守卫，改成存在性判断即失效） |
+
+> 变异 ②③ 存在的前提是 Step 1 的注入夹具。**没有那道缝，`withinLocalDirect` 的五个子条件删掉哪个测试都不会红** —— 计划早前版本正是这个状态，变异②写着「用变异夹具」却从未提供夹具。
 
 - [ ] **Step 6: 提交**
 
