@@ -437,7 +437,7 @@ const shapeOf = (key) => {
 - [ ] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run server/policy-fingerprint.test.mjs server/policy-types.test.mjs`
-Expected: PASS（10 tests）
+Expected: PASS（32 tests——`policy-fingerprint.test.mjs` 20 + `policy-types.test.mjs` 12；评审修复轮后的实际值，原文写的「10 tests」对不上任何一次真实运行,已按实测更正）
 
 - [ ] **Step 6: 变异验证**
 

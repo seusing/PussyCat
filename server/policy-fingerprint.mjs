@@ -2,7 +2,14 @@ import { createHash } from 'node:crypto'
 
 export const POLICY_SCHEMA_VERSION = 1
 
-/** 对象键排序、数组保序的规范化 JSON——哈希的单射前提。 */
+/**
+ * 对象键排序、数组保序的规范化 JSON——哈希的单射前提。
+ * **仅适用于纯 JSON 值**(经 `JSON.parse` 或字面量构造的 object/array/string/number/boolean/null)。
+ * 实测:`undefined` 与显式 `null` 会坍缩成同一个值(`value ?? null`);`Date`/`Map`/`Set`
+ * 因为没有自有可枚举属性,会被序列化成 `{}`——两个不同的 `Date` 会产出完全相同的结果。
+ * 当前调用点都来自 `JSON.parse` 或字面量,不会撞到这两个坑,但 Task 5 打算复用本函数
+ * 算 revision,届时若传入非纯 JSON 值,值得留意。
+ */
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   if (value && typeof value === 'object') {
@@ -59,13 +66,34 @@ export function reviewShapeHash(command, opencliVersion) {
   })).digest('hex')
 }
 
+// spec §3.1 把 authorities/effects/residues 定义为**集合**,§4.3 第 8 步明写「按值比较,
+// 非引用/非顺序」——与 policy-types.mjs 的 isSubsetOf 对同一批字段的语义一致。
+// canonicalJson 对数组**刻意保序**(positionalArgs 需要顺序敏感),所以不能让 canonicalJson
+// 本身变成顺序无关;必须在喂给它之前,把这三个集合字段单独排序归一化。
+// residues 的类型是 `'unknown' | Array<...>`(spec §3.1),字符串分支原样透传,不排序。
+function sortIfArray(value) {
+  return Array.isArray(value) ? [...value].sort() : value
+}
+
+function normalizeSetFields(metadata) {
+  if (!metadata || typeof metadata !== 'object') return metadata
+  return {
+    ...metadata,
+    authorities: sortIfArray(metadata.authorities),
+    effects: sortIfArray(metadata.effects),
+    residues: sortIfArray(metadata.residues),
+  }
+}
+
 /**
  * 判决指纹：它变了说明**用户该重新确认**（审定本身可能仍然有效）。
  * matchedDenyRule 只放**该命令实际命中的**规则——用全局 denyRevision 会让
  * 无关命令的 deny 变化作废全部确认。
+ * metadata 在入哈希前先经 normalizeSetFields——否则同一集合仅字面量顺序不同就会
+ * 产出不同指纹,让已确认的 acknowledgement 无端失效。
  */
 export function decisionFingerprint({ policySchemaVersion, reviewShapeHash: shape, metadata, matchedDenyRule }) {
   return createHash('sha256').update(canonicalJson({
-    policySchemaVersion, reviewShapeHash: shape, metadata, matchedDenyRule: matchedDenyRule ?? null,
+    policySchemaVersion, reviewShapeHash: shape, metadata: normalizeSetFields(metadata), matchedDenyRule: matchedDenyRule ?? null,
   })).digest('hex')
 }

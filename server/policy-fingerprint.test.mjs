@@ -85,6 +85,19 @@ describe('reviewShapeHash', () => {
     expect(reviewShapeHash(swapFlags, V)).toBe(reviewShapeHash(cmd, V))
   })
 
+  // 上面那条只验证了"同一个桶内两个 arg 换序"。这条补的是另一半:**单个 arg 的
+  // positional 从 false 翻到 true 导致它换桶**(从 flagArgs 挪到 positionalArgs)。
+  // 功能本身一直是对的(桶分流承载了这个语义),这里补的是曾经存在、后来在
+  // for 循环改 it.each 时静默丢失、也没有等价替代的测试覆盖。
+  it('单个 arg 的 positional 从 false 翻到 true 导致换桶,reviewShapeHash 必变', () => {
+    const cmd = find('antigravity/recent-paths')
+    const base = reviewShapeHash(cmd, V)
+    // 先证明这确实是一次真翻转:fixture 里的原值是 false
+    expect(cmd.args[0].positional).toBe(false)
+    const patched = { ...cmd, args: [{ ...cmd.args[0], positional: true }] }
+    expect(reviewShapeHash(patched, V)).not.toBe(base)
+  })
+
   it('三条审定记录的 reviewedAgainst 已回填为真实哈希', () => {
     for (const [key, record] of REVIEWED_RECORDS) {
       expect(record.reviewedAgainst, `${key} 未回填`).toBe(reviewShapeHash(find(key), V))
@@ -93,11 +106,42 @@ describe('reviewShapeHash', () => {
 })
 
 describe('decisionFingerprint', () => {
-  it('metadata 变化 → 确认失效;无关 deny 变化 → 不失效', () => {
+  it('metadata 变化 → 确认失效;相同输入两次独立调用结果一致(纯函数,按值不按引用)', () => {
     const base = { policySchemaVersion: 1, reviewShapeHash: 'S', metadata: { exposure: 'public' }, matchedDenyRule: null }
     expect(decisionFingerprint({ ...base, metadata: { exposure: 'personal' } })).not.toBe(decisionFingerprint(base))
-    // 该命令没命中任何 deny 规则,别的命令的 deny 怎么改都与它无关
+    // 注意实际验证边界:这条只证明"同一份数据,两次独立构造的对象字面量"产出同一指纹
+    // (纯函数、按值不按引用比较),不是"改了另一个命令的 deny 规则,这条命令的指纹不受影响"——
+    // 后者才是真正的跨命令隔离,本用例并未构造第二条 deny 规则去验证它。
+    // 隔离性目前靠函数签名保证:decisionFingerprint 只接受单命令的 matchedDenyRule 标量,
+    // 没有全局登记表入口,不存在"读到别的命令 deny"的通路——但这是签名保证,不是本用例验证的。
+    // 真正的跨命令隔离测试要等 Task 4 接线、且 overrides 里有第二条 deny 规则时才能有效构造。
     expect(decisionFingerprint({ ...base })).toBe(decisionFingerprint(base))
+  })
+
+  // spec §3.1 把 authorities/effects/residues 定义为**集合**,§4.3 第 8 步明写「按值比较,
+  // 非引用/非顺序」。一个字段一条用例(同 argProjection 的 it.each 惯例),避免一条内的
+  // 前一个字段失败掩盖后一个字段从未被真正跑到。
+  it.each([
+    ['authorities', ['public-network', 'explicit-local-input'], ['explicit-local-input', 'public-network']],
+    ['effects', ['local-file-write', 'remote-write'], ['remote-write', 'local-file-write']],
+    ['residues', ['temp-file', 'persistent-session'], ['persistent-session', 'temp-file']],
+  ])('metadata.%s 是集合,书写顺序不影响 decisionFingerprint', (field, orderA, orderB) => {
+    // 先证明这确实是"同一集合、仅字面量顺序不同",不是碰巧两次都没测出差异
+    expect([...orderA].sort()).toEqual([...orderB].sort())
+    expect(JSON.stringify(orderA)).not.toBe(JSON.stringify(orderB))
+    const a = { policySchemaVersion: 1, reviewShapeHash: 'S', matchedDenyRule: null,
+      metadata: { exposure: 'public', [field]: orderA } }
+    const b = { policySchemaVersion: 1, reviewShapeHash: 'S', matchedDenyRule: null,
+      metadata: { exposure: 'public', [field]: orderB } }
+    expect(decisionFingerprint(a)).toBe(decisionFingerprint(b))
+  })
+
+  it('residues 可能是字符串 "unknown" 而非数组 —— 归一化须原样透传,不抛错', () => {
+    const base = { policySchemaVersion: 1, reviewShapeHash: 'S', matchedDenyRule: null,
+      metadata: { exposure: 'public', residues: 'unknown' } }
+    expect(() => decisionFingerprint(base)).not.toThrow()
+    // 两次独立构造、字符串值相同 → 指纹相同(排除"字符串被当数组处理"之类的隐藏分叉)
+    expect(decisionFingerprint({ ...base, metadata: { ...base.metadata } })).toBe(decisionFingerprint(base))
   })
 })
 

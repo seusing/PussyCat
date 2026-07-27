@@ -240,7 +240,7 @@ type LegacyBaselineArtifact = {
 v1 只有一个指纹，把两件不同的事混为一谈：manifest 变化只会让**用户**重新确认，却不会让**人工审定**重新进行——而新增参数完全可能改变 `effects`/`exposure`，此时旧 metadata 应先回到 `unknown`。
 
 ```
-ARG_PROJECTION = { name, type, required, positional, valueRequired, default, choices }
+ARG_PROJECTION = { name, type, required, valueRequired, default, choices }
 
 reviewShapeHash = sha256(canonicalJson({
   opencliVersion,                    // vendored 版本:实现变了而 manifest 没变时,旧审定必须失效
@@ -266,16 +266,16 @@ decisionFingerprint = sha256(canonicalJson({
 - 用户 acknowledgement 绑 `decisionFingerprint`；
 - **无关命令的 deny 变化不再让全部确认失效**（v1 的 `denyRevision` 有此缺陷）。
 
-**`ARG_PROJECTION` 为何是这七个字段**（实测 arg 字段全集：`choices/default/help/name/positional/required/type/valueRequired`）：
+**`ARG_PROJECTION` 为何是这六个字段**（实测 arg 字段全集：`choices/default/help/name/positional/required/type/valueRequired`）：
 
 | 字段 | 为何入哈希 |
 |---|---|
 | `default` | **`appStore.ts:38` 用它播种表单 `values`，`command.ts:13` 用它决定布尔标志是否发 `--flag false`** ——`buildTokens` 不直接读它，但它经 `values` 改变实际提交的 argv |
 | `choices` | 限定可提交值域；放宽值域可能改变命令的作用面 |
-| `positional` | `buildTokens` 直接按它分流，改它就改 argv 结构 |
 | `valueRequired` | 决定标志是否携带值 |
 | `name`/`type`/`required` | 基本形状 |
 | `help` | **排除**——纯展示 |
+| `positional` | **排除于 `ARG_PROJECTION`**——语义已由 `positionalArgs`/`flagArgs` 顶层分桶独立承载（改了 `positional` 就换桶，哈希必变）；放进逐字段投影是冗余的第二份，且没有任何测试能区分它在不在（实测：删掉后全部用例仍绿） |
 
 命令级字段的取舍：`modulePath`（换实现文件即换实现）、`domain`（数据去向）、`navigateBefore`/`defaultWindowMode`（浏览器行为，为 browser tier 预留）、`defaultFormat`/`type` 一并纳入；**排除** `aliases`（别名不改行为）、`description`/`example`（纯展示）。
 
