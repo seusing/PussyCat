@@ -264,17 +264,32 @@ describe('reviewShapeHash', () => {
     }
   })
 
-  it('arg 的七个行为字段每个都改变哈希;help 不改变', () => {
+  // **一个字段一条用例**,不要塞进 for 循环。
+  // 教训(T1 同形复发):循环里第一条 expect 失败即抛异常,后面的字段**根本不会被执行**——
+  // 于是「实现漏哈希了某字段」和「测试压根没跑到该字段」在输出上长得一模一样。
+  // 每道守卫必须各自可见、各自能红。
+  it.each([
+    ['name', { name: 'x' }],
+    ['type', { type: 'str' }],
+    ['required', { required: true }],
+    ['valueRequired', { valueRequired: true }],   // 原值是 false,必须翻成 true 才是真变异
+    ['default', { default: 99 }],                 // 原值 20;经 appStore 播种 values 间接改变 argv
+    ['choices', { choices: ['a'] }],              // 原值 []
+  ])('arg 字段 %s 改变 reviewShapeHash', (_field, over) => {
     const cmd = find('antigravity/recent-paths')
     const base = reviewShapeHash(cmd, V)
-    const patch = (over) => ({ ...cmd, args: [{ ...cmd.args[0], ...over }] })
-    // default 经 appStore 播种 values、经 command.ts 决定布尔标志,间接改变实际 argv
-    for (const over of [{ name: 'x' }, { type: 'str' }, { required: true },
-                        { positional: true }, { valueRequired: false },
-                        { default: 99 }, { choices: ['a'] }]) {
-      expect(reviewShapeHash(patch(over), V), JSON.stringify(over)).not.toBe(base)
-    }
-    expect(reviewShapeHash(patch({ help: 'CHANGED' }), V)).toBe(base)
+    const patched = { ...cmd, args: [{ ...cmd.args[0], ...over }] }
+    // 先证明这确实是一次真变异:改后的值必须与原值不同,否则这条用例什么也没测
+    const [key] = Object.keys(over)
+    expect(JSON.stringify(patched.args[0][key]))
+      .not.toBe(JSON.stringify(cmd.args[0][key]))
+    expect(reviewShapeHash(patched, V)).not.toBe(base)
+  })
+
+  it('help 是纯展示,不改变 reviewShapeHash', () => {
+    const cmd = find('antigravity/recent-paths')
+    const base = reviewShapeHash(cmd, V)
+    expect(reviewShapeHash({ ...cmd, args: [{ ...cmd.args[0], help: 'CHANGED' }] }, V)).toBe(base)
   })
 
   it('位置参数顺序是语义;flag 顺序不是', () => {
@@ -341,12 +356,15 @@ export function canonicalJson(value) {
 // choices/default/help/name/positional/required/type/valueRequired,其中只有 help 是纯展示。
 // default 尤其要进:buildTokens 不直接读它,但 appStore.ts 用它播种表单 values、
 // command.ts 用它决定布尔标志是否发 `--flag false`,所以它经 values 改变实际提交的 argv。
+// **不含 `positional`**:它的语义已由下面 reviewShapeHash 的 positionalArgs/flagArgs 分桶
+// 独立承载(改了 positional 就换桶,哈希必变)。放在这里是冗余的第二份,而且**没有任何测试
+// 能区分它在不在** —— 实测:从本函数删掉 positional,全部用例仍绿。
+// 沿用本仓已立的规矩:没有任何测试能区分的东西会在后人手里烂掉,该删而不是硬凑一个测试。
 function argProjection(arg) {
   return {
     name: arg.name ?? null,
     type: arg.type ?? null,
     required: arg.required ?? false,
-    positional: arg.positional ?? false,
     valueRequired: arg.valueRequired ?? null,
     default: arg.default ?? null,
     choices: arg.choices ?? null,
@@ -423,7 +441,9 @@ Expected: PASS（10 tests）
 
 - [ ] **Step 6: 变异验证**
 
-从 `argProjection` 里删掉 `default` → 「arg 的七个行为字段」用例必须变红。确认后还原。
+**`argProjection` 的六个字段逐条各做一次**:删掉其中一个 → 对应的 `arg 字段 <名> 改变 reviewShapeHash` 用例必须变红、**且只有它变红** → 还原。六条各自独立验证,不允许「做了一条声称其余同理」。
+
+**施加变异后先确认它真的落到文件上**(`sed -n '<行号>p'` 或 grep),再看测试结果 —— 正则没匹配上时,测试输出与真实通过长得一模一样。
 
 - [ ] **Step 7: 提交**
 
