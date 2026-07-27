@@ -700,8 +700,11 @@ git commit -m "feat(policy): legacy 基线一次性物化(276 条)+ 只减不增
 **Files:**
 - Modify: `server/policy.mjs`
 - Test: `server/policy-decisions.test.mjs`
+- **Modify（既有测试，语义变更导致，见下）**: `server/policy.test.mjs`、`server/catalog-service.test.mjs`
 
 **Interfaces:** Produces `buildPolicyDecisions(snapshot)` → `PolicyDecision[]`；`buildExecutionPolicy(snapshot)` 追加 `decisions` 与 `decisionByKey: Map`，保留 `allowedCommands`（供既有消费点与 Task 6 使用）。
+
+> **既有测试为何必须动**：`allowedCommands` 改由判决派生后，5 条既有断言编码的是 spec §4.3 已废除的「三条件即准入」。Global Constraints 说的是「改语义时**改写**断言」——改写，不是删除，也**不是把正向断言翻成反向**。具体分类与改写规则见 Step 5.5，**照那个分类做，不要一刀切**。
 
 - [ ] **Step 1: 写失败测试** `server/policy-decisions.test.mjs`
 
@@ -1005,11 +1008,38 @@ Expected: 19 + 13 tests PASS（`policy-decisions` = 11 条真实数据 + 8 条�
 
 > 变异 ②③ 存在的前提是 Step 1 的注入夹具。**没有那道缝，`withinLocalDirect` 的五个子条件删掉哪个测试都不会红** —— 计划早前版本正是这个状态，变异②写着「用变异夹具」却从未提供夹具。
 
+- [ ] **Step 5.5: 改写因语义变更而失效的既有断言（5 条，分三类，逐类照做）**
+
+**铁律:不要把正向控制翻成反向断言。** 下面 A 类里的 `a/ok`/`demo/ok` 是**正向控制**——它证明「策略确实重建了 / 确实有东西被允许」。把它从 `true` 改成 `false`，测试会变绿，但同一个用例里的 `has('paperreview/review') === false` **在空集上同样成立**，deny 那条断言就此失去意义。绿着、名字没变、不再守护它承诺的东西。
+
+**另一个必须先认清的事实**：两个 catalog-service 夹具用 `opencliVersion: '9.9.9'`，而 `reviewShapeHash` 含 opencliVersion，spec §4.1.2 明写**一次 opencli 升级会让全部 legacy 条目形状漂移、集体退出基线**。所以在 9.9.9 夹具下 `allowedCommands` 为空是**正确行为**。正向控制不能再从 `allowedCommands` 拿，要从 `decisionByKey` 拿。
+
+**A 类——主语不是准入派生，`a/ok`/`demo/ok` 只是「某个被允许的东西」的替身（3 条）**
+
+| 用例 | 真正的主语 | 改写规则 |
+|---|---|---|
+| `成功刷新:spawn 姿势正确 + snapshot/policy 原子生效` | 刷新姿势 + 原子生效 | `allowedCommands.has('a/ok')` → `expect(decisionByKey.get('a/ok')).toBeDefined()`。判决覆盖全目录，新命令出现在判决里即证明策略从新快照重建过；再补一句 `state==='unknown'` 并注明「9.9.9 = 升级后的 opencli，基线集体失效，这是 §4.1.2 的预期」 |
+| `真刷新构造的 policy 消费显式 deny 覆盖表` | 刷新后的 policy 消费 deny 覆盖表 | 控制臂同上换成 `decisionByKey`；deny 臂**加强**为 `decisionByKey.get('paperreview/review').decisionSource === 'explicit-deny'`——比 `allowedCommands.has(...)===false` 更强，它钉的是**为什么**被拒 |
+| `直接调用唯一咽喉 buildExecutionPolicy 时 deny 仍优先` | deny 优先级 | 同上：控制臂换 `decisionByKey`，deny 臂加强到 `decisionSource` |
+
+**B 类——断言的是关系，关系仍成立，只是事实源换了（1 条）**
+
+`只做减法:派生集恰好少掉被 deny 的那些` 已经在断言关系而非魔法数字（它的注释自己说了）。把关系重述到新事实源：`allowedCommands` 恰等于「判决 state 为 `ready` 或 `acknowledgement-required` 的 key 集合」。`has('36kr/news')===true` 保留（真实快照下它命中基线，仍为 `ready`）。
+
+**C 类——主语就是被废除的规则本身（1 条）**
+
+`buildExecutionPolicy: 纯函数过滤 read+public+browser=false`：这个名字就是被 §4.3 废除的三条件。**改写并改名**，把它变成新规则的守卫：read+public+direct 但不在基线、又不满足 tier → `unknown/no-tier`。这是 I-P2 fail-closed 的直接守卫，比原来更强。**名字必须跟着改**——留着旧名字是本仓反复栽过的「名字比内容大」。
+
+**另加两条新守卫（不是改写，是补）**
+
+1. `allowedCommands` 与判决**单一事实源**：两者必须恒等，任一方向不一致即红。
+2. 执行面从 276 变 279 的**具体增量**：新增恰为三条人工审定命令，且**没有任何条目被移除**（只断言数字 279 挡不住「减一条 legacy、多两条别的」）。
+
 - [ ] **Step 6: 提交**
 
 ```bash
 npx tsc --noEmit && npx vitest run && npm run build && npm run check:legacy
-git add server/policy.mjs server/policy-decisions.test.mjs
+git add server/policy.mjs server/policy-decisions.test.mjs server/policy.test.mjs server/catalog-service.test.mjs
 git commit -m "feat(policy): 准入算法产出逐命令 PolicyDecision(全函数,顺序即语义);allowedCommands 改由判决派生"
 ```
 
