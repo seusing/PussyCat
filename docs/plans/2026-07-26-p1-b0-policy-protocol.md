@@ -517,7 +517,11 @@ describe('legacy 基线 artifact', () => {
 
   it('基线不含任何 browser 命令 —— 它只承接 P0-B 的直连只读面', () => {
     for (const key of Object.keys(baseline.entries)) {
-      expect(snapshot.commands.find((c) => c.command === key).browser, key).toBe(false)
+      // 先 toBeDefined 再读 .browser:否则 key 不在快照里时抛的是 TypeError 而非断言失败,
+      // 红是红了,但信息是「Cannot read properties of undefined」,指不到真正的原因。
+      const command = snapshot.commands.find((c) => c.command === key)
+      expect(command, `${key} 不在快照里`).toBeDefined()
+      expect(command.browser, key).toBe(false)
     }
   })
 })
@@ -610,12 +614,25 @@ try {
   process.exit(1)
 }
 
-let base
+// 取文件与解析文件必须分开 catch:`git show` 失败 = 该 ref 上没有这个文件(合法的首次引入);
+// JSON.parse 失败 = 文件在那儿但坏了。后者若复用「尚无基线」的话术并 exit 0,
+// 输出是**事实错误**(基线明明存在,只是损坏),而且闸门会对一份坏基线放行——
+// 与上面「宁可报错,不静默放行」自相矛盾。
+let baseRaw
 try {
-  base = JSON.parse(execFileSync('git', ['show', `${baseRef}:${path}`], { cwd: root, encoding: 'utf8', stdio: 'pipe' }))
+  baseRaw = execFileSync('git', ['show', `${baseRef}:${path}`], { cwd: root, encoding: 'utf8', stdio: 'pipe' })
 } catch {
   console.log(`[legacy] '${baseRef}' 上尚无基线,跳过 diff 检查(首次引入)`)
   process.exit(0)
+}
+
+let base
+try {
+  base = JSON.parse(baseRaw)
+} catch (err) {
+  console.error(`[legacy] ❌ base ref '${baseRef}' 上的基线文件解析失败:${err.message}`)
+  console.error('[legacy] 文件存在但不可解析,视为错误而非「首次引入」。闸门 fail-closed。')
+  process.exit(1)
 }
 
 const added = Object.keys(current.entries).filter((k) => !(k in base.entries))
@@ -639,7 +656,9 @@ Expected: **5** tests PASS；闸门打印「尚无基线,跳过 diff 检查(首�
 
 - [ ] **Step 7: 变异验证**
 
-**A. 测试的守护**：手工往 `server/policy-legacy-baseline.json` 的 `entries` 里加一个假 key（`"fake/cmd": "0"`）→ Step 1 的第 2、3 条用例变红（第 2 条:key 集合与派生结果不等;第 3 条:`fake/cmd` 不在快照里）。还原后确认回到 4 条全绿。
+**A. 测试的守护**：手工往 `server/policy-legacy-baseline.json` 的 `entries` 里加一个假 key（`"fake/cmd": "0"`）→ **3 条**用例变红：key 集合与派生结果不等、`fake/cmd` 不在快照里、以及「基线不含 browser 命令」那条（它同样要查快照,查不到 → 前置 `toBeDefined` 失败）。还原后确认回到 **5** 条全绿。
+
+> 第 3 条变红是**预期**,不是误伤——三条从不同角度都要求「基线里的 key 必须在快照里存在」。计划早前写「第 2、3 条」是漏数了一条。
 
 **B. 闸门的失败路径**——这一条不做的话，闸门交付时其防守逻辑一次都没被执行过（首次引入时 `origin/main` 上没有基线，`git show` 抛异常 → 直接 `exit 0`，比较分支走不到）。用 `LEGACY_BASE_REF` 指向一个本地 ref 才能真正走进去。**先提交基线**（Step 8），再逐条验：
 
@@ -649,12 +668,22 @@ Expected: **5** tests PASS；闸门打印「尚无基线,跳过 diff 检查(首�
 | B2 | 工作区往 `entries` 加 `"fake/cmd": "0"`，再跑 B1 命令 | **exit 1**，输出点名 `fake/cmd` |
 | B3 | 工作区删掉任意一条真实 key，再跑 B1 命令 | exit 0，输出 `已迁出 1 条: <key>` |
 | B4 | `LEGACY_BASE_REF=nonexistent/ref npm run check:legacy` | **exit 1**，报 base ref 不存在（fail-closed，不是静默跳过） |
+| B5 | base ref 上的基线文件是**损坏 JSON** | **exit 1**，报「解析失败」——不得复用「尚无基线，跳过」的话术 |
+
+B5 的构造（做完务必清理）：`git checkout --detach`，把 `server/policy-legacy-baseline.json` 覆盖成非法 JSON 并 commit，记下游离 commit id，`git checkout p1b0/policy-protocol-spec` 切回，然后 `LEGACY_BASE_REF=<游离id> npm run check:legacy`。该游离提交不挂任何分支，验完不必刻意删除（会被 gc 回收），但**切回后必须确认工作区干净**。
+
+> **B5 存在的理由**：这一格此前是绿灯放行的——`git show` 成功返回、`JSON.parse` 抛异常，两种性质完全不同的失败落进同一个 `catch`，闸门对一份**损坏的基线**报「首次引入」并 exit 0。Step 5 的脚本已拆成两段 catch，B5 就是钉住这个修复的那颗钉子。
 
 每步用 `echo $?` 看退出码——**光看输出文字不够**，闸门的契约是退出码。B2、B3 改完必须还原并复跑 B1 确认回到基线。
 
 > 环境提示：`VAR=x cmd` 是 bash 语法，本仓在 Windows 上，PowerShell 里要写 `$env:LEGACY_BASE_REF='HEAD'; npm run check:legacy`（且它会**留在会话里**，验完记得 `Remove-Item Env:LEGACY_BASE_REF`）。用 Bash 工具跑则前缀写法直接可用。
 
 > **注意**：本仓目前**没有 `.github/workflows`**，所以这道「CI 闸」当下只是一个手动 `npm run check:legacy`。spec §4.1.2 的 L1 要求 CI 强制执行，接线属于后续工作，不在本 task 范围。**本 task 的交付物是一个已验证可用的闸门，不是一个已生效的强制。** 报告里如实写明这一点，别让它读起来像 L1 已经落地。
+
+**留给「接 CI」那个后续任务的两条硬约束**（本 task 不实现，但必须记下来，否则接线时会把闸门接成永远绿的）：
+
+1. **`LEGACY_BASE_REF` 绝不能来自 PR 可控的输入**（分支名、label、PR body、workflow 的 `inputs`）。它必须由可信 runner 自己算出真实 merge-base 后灌入。否则提交者只要让它等于 `HEAD`，闸门就变成自比自、恒绿——这个覆盖口子是为了让失败路径**可验证**才开的，不是给运行时用的调节旋钮。
+2. **闸门只查 key 集合的增删，不查已入库 key 的哈希值是否被改。** 同一个 key 把 hash 改成垃圾值，闸门报 `276 → 276` 并放行。这在 L1 的字面定义内合规，真正兜住这一面的是 **Task 4 的运行时形状比对**（`LEGACY_BASELINE.entries[key] === reviewShapeHash(liveCommand)`，对不上即退出基线）。也就是说 legacy 的完整性是**两层叠加**：闸门管集合、运行时管形状。**任何一层被当成单独兜底都是误解**，Task 4 的实现与文档里要写明这个分工。
 
 - [ ] **Step 8: 提交**
 
