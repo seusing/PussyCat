@@ -29,13 +29,18 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
   })
 
   it('只做减法:派生集恰好少掉被 deny 的那些,既有命令不受影响', () => {
-    const derived = snapshot.commands.filter((c) => (
-      c.access === 'read' && c.strategy === 'public' && c.browser === false
-    ))
-    const deniedInCatalog = Object.entries(COMMAND_POLICY_OVERRIDES)
-      .filter(([key, rule]) => rule.decision === 'deny' && derived.some((c) => c.command === key))
-    // 断言的是**关系**不是魔法数字:catalog 漂移时不会误红,但 deny 没生效时一定红。
-    expect(policy.allowedCommands.size).toBe(derived.length - deniedInCatalog.length)
+    // 事实源已换成判决(Task 4:allowedCommands 由 decisions 派生),但**断言的仍是关系
+    // 而非魔法数字** —— catalog 漂移时不会误红,deny 没生效时一定红。
+    const runnable = policy.decisions
+      .filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
+      .map((d) => d.commandKey)
+    expect([...policy.allowedCommands].sort()).toEqual([...runnable].sort())
+    // 「只做减法」在新事实源下的形式:被 deny 的命令必然不可执行,且判决说得出**为什么**。
+    for (const [key, rule] of Object.entries(COMMAND_POLICY_OVERRIDES)) {
+      if (rule.decision !== 'deny') continue
+      expect(policy.allowedCommands.has(key), key).toBe(false)
+      expect(policy.decisionByKey.get(key).decisionSource, key).toBe('explicit-deny')
+    }
     expect(policy.allowedCommands.has('36kr/news')).toBe(true)
   })
 
@@ -79,9 +84,46 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
         { command: 'demo/ok', access: 'read', strategy: 'public', browser: false },
       ],
     })
-    expect(built.allowedCommands.has('demo/ok')).toBe(true)
+    // 正向控制:证明这次调用确实产出了判决(9.9.9 下 legacy 基线集体失效,允许集为空是
+    // spec §4.1.2 的预期行为,故控制臂改从 decisionByKey 取)。
+    expect(built.decisionByKey.get('demo/ok')).toBeDefined()
+    // deny 臂**加强**:钉住被拒的**原因**,而不只是「不在允许集里」——后者在空集上平凡成立。
+    expect(built.decisionByKey.get('paperreview/review').decisionSource).toBe('explicit-deny')
     expect(built.allowedCommands.has('paperreview/review')).toBe(false)
     expect(built.deniedCommands.get('paperreview/review')).toContain('capability token')
+  })
+})
+
+describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
+  it('allowedCommands 与判决恒等 —— 任一方向不一致即红', () => {
+    const runnable = new Set(policy.decisions
+      .filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
+      .map((d) => d.commandKey))
+    // 方向一:允许集里的每一条,判决都必须认为它可执行(否则允许集比判决宽 = 绕过判决)
+    for (const key of policy.allowedCommands) {
+      expect(runnable.has(key), `${key} 在 allowedCommands 里,判决却不可执行`).toBe(true)
+    }
+    // 方向二:判决认为可执行的每一条,都必须在允许集里(否则判决比允许集宽 = 判决被吞)
+    for (const key of runnable) {
+      expect(policy.allowedCommands.has(key), `${key} 判决可执行,却不在 allowedCommands 里`).toBe(true)
+    }
+    expect(policy.allowedCommands.size).toBe(runnable.size)
+  })
+
+  it('执行面增量恰为三条人工审定命令,且没有任何条目被移除', () => {
+    // 只断言总数 279 挡不住「减掉一条 legacy、多进来两条别的」——必须钉住**增量本身**。
+    const legacyDerived = new Set(snapshot.commands
+      .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
+      .map((c) => c.command)
+      .filter((k) => COMMAND_POLICY_OVERRIDES[k]?.decision !== 'deny'))
+    const added = [...policy.allowedCommands].filter((k) => !legacyDerived.has(k)).sort()
+    const removed = [...legacyDerived].filter((k) => !policy.allowedCommands.has(k)).sort()
+    expect(added).toEqual([
+      'antigravity/recent-paths', 'mercury/reimbursement-plan', 'trae-cn/setup',
+    ])
+    expect(removed).toEqual([])
+    expect(legacyDerived.size).toBe(276)
+    expect(policy.allowedCommands.size).toBe(279)
   })
 })
 
@@ -133,7 +175,10 @@ describe('P0-B execution policy', () => {
   })
 })
 
-it('buildExecutionPolicy: 纯函数过滤 read+public+browser=false', () => {
+// 改名自「buildExecutionPolicy: 纯函数过滤 read+public+browser=false」——
+// 那个名字就是 spec §4.3 已**废除**的三条件规则本身(public-direct 不再是需要允许集的 tier,
+// 改由 legacy 基线承接)。留着旧名字就是本仓反复栽过的「名字比内容大」。
+it('buildExecutionPolicy: 三条件不再等于准入 —— 不在基线又不落 tier 的命令一律 unknown/no-tier', () => {
   const policy = buildExecutionPolicy({
     opencliVersion: '9.9.9',
     commands: [
@@ -143,7 +188,17 @@ it('buildExecutionPolicy: 纯函数过滤 read+public+browser=false', () => {
       { command: 'a/br', access: 'read', strategy: 'public', browser: true },
     ],
   })
-  expect([...policy.allowedCommands]).toEqual(['a/ok'])
+  // a/ok 满足全部三条件,但它不在 legacy 基线里(捏造的 key)、strategy 也不是 local
+  // (过不了 tierOf) → 落 unknown/no-tier。**这是 I-P2 fail-closed 的直接守卫**:
+  // 没人审定过的命令不得可执行,比原来的「三条件即准入」更强。
+  expect(policy.decisionByKey.get('a/ok').state).toBe('unknown')
+  expect(policy.decisionByKey.get('a/ok').reasonCode).toBe('no-tier')
+  expect([...policy.allowedCommands]).toEqual([])
+  // 判决覆盖**全目录**,不是只发给「过了三条件」的那些。
+  expect(policy.decisions).toHaveLength(4)
+  for (const key of ['a/ok', 'a/write', 'a/priv', 'a/br']) {
+    expect(policy.decisionByKey.get(key).state, key).toBe('unknown')
+  }
   expect(policy.opencliVersion).toBe('9.9.9')
 })
 

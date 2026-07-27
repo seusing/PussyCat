@@ -53,7 +53,13 @@ describe('CatalogService', () => {
     expect(snapshot.schemaVersion).toBe(1)
     expect(snapshot.commands[0].type).toBe('json')            // manifest 字段已 merge
     expect(snapshot.opencliVersion).toBe('9.9.9')
-    expect(service.current().policy.allowedCommands.has('a/ok')).toBe(true)
+    // 正向控制:证明 policy 确实从**新快照**重建过。判决覆盖全目录,新命令出现在判决里即是证据。
+    // 为什么不再用 allowedCommands:本夹具 opencliVersion 是 9.9.9,而 reviewShapeHash 含它,
+    // 于是全部 legacy 条目形状漂移、集体退出基线 —— 这是 spec §4.1.2 明写的**升级连带后果**,
+    // 9.9.9 下允许集为空是**正确行为**,不是需要绕开的障碍。
+    const decision = service.current().policy.decisionByKey.get('a/ok')
+    expect(decision).toBeDefined()
+    expect(decision.state).toBe('unknown')
   })
 
   it('真刷新构造的 policy 消费显式 deny 覆盖表', async () => {
@@ -75,7 +81,11 @@ describe('CatalogService', () => {
 
     const current = service.current()
     expect(current.snapshot.commands.some((command) => command.command === 'paperreview/review')).toBe(true)
-    expect(current.policy.allowedCommands.has('a/ok')).toBe(true)
+    // 正向控制:理由同上一条(9.9.9 → 基线集体失效),改从判决取。
+    expect(current.policy.decisionByKey.get('a/ok')).toBeDefined()
+    // deny 臂**加强**:钉住「**为什么**被拒」,而不只是「不在允许集里」。
+    // 后者在空集上平凡成立 —— 证明不了覆盖表真的被消费过。
+    expect(current.policy.decisionByKey.get('paperreview/review').decisionSource).toBe('explicit-deny')
     expect(current.policy.allowedCommands.has('paperreview/review')).toBe(false)
     expect(current.policy.deniedCommands.get('paperreview/review')).toContain('capability token')
   })
