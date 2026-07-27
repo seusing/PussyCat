@@ -6,9 +6,25 @@ import { REVIEWED_RECORDS } from './policy-metadata.mjs'
 import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewShapeHash } from './policy-fingerprint.mjs'
 
 const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const LEGACY_BASELINE = JSON.parse(
-  readFileSync(join(moduleRoot, 'server/policy-legacy-baseline.json'), 'utf8'),
-)
+
+// OPENCLI_HOST_LEGACY_BASELINE_PATH 是**测试注入点**(供 readiness.test.mjs 制造损坏基线),
+// 与 index.mjs 的 OPENCLI_HOST_CATALOG_PATH 同一套路;默认行为不变。
+const LEGACY_BASELINE_PATH = process.env.OPENCLI_HOST_LEGACY_BASELINE_PATH
+  ?? join(moduleRoot, 'server/policy-legacy-baseline.json')
+
+// 读盘**惰性 + memo**:模块求值期一律不碰磁盘。
+// 理由是 readiness 失败协议(见 index.mjs 的 failReady 注释):index.mjs 的 try/catch 包住的是
+// `loadExecutionPolicy`,而静态 ESM import 在 try **之前**求值 —— 若把 JSON.parse 放在模块顶层,
+// 基线损坏会以**裸 SyntaxError** 抛在 module job 里,`failReady()` 从未被调用,
+// supervisor 收不到 `opencliHostReady:false`,于是「协议内失败」被误判成 process-failed,
+// 给用户的文案与排障方向全错。惰性化让这类损坏落进 loadExecutionPolicy 的 try,走结构化失败。
+let legacyBaselineMemo = null
+function legacyBaseline() {
+  if (legacyBaselineMemo === null) {
+    legacyBaselineMemo = JSON.parse(readFileSync(LEGACY_BASELINE_PATH, 'utf8'))
+  }
+  return legacyBaselineMemo
+}
 
 export class RequestPolicyError extends Error {
   constructor(statusCode, message, detail) {
@@ -55,13 +71,26 @@ function withinLocalDirect(m) {
   if (!LOCAL_DIRECT.exposures.includes(m.exposure)) return false
   if (m.effects.length > 0) return false
   if (m.credentialFlow !== 'none') return false
-  if (!Array.isArray(m.residues) || m.residues.length > 0) return false
+  // 走到这里 residues 必是数组:isCompleteRecord 只放行 `'unknown'` 或 RESIDUES 子集数组,
+  // 而 `'unknown'` 已被第 6 步拦掉。原先这里还有一个 `!Array.isArray(m.residues)` 前置判断,
+  // 已删 —— 它是**到不了的分支**,留着会让人误以为第 7 步在补防一类第 6 步漏掉的输入。
+  if (m.residues.length > 0) return false
   return true
 }
 
-/** 集合恰好相等(按值,非引用/非顺序)——第 8 步的判据。 */
+/**
+ * 集合恰好相等(按值,非引用/非顺序、**非重数**)——第 8 步的判据。
+ * 用 Set 归一化再比:spec §4.3 第 8 步说的是「authorities 集合恰好等于 {explicit-local-input}」,
+ * 集合语义下 `['x','x']` 与 `['x']` 相等。旧实现先比 length,等价于**多重集**相等,
+ * 于是 `['explicit-local-input','explicit-local-input']` 会掉到第 9 步多挂一次弹窗——
+ * 方向是 fail-safe,但与 §4.3 字面不符。
+ */
 function sameSet(a, b) {
-  return a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|')
+  const left = new Set(a)
+  const right = new Set(b)
+  if (left.size !== right.size) return false
+  for (const item of left) if (!right.has(item)) return false
+  return true
 }
 
 // `records` 是**只给测试用的注入缝**,生产调用不传第二参。
@@ -91,7 +120,7 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
     // 管不了「同一个 key 的 hash 被改成别的值」;真正兜住那一面的是这里的等值比较——
     // 入库哈希与当前形状对不上,该命令自动退出基线落入 unknown。
     // 两层缺一不可,**任何一层被当成单独兜底都是误解**(spec §4.1.2 L1 / L2)。
-    if (LEGACY_BASELINE.entries[commandKey] === shape) {
+    if (legacyBaseline().entries[commandKey] === shape) {
       return { ...base, state: 'ready', decisionSource: 'legacy-baseline' }
     }
 
@@ -176,14 +205,24 @@ export function buildExecutionPolicy(snapshot) {
     deniedCommands.set(commandKey, rule.reason)
   }
 
+  // description 是**用户可见文案**:host-server.mjs 把它当 /health 的 executionPolicy 字段下发,
+  // index.mjs 打进启动日志。所以它必须说的是**当前真实的事实源**。
+  // 旧文案写着 `access=read, strategy=public, browser=false` —— 那正是 spec §4.3 已废除的三条件
+  // (public-direct 不再是需要允许集的 tier,改由 legacy 基线承接)。留着就是对用户说假话。
+  const legacyCount = decisions.filter((d) => d.decisionSource === 'legacy-baseline').length
+  const tierCount = decisions.filter((d) => (
+    d.decisionSource === 'tier-evaluation'
+    && (d.state === 'ready' || d.state === 'acknowledgement-required')
+  )).length
+
   return {
     opencliVersion: snapshot.opencliVersion,
     allowedCommands,
     deniedCommands,
     decisions,
     decisionByKey,
-    // 措辞如实:执行面不再仅由三条件决定,还减去覆盖表。
-    description: `catalog: access=read, strategy=public, browser=false;再减去覆盖表 deny ${deniedCommands.size} 条`,
+    description: `逐命令判决:legacy 基线 ${legacyCount} 条 + tier 审定放行 ${tierCount} 条;`
+      + `显式 deny ${deniedCommands.size} 条,其余一律 unknown 拒绝(fail-closed)`,
   }
 }
 

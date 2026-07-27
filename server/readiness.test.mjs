@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const serverEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'index.mjs')
@@ -68,6 +70,28 @@ describe('readiness 协议', () => {
     expect(typeof ready.error.summary).toBe('string')
     const code = await new Promise((r) => child.once('exit', r))
     expect(code).not.toBe(0)
+  }, 30000)
+
+  it('协议内失败:legacy 基线损坏 → ready:false,而非模块求值期的裸 SyntaxError', async () => {
+    // **I-3 回归钉。** 两处读盘(legacy 基线、catalog 快照)原本在**模块求值期**执行,
+    // 而 index.mjs 的 try/catch 包住的是 loadExecutionPolicy,静态 ESM import 在 try **之前**求值。
+    // 实测过的坏行为:基线损坏 → 裸 SyntaxError 抛在 module job 里,failReady() 从未被调用,
+    // 判定行根本不出现 —— supervisor 把「协议内失败」误判成 process-failed,
+    // 给用户的文案与排障方向全错(理由见 index.mjs failReady 的注释)。
+    // 读盘改惰性 + memo 后,损坏必须落进 loadExecutionPolicy 的 try,走结构化失败。
+    const dir = mkdtempSync(join(tmpdir(), 'opencli-legacy-'))
+    const corrupt = join(dir, 'policy-legacy-baseline.json')
+    writeFileSync(corrupt, '{ CORRUPT')
+    try {
+      const { child, firstJson } = startHost({ OPENCLI_HOST_LEGACY_BASELINE_PATH: corrupt })
+      const ready = await firstJson.catch((e) => e)
+      expect(ready.opencliHostReady).toBe(false)
+      expect(typeof ready.error.summary).toBe('string')
+      const code = await new Promise((r) => child.once('exit', r))
+      expect(code).not.toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   }, 30000)
 
   it('协议内失败 + 看门狗已挂:判定行完整,且仍以 1 退出(不因等排空而挂死)', async () => {

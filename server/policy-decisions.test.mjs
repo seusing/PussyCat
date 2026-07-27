@@ -113,6 +113,15 @@ describe('准入算法 —— 真实数据到不了的出口(注入夹具)', () 
     expect(d.state).toBe('ready')
   })
 
+  it('authorities 按**集合**比较 —— 重复项不改变第 8 步判定(§4.3 字面)', () => {
+    // 旧 sameSet 先比 length,等价于**多重集**相等:['x','x'] 与 ['x'] 判不等,
+    // 于是会掉到第 9 步多挂一次弹窗。方向 fail-safe,但与 §4.3 第 8 步
+    // 「authorities 集合恰好等于 {explicit-local-input}」的字面不符。
+    const d = decide({ authorities: ['explicit-local-input', 'explicit-local-input'] })
+    expect(d.state).toBe('ready')
+    expect(d.decisionSource).toBe('tier-evaluation')
+  })
+
   it.each([
     ['exposure=unknown 早于阈值判定', { exposure: 'unknown' }, 'unknown', 'exposure-unknown'],
     ['residues=unknown 早于阈值判定', { residues: 'unknown' }, 'unknown', 'residue-unknown'],

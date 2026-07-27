@@ -10,6 +10,7 @@ import {
   validateCancelRequest,
   validateStartRequest,
 } from './policy.mjs'
+import { reviewShapeHash } from './policy-fingerprint.mjs'
 
 const catalogPath = resolve('public/catalog.snapshot.json')
 const policy = loadExecutionPolicy(catalogPath)
@@ -25,6 +26,12 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
     expect(target.strategy).toBe('public')
     expect(target.browser).toBe(false)
 
+    // **这一条是本用例的命门。** 只断言「不在允许集里」对 deny 已**失去敏感度**:
+    // paperreview/review 不在 legacy 基线(基线 = 派生 − 它)、strategy==='public' 又过不了
+    // tierOf,所以就算把第 1 步的 deny 短路整个关掉,它照样落 unknown/no-tier、照样不在允许集,
+    // 用例仍然全绿 —— 名字写着「deny 优先」,却对 deny 是死的。
+    // 钉住**判决来源**才能真的守住 I-P3:关掉第 1 步,这行立刻红。
+    expect(policy.decisionByKey.get('paperreview/review').decisionSource).toBe('explicit-deny')
     expect(policy.allowedCommands.has('paperreview/review')).toBe(false)
   })
 
@@ -73,7 +80,17 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
   })
 
   it('description 不再声称执行面完全由三条件决定', () => {
-    expect(policy.description).toContain('覆盖表')
+    // 原断言是 `.toContain('覆盖表')` —— 对着字面写三条件的文案**照样绿**,挡不住它要挡的东西。
+    // description 是用户可见文案(/health 的 executionPolicy 字段 + 启动日志),
+    // 说的必须是当前真实事实源。故改成**能挡住旧文案**的形式。
+    expect(policy.description).not.toContain('access=read')
+    expect(policy.description).not.toContain('strategy=public')
+    expect(policy.description).not.toContain('browser=false')
+    // 正向:必须点名真正的两个来源与 fail-closed 缺省
+    expect(policy.description).toContain('legacy 基线')
+    expect(policy.description).toContain('tier')
+    expect(policy.description).toContain('deny')
+    expect(policy.description).toContain('fail-closed')
   })
 
   it('直接调用唯一咽喉 buildExecutionPolicy 时 deny 仍优先', () => {
@@ -124,6 +141,24 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(removed).toEqual([])
     expect(legacyDerived.size).toBe(276)
     expect(policy.allowedCommands.size).toBe(279)
+  })
+
+  it('注入缝不经 buildExecutionPolicy 透传 —— 传第二参也不改变任何判决', () => {
+    // 今天这道缝在生产面不可达(buildExecutionPolicy 形参只有 snapshot、内部调用不带第二参、
+    // HTTP 面够不着),但**此前没有任何断言钉住它**:将来有人给它加个 opts 往下转发,
+    // 测试套件看不见。这里伪造一条**会放大执行面**的记录——若透传,
+    // trae-solo/state-get 就从 unknown 变成 ready。
+    const host = snapshot.commands.find((c) => c.command === 'trae-solo/state-get')
+    const forged = new Map([['trae-solo/state-get', {
+      reviewedAgainst: reviewShapeHash(host, snapshot.opencliVersion),
+      metadata: {
+        executionPath: 'direct-node', authorities: [], exposure: 'public',
+        effects: [], credentialFlow: 'none', residues: [],
+      },
+    }]])
+    const built = buildExecutionPolicy(snapshot, { records: forged })
+    expect(built.decisionByKey.get('trae-solo/state-get').state).toBe('unknown')
+    expect(built.decisions).toEqual(policy.decisions)
   })
 })
 
