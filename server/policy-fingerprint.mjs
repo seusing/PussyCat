@@ -75,14 +75,17 @@ function sortIfArray(value) {
   return Array.isArray(value) ? [...value].sort() : value
 }
 
+// 只改写**已存在**的键,不凭空补 authorities/effects/residues:0.0 生产路径里
+// ReviewedPolicyRecord 一定三键俱全(isCompleteRecord 把关),但本函数是通用工具,
+// 不该对"某键原本缺席"的调用方悄悄加上 `键:null`——那本身也是一次不该发生的指纹变化,
+// 与本轮要修的"顺序不该影响指纹"是两回事,不能借归一化之手引入。
 function normalizeSetFields(metadata) {
   if (!metadata || typeof metadata !== 'object') return metadata
-  return {
-    ...metadata,
-    authorities: sortIfArray(metadata.authorities),
-    effects: sortIfArray(metadata.effects),
-    residues: sortIfArray(metadata.residues),
-  }
+  const normalized = { ...metadata }
+  if ('authorities' in metadata) normalized.authorities = sortIfArray(metadata.authorities)
+  if ('effects' in metadata) normalized.effects = sortIfArray(metadata.effects)
+  if ('residues' in metadata) normalized.residues = sortIfArray(metadata.residues)
+  return normalized
 }
 
 /**

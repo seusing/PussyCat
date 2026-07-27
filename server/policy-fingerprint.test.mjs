@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -136,12 +137,19 @@ describe('decisionFingerprint', () => {
     expect(decisionFingerprint(a)).toBe(decisionFingerprint(b))
   })
 
-  it('residues 可能是字符串 "unknown" 而非数组 —— 归一化须原样透传,不抛错', () => {
-    const base = { policySchemaVersion: 1, reviewShapeHash: 'S', matchedDenyRule: null,
-      metadata: { exposure: 'public', residues: 'unknown' } }
+  it('residues 可能是字符串 "unknown" 而非数组 —— 归一化须原样透传,不得被当数组展开排序', () => {
+    const metadata = { exposure: 'public', residues: 'unknown' }
+    const base = { policySchemaVersion: 1, reviewShapeHash: 'S', matchedDenyRule: null, metadata }
     expect(() => decisionFingerprint(base)).not.toThrow()
-    // 两次独立构造、字符串值相同 → 指纹相同(排除"字符串被当数组处理"之类的隐藏分叉)
-    expect(decisionFingerprint({ ...base, metadata: { ...base.metadata } })).toBe(decisionFingerprint(base))
+    // 直接对照"手工构造的期望值"(用未经归一化的原始 metadata 直接算 canonicalJson),
+    // 而不是"两次独立调用互相比较"——后者抓不住这类 bug:若归一化误用
+    // `[...value].sort()` 漏了 Array.isArray 判断,字符串会被展开成字符数组再排序
+    // ('unknown' → ['k','n','n','n','o','u','w']),不抛错、且两次调用结果依然彼此相等
+    // (都被同样地腐化),纯粹"比较两次调用"抓不到;必须对照真正的期望值才能揭穿。
+    const expected = createHash('sha256').update(canonicalJson({
+      policySchemaVersion: 1, reviewShapeHash: 'S', metadata, matchedDenyRule: null,
+    })).digest('hex')
+    expect(decisionFingerprint(base)).toBe(expected)
   })
 })
 
