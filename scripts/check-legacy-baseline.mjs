@@ -27,12 +27,25 @@ try {
   process.exit(1)
 }
 
-let base
+// 取文件与解析文件必须分开 catch:`git show` 失败 = 该 ref 上没有这个文件(合法的首次引入);
+// JSON.parse 失败 = 文件在那儿但坏了。后者若复用「尚无基线」的话术并 exit 0,
+// 输出是**事实错误**(基线明明存在,只是损坏),而且闸门会对一份坏基线放行——
+// 与上面「宁可报错,不静默放行」自相矛盾。
+let baseRaw
 try {
-  base = JSON.parse(execFileSync('git', ['show', `${baseRef}:${path}`], { cwd: root, encoding: 'utf8', stdio: 'pipe' }))
+  baseRaw = execFileSync('git', ['show', `${baseRef}:${path}`], { cwd: root, encoding: 'utf8', stdio: 'pipe' })
 } catch {
   console.log(`[legacy] '${baseRef}' 上尚无基线,跳过 diff 检查(首次引入)`)
   process.exit(0)
+}
+
+let base
+try {
+  base = JSON.parse(baseRaw)
+} catch (err) {
+  console.error(`[legacy] ❌ base ref '${baseRef}' 上的基线文件解析失败:${err.message}`)
+  console.error('[legacy] 文件存在但不可解析,视为错误而非「首次引入」。闸门 fail-closed。')
+  process.exit(1)
 }
 
 const added = Object.keys(current.entries).filter((k) => !(k in base.entries))

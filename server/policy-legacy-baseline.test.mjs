@@ -48,7 +48,11 @@ describe('legacy 基线 artifact', () => {
 
   it('基线不含任何 browser 命令 —— 它只承接 P0-B 的直连只读面', () => {
     for (const key of Object.keys(baseline.entries)) {
-      expect(snapshot.commands.find((c) => c.command === key).browser, key).toBe(false)
+      // 先 toBeDefined 再读 .browser:否则 key 不在快照里时抛的是 TypeError 而非断言失败,
+      // 红是红了,但信息是「Cannot read properties of undefined」,指不到真正的原因。
+      const command = snapshot.commands.find((c) => c.command === key)
+      expect(command, `${key} 不在快照里`).toBeDefined()
+      expect(command.browser, key).toBe(false)
     }
   })
 })
