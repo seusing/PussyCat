@@ -182,17 +182,18 @@ tier 是**候选分组**，进入 tier 只说明「这批命令值得被审定�
 | 命令总数 | 1278（其中派生可执行 277，减显式 deny 1 → 基线 276） |
 | 与 `main@43d789b` | 完全一致 |
 
-**目标 schema**（`server/policy-legacy-baseline.json`，**尚未生成**，由实施任务据上表物化）：
+**目标 schema**（`server/policy-legacy-baseline.json`，**尚未生成**，由实施任务据上表物化）。
+写成类型声明而非 JSON 样例：样例里的 `...` 与 `//` 会让严格 JSON 解析失败，而尖括号模板又是占位符。
 
-```
-{
-  "materializedFrom": {
-    "path": "public/catalog.snapshot.json",
-    "gitBlob": "3b80be2b9b19e03f7475ab6a085f6eb0f85ab3fa",
-    "sha256": "d714ef22863031ea694d5d90d2582d331bb466bc508db46ecf7cb6faf0b0398f"
-  },
-  "opencliVersion": "1.8.6",
-  "entries": { "<commandKey>": "<reviewShapeHash>", ... }   // 276 条
+```ts
+type LegacyBaselineArtifact = {
+  materializedFrom: {
+    path: 'public/catalog.snapshot.json'
+    gitBlob: '3b80be2b9b19e03f7475ab6a085f6eb0f85ab3fa'
+    sha256: 'd714ef22863031ea694d5d90d2582d331bb466bc508db46ecf7cb6faf0b0398f'
+  }
+  opencliVersion: '1.8.6'
+  entries: { [commandKey: string]: string }   // value 为 reviewShapeHash，初始恰好 276 条
 }
 ```
 
