@@ -1043,6 +1043,27 @@ git add server/policy.mjs server/policy-decisions.test.mjs server/policy.test.mj
 git commit -m "feat(policy): 准入算法产出逐命令 PolicyDecision(全函数,顺序即语义);allowedCommands 改由判决派生"
 ```
 
+- [ ] **Step 7: 评审修复(三条必修)**
+
+**I-1 `policy.description` 现在是一句假话,而守它的用例挡不住。** `server/policy.mjs` 返回的 description 仍写着 `catalog: access=read, strategy=public, browser=false` —— 正是 §4.3 废除的三条件。它不是内部注释:`host-server.mjs` 把它当 `/health` 的 `executionPolicy` 字段**下发**,`index.mjs` 打进启动日志。而 `policy.test.mjs` 那条名为「description 不再声称执行面完全由三条件决定」的用例只断言 `.toContain('覆盖表')`,对着字面写三条件的文案照样绿。
+改:description 改写为真实事实源(legacy 基线 + tier 判决 − 显式 deny);断言换成**能挡住旧文案**的形式(如 `.not.toContain('access=read, strategy=public')`)。
+
+> Step 5.5 的 C 类规则(名字必须跟着内容改)当时只用在了**测试名**上,漏了产品自己的**用户可见文案**。同一条规矩,两个作用面。
+
+**I-2 「deny 优先」用例已对 deny 失去敏感度。** 变异实测:关掉第 1 步短路(`if (false && ...)`),5 条用例变红,而名叫「deny 优先:满足全部派生条件也照样被拿掉」的那条**保持绿**——`paperreview/review` 不在 legacy 基线(基线 = 派生 − 它)、`strategy==='public'` 又过不了 `tierOf`,所以 deny 就算完全失效它也落 `unknown/no-tier`,照样不在允许集。
+改:该用例补 `expect(policy.decisionByKey.get('paperreview/review').decisionSource).toBe('explicit-deny')`,改完施加上述变异**必须变红**。
+
+> **Step 5.5 分类法的系统性盲区,记在这里**:它只筛「变红的 5 条」,筛不出「因语义变更而变得**恒真**的既有断言」。语义变更时真正危险的不是失败的测试,是那些**为了一个新的、更弱的理由继续通过**的测试——它们不会举手。以后凡是改变准入语义的 task,除了修红的,还要**主动对既有绿灯用例施加「关掉被改语义」的变异**,看谁本该红却没红。
+
+**I-3 模块级读盘绕过了 readiness 失败协议。** Step 3 的代码把 `policy-legacy-baseline.json`(直接)与 `public/catalog.snapshot.json`(经 `policy-metadata.mjs`)的读取放在**模块求值期**。`index.mjs` 的 try/catch 包住的是 `loadExecutionPolicy`,而静态 ESM import 在 try **之前**求值。实测:基线损坏 → `SyntaxError` 抛在 module job 里,**没有 `opencliHostReady:false`、`failReady()` 从未被调用**。`index.mjs` 自己的注释写着这条协议的理由:「丢了它,『协议内失败』会被误判成 process-failed —— 两者给用户的文案与排障方向完全不同」。
+改:两处读盘改**惰性 + memo**(首次用到时才 parse),使损坏落进 `loadExecutionPolicy` 的 try,走 `failReady()` 结构化失败。验收:损坏基线 / 损坏快照各跑一次 `node server/index.mjs`,**必须**出现 `opencliHostReady:false`,不得是裸 `SyntaxError`;验完还原。并补一条钉住该行为的用例。
+
+**顺带清理(评审 Minor,择要做)**
+
+- `withinLocalDirect` 里 `!Array.isArray(m.residues)` 是**到不了的分支**(`isCompleteRecord` 保证 residues ∈ {`'unknown'`, 数组},第 6 步已拦掉 `'unknown'`)。删掉,或加一行注明「纵深防御、非活分支」——**别让人以为第 7 步在防一类第 6 步漏掉的输入**。
+- `sameSet` 名不副实:注释写「集合恰好相等」,实为多重集相等(`['x','x']` 判不等 → 掉到第 9 步多挂一次弹窗)。方向 fail-safe,但与 §4.3 第 8 步字面不符。改成真集合比较,或改名 + 改注释。
+- **注入缝没有任何断言钉住**。今天没被绕过(已核:`buildExecutionPolicy` 形参只有 snapshot、调用不带第二参、无 options 透传、HTTP 面不可达),但将来有人加个 `buildExecutionPolicy(snapshot, opts)` 往下转发,测试套件看不见。补一条:给 `buildExecutionPolicy` 传第二参时,判决与不传时**逐条相同**。
+
 ---
 
 ## Task 5：`/catalog/effective` 端点 + revision
