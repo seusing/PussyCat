@@ -71,10 +71,7 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
     expect(policy.description).toContain('覆盖表')
   })
 
-  it('直接打 buildExecutionPolicy 也生效 —— 覆盖 catalog 真刷新那条路径', () => {
-    // 策略有两个构造入口:启动读快照(loadExecutionPolicy)与 CatalogService 真刷新
-    // (catalog-service.mjs 直接调 buildExecutionPolicy)。两者共用这一个咽喉,
-    // 但"共用"是结构论证不是测试 —— 这里直接打咽喉,把第二条路径也钉住。
+  it('直接调用唯一咽喉 buildExecutionPolicy 时 deny 仍优先', () => {
     const built = buildExecutionPolicy({
       opencliVersion: '9.9.9',
       commands: [

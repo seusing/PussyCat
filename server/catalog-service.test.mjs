@@ -56,6 +56,30 @@ describe('CatalogService', () => {
     expect(service.current().policy.allowedCommands.has('a/ok')).toBe(true)
   })
 
+  it('真刷新构造的 policy 消费显式 deny 覆盖表', async () => {
+    const list = JSON.stringify([
+      { command: 'a/ok', site: 'a', name: 'ok', description: '', access: 'read', strategy: 'public', browser: false, args: [] },
+      { command: 'paperreview/review', site: 'paperreview', name: 'review', description: '', access: 'read', strategy: 'public', browser: false, args: [] },
+    ])
+    const manifest = JSON.stringify([
+      { site: 'a', name: 'ok', type: 'json' },
+      { site: 'paperreview', name: 'review', type: 'json' },
+    ])
+    const { service, children } = setup({
+      readFileImpl: (path) => (String(path).includes('package.json') ? '{"version":"9.9.9"}' : manifest),
+    })
+
+    const refreshing = service.refresh()
+    emitSuccess(children[0], list)
+    await refreshing
+
+    const current = service.current()
+    expect(current.snapshot.commands.some((command) => command.command === 'paperreview/review')).toBe(true)
+    expect(current.policy.allowedCommands.has('a/ok')).toBe(true)
+    expect(current.policy.allowedCommands.has('paperreview/review')).toBe(false)
+    expect(current.policy.deniedCommands.get('paperreview/review')).toContain('capability token')
+  })
+
   it('single-flight:并发 refresh 只 spawn 一次', async () => {
     const { service, children, spawnCalls } = setup()
     const p1 = service.refresh(); const p2 = service.refresh()
