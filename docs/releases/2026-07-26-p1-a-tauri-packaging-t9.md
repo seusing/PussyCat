@@ -270,6 +270,7 @@ Git HEAD: eecb23f9d0973961e445e351bc89e7acada854d9
 **⚠️ 装完抓到的包装卫生问题（非 P1-A 阻塞项，记 backlog）**：NSIS 与 MSI **装进了同一个目录**，
 机器上因此并存两份安装登记（HKCU 一份 + HKLM 一份），指向同一份文件。卸载任一个都会删掉
 另一个仍声称拥有的文件，留下半残状态。发布前应让两种包互斥（安装时检测并劝退）或分目录。
+本机重叠状态已按第 13 节清理；产品层问题仍留 backlog。
 
 ### 11.3 顺带验到：策略拒绝路径（非缺陷）
 
@@ -291,3 +292,57 @@ Git HEAD: eecb23f9d0973961e445e351bc89e7acada854d9
 1. NSIS/MSI 同目录并存 → 安装互斥或分目录（见 11.2）
 2. 策略外命令仍可点击运行 → 运行按钮置灰 + 就地说明（见 11.3）
 3. M-2 / M-9 / M-11（终审 Minor，见 `.superpowers/sdd/progress.md`）
+
+---
+
+## 13. T9 后机器卫生：移除重叠 MSI，保留 NSIS
+
+2026-07-27 按「先取证、再卸 MSI、最后用第 10 节最终 NSIS 修复覆盖」执行，避免 MSI 卸载
+共享目录后留下只有登记、没有主程序的半残 NSIS。
+
+### 13.1 清理前
+
+| 登记 | Registry key | InstallLocation |
+|---|---|---|
+| NSIS | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenCLI App Clone` | `C:\Users\Lauseusing\AppData\Local\OpenCLI App Clone` |
+| MSI | `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\{33F4F989-5FE9-4226-981E-DCCBC58798BE}` | 同上 |
+
+MSI 的 `InstallSource` 为本仓
+`src-tauri\target\release\bundle\msi\`；ProductCode
+`{33F4F989-5FE9-4226-981E-DCCBC58798BE}`。
+
+### 13.2 卸载与修复
+
+应用退出后，以管理员权限执行：
+
+```text
+msiexec /x {33F4F989-5FE9-4226-981E-DCCBC58798BE} /passive /norestart /L*v <log>
+```
+
+退出码 **0**；Windows Installer 日志记录
+`Removal completed successfully` / `删除成功或错误状态: 0`。卸载后共享目录只剩
+`host/` 与 NSIS 的 `uninstall.exe`，证明「卸一个会破坏另一个」不是理论推断。
+
+随后先校验最终 NSIS：
+
+```text
+SHA-256 = 163EBA7E1BE2BF70E516105FCEC75889E78281D4F36E3109342BE2C8448DA285
+```
+
+再以 `/S` 修复覆盖。最终安装树恢复为 **3596 文件 / 34,700,503 bytes**。
+
+### 13.3 清理后验收
+
+| 项 | 结果 |
+|---|---|
+| 卸载登记数 | **1** |
+| 保留登记 | 仅 HKCU NSIS |
+| MSI ProductCode key | 不存在 |
+| 已安装主程序 | `opencli-app-clone.exe`，版本 `0.1.0`，9,303,552 bytes |
+| Host 启动命令 | 绝对 Node：`C:\Program Files\nodejs\node.exe ...\host\server\index.mjs` |
+| Host 监听 | `127.0.0.1:<随机端口>` |
+| `/health` | HTTP **200**，opencli `1.8.6` |
+| 强制关闭主进程后 | 主进程与 Host node 遗留数 **0** |
+
+机器当前只保留 NSIS 安装；第 12 节的「安装互斥或分目录」仍是未来发行前的产品 backlog，
+本节只完成当前机器的重叠状态处置。
