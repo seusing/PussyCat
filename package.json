@@ -19,6 +19,7 @@
     "bench:append": "node scripts/bench-append-output.mjs",
     "build:host": "node scripts/build-host-runtime.mjs",
     "verify:host": "node scripts/verify-host-closure.mjs",
+    "check:legacy": "node scripts/check-legacy-baseline.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
