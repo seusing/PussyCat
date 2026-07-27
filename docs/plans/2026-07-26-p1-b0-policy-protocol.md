@@ -487,6 +487,17 @@ describe('legacy 基线 artifact', () => {
     expect(baseline.opencliVersion).toBe(snapshot.opencliVersion)
   })
 
+  // 上面那条是**自反的**:artifact 若从另一份快照重新物化,它的 sha 与当时的快照仍然自洽,
+  // 三条断言全绿。要把身份钉在 spec §4.2 声明的那一份上,必须写死字面量。
+  // 三个值已核实与 main@43d789b 的实际文件一致(2026-07-27)。
+  it('固定源身份等于 spec §4.2 钉死的那一份,而非「某一份自洽的快照」', () => {
+    expect(baseline.materializedFrom.sha256)
+      .toBe('d714ef22863031ea694d5d90d2582d331bb466bc508db46ecf7cb6faf0b0398f')
+    expect(baseline.materializedFrom.gitBlob)
+      .toBe('3b80be2b9b19e03f7475ab6a085f6eb0f85ab3fa')
+    expect(baseline.opencliVersion).toBe('1.8.6')
+  })
+
   it('条目 = P0-B 三条件派生结果 − 显式 deny,恰 276 条', () => {
     const derived = snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
@@ -571,7 +582,13 @@ Expected: `[legacy] 物化 276 条 → …/server/policy-legacy-baseline.json`
 
 ```js
 // CI 闸:legacy 只减不增(L1)。新增 key 直接失败;删除允许。
-// 同时校验固定源身份——artifact 被重新生成过的话,sha256 会与入库时的记录对不上。
+//
+// base ref 可用 LEGACY_BASE_REF 覆盖(默认 origin/main),三个理由:
+//   1. **本闸门的失败路径必须可验证**。首次引入时 origin/main 上还没有这个文件,
+//      比较分支根本走不到——若不可覆盖,交付时唯一被执行过的是「跳过」分支,
+//      真正防守 L1 的 added-detection 逻辑零验证。见 Step 7。
+//   2. CI 上 PR 应比 merge-base,而不是随时间漂移的 origin/main。
+//   3. 浅克隆里 origin/main 往往不存在。
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -579,13 +596,25 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const path = 'server/policy-legacy-baseline.json'
+const baseRef = process.env.LEGACY_BASE_REF || 'origin/main'
 const current = JSON.parse(readFileSync(resolve(root, path), 'utf8'))
+
+// 「ref 不存在」与「ref 上没有该文件」是两回事,不能都静默放行:
+// 前者是环境问题(没 fetch / 浅克隆),静默 exit 0 会让闸门在 CI 里永远绿着而没人发现。
+try {
+  execFileSync('git', ['rev-parse', '--verify', `${baseRef}^{commit}`], { cwd: root, stdio: 'pipe' })
+} catch {
+  console.error(`[legacy] ❌ base ref '${baseRef}' 不存在,无法比较。`)
+  console.error('[legacy] 请先 git fetch,或用 LEGACY_BASE_REF 指定一个存在的 ref。')
+  console.error('[legacy] 闸门 fail-closed:宁可报错,不静默放行。')
+  process.exit(1)
+}
 
 let base
 try {
-  base = JSON.parse(execFileSync('git', ['show', `origin/main:${path}`], { cwd: root, encoding: 'utf8' }))
+  base = JSON.parse(execFileSync('git', ['show', `${baseRef}:${path}`], { cwd: root, encoding: 'utf8', stdio: 'pipe' }))
 } catch {
-  console.log('[legacy] origin/main 上尚无基线,跳过 diff 检查(首次引入)')
+  console.log(`[legacy] '${baseRef}' 上尚无基线,跳过 diff 检查(首次引入)`)
   process.exit(0)
 }
 
@@ -606,11 +635,26 @@ console.log('[legacy] ✅ 只减不增')
 - [ ] **Step 6: 跑测试与闸门确认通过**
 
 Run: `npx vitest run server/policy-legacy-baseline.test.mjs && npm run check:legacy`
-Expected: 4 tests PASS；闸门打印 `✅ 只减不增`
+Expected: **5** tests PASS；闸门打印「尚无基线,跳过 diff 检查(首次引入)」——注意此时闸门**并未**真正比较,真正的失败路径见 Step 7-B
 
 - [ ] **Step 7: 变异验证**
 
-手工往 `server/policy-legacy-baseline.json` 的 `entries` 里加一个假 key（如 `"fake/cmd": "0"`）→ `npm run check:legacy` 必须退出码 1 并点名该 key，且 Step 1 的第 2、3 条用例变红。确认后还原。
+**A. 测试的守护**：手工往 `server/policy-legacy-baseline.json` 的 `entries` 里加一个假 key（`"fake/cmd": "0"`）→ Step 1 的第 2、3 条用例变红（第 2 条:key 集合与派生结果不等;第 3 条:`fake/cmd` 不在快照里）。还原后确认回到 4 条全绿。
+
+**B. 闸门的失败路径**——这一条不做的话，闸门交付时其防守逻辑一次都没被执行过（首次引入时 `origin/main` 上没有基线，`git show` 抛异常 → 直接 `exit 0`，比较分支走不到）。用 `LEGACY_BASE_REF` 指向一个本地 ref 才能真正走进去。**先提交基线**（Step 8），再逐条验：
+
+| # | 操作 | 期望 |
+|---|---|---|
+| B1 | `LEGACY_BASE_REF=HEAD npm run check:legacy` | exit 0，`✅ 只减不增`（自己比自己，无 diff） |
+| B2 | 工作区往 `entries` 加 `"fake/cmd": "0"`，再跑 B1 命令 | **exit 1**，输出点名 `fake/cmd` |
+| B3 | 工作区删掉任意一条真实 key，再跑 B1 命令 | exit 0，输出 `已迁出 1 条: <key>` |
+| B4 | `LEGACY_BASE_REF=nonexistent/ref npm run check:legacy` | **exit 1**，报 base ref 不存在（fail-closed，不是静默跳过） |
+
+每步用 `echo $?` 看退出码——**光看输出文字不够**，闸门的契约是退出码。B2、B3 改完必须还原并复跑 B1 确认回到基线。
+
+> 环境提示：`VAR=x cmd` 是 bash 语法，本仓在 Windows 上，PowerShell 里要写 `$env:LEGACY_BASE_REF='HEAD'; npm run check:legacy`（且它会**留在会话里**，验完记得 `Remove-Item Env:LEGACY_BASE_REF`）。用 Bash 工具跑则前缀写法直接可用。
+
+> **注意**：本仓目前**没有 `.github/workflows`**，所以这道「CI 闸」当下只是一个手动 `npm run check:legacy`。spec §4.1.2 的 L1 要求 CI 强制执行，接线属于后续工作，不在本 task 范围。**本 task 的交付物是一个已验证可用的闸门，不是一个已生效的强制。** 报告里如实写明这一点，别让它读起来像 L1 已经落地。
 
 - [ ] **Step 8: 提交**
 
