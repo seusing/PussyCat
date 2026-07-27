@@ -1,6 +1,6 @@
 # P1-B0 策略协议 + 1a 本地竖切 设计稿
 
-- 日期：2026-07-26（**v3**，吸收第二轮评审 5 组 P1 + 4 项 P2 + legacy 债务裁决）
+- 日期：2026-07-26（**v3.1**，三轮评审全部吸收；固定源身份已实测钉死）
 - 基线：`main @ 43d789b`（含 P1-A.1 覆盖表种子 `98e02fd`/`af10a8f`）
 - 上游规格：`docs/specs/2026-07-23-opencli-app-clone-p0-design.md`
 - 并行但**不属本里程碑 DoD**：BrowserBridge spike（见 §11）
@@ -159,7 +159,7 @@ tier 是**候选分组**，进入 tier 只说明「这批命令值得被审定�
 | # | 规则 |
 |---|---|
 | **L1** | **数量单调不增。** CI 输出 `legacyCount` 与 diff；出现新 key 直接失败 |
-| **L2** | **触碰即迁出。** 某命令的源码、manifest、overlay 或策略分类被改动时，**同一 PR** 必须补齐其 `ReviewedPolicyRecord` 并迁出 legacy |
+| **L2** | **触碰即处置。** 某命令的源码、manifest、overlay 或策略分类被改动时，该条目**必须退出 legacy**；处置方式二选一：**(a)** 补齐 `ReviewedPolicyRecord` 迁入 `tier-evaluation`，或 **(b)** 显式删除基线条目并接受它落入 `unknown`/`denied`。**能力切片已承诺开放的 cohort 必须走 (a)。** |
 | **L3** | **按能力切片迁移。** 每个后续里程碑**完整迁移其目标 cohort**，不挑任意 N 条凑数 |
 | **L4** | **清零门。** `P1-B 完整闭环 / policy model GA` 之前必须 `legacyCount === 0` |
 
@@ -171,13 +171,28 @@ tier 是**候选分组**，进入 tier 只说明「这批命令值得被审定�
 
 **基线是一份受版本控制的 artifact，不是每次构建重新算出来的。**
 
+**固定源身份（已实测钉死，非占位符）**：
+
+| 项 | 值 |
+|---|---|
+| 文件 | `public/catalog.snapshot.json` |
+| git blob | `3b80be2b9b19e03f7475ab6a085f6eb0f85ab3fa` |
+| 文件 SHA-256 | `d714ef22863031ea694d5d90d2582d331bb466bc508db46ecf7cb6faf0b0398f` |
+| opencli | `1.8.6` |
+| 命令总数 | 1278（其中派生可执行 277，减显式 deny 1 → 基线 276） |
+| 与 `main@43d789b` | 完全一致 |
+
+**目标 schema**（`server/policy-legacy-baseline.json`，**尚未生成**，由实施任务据上表物化）：
+
 ```
-server/policy-legacy-baseline.json   （入库，逐 key 可 review）
 {
-  "materializedFrom": "public/catalog.snapshot.json @ <P1-A 发布时的 sha256>",
-  "materializedAt": "2026-07-26",
+  "materializedFrom": {
+    "path": "public/catalog.snapshot.json",
+    "gitBlob": "3b80be2b9b19e03f7475ab6a085f6eb0f85ab3fa",
+    "sha256": "d714ef22863031ea694d5d90d2582d331bb466bc508db46ecf7cb6faf0b0398f"
+  },
   "opencliVersion": "1.8.6",
-  "entries": { "<commandKey>": "<reviewShapeHash>", ... }
+  "entries": { "<commandKey>": "<reviewShapeHash>", ... }   // 276 条
 }
 ```
 
@@ -239,7 +254,7 @@ reviewShapeHash = sha256(canonicalJson({
 }))
 
 decisionFingerprint = sha256(canonicalJson({
-  policySchemaVersion,
+  policySchemaVersion,               // 与 wire 上 policy.schemaVersion 是同一字段(§6.2)
   reviewShapeHash,
   effectiveMetadata,
   matchedDenyRule,                   // **该命令实际命中的**规则,不是全局 denyRevision
@@ -268,7 +283,7 @@ decisionFingerprint = sha256(canonicalJson({
 | catalog 新增命令 | 无 metadata → `unknown` |
 | 相关 manifest 字段 / opencli 版本变化 | `reviewShapeHash` 变 → **审定失效** → `unknown`（需人工重审） |
 | metadata 修订 | `decisionFingerprint` 变 → **用户确认失效**（需重新确认，但无需重审） |
-| 展示性字段变化 | 不触发任何失效 |
+| `description` / `help` / `example` / `aliases` 变化 | 不触发任何失效（**点名列举**——`columns` 已进哈希，不属此列） |
 
 ---
 
@@ -388,7 +403,7 @@ type ActivityEntry = {
 
 - **独立存储**（`'opencli-app:activity:v1'`），不塞进 preferences；
 - **容量上限 200 条**，超出按 `startedAt` 驱逐最旧；可一键清空；
-- **写入时机**：前端**发起尝试时**即写入首行（早于 HTTP 请求），故 `403`/`428`/`409` 这类被拒尝试同样留痕（`outcome:'rejected'`）；HTTP 受理后按 `id` 回填 `runId`，终态时回填 `finishedAt`/`outcome`。
+- **写入时机**：`runId` 在**发起请求前**生成（现状即如此，`crypto.randomUUID()`），与 ActivityEntry 首行**同时写入**——故 `runId` 是必填而非回填；`403`/`428`/`409` 这类被拒尝试同样留痕（`outcome:'rejected'`）；终态时按 `id` 回填 `finishedAt`/`outcome`。
   （v2 把写入定在「`/start` 受理后」，导致 `rejected` 永远不可达。）
 - **不记参数值、不记结果、不记错误详情** [I-P7]。
 
@@ -487,7 +502,7 @@ type ActivityEntry = {
 | 风险 | 处置 |
 |---|---|
 | `effects` 人工面规模未知 | 明确不给上界；tier 逐步开放，未审定即 `unknown` |
-| localStorage 可被改写 | 已改称「活动历史」；伪造 acknowledgement 只影响提示，不提升执行能力 [I-P5] |
+| localStorage 可被改写 | 已改称「活动历史」。**ack 不是安全边界**：fingerprint 由 `/catalog/effective` 公开下发，持有 Host 会话凭据的调用方可自行提交它跳过提示。ack 只防误点与陈旧 UI；**安全执行边界是 Host 对 `denied`/`unknown` 的拒绝** [I-P5] |
 | 前端置灰与 Host 判决短暂不一致 | `409` 兜底；置灰只是体验 [I-P1] |
 | legacy 基线冻结的是**当时**的判断 | 基线只减不增；形状漂移即退出基线；后续可逐批补审定迁出 legacy |
 | 本机缺 ambient-local 软件 | §9.2 替换准则；不具备则记「未验」，不粉饰 |
@@ -498,4 +513,4 @@ type ActivityEntry = {
 
 ## 12. 待确认
 
-无。第一轮评审的 6 组 P1、3 项裁决与 1 处事实更正已全部吸收（对照见各节标注）。
+无。三轮评审全部吸收：第一轮 6 组 P1 + 3 项裁决 + 1 处事实更正（v2）；第二轮 5 组 P1 + 4 项 P2 + legacy 债务裁决（v3）；第三轮 3 组 P1 + 4 项 P2（v3.1，本稿）。对照见各节的「v_ 修正」标注。
