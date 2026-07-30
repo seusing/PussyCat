@@ -1154,9 +1154,21 @@ Expected: FAIL —— `/catalog/effective` 返回 404
 
 （`createHash` 从 `node:crypto` 引入；`canonicalJson` 与 `POLICY_SCHEMA_VERSION` 从 `./policy-fingerprint.mjs` 引入。）
 
-> **`generatedAt` 存进 state,不要在响应里现取。** 它描述的是「这份判决何时生成」,不是「你何时请求」。写成 `Date.now()` 现取的话,同一个 revision 会配上不同的 generatedAt——自相矛盾。
+> **`generatedAt` 存进 state,不要在响应里现取。** 它描述的是「这份判决何时生成」,不是「你何时请求」。
 >
-> **`canonicalJson` 的适用范围**：Task 2 已注明它只适用于纯 JSON 值。`commands` 与 `decisions` 都来自 `JSON.parse` 或本仓构造的纯对象，满足条件。开销是每次 refresh 对 ~1278×2 个对象做一次递归串化，`/catalog` 本来就每次 GET 都 refresh，量级可接受；若日后成为热点，缓存到 state 即可（它已经在 state 里了）。
+> ⚠️ **这条处方本身不够——存进 state 达不到它声称的目的**(评审实测)。端点每次请求都无条件 `refresh()`,state 每请求重建一次,于是 `revision` 相同而 `generatedAt` 不同 —— 上面点名要避免的自相矛盾原样发生,只是换了条路径。**正确写法是内容未变就沿用旧时刻**：
+> ```js
+> generatedAt: state?.revision === revision ? state.generatedAt : now()
+> ```
+> 并补一条守卫:两次请求之间不改夹具 → `generatedAt` 也必须相同。**没有这条守卫,把它改回 `Date.now()` 全仓依然全绿**(实测)。
+>
+> **`canonicalJson` 的适用范围**：Task 2 已注明它只适用于纯 JSON 值。
+>
+> ⚠️ **原文这里写的「`commands` 与 `decisions` 都来自 `JSON.parse` 或本仓构造的纯对象,满足条件」是假的**,已实证:`mergeManifestFields`(`src/shared/normalize.mjs`)命中 manifest 时**无条件写入** `navigateBefore`/`defaultWindowMode`/`type`/`modulePath` 四键,两边都没给就留 `undefined` —— 真实数据 **1211/1278** 条中招。而 `JSON.stringify` 会把这类键整个丢掉,所以服务端按内存态算、客户端按收到的 JSON 算,**永远算不出同一个值**,revision 退化成不透明 nonce。修法是让 `canonicalJson` 跳过 `undefined` 值的对象键、与 `JSON.stringify` 对齐(已在 `db25c1c` 落地,经独立三层验证对既有哈希严格中性)。
+>
+> **教训记这里**:Task 2 的 docstring 早就为 Task 5 预告过这个坑,而本条注释用一句错误的宽慰**覆盖**了那条已有的警告。**写「这里没问题」比不写更危险** —— 它会让后来的人不再去看那条警告。凡是要写「满足条件/不会撞到」,先实测再写。
+>
+> 开销是每次 refresh 对 ~1278×2 个对象做一次递归串化，`/catalog` 本来就每次 GET 都 refresh，量级可接受；若日后成为热点，缓存到 state 即可（它已经在 state 里了）。
 
 - [ ] **Step 4: `host-server.mjs` 加端点**
 
@@ -1215,6 +1227,23 @@ npx tsc --noEmit && npx vitest run && npm run build
 git add server/catalog-service.mjs server/host-server.mjs server/host-server.test.mjs
 git commit -m "feat(host): 新增 /catalog/effective 原子 envelope(带显式 revision);/catalog 原形状不变"
 ```
+
+- [ ] **Step 7: 评审修复**
+
+**I-1 `generatedAt` 的不变式在交付代码里已被违反,而注释在替它说谎。** 实测:两次连续请求 `revision` 相同、`generatedAt` 不同 —— 正是 Step 3 点名要避免的自相矛盾,只是换了条路径(端点无条件 refresh,state 每请求重建)。而 `host-server.mjs` 那句 `// 判决生成时刻,不是本次请求时刻` 断言了一个代码并未建立的区分。
+改:内容未变即沿用旧时刻(`state?.revision === revision ? state.generatedAt : now()`),**并补守卫**——两次请求之间不改夹具 → `generatedAt` 必须相同。没有守卫的话,把它改回 `Date.now()` 全仓依然全绿(实测)。
+
+**I-2 新端点的失败路径整段无覆盖。** `!catalogService → 404` 分支与整个 catch 块(约 12 行)是从 `/catalog` 复制来的,而 `/catalog` 的对应两条**都有**测试(`host-server.test.mjs` 里透传 `statusCode` 504、未配置 → 404),复制来的双胞胎一条都没有。三处变异实测**全仓 332 条全绿逃逸**:404 分支改 200、catch 块改恒 `200 {}`、`generatedAt` 改 `Date.now()`。
+改:补两条与既有 `/catalog` 用例**同构**的失败路径用例。补完对上述三处变异各施加一次,确认这次会红。
+
+**M-2 / M-3 三处注释已过期或说错**
+- `catalog-service.mjs` 第 20 行「原子替换 `{snapshot, policy}`」、第 30 行 `// { snapshot, policy } | undefined` —— state 现在是四个字段。
+- `policy-fingerprint.mjs` 第 10 行「当前调用点都来自 `JSON.parse` 或字面量」—— **本 task 新增的 revision 调用点传的正是 `mergeManifestFields` 产出的内存态**,既非 `JSON.parse` 结果也非字面量。结论(不撞 Date/Map/Set)仍成立但理由说错了。把依据从「来源」改成「值树里无 Date/Map/Set,标量位无 undefined」。
+
+**M-5 顺手补一条冻结值守卫(Task 2 遗留,本 task 给 `canonicalJson` 加了第三个消费方,风险抬高一档)**
+`decisionFingerprint` 唯一那条「对照手工期望值」的用例是**用 `canonicalJson` 自己算的期望值**,对 `canonicalJson` 的任何改动自洽,抓不到漂移。三条人工记录的 fingerprint 补一条**写死字面量**的断言(照 Task 3 「固定源身份」那条的做法)。影响面是 acknowledgement 被无声作废,按 I-P5 不是安全边界,但无声这一点本身要治。
+
+**另:spec §6.2 补一句 revision 的摘要范围**(`policySchemaVersion + opencliVersion + commands + decisions`,不含 `listSha256`/`manifestSha256`/`source`/`snapshot.generatedAt`)。它是「判决绑定这份命令集」的令牌,**不是整个 envelope 的 ETag**——wire 上没说清的话前端可能当后者用。
 
 ---
 
