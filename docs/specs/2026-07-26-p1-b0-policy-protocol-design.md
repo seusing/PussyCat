@@ -335,6 +335,18 @@ GET /catalog/effective  → {
 
 `revision` 由 CatalogService 在原子替换时生成，snapshot 与 decisions 共享同一值。**新前端只用 `/catalog/effective`。**
 
+**`revision` 的摘要范围（实现已落地，写在这里免得被当成别的东西用）**：
+
+```
+sha256({ policySchemaVersion, opencliVersion, commands, decisions }).slice(0, 16)
+```
+
+- **含**：`policy.schemaVersion`、`snapshot.opencliVersion`、`snapshot.commands` **全文**、`policy.decisions` 全文。客户端拿 envelope 就能自己重算出同一个值——这才是 I-P4 说的「可验」。
+- **不含**：`listSha256`、`manifestSha256`、`source`、`snapshot.generatedAt`、`policy.generatedAt`。
+- 因此它是**「这份判决属于这份命令集」的绑定令牌，不是整个 envelope 的 ETag**。上面那几个字段变了而命令与判决没变时，`revision` 不动——前端若拿它当 ETag 判「整个响应没变」会误判。**缓存键用 `revision`，但别用它推断 envelope 逐字节未变。**
+- 摘要里**不得掺时间戳**：掺了客户端就永远算不出来，`revision` 会退化成不透明 nonce，I-P4 随之落空。
+- `generatedAt` 的语义是「这份内容首次生成的时刻」——`revision` 不变则它保持不动（跨 Host 重启除外，`state` 是进程内闭包，重启后首次刷新会取新值而 `revision` 不变）。**跨重启稳定的只有 `revision`。**
+
 ### 6.3 `/start` 与完整状态码表
 
 ```ts
