@@ -1411,6 +1411,29 @@ git add server/policy.mjs server/host-server.mjs server/policy.test.mjs server/h
 git commit -m "feat(policy): /start 按判决分派——202/428/409/403(denied|unknown)/400,reasonCode 稳定标识"
 ```
 
+- [ ] **Step 7: 补三条(变异⑥ 揭示的缺口 + 两条顺序守卫)**
+
+**A. 端到端往返 —— 确认协议的核心承诺,今天无人守。**
+
+变异⑥ 查实:**全仓没有任何测试把 `/catalog/effective` 与 `/start` 配对**(`/catalog/effective` 的九条从不发 `/start`;守 `activePolicy()` 的那条用的是 `/catalog` + stub)。二者今天同源只是实现巧合——恰好读同一个 `state` 单引用。
+
+存在一类**零成本逃逸**:让 `/catalog/effective` 自己现算一份 policy、`/start` 仍读 `activePolicy()`,全仓 351 条全绿,而用户表现为**「确认了却一直 409」**——点了确认却永远跑不了,且前端无从自愈。
+
+补一条真往返:`GET /catalog/effective` → 从 envelope 里取 `antigravity/recent-paths` 的 `fingerprint` → 原样 `POST /start` → **必须 202**。**fingerprint 不得在测试里自己算**,必须来自上一步的响应体——自己算就又变成「拿被测对象自己的输出对照它自己」。
+
+这条同时补上 Concern 4(spec §6.3 的「ack-required + 匹配 fingerprint → 202」组合此前只有单元层覆盖)。
+
+**B. 带 fingerprint 不能救 denied / unknown(I-P5 的正向性质,靠分支顺序保证,无测试)。**
+
+给 `paperreview/review`(denied)与 `trae-solo/state-get`(unknown)各发一次**带看似合法的 `acknowledgement.fingerprint`** 的 `/start` → 必须仍是 **403**,不得变 202/428/409。
+配一处变异:把 `acknowledgement-required` 那块挪到 403 块**之前** → 这两条必须变红。**顺序即语义,和算法第 6/8 步一样,要有东西钉住。**
+
+**C. `allowedCommands` 加一句注释。**
+
+它现在完全不参与准入(唯一消费点只剩 `index.mjs` 的报数),但名字仍像准入白名单。**Task 4 埋下 428 洞的成因正是它把 `acknowledgement-required` 也算作「allowed」** ——写明:它是「判决可执行」的计数视图,**不是准入依据**;准入的唯一入口是 `decisionByKey` + `validateStartRequest`。重命名留作后续候选,本 task 不动。
+
+> 计划变异表 ③④ 的预期条数低估了(③ 实测红 4 而非 2、④ 红 3 而非 1),多出的红全是同性质守卫、非误伤。实现者按实测记账未改计划文本,做法正确;此处补记,以实测为准。
+
 ---
 
 ## Task 7：前端消费判决（置灰 + 就地说明）
