@@ -6,6 +6,7 @@ import {
   validateStartRequest,
 } from './policy.mjs'
 import { POLICY_SCHEMA_VERSION } from './policy-fingerprint.mjs'
+import { checkBrowserBridgeHealth } from './browser-bridge-health.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
 
@@ -118,6 +119,7 @@ export function createHostServer({
   maxBodyBytes = 64 * 1024,
   runManagerOptions = {},
   sseOptions = {},
+  browserBridgeHealth = checkBrowserBridgeHealth,
 } = {}) {
   if (!policy) throw new Error('policy is required')
   const activePolicy = () => catalogService?.current()?.policy ?? policy
@@ -226,6 +228,16 @@ export function createHostServer({
             },
           })
         }
+        return
+      }
+
+      // BrowserBridge 健康诊断。前端**不得直连 daemon**(它拒绝非扩展 Origin 且要求 X-OpenCLI 头),
+      // 由 Host 代理并做字段投影 —— 白名单与剔除理由见 browser-bridge-health.mjs。
+      // 本端点永不 5xx:诊断失败本身也是结构化的诊断结果(daemon: stopped/unreachable/error)。
+      if (url.pathname === '/browser-bridge/health' && request.method === 'GET') {
+        writeJson(response, 200, await browserBridgeHealth({
+          opencliVersion: activePolicy().opencliVersion,
+        }))
         return
       }
 
