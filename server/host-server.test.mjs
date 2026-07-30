@@ -1,13 +1,14 @@
 // @vitest-environment node
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { fetch as realFetch } from 'undici'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHostServer } from './host-server.mjs'
 import { createCatalogService } from './catalog-service.mjs'
-import { loadExecutionPolicy } from './policy.mjs'
+import { buildExecutionPolicy, loadExecutionPolicy } from './policy.mjs'
 import { canonicalJson } from './policy-fingerprint.mjs'
 
 const origin = 'http://127.0.0.1:5173'
@@ -635,5 +636,88 @@ describe('/start 状态码表逐格(HTTP 层)', () => {
     expect(res.status).toBe(400)
     // 结构错误没有 reasonCode:那行序列化是**条件**的,不是无条件塞一个字段。
     expect((await res.json()).reasonCode).toBeUndefined()
+  })
+
+  // ——— I-P5:acknowledgement 不是安全授权 ————————————————————————
+  // 带一个**看似合法**的 fingerprint 不得把 denied/unknown 送进执行面。
+  // 借的是 antigravity/recent-paths 那条判决的**真** fingerprint(只是属于另一条命令),
+  // 比随手编一个 hex 串更接近真实误用形态。
+  //
+  // **这两条是行为固定,不是可变异守卫。** 该性质由算法结构保证而非分支顺序:
+  // denied/unknown 在第 1/3/4/5/6/7 步就 return,**早于第 8 步的 fingerprint 计算**,
+  // 那些判决对象上根本没有 fingerprint 字段(下面第一条断言把这点钉住),
+  // 任何供给值都不可能匹配。写下来是防止未来重构把它改掉,不是为了凑一处变异。
+  const borrowedFingerprint = () => realPolicy.decisionByKey.get('antigravity/recent-paths').fingerprint
+
+  it('denied/unknown 的判决根本没有 fingerprint 字段 —— 无从匹配,这才是结构性保证', () => {
+    expect(realPolicy.decisionByKey.get('paperreview/review').fingerprint).toBeUndefined()
+    expect(realPolicy.decisionByKey.get('trae-solo/state-get').fingerprint).toBeUndefined()
+    // 对照:需确认的那条才有,证明上面两个 undefined 不是「本来就没人有」。
+    expect(typeof borrowedFingerprint()).toBe('string')
+  })
+
+  it('403(denied):带看似合法的 fingerprint 也救不回来', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-deny-ack-1', commandKey: 'paperreview/review',
+      argv: ['paperreview', 'review', 'tok', '-f', 'json'],
+      acknowledgement: { fingerprint: borrowedFingerprint() },
+    })
+    expect(res.status).toBe(403)                                  // 不得变 202/428/409
+    expect((await res.json()).reasonCode).toBe('explicit-deny')
+  })
+
+  it('403(unknown):带看似合法的 fingerprint 也救不回来', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-unknown-ack-1', commandKey: 'trae-solo/state-get',
+      argv: ['trae-solo', 'state-get', '-f', 'json'],
+      acknowledgement: { fingerprint: borrowedFingerprint() },
+    })
+    expect(res.status).toBe(403)
+    expect((await res.json()).reasonCode).toBe('metadata-missing')
+  })
+})
+
+// Step 7-A:确认协议的核心承诺 —— **你被展示的 fingerprint 就是被校验的 fingerprint**。
+// 变异⑥ 查实全仓没有任何测试把 /catalog/effective 与 /start 配对,二者同源只是实现巧合。
+// 这条把往返走通:envelope 里拿到什么,就原样发回去,必须 202。
+describe('/catalog/effective → /start 往返(两端点判决同源)', () => {
+  const realSnapshot = JSON.parse(
+    readFileSync(resolve('public/catalog.snapshot.json'), 'utf8').replace(/^﻿/, ''),
+  )
+
+  // /catalog/effective 不挂 catalogService 就是 404,而既有那个合成小目录里
+  // 根本没有 antigravity/recent-paths,造不出 acknowledgement-required。
+  // 故装一个「真快照 + 由它派生的 policy」的 service:两端点读同一个 state 单引用,
+  // 正是本用例要守住的那件事。
+  const sameSourceService = () => {
+    const state = {
+      snapshot: realSnapshot,
+      policy: buildExecutionPolicy(realSnapshot),
+      revision: 'rev-t6-roundtrip',
+      generatedAt: 1,
+    }
+    return { refresh: async () => realSnapshot, current: () => state, close: () => {} }
+  }
+
+  it('envelope 下发的 fingerprint 原样回传 → 202', async () => {
+    const { baseUrl } = await setup({ catalogService: sameSourceService() })
+    const body = await (await fetch(`${baseUrl}/catalog/effective`, { headers: { Origin: origin } })).json()
+    const decision = body.policy.decisions.find((d) => d.commandKey === 'antigravity/recent-paths')
+
+    // 前提:envelope 真的下发了一条需确认判决且带 fingerprint。
+    // 少了这两句,哪天它变成 ready,下面的 202 会**平凡满足**,这条用例就与确认协议无关了。
+    expect(decision.state).toBe('acknowledgement-required')
+    expect(typeof decision.fingerprint).toBe('string')
+
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-roundtrip-1', commandKey: 'antigravity/recent-paths',
+      argv: ['antigravity', 'recent-paths', '-f', 'json'],
+      // **原样回传,未在测试里重算。** 自己算就成了「拿被测对象的输出对照它自己」——
+      // reviewShapeHash/decisionFingerprint 一起漂,照样绿。
+      acknowledgement: { fingerprint: decision.fingerprint },
+    })
+    expect(res.status).toBe(202)
   })
 })

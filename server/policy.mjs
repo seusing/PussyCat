@@ -193,6 +193,14 @@ export function buildExecutionPolicy(snapshot) {
   const decisionByKey = new Map(decisions.map((d) => [d.commandKey, d]))
 
   // allowedCommands 改由判决派生 —— 与 decisions **单一事实源**,不再是并行的第二套规则。
+  //
+  // **它是「判决可执行」的计数视图,不是准入依据。** 准入的唯一入口是
+  // `decisionByKey` + `validateStartRequest`;本集合唯一的消费点是 index.mjs 的报数
+  // (readiness 的 policyCommands 与启动日志),不参与任何放行判断。
+  // **Task 4 埋下「antigravity/recent-paths 可无确认执行」那个洞,成因正是它:**
+  // 它把 acknowledgement-required 也算作「allowed」,而当时 /start 读的就是它——
+  // 于是「判决说需要确认」在执行面上等价于「放行」。名字比职责大,别再拿它当白名单。
+  // (重命名是后续候选,本 task 不动。)
   const allowedCommands = new Set(
     decisions
       .filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
