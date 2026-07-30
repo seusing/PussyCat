@@ -1089,6 +1089,34 @@ describe('/catalog/effective', () => {
     expect(body.policy.decisions.length).toBe(body.snapshot.commands.length)
   })
 
+  // 上面那条**证明不了 revision 有任何用处** —— 返回常量 'x' 也能全绿。
+  // I-P4 说的「在 wire 上可验」只有一个意思:客户端拿 envelope 能自己算出同一个值。
+  // 下面三条才是 revision 存在的理由。
+  it('客户端可从 envelope 自行重算出同一 revision(这才是 I-P4 的「可验」)', async () => {
+    const body = await (await fetch(`${base}/catalog/effective`, { headers: { Origin: allowed } })).json()
+    const recomputed = createHash('sha256').update(canonicalJson({
+      policySchemaVersion: body.policy.schemaVersion,
+      opencliVersion: body.snapshot.opencliVersion,
+      commands: body.snapshot.commands,
+      decisions: body.policy.decisions,
+    })).digest('hex').slice(0, 16)
+    expect(recomputed).toBe(body.revision)
+  })
+
+  it('内容未变 → 两次请求 revision 相同(掺时间戳就做不到这条)', async () => {
+    const a = await (await fetch(`${base}/catalog/effective`, { headers: { Origin: allowed } })).json()
+    const b = await (await fetch(`${base}/catalog/effective`, { headers: { Origin: allowed } })).json()
+    expect(b.revision).toBe(a.revision)
+  })
+
+  it('快照变 → revision 必变(否则它挡不住「换了目录却说还是同一份」)', async () => {
+    const before = await (await fetch(`${base}/catalog/effective`, { headers: { Origin: allowed } })).json()
+    // 让下一次 refresh 吐出不同的 catalog(构造方式随夹具而定,关键是内容真的变了)
+    mutateCatalogFixture()
+    const after = await (await fetch(`${base}/catalog/effective`, { headers: { Origin: allowed } })).json()
+    expect(after.revision).not.toBe(before.revision)
+  })
+
   it('/catalog 原形状不变 —— 既有前端契约不破', async () => {
     const res = await fetch(`${base}/catalog`, { headers: { Origin: allowed } })
     const body = await res.json()
@@ -1109,14 +1137,26 @@ Expected: FAIL —— `/catalog/effective` 返回 404
 在原子替换处（现 `const policy = buildExecutionPolicy(snapshot)` 附近）加：
 
 ```js
-    // revision 让「snapshot 与 decisions 同源」在 wire 上可验(I-P4),而不是靠口头承诺。
-    const revision = createHash('sha256')
-      .update(canonicalJson({ commands: snapshot.commands.length, opencliVersion: snapshot.opencliVersion, at: Date.now() }))
-      .digest('hex').slice(0, 16)
-    this.state = { snapshot, policy, revision }
+    // revision 让「snapshot 与 decisions 同源」在 wire 上**可验**(I-P4)——
+    // 「可验」的定义是:客户端拿到 envelope 后能自己重算出同一个值。因此
+    //   · 不含 Date.now():掺了时间戳客户端就永远算不出来,那是不透明 nonce 不是摘要;
+    //   · 取 commands **全文**而非 commands.length:长度相同内容不同会撞成同一个 revision;
+    //   · **必须含 decisions**:revision 要证的正是「这份判决属于这份快照」,不含它就什么也没证。
+    const generatedAt = Date.now()
+    const revision = createHash('sha256').update(canonicalJson({
+      policySchemaVersion: POLICY_SCHEMA_VERSION,
+      opencliVersion: snapshot.opencliVersion,
+      commands: snapshot.commands,
+      decisions: policy.decisions,
+    })).digest('hex').slice(0, 16)
+    this.state = { snapshot, policy, revision, generatedAt }
 ```
 
-（`createHash` 从 `node:crypto` 引入；`canonicalJson` 从 `./policy-fingerprint.mjs` 引入。）
+（`createHash` 从 `node:crypto` 引入；`canonicalJson` 与 `POLICY_SCHEMA_VERSION` 从 `./policy-fingerprint.mjs` 引入。）
+
+> **`generatedAt` 存进 state,不要在响应里现取。** 它描述的是「这份判决何时生成」,不是「你何时请求」。写成 `Date.now()` 现取的话,同一个 revision 会配上不同的 generatedAt——自相矛盾。
+>
+> **`canonicalJson` 的适用范围**：Task 2 已注明它只适用于纯 JSON 值。`commands` 与 `decisions` 都来自 `JSON.parse` 或本仓构造的纯对象，满足条件。开销是每次 refresh 对 ~1278×2 个对象做一次递归串化，`/catalog` 本来就每次 GET 都 refresh，量级可接受；若日后成为热点，缓存到 state 即可（它已经在 state 里了）。
 
 - [ ] **Step 4: `host-server.mjs` 加端点**
 
@@ -1136,7 +1176,7 @@ Expected: FAIL —— `/catalog/effective` 返回 404
             snapshot: current.snapshot,
             policy: {
               schemaVersion: POLICY_SCHEMA_VERSION,
-              generatedAt: Date.now(),
+              generatedAt: current.generatedAt,     // 判决生成时刻,不是本次请求时刻
               decisions: current.policy.decisions,
             },
           })
@@ -1157,6 +1197,16 @@ Expected: FAIL —— `/catalog/effective` 返回 404
 
 Run: `npx vitest run server/host-server.test.mjs`
 Expected: 全部 PASS（含既有用例）
+
+- [ ] **Step 5.5: 变异验证（revision 的三条性质各自独立可红）**
+
+| # | 变异 | 预期只红 |
+|---|---|---|
+| 1 | revision 摘要里去掉 `decisions` | 「客户端可从 envelope 自行重算」——它算进去了、服务端没有 |
+| 2 | revision 摘要里加回 `at: Date.now()` | 「内容未变 → 两次 revision 相同」与「可重算」两条 |
+| 3 | `commands: snapshot.commands` 改回 `snapshot.commands.length` | 「快照变 → revision 必变」（在只改内容不改条数的夹具下）与「可重算」 |
+
+变异 ③ 要求夹具的两份 catalog **条数相同、内容不同** —— 否则改回 length 也照样变，测不出东西。构造夹具时就按这个来。
 
 - [ ] **Step 6: 提交**
 
