@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isCompleteRecord } from './policy-types.mjs'
-import { REVIEWED_RECORDS } from './policy-metadata.mjs'
+import { BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS } from './policy-metadata.mjs'
 import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewShapeHash } from './policy-fingerprint.mjs'
 
 const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -55,26 +55,51 @@ export const COMMAND_POLICY_OVERRIDES = {
   },
 }
 
-// local-direct tier 的允许集(spec §4.1.1)。「本 tier 不接收」不等于永久排除。
-const LOCAL_DIRECT = {
-  authorities: ['public-network', 'explicit-local-input', 'ambient-local-files'],
-  exposures: ['public', 'personal'],
+/**
+ * 各 tier 的允许集(轴上界)。**「本 tier 不接收」不等于永久排除。**
+ *
+ * `local-direct` 见 spec §4.1.1;`browser-cookie-read-pilot` 见
+ * docs/specs/2026-07-30-browser-cookie-read-pilot-review.md §6.2。后者相对前者有两处
+ * **有意放宽**,各自的代价由确认协议(第 9 步)承担:
+ *   · credentialFlow 从 none 放到允许 consume —— 消费浏览器登录态正是该 tier 的存在理由;
+ *   · residues 从 [] 放到允许 persistent-session —— 四条 whoami 的 siteSession:'persistent'
+ *     是上游 _shared/site-auth.js:59 写死的,绕不过。
+ * effects 两个 tier 都必须为 [],不放宽。
+ */
+const TIER_ALLOWANCES = {
+  'local-direct': {
+    authorities: ['public-network', 'explicit-local-input', 'ambient-local-files'],
+    exposures: ['public', 'personal'],
+    credentialFlows: ['none'],
+    residues: [],
+  },
+  'browser-cookie-read-pilot': {
+    authorities: ['browser-profile', 'public-network'],
+    exposures: ['public', 'personal'],
+    credentialFlows: ['none', 'consume'],
+    residues: ['persistent-session'],
+  },
 }
 
 function tierOf(command) {
+  // 试点成员是**显式 key 集**,不是派生谓词(理由见 policy-metadata.mjs 的 BROWSER_COOKIE_READ_PILOT)。
+  // 它先于 local-direct 判定,但二者集合天然不交(试点八条全是 browser===true)。
+  if (BROWSER_COOKIE_READ_PILOT.has(command.command)) return 'browser-cookie-read-pilot'
   if (command.browser === false && command.strategy === 'local') return 'local-direct'
   return null
 }
 
-function withinLocalDirect(m) {
-  if (!m.authorities.every((a) => LOCAL_DIRECT.authorities.includes(a))) return false
-  if (!LOCAL_DIRECT.exposures.includes(m.exposure)) return false
+function withinTier(tier, m) {
+  const allow = TIER_ALLOWANCES[tier]
+  if (!allow) return false
+  if (!m.authorities.every((a) => allow.authorities.includes(a))) return false
+  if (!allow.exposures.includes(m.exposure)) return false
   if (m.effects.length > 0) return false
-  if (m.credentialFlow !== 'none') return false
+  if (!allow.credentialFlows.includes(m.credentialFlow)) return false
   // 走到这里 residues 必是数组:isCompleteRecord 只放行 `'unknown'` 或 RESIDUES 子集数组,
   // 而 `'unknown'` 已被第 6 步拦掉。原先这里还有一个 `!Array.isArray(m.residues)` 前置判断,
   // 已删 —— 它是**到不了的分支**,留着会让人误以为第 7 步在补防一类第 6 步漏掉的输入。
-  if (m.residues.length > 0) return false
+  if (!m.residues.every((r) => allow.residues.includes(r))) return false
   return true
 }
 
@@ -125,7 +150,8 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
     }
 
     // 3. tier
-    if (!tierOf(command)) {
+    const tier = tierOf(command)
+    if (!tier) {
       return { ...base, state: 'unknown', decisionSource: 'unclassified', reasonCode: 'no-tier' }
     }
 
@@ -151,7 +177,7 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
     }
 
     // 7. tier 阈值(含 residues)
-    if (!withinLocalDirect(m)) {
+    if (!withinTier(tier, m)) {
       return { ...base, state: 'denied', decisionSource: 'tier-evaluation',
                metadata: m, reasonCode: 'tier-threshold' }
     }
@@ -174,14 +200,91 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
       return { ...base, state: 'ready', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
     }
 
-    // 9. 环境式本地读取 或 personal 输出 → 需确认
-    if (m.authorities.includes('ambient-local-files') || m.exposure === 'personal') {
+    // 9. 需确认的四种情形。原文只列前两支(ambient-local-files / personal),那是在 browser tier
+    //    存在之前写的,枚举不完整——不是判据错了。补的两支各有独立理由:
+    //    · browser-profile **严格强于** ambient-local-files:后者是「程序自己去扫本地文件」,
+    //      前者在此之上还动用**用户的登录态本身**,读取范围由站点会话决定;
+    //    · residues 含 persistent-session 是用户看得见的跨命令状态(浏览器里多一个不关的自动化
+    //      标签),该在确认时告知,而不是靠 personal 顺带覆盖。
+    //    对既有三条记录是 **no-op**:它们的 authorities 为 [] / [explicit-local-input] /
+    //    [ambient-local-files]、residues 全为 [],新增两支在其身上恒假。
+    //    它同时堵掉本 tier 唯一的漏网者 bilibili/hot(exposure=public 且无 persistent-session,
+    //    按原两支会落第 10 步直接 ready——而它是以用户登录身份打 B 站 API 的)。
+    if (
+      m.authorities.includes('ambient-local-files')
+      || m.authorities.includes('browser-profile')
+      || m.exposure === 'personal'
+      || m.residues.includes('persistent-session')
+    ) {
       return { ...base, state: 'acknowledgement-required', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
     }
 
     // 10.
     return { ...base, state: 'ready', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
   })
+}
+
+/**
+ * 试点命令的 argv 约束:**只接受该命令 manifest 声明过的 flag,加 `-f json`。**
+ *
+ * 为什么只有试点命令有这道闸:`--trace` / `--window` / `--site-session` / `--keep-tab`
+ * 是 opencli 的**运行时全局选项**(commanderAdapter.js:49,53-55),不是 manifest args,
+ * 因此**不进 reviewShapeHash**(policy-fingerprint.mjs 只投影 command.args)。而八条审定记录里
+ * `effects: []` 与 `residues: []` 的成立恰恰以「不追加这些选项」为前提:
+ *   · `--trace on` → observation/artifact.js:57 真的 writeFileSync 落盘 → local-file-write + temp-file;
+ *   · `--site-session persistent` → execution.js:461 让**用户值优先**,四条 ephemeral 命令当场变
+ *     persistent,residues 失真。
+ * 这个前提此前只由前端 src/data/command.ts 的 buildArgv 保证,而 I-P1 说**绕过前端不得获得额外
+ * 执行能力** —— 在这里恰恰能获得。所以这道闸必须在 Host 侧,不能在前端。
+ *
+ * **范围是有意收窄的**:legacy 基线的 276 条不走这道闸(它们没有任何声称 effects/residues 的
+ * 人工审定,不存在被 `--trace` 推翻的结论),贸然收紧会波及未审定过 argv 形状的一大片命令。
+ * 该残余口子记在审定文档 §8.2,不在本次口径内。
+ */
+function buildArgvConstraint(command) {
+  const args = command.args ?? []
+  return {
+    flags: new Set(args.filter((a) => !a.positional).map((a) => `--${a.name}`)),
+    positionals: args.filter((a) => a.positional).length,
+  }
+}
+
+const FORMAT_FLAGS = new Set(['-f', '--format'])
+
+function argvNotAllowed(commandKey, token) {
+  const error = new RequestPolicyError(400, 'argv contains a token outside the reviewed command shape',
+    `${commandKey}: ${token}`)
+  error.reasonCode = 'argv-not-allowed'
+  return error
+}
+
+export function assertDeclaredArgvOnly(argv, constraint, commandKey) {
+  let positionalsSeen = 0
+  for (let index = 2; index < argv.length; index += 1) {
+    const token = argv[index]
+
+    // `--flag=value` 形式:值内联,不消费下一个 token。
+    if (token.startsWith('--') && token.includes('=')) {
+      const name = token.slice(0, token.indexOf('='))
+      if (!FORMAT_FLAGS.has(name) && !constraint.flags.has(name)) throw argvNotAllowed(commandKey, token)
+      continue
+    }
+
+    if (FORMAT_FLAGS.has(token) || constraint.flags.has(token)) {
+      // 值必须存在且**不得以 `-` 开头**。否则 `--limit --trace` 会把 `--trace` 当成 limit 的值放行,
+      // 而 commander 那边照样把它解析成一个开着的全局标志 —— 闸门形同虚设。
+      const value = argv[index + 1]
+      if (typeof value !== 'string' || value.startsWith('-')) throw argvNotAllowed(commandKey, token)
+      index += 1
+      continue
+    }
+
+    // 到这里仍以 `-` 开头的,一律是未声明的标志(含 `-v` 一类短选项)。
+    if (token.startsWith('-')) throw argvNotAllowed(commandKey, token)
+
+    positionalsSeen += 1
+    if (positionalsSeen > constraint.positionals) throw argvNotAllowed(commandKey, token)
+  }
 }
 
 export function buildExecutionPolicy(snapshot) {
@@ -191,6 +294,14 @@ export function buildExecutionPolicy(snapshot) {
 
   const decisions = buildPolicyDecisions(snapshot)
   const decisionByKey = new Map(decisions.map((d) => [d.commandKey, d]))
+
+  // **不进 decisions、不上 wire**:/catalog/effective 只下发 policy.decisions,
+  // 这张表是 Host 内部的执行期约束,前端无从看见也不需要看见。
+  const argvConstraintByKey = new Map()
+  for (const command of snapshot.commands) {
+    if (!BROWSER_COOKIE_READ_PILOT.has(command.command)) continue
+    argvConstraintByKey.set(command.command, buildArgvConstraint(command))
+  }
 
   // allowedCommands 改由判决派生 —— 与 decisions **单一事实源**,不再是并行的第二套规则。
   //
@@ -234,6 +345,7 @@ export function buildExecutionPolicy(snapshot) {
     deniedCommands,
     decisions,
     decisionByKey,
+    argvConstraintByKey,
     description: `逐命令判决:legacy 基线 ${legacyCount} 条 + tier 审定放行 ${tierCount} 条;`
       + `显式 deny ${deniedCommands.size} 条,其余一律 unknown 拒绝(fail-closed)`,
   }
@@ -317,6 +429,12 @@ export function validateStartRequest(value, policy, {
       throw error
     }
   }
+  // 试点命令的 argv 白名单。必须晚于上面的判决分派(denied/unknown 该拿 403 而不是 400),
+  // 早于放行。见 assertDeclaredArgvOnly 的 docstring:它兑现的是审定记录里
+  // `effects: []` / `residues: []` 所依赖的那个前提。
+  const argvConstraint = policy.argvConstraintByKey?.get(commandKey)
+  if (argvConstraint) assertDeclaredArgvOnly(argv, argvConstraint, commandKey)
+
   if (requestedFormat(argv) !== 'json') {
     throw new RequestPolicyError(400, 'P0-B requires explicit JSON output', 'append -f json to argv')
   }

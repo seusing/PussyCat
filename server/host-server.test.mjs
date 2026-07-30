@@ -721,3 +721,90 @@ describe('/catalog/effective → /start 往返(两端点判决同源)', () => {
     expect(res.status).toBe(202)
   })
 })
+
+// ——— 试点 argv 白名单在 HTTP 层生效 ——————————————————————————————————
+// 为什么必须有这一层:单元层直接调 validateStartRequest,碰不到 host-server 的 catch 分支与
+// reasonCode 序列化那行。Task 5/6 都栽过同一个形状——新增的失败路径只有单元覆盖,
+// 把 HTTP 侧那行删掉全仓照样绿。
+describe('/start 试点 argv 白名单(HTTP 层)', () => {
+  const realPolicy = loadExecutionPolicy(resolve('public/catalog.snapshot.json'))
+  const pilotAck = () => realPolicy.decisionByKey.get('xiaohongshu/feed').fingerprint
+
+  it('夹具前提:xiaohongshu/feed 是需确认的试点命令且挂了 argv 约束', () => {
+    expect(realPolicy.decisionByKey.get('xiaohongshu/feed').state).toBe('acknowledgement-required')
+    expect(realPolicy.argvConstraintByKey.has('xiaohongshu/feed')).toBe(true)
+  })
+
+  it('400/argv-not-allowed:带 --trace on 的试点命令被 Host 拒绝(不靠前端)', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-trace-1', commandKey: 'xiaohongshu/feed',
+      argv: ['xiaohongshu', 'feed', '--trace', 'on', '-f', 'json'],
+      acknowledgement: { fingerprint: pilotAck() },
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).reasonCode).toBe('argv-not-allowed')
+  })
+
+  it('400/argv-not-allowed:--site-session persistent 同样拒绝', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-session-1', commandKey: 'xiaohongshu/feed',
+      argv: ['xiaohongshu', 'feed', '--site-session', 'persistent', '-f', 'json'],
+      acknowledgement: { fingerprint: pilotAck() },
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).reasonCode).toBe('argv-not-allowed')
+  })
+
+  it('202:只带声明过的 --limit 时照常受理 —— 白名单不是把试点命令锁死', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-limit-1', commandKey: 'xiaohongshu/feed',
+      argv: ['xiaohongshu', 'feed', '--limit', '20', '-f', 'json'],
+      acknowledgement: { fingerprint: pilotAck() },
+    })
+    expect(res.status).toBe(202)
+  })
+})
+
+// ——— BrowserBridge 健康诊断(HTTP 层)————————————————————————————————
+describe('/browser-bridge/health', () => {
+  it('转发结构化诊断,且带上 Host 自己知道的 opencliVersion', async () => {
+    const { baseUrl } = await setup({
+      browserBridgeHealth: async ({ opencliVersion }) => ({
+        checkedAt: 1, daemon: 'running', extension: 'connected', profile: 'ready',
+        profileCount: 1, opencliVersion, retryable: false, reasonCode: 'ok', summary: '就绪',
+      }),
+    })
+    const res = await fetch(`${baseUrl}/browser-bridge/health`, { headers: { Origin: origin } })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.daemon).toBe('running')
+    expect(body.reasonCode).toBe('ok')
+    // 版本不是诊断器编的,是 Host 从生效 policy 取的 —— 这一行钉住那条接线。
+    expect(body.opencliVersion).toBe(policy.opencliVersion)
+  })
+
+  it('daemon 没起来时仍返回 200 + 结构化失败,不是 5xx', async () => {
+    // 「桥接没就绪」与「Host 内部错误」给用户的下一步动作完全不同,不能混成一个错误码。
+    const { baseUrl } = await setup({
+      browserBridgeHealth: async () => ({
+        checkedAt: 1, daemon: 'stopped', extension: 'unknown', profile: 'unknown',
+        profileCount: 0, opencliVersion: '1.8.6', retryable: true,
+        reasonCode: 'daemon-stopped', summary: 'daemon 未运行',
+      }),
+    })
+    const res = await fetch(`${baseUrl}/browser-bridge/health`, { headers: { Origin: origin } })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.daemon).toBe('stopped')
+    expect(body.retryable).toBe(true)
+  })
+
+  it('受 Origin 白名单管辖 —— 非法 Origin 拿不到诊断', async () => {
+    const { baseUrl } = await setup()
+    const res = await fetch(`${baseUrl}/browser-bridge/health`, { headers: { Origin: 'http://evil.example' } })
+    expect(res.status).toBe(403)
+  })
+})

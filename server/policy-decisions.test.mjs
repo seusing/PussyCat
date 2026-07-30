@@ -76,9 +76,9 @@ describe('准入算法', () => {
     expect(decisions.size).toBe(snapshot.commands.length)
   })
 
-  it('可执行面 = legacy 276 + 三条审定中的 ready/ack', () => {
+  it('可执行面 = legacy 276 + 三条 local-direct + 八条试点', () => {
     const runnable = [...decisions.values()].filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
-    expect(runnable.length).toBe(276 + 3)
+    expect(runnable.length).toBe(276 + 3 + 8)
   })
 
   // 上一条的「全状态」是遍历**恰好出现的**状态,证明不了四个状态都能构造出来。
@@ -134,5 +134,89 @@ describe('准入算法 —— 真实数据到不了的出口(注入夹具)', () 
     const d = decide(patch)
     expect(d.state).toBe(state)
     expect(d.reasonCode).toBe(reasonCode)
+  })
+})
+
+// ——— browser-cookie-read-pilot 试点 ————————————————————————————————————————
+// 审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md。
+// 这一组守的是三件事:八条真的进了 tier 且只能落 ready/ack;**没进试点的同 cohort 命令
+// 一条都没被带出来**;write/ui/intercept/download/login 继续被拒。
+describe('browser-cookie-read-pilot', () => {
+  const PILOT = [
+    'xiaohongshu/whoami', 'xiaohongshu/feed',
+    'bilibili/whoami', 'bilibili/hot',
+    'twitter/whoami', 'twitter/timeline',
+    'youtube/whoami', 'youtube/subscriptions',
+  ]
+
+  // 逐条一个用例(不塞进单个 for 循环):循环里第一条 expect 失败即抛,后面的命令根本不会被执行,
+  // 于是「某条命令判决错了」与「测试压根没跑到它」在输出上长得一模一样。
+  it.each(PILOT)('%s 进 tier-evaluation 且拿到 acknowledgement-required + fingerprint', (key) => {
+    const d = decisions.get(key)
+    expect(d, `${key} 不在判决表里`).toBeDefined()
+    expect(d.decisionSource).toBe('tier-evaluation')
+    expect(d.state).toBe('acknowledgement-required')
+    expect(typeof d.fingerprint).toBe('string')
+    expect(d.metadata.executionPath).toBe('browser-bridge')
+    expect(d.metadata.credentialFlow).toBe('consume')
+  })
+
+  it('八条只能得 ready 或 acknowledgement-required —— 不得出现 denied/unknown', () => {
+    for (const key of PILOT) {
+      expect(['ready', 'acknowledgement-required'], key).toContain(decisions.get(key).state)
+    }
+  })
+
+  it('bilibili/hot 虽 exposure=public,仍需确认 —— 它以用户登录身份打 API', () => {
+    // 这条单独立用例:它是第 9 步新增 browser-profile 分支唯一能打红的真实数据点。
+    // 按扩展前的第 9 步(只看 ambient-local-files / personal),它会落第 10 步直接 ready。
+    const d = decisions.get('bilibili/hot')
+    expect(d.metadata.exposure).toBe('public')
+    expect(d.metadata.residues).toEqual([])
+    expect(d.state).toBe('acknowledgement-required')
+  })
+
+  it('四条 whoami 的 persistent-session 如实进 metadata,并随判决下发', () => {
+    for (const key of ['xiaohongshu/whoami', 'bilibili/whoami', 'twitter/whoami', 'youtube/whoami']) {
+      expect(decisions.get(key).metadata.residues, key).toEqual(['persistent-session'])
+    }
+  })
+
+  it('**同 cohort 的非成员一条都没被带出来** —— 496 条 read+cookie+browser 里只放行这八条', () => {
+    const cohort = snapshot.commands
+      .filter((c) => c.access === 'read' && c.strategy === 'cookie' && c.browser === true)
+      .map((c) => c.command)
+    // 先证明这个 cohort 确实远大于试点,否则下面的断言可能在一个只有八条的集合上空转
+    expect(cohort.length).toBeGreaterThan(400)
+    const runnable = cohort.filter((k) => {
+      const d = decisions.get(k)
+      return d.state === 'ready' || d.state === 'acknowledgement-required'
+    })
+    expect(runnable.sort()).toEqual([...PILOT].sort())
+  })
+
+  it.each([
+    ['bilibili/history', 'read+cookie 同站非成员'],
+    ['bilibili/following', 'read+cookie 同站非成员'],
+    ['xiaohongshu/comments', 'read+cookie 同站非成员'],
+    ['12306/orders', 'read+cookie 他站非成员'],
+  ])('%s(%s)保持 unknown/no-tier', (key) => {
+    const d = decisions.get(key)
+    expect(d, `${key} 不在判决表里`).toBeDefined()
+    expect(d.state).toBe('unknown')
+    expect(d.reasonCode).toBe('no-tier')
+  })
+
+  it.each([
+    ['xiaohongshu/login', 'login(write+cookie)'],
+    ['12306/login', 'login(write+cookie)'],
+    ['antigravity/cookies', 'ui'],
+    ['36kr/article', 'intercept'],
+    ['bilibili/download', 'download'],
+  ])('%s(%s)继续被拒', (key) => {
+    const d = decisions.get(key)
+    expect(d, `${key} 不在判决表里`).toBeDefined()
+    expect(['denied', 'unknown'], key).toContain(d.state)
+    expect(d.state === 'ready' || d.state === 'acknowledgement-required').toBe(false)
   })
 })

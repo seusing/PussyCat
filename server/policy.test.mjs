@@ -127,8 +127,9 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(policy.allowedCommands.size).toBe(runnable.size)
   })
 
-  it('执行面增量恰为三条人工审定命令,且没有任何条目被移除', () => {
-    // 只断言总数 279 挡不住「减掉一条 legacy、多进来两条别的」——必须钉住**增量本身**。
+  it('执行面增量恰为三条 local-direct 加八条试点命令,且没有任何条目被移除', () => {
+    // 只断言总数 287 挡不住「减掉一条 legacy、多进来两条别的」——必须钉住**增量本身**。
+    // 试点开放后增量从 3 条变 11 条:多出的八条**逐条列名**,任何第九条溜进执行面都会红。
     const legacyDerived = new Set(snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
       .map((c) => c.command)
@@ -136,11 +137,13 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     const added = [...policy.allowedCommands].filter((k) => !legacyDerived.has(k)).sort()
     const removed = [...legacyDerived].filter((k) => !policy.allowedCommands.has(k)).sort()
     expect(added).toEqual([
-      'antigravity/recent-paths', 'mercury/reimbursement-plan', 'trae-cn/setup',
+      'antigravity/recent-paths', 'bilibili/hot', 'bilibili/whoami',
+      'mercury/reimbursement-plan', 'trae-cn/setup', 'twitter/timeline', 'twitter/whoami',
+      'xiaohongshu/feed', 'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
     ])
     expect(removed).toEqual([])
     expect(legacyDerived.size).toBe(276)
-    expect(policy.allowedCommands.size).toBe(279)
+    expect(policy.allowedCommands.size).toBe(287)
   })
 
   it('注入缝不经 buildExecutionPolicy 透传 —— 传第二参也不改变任何判决', () => {
@@ -290,5 +293,102 @@ describe('确认校验与状态码', () => {
   it('结构非法 → 400,不被判决分派吞掉', () => {
     try { validateStartRequest({ runId: 'r', commandKey: 'trae-cn/setup', argv: 'not-an-array' }, policy); throw new Error('应当抛出') }
     catch (e) { expect(e.statusCode).toBe(400) }
+  })
+})
+
+// ——— 试点命令的 argv 白名单(审定 §1.2 口径 F 的 P0)————————————————————————
+// 为什么必须有这一层:`--trace` / `--site-session` / `--keep-tab` / `--window` 是 opencli 的
+// **运行时全局选项**,不是 manifest args,因此不进 reviewShapeHash。而八条审定记录里
+// `effects: []` 与 `residues: []` 的成立**以「不追加这些选项」为前提**。该前提此前只由前端
+// buildArgv 保证 —— 而 I-P1 说绕过前端不得获得额外执行能力,这里恰恰能获得。
+describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
+  const ack = policy.decisionByKey.get('xiaohongshu/feed').fingerprint
+  const start = (argv, over = {}) => validateStartRequest({
+    runId: 'r', commandKey: 'xiaohongshu/feed', argv,
+    acknowledgement: { fingerprint: ack }, ...over,
+  }, policy)
+
+  it('声明过的 flag(--limit)照常放行 —— 白名单不是把命令锁死', () => {
+    expect(start(['xiaohongshu', 'feed', '--limit', '20', '-f', 'json']).commandKey)
+      .toBe('xiaohongshu/feed')
+  })
+
+  it('零 flag 也放行', () => {
+    expect(start(['xiaohongshu', 'feed', '-f', 'json']).commandKey).toBe('xiaohongshu/feed')
+  })
+
+  it.each([
+    ['--trace', ['xiaohongshu', 'feed', '--trace', 'on', '-f', 'json']],
+    ['--site-session', ['xiaohongshu', 'feed', '--site-session', 'persistent', '-f', 'json']],
+    ['--keep-tab', ['xiaohongshu', 'feed', '--keep-tab', 'true', '-f', 'json']],
+    ['--window', ['xiaohongshu', 'feed', '--window', 'foreground', '-f', 'json']],
+    ['--profile', ['xiaohongshu', 'feed', '--profile', 'other', '-f', 'json']],
+    ['--trace=on(等号形式)', ['xiaohongshu', 'feed', '--trace=on', '-f', 'json']],
+    ['-v(短选项)', ['xiaohongshu', 'feed', '-v', '-f', 'json']],
+    ['裸位置参数(本命令声明 0 个位置参数)', ['xiaohongshu', 'feed', 'extra', '-f', 'json']],
+  ])('%s → 400/argv-not-allowed', (_name, argv) => {
+    try {
+      start(argv)
+      throw new Error('应当抛出')
+    } catch (e) {
+      expect(e).toBeInstanceOf(RequestPolicyError)
+      expect(e.statusCode).toBe(400)
+      expect(e.reasonCode).toBe('argv-not-allowed')
+    }
+  })
+
+  it('声明过的 flag 后面塞标志当"值"也拦得住 —— --limit --trace 不得放行', () => {
+    // 若只做「flag 名在白名单里」检查、无条件吃掉下一个 token,`--trace` 会被当成 --limit 的值
+    // 混过去,而 commander 那边照样把它解析成一个开着的全局标志。
+    try {
+      start(['xiaohongshu', 'feed', '--limit', '--trace', '-f', 'json'])
+      throw new Error('应当抛出')
+    } catch (e) {
+      expect(e.statusCode).toBe(400)
+      expect(e.reasonCode).toBe('argv-not-allowed')
+    }
+  })
+
+  it('白名单**只作用于试点命令** —— legacy 基线命令的 argv 形状不受影响', () => {
+    // 范围有意收窄:legacy 276 条没有任何声称 effects/residues 的人工审定,
+    // 不存在被 --trace 推翻的结论。贸然收紧会波及一大片未审定过 argv 形状的命令。
+    // 这条同时是**误伤守卫**:白名单若漏挂成全局,这里会红。
+    expect(policy.argvConstraintByKey.has('36kr/news')).toBe(false)
+    expect(validateStartRequest({
+      runId: 'r', commandKey: '36kr/news', argv: ['36kr', 'news', '--trace', 'on', '-f', 'json'],
+    }, policy).commandKey).toBe('36kr/news')
+  })
+
+  it('八条试点命令都挂上了约束,且 flags 恰为各自 manifest 声明的集合', () => {
+    const expected = new Map([
+      ['xiaohongshu/whoami', []],
+      ['xiaohongshu/feed', ['--limit']],
+      ['bilibili/whoami', []],
+      ['bilibili/hot', ['--limit']],
+      ['twitter/whoami', []],
+      ['twitter/timeline', ['--limit', '--top-by-engagement', '--type']],
+      ['youtube/whoami', []],
+      ['youtube/subscriptions', ['--limit']],
+    ])
+    expect([...policy.argvConstraintByKey.keys()].sort()).toEqual([...expected.keys()].sort())
+    for (const [key, flags] of expected) {
+      const constraint = policy.argvConstraintByKey.get(key)
+      expect([...constraint.flags].sort(), key).toEqual(flags)
+      expect(constraint.positionals, key).toBe(0)
+    }
+  })
+
+  it('denied/unknown 优先于 argv 白名单 —— 带非法 flag 的被拒命令仍得 403,不是 400', () => {
+    // 顺序是语义:先判「这条命令能不能跑」,再判「这次调用的形状对不对」。
+    try {
+      validateStartRequest({
+        runId: 'r', commandKey: 'paperreview/review',
+        argv: ['paperreview', 'review', 'tok', '--trace', 'on', '-f', 'json'],
+      }, policy)
+      throw new Error('应当抛出')
+    } catch (e) {
+      expect(e.statusCode).toBe(403)
+      expect(e.reasonCode).toBe('explicit-deny')
+    }
   })
 })
