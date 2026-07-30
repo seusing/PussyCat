@@ -11,7 +11,9 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+// LEGACY_REPO_ROOT 是**测试注入点**(供 check-legacy-baseline.test.mjs 在临时 git 仓里跑闸门),
+// 与 server/policy.mjs 的 OPENCLI_HOST_LEGACY_BASELINE_PATH 同一套路;默认行为不变。
+const root = process.env.LEGACY_REPO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const path = 'server/policy-legacy-baseline.json'
 const baseRef = process.env.LEGACY_BASE_REF || 'origin/main'
 const current = JSON.parse(readFileSync(resolve(root, path), 'utf8'))

@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # legacy 闸门要算 merge-base(origin/main, HEAD),浅克隆(默认 fetch-depth:1)
+          # 拿不到完整历史,merge-base 算不出来。这里要的是完整历史。
+          fetch-depth: 0
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+
+      - name: 单元测试
+        run: npx vitest run
+
+      - name: 构建
+        run: npm run build
+
+      - name: 计算 LEGACY_BASE_REF
+        # 出处:docs/plans/2026-07-26-p1-b0-policy-protocol.md
+        # Task 3 Step 7「留给接 CI 的两条硬约束」第 1 条。
+        #
+        # 硬约束:LEGACY_BASE_REF 绝不能来自 PR 可控的输入(分支名、label、PR body、
+        # workflow 的 inputs)。它必须由这条可信 runner 自己算出真实 merge-base 后灌入。
+        # 原因:check-legacy-baseline.mjs 支持用环境变量覆盖 base ref,这个覆盖口子
+        # 当初开出来只是为了让闸门自身「首次引入 / base ref 不存在」等失败路径可验证
+        # (见该脚本顶部注释),不是运行时的调节旋钮。如果这里改成读取任何提交者可控的
+        # 值,提交者只要让它等于 HEAD,闸门就变成自比自、恒绿,防线形同虚设。
+        #
+        # 已知边界(不是本步骤要解决的,如实记录):push 到 main 时
+        # merge-base(origin/main, HEAD) == HEAD,同样是自比自、恒绿——这一步单独
+        # 挡不住"直接推 main"。真正的强制点在 PR 门 + 分支保护规则(要求这条 check
+        # 必须通过才能合并到 main),不在这一行 shell 里。
+        #
+        # merge-base 算不出时(没有共同祖先、fetch-depth 不够等)git 以非零退出码报错,
+        # set -e 让这一步直接失败,不吞错、不静默放行——fail-closed。
+        run: |
+          set -e
+          resolved="$(git merge-base origin/main HEAD)"
+          echo "[ci] LEGACY_BASE_REF 解析为 merge-base(origin/main, HEAD) = $resolved"
+          echo "LEGACY_BASE_REF=$resolved" >> "$GITHUB_ENV"
+
+      - name: legacy 基线闸(只减不增)
+        run: npm run check:legacy
