@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { HealthPill } from './HealthPill'
+import { BrowserBridgeStatus } from './BrowserBridgeStatus'
 
 export default function AppShell({ nav, config, runs, catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl }: {
   nav: ReactNode
@@ -17,6 +18,7 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
         <div className="font-semibold">OpenCLI App</div>
         <div className="flex items-center gap-3">
           {headerActions}
+          <BrowserBridgeStatus baseUrl={baseUrl} />
           <HealthPill baseUrl={baseUrl} />
         </div>
       </header>
