@@ -494,6 +494,7 @@ const HOST_ENV_KEYS: &[&str] = &[
     "OPENCLI_HOST_PARENT_WATCH",
     "OPENCLI_HOST_ALLOWED_ORIGINS",
     "OPENCLI_HOST_CATALOG_PATH",
+    "OPENCLI_HOST_LEGACY_BASELINE_PATH",
     "OPENCLI_HOST_CANCEL_GRACE_MS",
     "OPENCLI_HOST_COMMAND_TIMEOUT_MS",
     "OPENCLI_HOST_MAX_CONCURRENT_RUNS",
@@ -527,7 +528,10 @@ fn configure_host_env(cmd: &mut Command) {
     cmd.env_remove("OPENCLI_HOST_ALLOWED_ORIGINS");
 
     // 其余一律回落到 Host 默认值(2000ms / 90000ms / 1 并发),不接受环境改写。
+    // OPENCLI_HOST_LEGACY_BASELINE_PATH 与 CATALOG_PATH 同性质(readiness 测试注入点),
+    // 且能替换 legacy 基线来源 —— 打包形态继承它等于把 fail-closed 的地基交给环境,必须移除。
     cmd.env_remove("OPENCLI_HOST_CATALOG_PATH")
+        .env_remove("OPENCLI_HOST_LEGACY_BASELINE_PATH")
         .env_remove("OPENCLI_HOST_CANCEL_GRACE_MS")
         .env_remove("OPENCLI_HOST_COMMAND_TIMEOUT_MS")
         .env_remove("OPENCLI_HOST_MAX_CONCURRENT_RUNS");
