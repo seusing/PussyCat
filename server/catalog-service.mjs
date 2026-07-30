@@ -17,7 +17,8 @@ export class CatalogServiceError extends Error {
 }
 
 // 现场重生成 catalog:spawn opencli list(P0-B 同款安全姿势)→ manifest merge → schema 校验
-// → buildExecutionPolicy → 全部成功后单引用原子替换 {snapshot, policy};任一失败旧值不动。
+// → buildExecutionPolicy → 算 revision → 全部成功后单引用原子替换
+// {snapshot, policy, revision, generatedAt};任一失败旧值不动。
 export function createCatalogService({
   opencliEntry,
   resolveManifest,
@@ -27,7 +28,7 @@ export function createCatalogService({
   timeoutMs = 15_000,
   maxOutputBytes = 8 * 1024 * 1024,
 }) {
-  let state              // { snapshot, policy } | undefined —— 单引用,原子换
+  let state              // { snapshot, policy, revision, generatedAt } | undefined —— 单引用,原子换
   let inflight           // Promise | undefined —— single-flight
   let activeChild        // 在途子进程,close() 时 kill
   let failActive         // 在途 runList 的 fail 引用,close() 时主动 reject(fakeChild kill 不会自动 emit close)
@@ -149,13 +150,17 @@ export function createCatalogService({
     //   · 不含 now():掺了时间戳客户端就永远算不出来,那是不透明 nonce 不是摘要;
     //   · 取 commands **全文**而非 commands.length:长度相同内容不同会撞成同一个 revision;
     //   · **必须含 decisions**:revision 要证的正是「这份判决属于这份快照」,不含它就什么也没证。
-    const generatedAt = now()
     const revision = createHash('sha256').update(canonicalJson({
       policySchemaVersion: POLICY_SCHEMA_VERSION,
       opencliVersion: snapshot.opencliVersion,
       commands: snapshot.commands,
       decisions: policy.decisions,
     })).digest('hex').slice(0, 16)
+    // generatedAt 是「**这份判决**何时生成」,所以内容没变就必须沿用旧时刻。
+    // 光把它存进 state 达不到这个目的:端点每次请求都无条件 refresh(),state 每请求重建一次,
+    // 于是 revision 相同而 generatedAt 不同 —— 正是要避免的自相矛盾,只是换了条路径。
+    // 判据用 revision 而不是「快照是否全等」:revision 本就是内容摘要,现成且更便宜。
+    const generatedAt = state?.revision === revision ? state.generatedAt : now()
     state = { snapshot, policy, revision, generatedAt }   // ← 全部成功后才替换,单引用原子
     return snapshot
   }

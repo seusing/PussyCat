@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { reviewShapeHash, decisionFingerprint, canonicalJson } from './policy-fingerprint.mjs'
+import { reviewShapeHash, decisionFingerprint, canonicalJson, POLICY_SCHEMA_VERSION } from './policy-fingerprint.mjs'
 import { REVIEWED_RECORDS } from './policy-metadata.mjs'
 
 const snapshot = JSON.parse(readFileSync(resolve('public/catalog.snapshot.json'), 'utf8').replace(/^﻿/, ''))
@@ -150,6 +150,33 @@ describe('decisionFingerprint', () => {
       policySchemaVersion: 1, reviewShapeHash: 'S', metadata, matchedDenyRule: null,
     })).digest('hex')
     expect(decisionFingerprint(base)).toBe(expected)
+  })
+
+  // 上面那条的「手工期望值」是**用 `canonicalJson` 自己算的** —— 它对 `canonicalJson`
+  // 的任何改动都自洽,抓不到漂移。本仓已有三个消费方(reviewShapeHash / decisionFingerprint
+  // / Task 5 的 revision),改动它的动机只会变多,所以照 Task 3「固定源身份」那条的做法
+  // 补一组**写死字面量**:值变了这里必须有人手动改,并解释为什么。
+  //
+  // 漂移的后果:fingerprint 全变 → 用户已保存的 acknowledgement 被**无声**作废,
+  // 全部需确认的命令重新弹窗。按 I-P5 它不是安全边界(acknowledgement 本就不是安全授权),
+  // 但「无声」这一点本身要治。
+  it('三条人工记录的 decisionFingerprint 冻结值(挡住 canonicalJson 的无声漂移)', () => {
+    const frozen = new Map([
+      ['trae-cn/setup', '2a2994c1470e84f106181d5999102a24c04c4a2deba0b43a4e0ae788c3627d27'],
+      ['mercury/reimbursement-plan', '2f06f817986e5a2acca50dea3fca05d60893e6c227de69e6a9b730e89d8cf0e6'],
+      ['antigravity/recent-paths', '80e57cf850a677eb934eb8c65b00b721f9f0cd73fd6ddcd8be2e7a6f02645207'],
+    ])
+    // 先证明这三条就是 REVIEWED_RECORDS 的全部,否则将来加了第四条记录,
+    // 这个冻结集会**静默地只覆盖一部分**。
+    expect([...REVIEWED_RECORDS.keys()].sort()).toEqual([...frozen.keys()].sort())
+    for (const [key, record] of REVIEWED_RECORDS) {
+      expect(decisionFingerprint({
+        policySchemaVersion: POLICY_SCHEMA_VERSION,
+        reviewShapeHash: record.reviewedAgainst,
+        metadata: record.metadata,
+        matchedDenyRule: null,
+      }), key).toBe(frozen.get(key))
+    }
   })
 })
 

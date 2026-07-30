@@ -208,7 +208,10 @@ export function createHostServer({
             snapshot: current.snapshot,
             policy: {
               schemaVersion: POLICY_SCHEMA_VERSION,
-              generatedAt: current.generatedAt,     // 判决生成时刻,不是本次请求时刻
+              // 判决生成时刻,不是本次请求时刻。这个区分**不是这一行建立的** ——
+              // 本端点每次请求都无条件 refresh(),真正让它成立的是 catalog-service.mjs
+              // 里「revision 未变则沿用旧 generatedAt」那一步。
+              generatedAt: current.generatedAt,
               decisions: current.policy.decisions,
             },
           })

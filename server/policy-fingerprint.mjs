@@ -7,14 +7,20 @@ export const POLICY_SCHEMA_VERSION = 1
  * **仅适用于纯 JSON 值**(经 `JSON.parse` 或字面量构造的 object/array/string/number/boolean/null)。
  * 实测:数组元素与标量位置上的 `undefined` 与显式 `null` 会坍缩成同一个值(`value ?? null`);
  * `Date`/`Map`/`Set` 因为没有自有可枚举属性,会被序列化成 `{}`——两个不同的 `Date`
- * 会产出完全相同的结果。当前调用点都来自 `JSON.parse` 或字面量,不会撞到这两个坑。
+ * 会产出完全相同的结果。
+ *
+ * 当前调用点都不撞这两个坑,但**依据不是「来源都是 JSON.parse 或字面量」** ——
+ * Task 5 的 revision 调用点传的正是 `mergeManifestFields` 产出的**内存态**,
+ * 既不是 `JSON.parse` 的结果也不是字面量。真正的依据是对**值树**的性质:
+ * 其中没有 `Date`/`Map`/`Set`,且标量位与数组元素位上没有 `undefined`
+ * (对象键上的 `undefined` 已由下面那条规则处理掉)。新增调用点时按这个标准核,别按来源核。
  *
  * **对象键上的 `undefined` 一律跳过**,与 `JSON.stringify` 对齐(它会把这类键整个丢掉)。
  * 这一条是 Task 5 的 revision 能在 wire 上可验(I-P4)的前提:服务端按内存态算,客户端按
  * 收到的 JSON 算,两边必须一致。原实现把这类键渲染成 `"k":null`,而客户端收到的 JSON 里
  * 压根没有 k —— 客户端**永远**算不出同一个值,revision 就退化成不透明 nonce。
  * 这不是假想:`mergeManifestFields` 无条件写 navigateBefore/defaultWindowMode/type/modulePath
- * 四个键,manifest 没给的就留 `undefined` —— 实测 1278 条真实命令里 1208 条中招。
+ * 四个键,manifest 没给的就留 `undefined` —— 实测 1278 条真实命令里 **1211** 条中招。
  * (本函数原注释已预告 Task 5 复用时"值得留意"这两个坑,此处即是那笔账。)
  */
 export function canonicalJson(value) {

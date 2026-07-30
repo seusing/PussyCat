@@ -398,9 +398,13 @@ describe('/catalog/effective', () => {
       { site: 'a', name: 'two', type: 'json' },
     ])
     let list = commands
+    // 单调计数时钟:`Date.now()` 的毫秒分辨率会让「快照变 → generatedAt 也变」
+    // 偶然假绿(两次 refresh 落在同一毫秒)。注入自增时钟后两条时刻断言都是确定性的。
+    let tick = 0
     const service = createCatalogService({
       opencliEntry: 'C:/fixture/dist/src/main.js',
       resolveManifest: () => 'C:/fixture/cli-manifest.json',
+      now: () => { tick += 1; return tick },
       spawnImpl: () => {
         const child = new EventEmitter()
         child.stdout = new EventEmitter()
@@ -466,6 +470,29 @@ describe('/catalog/effective', () => {
     expect(b.revision).toBe(a.revision)
   })
 
+  // generatedAt 说的是「**这份判决**何时生成」。端点每次请求都无条件 refresh(),
+  // state 每请求重建一次 —— 光把 generatedAt 存进 state 挡不住它每次变。
+  // 没有这条守卫,把它写回 `now()` / `Date.now()` 全仓依然全绿(评审实测)。
+  it('内容未变 → generatedAt 也必须相同(存进 state 还不够,得沿用旧时刻)', async () => {
+    const { service } = liveCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const a = await (await effective(baseUrl)).json()
+    const b = await (await effective(baseUrl)).json()
+    expect(typeof a.policy.generatedAt).toBe('number')
+    expect(b.policy.generatedAt).toBe(a.policy.generatedAt)
+  })
+
+  // 内容真变了就该换时刻 —— 否则上一条可以靠「永远返回同一个常量」平凡满足。
+  it('快照变 → generatedAt 随之更新(反向控制,挡住「恒定常量」的平凡解)', async () => {
+    const { service, mutate } = liveCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const before = await (await effective(baseUrl)).json()
+    mutate()
+    const after = await (await effective(baseUrl)).json()
+    expect(after.revision).not.toBe(before.revision)
+    expect(after.policy.generatedAt).not.toBe(before.policy.generatedAt)
+  })
+
   it('快照变 → revision 必变(否则它挡不住「换了目录却说还是同一份」)', async () => {
     const { service, mutate } = liveCatalogService()
     const { baseUrl } = await setup({ catalogService: service })
@@ -487,5 +514,31 @@ describe('/catalog/effective', () => {
     expect(Array.isArray(body.commands)).toBe(true)
     expect(body.policy).toBeUndefined()      // 原端点不得混入 policy
     expect(body.decisions).toBeUndefined()
+  })
+
+  // 下面两条与上面 `GET /catalog` 那两条**同构**。新端点的 404 分支与整个 catch 块
+  // 是从 /catalog 复制来的,而复制来的那份此前一条测试都没有 —— 实测三处变异
+  // (404 改 200、catch 改恒 200、generatedAt 改 Date.now())全仓 332 条全绿逃逸。
+  it('未配置 catalogService → GET /catalog/effective 404', async () => {
+    const { baseUrl } = await setup()
+    const res = await effective(baseUrl)
+    expect(res.status).toBe(404)
+    expect((await res.json()).error).toMatch(/not enabled/i)
+  })
+
+  it('刷新失败 → 透传 CatalogServiceError.statusCode,不下发任何 envelope', async () => {
+    const service = {
+      refresh: async () => { const e = new Error('timed out'); e.statusCode = 504; e.name = 'CatalogServiceError'; throw e },
+      current: () => undefined,
+      close: () => {},
+    }
+    const { baseUrl } = await setup({ catalogService: service })
+    const res = await effective(baseUrl)
+    expect(res.status).toBe(504)
+    const body = await res.json()
+    expect(body.error.summary).toMatch(/timed out/)
+    // 失败时不得混出半份 envelope —— 否则前端可能拿着 undefined revision 往下走
+    expect(body.revision).toBeUndefined()
+    expect(body.policy).toBeUndefined()
   })
 })
