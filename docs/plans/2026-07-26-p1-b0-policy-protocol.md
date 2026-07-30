@@ -1255,6 +1255,12 @@ git commit -m "feat(host): 新增 /catalog/effective 原子 envelope(带显式 r
 
 **Interfaces:** `validateStartRequest(value, policy)` 对 `acknowledgement-required` 的命令要求 `acknowledgement.fingerprint` 匹配；新增 `RequestPolicyError` 的 428/409。
 
+**本 task 顺带结清三笔前面欠的账**（Task 4 评审记的，不要漏）：
+
+1. **`antigravity/recent-paths` 自 `2be4b33` 起可无确认执行** —— `allowedCommands` 含 `acknowledgement-required`，而 `/start` 当时还没有确认校验。本 task 的 428 分支就是补上它，**这是本 task 存在的首要理由**，不是附带。
+2. **`deniedCommands` 已不再是「所有被拒命令」** —— 第 7 步能产 `denied/tier-threshold` 却不进该表。Step 3 把 `validateStartRequest` 改成读 `decisionByKey` 后，`policy.mjs:282` 那个唯一的运行时消费点消失，该表只剩 `description` 里的计数在用，而 description 的措辞是「**显式 deny** K 条」——准确。**结论：不必改数据结构，但要在 `deniedCommands` 定义处加一行注释写明它只含显式 deny，不是全部被拒集合**，免得后人拿它当全集。
+3. **`matchedDenyRule` 恒为 null 且零覆盖** —— 命中 deny 的命令在算法第 1 步就 return，本 task 不改变这一点。**不要为它造测试**，如实留在报告里即可。
+
 - [ ] **Step 1: 写失败测试**（追加到 `server/policy.test.mjs`）
 
 ```js
@@ -1294,6 +1300,45 @@ describe('确认校验与状态码', () => {
   })
 })
 ```
+
+**上面五条只覆盖了状态码表的四格,而且全在单元层。** spec §10.1 第 11 道门要求的是**逐格**:`202 / 428 / 409 / 403(denied) / 403(unknown) / 400`。缺 `403(denied)` 与 `400`,且 `202` 只在别处间接测过。补两条(同一个 describe 内):
+
+```js
+  it('显式 deny 的命令 → 403,reasonCode 与 unknown 区分得开', () => {
+    try {
+      validateStartRequest({ runId: 'r', commandKey: 'paperreview/review',
+        argv: ['paperreview', 'review', 'tok', '-f', 'json'] }, policy)
+      throw new Error('应当抛出')
+    } catch (e) {
+      expect(e.statusCode).toBe(403)
+      expect(e.reasonCode).toBe('explicit-deny')      // 与 metadata-missing 那条互为对照
+    }
+  })
+
+  it('结构非法 → 400,不被判决分派吞掉', () => {
+    try { validateStartRequest({ runId: 'r', commandKey: 'trae-cn/setup', argv: 'not-an-array' }, policy); throw new Error('应当抛出') }
+    catch (e) { expect(e.statusCode).toBe(400) }
+  })
+```
+
+- [ ] **Step 1.5: HTTP 层把状态码表走一遍**（追加到 `server/host-server.test.mjs`）
+
+**为什么必须有这一层**：Step 3 要在 `host-server.mjs` 的 catch 里加一行 `reasonCode` 序列化。上面全部用例都是直接调 `validateStartRequest` 的单元测试,**碰不到那行** —— 把它删掉全仓照样绿。Task 5 刚因为同一个形状(新端点的 404 分支与 catch 块零覆盖、三处变异全绿逃逸)被评审打回,不要再交一次。
+
+**夹具坑,先看清再动手**：`host-server.test.mjs` 现有夹具用 `opencliVersion: '9.9.9'`,而 `reviewShapeHash` 含 opencliVersion,按 spec §4.1.2 **一次升级会让全部 legacy 条目集体漂出基线** —— 那套夹具下每条命令都是 `unknown/no-tier`,**428/409 根本造不出来**。
+
+做法:该 describe 用**真快照**构造 policy 直接注入(`createHostServer({ policy: buildExecutionPolicy(realSnapshot), ... })`,不挂 catalogService,`activePolicy()` 自然回落到注入的 policy),这样 `antigravity/recent-paths` 才是 `acknowledgement-required`、`trae-cn/setup` 才是 `ready`。
+
+逐格断言 **HTTP 状态码 + 响应体里的 `reasonCode`**(不是只断状态码——`reasonCode` 那行正是本层要守的):
+
+| 格 | 构造 | 期望 |
+|---|---|---|
+| 202 | `trae-cn/setup`(ready) | 202 |
+| 428 | `antigravity/recent-paths` 不带 acknowledgement | 428 + `reasonCode: 'acknowledgement-required'` |
+| 409 | 同上,带 `fingerprint: 'stale'` | 409 + `reasonCode: 'fingerprint-stale'` |
+| 403(denied) | `paperreview/review` | 403 + `reasonCode: 'explicit-deny'` |
+| 403(unknown) | `trae-solo/state-get` | 403 + `reasonCode: 'metadata-missing'` |
+| 400 | `argv` 非数组 | 400 |
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -1341,9 +1386,22 @@ Expected: FAIL —— 428/409 未实现
 Run: `npx vitest run server/policy.test.mjs server/host-server.test.mjs`
 Expected: 全部 PASS
 
-- [ ] **Step 5: 变异验证**
+- [ ] **Step 5: 变异验证（六处，逐个做完还原，确认「只有预期的用例变红」）**
 
-把 428 分支改成直接放行 → 「未带 acknowledgement → 428」用例必须变红。确认后还原。
+本 Step 新增四个分支加一行序列化，一处变异远远不够。
+
+| # | 变异 | 预期只红 |
+|---|---|---|
+| 1 | 428 分支改成直接放行 | 「未带 acknowledgement → 428」+ HTTP 层 428 那格 |
+| 2 | 409 的 `supplied !== decision.fingerprint` 改成恒 `false` | 「fingerprint 不匹配 → 409」+ HTTP 层 409 那格 |
+| 3 | 403 分支的 `error.reasonCode = decision?.reasonCode ?? 'no-decision'` 改成恒 `'no-decision'` | 两条 403(区分 `explicit-deny` / `metadata-missing` 的那两条) |
+| 4 | 把 `decision.state === 'unknown'` 从 403 条件里摘掉 | 「unknown → 403」——摘掉后它会掉进后面的分支被放行 |
+| 5 | **`host-server.mjs` 里新加的 `reasonCode` 序列化那行整行删掉** | 仅 HTTP 层那四条带 `reasonCode` 的格 |
+| 6 | `activePolicy()` 改成恒返回启动期 `policy`（不读 `catalogService.current()`） | 待观察：若无用例变红，说明「`/start` 与 `/catalog/effective` 判决同源」这条无人守，**记进报告**，不要自行加测试 |
+
+变异 ⑤ 是本轮的重点 —— 它正是 Task 5 被打回的那个形状（新增的序列化/失败路径无人守）。**做完必须确认它真的能红**，不能红就说明 Step 1.5 白写了。
+
+变异 ⑥ 不预设结论。`activePolicy()` 现在读 `catalogService?.current()?.policy ?? policy`，与 `/catalog/effective` 同源；若这条性质没有任何守卫，如实记账即可，是否补测由协调器裁决。
 
 - [ ] **Step 6: 提交**
 
