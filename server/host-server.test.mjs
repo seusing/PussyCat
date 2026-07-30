@@ -1,9 +1,12 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { fetch as realFetch } from 'undici'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHostServer } from './host-server.mjs'
+import { createCatalogService } from './catalog-service.mjs'
+import { canonicalJson } from './policy-fingerprint.mjs'
 
 const origin = 'http://127.0.0.1:5173'
 const policy = {
@@ -378,5 +381,111 @@ describe('GET /catalog + 动态 policy', () => {
     const { baseUrl } = await setup()
     const res = await fetch(`${baseUrl}/catalog`, { headers: { Origin: origin } })
     expect(res.status).toBe(404)
+  })
+})
+
+describe('/catalog/effective', () => {
+  // 用**真的** createCatalogService,不是 stub —— revision 的三条性质全部由
+  // catalog-service.mjs 里那段摘要实现承担;换成 stub,Step 5.5 的三处变异一条都红不了,
+  // 这一整个 describe 就退化成在测夹具自己。
+  function liveCatalogService() {
+    const commands = [
+      { command: 'a/one', site: 'a', name: 'one', description: 'first', access: 'read', strategy: 'public', browser: false, args: [] },
+      { command: 'a/two', site: 'a', name: 'two', description: 'second', access: 'read', strategy: 'public', browser: false, args: [] },
+    ]
+    const manifest = JSON.stringify([
+      { site: 'a', name: 'one', type: 'json' },
+      { site: 'a', name: 'two', type: 'json' },
+    ])
+    let list = commands
+    const service = createCatalogService({
+      opencliEntry: 'C:/fixture/dist/src/main.js',
+      resolveManifest: () => 'C:/fixture/cli-manifest.json',
+      spawnImpl: () => {
+        const child = new EventEmitter()
+        child.stdout = new EventEmitter()
+        child.stderr = new EventEmitter()
+        child.kill = () => true
+        // 自驱夹具:catalog-service 在 spawnImpl 返回后**同步**挂完 data/close 监听,
+        // setImmediate 晚于当前宏任务,故喂数据时监听一定已就位。
+        setImmediate(() => {
+          child.stdout.emit('data', Buffer.from(JSON.stringify(list)))
+          child.emit('close', 0)
+        })
+        return child
+      },
+      readFileImpl: (path) => (String(path).includes('package.json') ? '{"version":"9.9.9"}' : manifest),
+    })
+    return {
+      service,
+      // 让下一次 refresh 吐出**条数相同、内容不同**的 catalog。
+      // 条数必须相同:否则 revision 摘要里把 commands 换回 commands.length 也照样变,
+      // Step 5.5 的变异③ 就什么都测不出来。
+      // 只改 description:它不进 reviewShapeHash,故 decisions 逐字节不变——
+      // 「快照变 → revision 必变」于是只可能由 commands **全文**那一项撑住。
+      mutate() { list = commands.map((c) => ({ ...c, description: `${c.description}-CHANGED` })) },
+    }
+  }
+
+  const effective = (baseUrl) => fetch(`${baseUrl}/catalog/effective`, { headers: { Origin: origin } })
+
+  it('返回 envelope,snapshot 与 decisions 共享同一 revision', async () => {
+    const { service } = liveCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const res = await effective(baseUrl)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(typeof body.revision).toBe('string')
+    expect(body.revision.length).toBeGreaterThan(0)
+    expect(Array.isArray(body.snapshot.commands)).toBe(true)
+    expect(body.policy.schemaVersion).toBe(1)
+    expect(body.policy.decisions.length).toBe(body.snapshot.commands.length)
+  })
+
+  // 上面那条**证明不了 revision 有任何用处** —— 服务端返回常量 'x' 也能全绿。
+  // I-P4 说的「在 wire 上可验」只有一个意思:客户端拿 envelope 能自己算出同一个值。
+  // 下面三条才是 revision 存在的理由。
+  it('客户端可从 envelope 自行重算出同一 revision(这才是 I-P4 的「可验」)', async () => {
+    const { service } = liveCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const body = await (await effective(baseUrl)).json()
+    const recomputed = createHash('sha256').update(canonicalJson({
+      policySchemaVersion: body.policy.schemaVersion,
+      opencliVersion: body.snapshot.opencliVersion,
+      commands: body.snapshot.commands,
+      decisions: body.policy.decisions,
+    })).digest('hex').slice(0, 16)
+    expect(recomputed).toBe(body.revision)
+  })
+
+  it('内容未变 → 两次请求 revision 相同(掺时间戳就做不到这条)', async () => {
+    const { service } = liveCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const a = await (await effective(baseUrl)).json()
+    const b = await (await effective(baseUrl)).json()
+    expect(b.revision).toBe(a.revision)
+  })
+
+  it('快照变 → revision 必变(否则它挡不住「换了目录却说还是同一份」)', async () => {
+    const { service, mutate } = liveCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const before = await (await effective(baseUrl)).json()
+    mutate()
+    const after = await (await effective(baseUrl)).json()
+    // 先证明这确实是一次真变异,**且条数没变** —— 否则下面那条不等式可能只是
+    // 「条数变了」撑起来的,摘要里取全文还是取 length 就无从区分。
+    expect(after.snapshot.commands).toHaveLength(before.snapshot.commands.length)
+    expect(after.snapshot.commands).not.toEqual(before.snapshot.commands)
+    expect(after.revision).not.toBe(before.revision)
+  })
+
+  it('/catalog 原形状不变 —— 既有前端契约不破', async () => {
+    const { service } = liveCatalogService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const res = await fetch(`${baseUrl}/catalog`, { headers: { Origin: origin } })
+    const body = await res.json()
+    expect(Array.isArray(body.commands)).toBe(true)
+    expect(body.policy).toBeUndefined()      // 原端点不得混入 policy
+    expect(body.decisions).toBeUndefined()
   })
 })

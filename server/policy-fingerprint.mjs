@@ -5,15 +5,22 @@ export const POLICY_SCHEMA_VERSION = 1
 /**
  * 对象键排序、数组保序的规范化 JSON——哈希的单射前提。
  * **仅适用于纯 JSON 值**(经 `JSON.parse` 或字面量构造的 object/array/string/number/boolean/null)。
- * 实测:`undefined` 与显式 `null` 会坍缩成同一个值(`value ?? null`);`Date`/`Map`/`Set`
- * 因为没有自有可枚举属性,会被序列化成 `{}`——两个不同的 `Date` 会产出完全相同的结果。
- * 当前调用点都来自 `JSON.parse` 或字面量,不会撞到这两个坑,但 Task 5 打算复用本函数
- * 算 revision,届时若传入非纯 JSON 值,值得留意。
+ * 实测:数组元素与标量位置上的 `undefined` 与显式 `null` 会坍缩成同一个值(`value ?? null`);
+ * `Date`/`Map`/`Set` 因为没有自有可枚举属性,会被序列化成 `{}`——两个不同的 `Date`
+ * 会产出完全相同的结果。当前调用点都来自 `JSON.parse` 或字面量,不会撞到这两个坑。
+ *
+ * **对象键上的 `undefined` 一律跳过**,与 `JSON.stringify` 对齐(它会把这类键整个丢掉)。
+ * 这一条是 Task 5 的 revision 能在 wire 上可验(I-P4)的前提:服务端按内存态算,客户端按
+ * 收到的 JSON 算,两边必须一致。原实现把这类键渲染成 `"k":null`,而客户端收到的 JSON 里
+ * 压根没有 k —— 客户端**永远**算不出同一个值,revision 就退化成不透明 nonce。
+ * 这不是假想:`mergeManifestFields` 无条件写 navigateBefore/defaultWindowMode/type/modulePath
+ * 四个键,manifest 没给的就留 `undefined` —— 实测 1278 条真实命令里 1208 条中招。
+ * (本函数原注释已预告 Task 5 复用时"值得留意"这两个坑,此处即是那笔账。)
  */
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   if (value && typeof value === 'object') {
-    const keys = Object.keys(value).sort()
+    const keys = Object.keys(value).filter((key) => value[key] !== undefined).sort()
     return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(',')}}`
   }
   return JSON.stringify(value ?? null)

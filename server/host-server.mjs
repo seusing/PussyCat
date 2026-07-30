@@ -5,6 +5,7 @@ import {
   validateCancelRequest,
   validateStartRequest,
 } from './policy.mjs'
+import { POLICY_SCHEMA_VERSION } from './policy-fingerprint.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
 
@@ -178,6 +179,39 @@ export function createHostServer({
         try {
           const snapshot = await catalogService.refresh()
           writeJson(response, 200, snapshot)      // 只在原子替换完成后返回:目录与生效 policy 恒一致
+        } catch (error) {
+          const statusCode = (error && typeof error === 'object' && Number.isInteger(error.statusCode))
+            ? error.statusCode
+            : 500
+          writeJson(response, statusCode, {
+            error: {
+              summary: error instanceof Error ? error.message : 'Catalog refresh failed',
+              ...(error && typeof error === 'object' && error.detail ? { detail: error.detail } : {}),
+            },
+          })
+        }
+        return
+      }
+
+      // 路由顺序说明:`/catalog` 用的是**严格相等**匹配,故本分支写在其后无碍。
+      // 若后人把上面改成 startsWith,这里必须提到 `/catalog` 之前,否则永远走不到。
+      if (url.pathname === '/catalog/effective' && request.method === 'GET') {
+        if (!catalogService) {
+          writeJson(response, 404, { error: 'Catalog refresh is not enabled' })
+          return
+        }
+        try {
+          await catalogService.refresh()
+          const current = catalogService.current()
+          writeJson(response, 200, {
+            revision: current.revision,
+            snapshot: current.snapshot,
+            policy: {
+              schemaVersion: POLICY_SCHEMA_VERSION,
+              generatedAt: current.generatedAt,     // 判决生成时刻,不是本次请求时刻
+              decisions: current.policy.decisions,
+            },
+          })
         } catch (error) {
           const statusCode = (error && typeof error === 'object' && Number.isInteger(error.statusCode))
             ? error.statusCode

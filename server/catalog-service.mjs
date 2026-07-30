@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { stripBom, mergeManifestFields } from '../src/shared/normalize.mjs'
 import { assertCatalogCommands } from '../src/shared/catalogSchema.mjs'
 import { buildExecutionPolicy } from './policy.mjs'
+import { POLICY_SCHEMA_VERSION, canonicalJson } from './policy-fingerprint.mjs'
 
 export class CatalogServiceError extends Error {
   constructor(statusCode, message, detail) {
@@ -143,7 +144,19 @@ export function createCatalogService({
       commands,
     }
     const policy = buildExecutionPolicy(snapshot)
-    state = { snapshot, policy }        // ← 全部成功后才替换,单引用原子
+    // revision 让「snapshot 与 decisions 同源」在 wire 上**可验**(I-P4)——
+    // 「可验」的定义是:客户端拿到 envelope 后能自己重算出同一个值。因此
+    //   · 不含 now():掺了时间戳客户端就永远算不出来,那是不透明 nonce 不是摘要;
+    //   · 取 commands **全文**而非 commands.length:长度相同内容不同会撞成同一个 revision;
+    //   · **必须含 decisions**:revision 要证的正是「这份判决属于这份快照」,不含它就什么也没证。
+    const generatedAt = now()
+    const revision = createHash('sha256').update(canonicalJson({
+      policySchemaVersion: POLICY_SCHEMA_VERSION,
+      opencliVersion: snapshot.opencliVersion,
+      commands: snapshot.commands,
+      decisions: policy.decisions,
+    })).digest('hex').slice(0, 16)
+    state = { snapshot, policy, revision, generatedAt }   // ← 全部成功后才替换,单引用原子
     return snapshot
   }
 
