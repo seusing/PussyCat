@@ -15,4 +15,10 @@ test('无 detail 时字段与 message 一致;仍是 Error 实例(消费方兼容
   expect(e.detail).toBeUndefined()
   expect(e).toBeInstanceOf(Error)
   expect(e.name).toBe('HostRequestError')
+  expect(e.reasonCode).toBeUndefined()
+})
+
+test('reasonCode 透传(Task 8:409/428 分派靠它,不靠 summary 文案)', () => {
+  const e = new HostRequestError('策略已过期', '重新拉取目录', 409, 'fingerprint-stale')
+  expect(e.reasonCode).toBe('fingerprint-stale')
 })

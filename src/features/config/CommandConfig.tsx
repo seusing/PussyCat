@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { commandPreview } from '../../data/command'
-import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
+import { isSiteFavorited, isCommandFavorited, isAcknowledged } from '../../data/preferences'
 import { validate } from './validation'
 import { DynamicField } from './DynamicField'
 import { CopyButton } from '../../components/CopyButton'
+import { explainDecision, isRunnable } from '../../data/policy'
 
 export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; registerSubmit?: (fn: (() => void) | null) => void }) {
   const selected = useAppStore((s) => s.selected)
   const values = useAppStore((s) => s.values)
   const setValue = useAppStore((s) => s.setValue)
   const currentRun = useAppStore((s) => s.currentRun)
+  const decision = useAppStore((s) => (s.selected ? s.decisionFor(s.selected.command) : undefined))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const preferences = useAppStore((s) => s.preferences)
   const toggleSiteFavorite = useAppStore((s) => s.toggleSiteFavorite)
   const toggleCommandFavorite = useAppStore((s) => s.toggleCommandFavorite)
+  const revokeAcknowledgementCommand = useAppStore((s) => s.revokeAcknowledgementCommand)
   const handleRunRef = useRef<(() => void) | null>(null)
 
   useEffect(() => { setErrors({}) }, [selected])   // ⑦a 切换命令后清掉上一条命令残留的字段错误
@@ -49,6 +52,11 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
   if (!selected) { return <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>从左侧选择一个服务和命令</div> }
 
   const running = currentRun?.state === 'starting' || currentRun?.state === 'running' || currentRun?.state === 'cancelling'
+  const runnable = isRunnable(decision)
+  // 已确认的 acknowledgement-required 命令旁给一个撤销入口(Task 8 Step 4)。
+  // 撤销后 isAcknowledged 变 false,下次运行会重新弹确认框——不影响 Host 判决本身(I-P5)。
+  const acknowledged = decision?.state === 'acknowledgement-required' && !!decision.fingerprint
+    && isAcknowledged(preferences, selected.command, decision.fingerprint)
 
   return (
     <div>
@@ -94,11 +102,22 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
         <CopyButton label="复制命令" getText={() => commandPreview(selected, values)} testid="copy-command" />
       </div>
 
-      <button data-testid="run-button" disabled={running} onClick={handleRun}
+      <button data-testid="run-button" disabled={running || !runnable} onClick={handleRun}
         className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
         style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
         {running ? '运行中…' : '运行任务'}
       </button>
+      {!runnable && (
+        <p data-testid="decision-reason" className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          {explainDecision(decision)}
+        </p>
+      )}
+      {acknowledged && (
+        <button data-testid="revoke-acknowledge" onClick={() => revokeAcknowledgementCommand(selected.command)}
+          className="mt-1 block text-xs underline" style={{ color: 'var(--color-fg-dim)' }}>
+          撤销确认
+        </button>
+      )}
     </div>
   )
 }

@@ -1,21 +1,26 @@
 import type { CommandManifest } from './types'
 
-export const PREFS_KEY = 'opencli-app:prefs:v1'
+export const PREFS_KEY = 'opencli-app:prefs:v1'          // v1:只读遗留 key,仅供迁移读取,不再写入
+export const PREFS_KEY_V2 = 'opencli-app:prefs:v2'
 export const RECENT_CAP = 20
 
 export type FavoriteSite = { site: string; order: number; createdAt: number }
 export type FavoriteCommand = { command: string; site: string; order: number; createdAt: number }
 export type RecentEntry = { command: string; at: number }
+// 落盘白名单:恰好这三个字段(I-P7)。commandKey/fingerprint/acknowledgedAt 之外一律不得进入
+// 持久化 —— 尤其是 values/argv/result/error/detail,它们属于运行期数据,不属于"我确认过这条策略"这件事。
+export type Acknowledgement = { commandKey: string; fingerprint: string; acknowledgedAt: number }
 
 export type PreferencesSnapshot = {
   schemaVersion: 1
   favoriteSites: FavoriteSite[]
   favoriteCommands: FavoriteCommand[]
   recent: RecentEntry[]
+  acknowledgements: Acknowledgement[]
 }
 
 export function emptyPreferences(): PreferencesSnapshot {
-  return { schemaVersion: 1, favoriteSites: [], favoriteCommands: [], recent: [] }
+  return { schemaVersion: 1, favoriteSites: [], favoriteCommands: [], recent: [], acknowledgements: [] }
 }
 
 function resolveStorage(storage?: Storage): Storage | undefined {
@@ -41,6 +46,15 @@ function isRecentEntry(x: unknown): x is RecentEntry {
   const o = x as RecentEntry
   return !!o && typeof o === 'object' && typeof o.command === 'string' && isFiniteNum(o.at)
 }
+// 只认三个白名单字段,即使原始项夹带 values/argv/result/error/detail 等运行期字段,
+// 重建时也一律丢弃(I-P7 的落盘守卫;见 preferences.test.ts 的守卫用例)。
+function isAcknowledgement(x: unknown): x is Acknowledgement {
+  const o = x as Acknowledgement
+  return !!o && typeof o === 'object' && typeof o.commandKey === 'string' && typeof o.fingerprint === 'string' && isFiniteNum(o.acknowledgedAt)
+}
+function toCleanAcknowledgement(a: Acknowledgement): Acknowledgement {
+  return { commandKey: a.commandKey, fingerprint: a.fingerprint, acknowledgedAt: a.acknowledgedAt }
+}
 
 function uniqueBy<T>(items: T[], keyOf: (x: T) => string): T[] {
   const seen = new Set<string>()
@@ -52,43 +66,72 @@ function uniqueBy<T>(items: T[], keyOf: (x: T) => string): T[] {
   return out
 }
 
-export function loadPreferences(storage?: Storage): PreferencesSnapshot {
-  const s = resolveStorage(storage)
-  if (!s) return emptyPreferences()
-  try {
-    const raw = s.getItem(PREFS_KEY)
-    if (!raw) return emptyPreferences()
-    const p = JSON.parse(raw)
-    if (p?.schemaVersion !== 1) return emptyPreferences()
-    if (!Array.isArray(p.favoriteSites) || !Array.isArray(p.favoriteCommands) || !Array.isArray(p.recent)) {
-      return emptyPreferences()
-    }
-    // 载入端把持久化当不可信边界:类型校验(F3)之外,还须恢复唯一键不变量——三数组统一
-    // uniqueBy 首见保留(写端 toggle/restore 有幂等检查,但手工损坏/未来迁移可注入重复键;二轮复审 P2);
-    // recent 另与 pushRecent 对齐 RECENT_CAP 截断(M1)
-    // 显式 unknown[] 注解:JSON.parse 的 any 会让 uniqueBy 泛型推断失效,unknown[] 上守卫过滤才正确收窄
-    const rawSites: unknown[] = p.favoriteSites
-    const rawCommands: unknown[] = p.favoriteCommands
-    const rawRecent: unknown[] = p.recent
-    return {
-      schemaVersion: 1,
-      favoriteSites: uniqueBy(rawSites.filter(isFavSite), (f) => f.site),
-      favoriteCommands: uniqueBy(rawCommands.filter(isFavCommand), (f) => f.command),
-      recent: uniqueBy(rawRecent.filter(isRecentEntry), (r) => r.command).slice(0, RECENT_CAP),
-    }
-  } catch {
-    return emptyPreferences()
+// 迁移期兼容:早期/手工构造的收藏项可能缺 order(见 preferences.test.ts 的 v1 迁移与 v2 坏项两条夹具)。
+// 按数组下标补一个稳定序,不影响其余字段的既有校验(isFavSite/isFavCommand 仍会拒绝缺 site/command/createdAt 的项)。
+function backfillOrder(item: unknown, index: number): unknown {
+  if (!item || typeof item !== 'object') return item
+  const o = item as Record<string, unknown>
+  return isFiniteNum(o.order) ? item : { ...o, order: index }
+}
+
+// 归一化一份"看起来像 PreferencesSnapshot"的原始 JSON。
+// schemaVersion 缺失视为可接受(遗留数据/精简夹具);**存在但不等于 1** 才判定整份无效——
+// 与「loadPreferences:schemaVersion 不符→empty」的既有约束一致,只是放宽了"完全没写这个字段"的情形。
+function normalizeSnapshot(raw: unknown): PreferencesSnapshot | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const p = raw as Record<string, unknown>
+  if (p.schemaVersion !== undefined && p.schemaVersion !== 1) return undefined
+  if (!Array.isArray(p.favoriteSites) || !Array.isArray(p.favoriteCommands) || !Array.isArray(p.recent)) return undefined
+  const rawSites: unknown[] = p.favoriteSites
+  const rawCommands: unknown[] = p.favoriteCommands
+  const rawRecent: unknown[] = p.recent
+  const rawAcks: unknown[] = Array.isArray(p.acknowledgements) ? p.acknowledgements : []
+  return {
+    schemaVersion: 1,
+    favoriteSites: uniqueBy(rawSites.map(backfillOrder).filter(isFavSite), (f) => f.site),
+    favoriteCommands: uniqueBy(rawCommands.map(backfillOrder).filter(isFavCommand), (f) => f.command),
+    recent: uniqueBy(rawRecent.filter(isRecentEntry), (r) => r.command).slice(0, RECENT_CAP),
+    acknowledgements: uniqueBy(rawAcks.filter(isAcknowledgement).map(toCleanAcknowledgement), (a) => a.commandKey),
   }
 }
 
-export function savePreferences(prefs: PreferencesSnapshot, storage?: Storage): void {
-  const s = resolveStorage(storage)
-  if (!s) return
+function readRaw(s: Storage, key: string): PreferencesSnapshot | undefined {
   try {
-    s.setItem(PREFS_KEY, JSON.stringify(prefs))
+    const raw = s.getItem(key)
+    if (!raw) return undefined
+    return normalizeSnapshot(JSON.parse(raw))
   } catch {
-    /* 配额满 / 隐私模式:静默降级,内存态仍有效 */
+    return undefined
   }
+}
+
+function tryWrite(s: Storage, key: string, prefs: PreferencesSnapshot): boolean {
+  try {
+    s.setItem(key, JSON.stringify(prefs))
+    return true
+  } catch {
+    return false   // 配额满 / 隐私模式:静默降级,内存态仍有效(调用方决定要不要提示"本次会话有效")
+  }
+}
+
+export function loadPreferences(storage?: Storage): PreferencesSnapshot {
+  const s = resolveStorage(storage)
+  if (!s) return emptyPreferences()
+  const v2 = readRaw(s, PREFS_KEY_V2)
+  if (v2) return v2
+  // v2 无数据:读 v1 归一化后写回 v2(一次性迁移);v1 之后只读,不再写入
+  const migrated = readRaw(s, PREFS_KEY)
+  if (migrated) {
+    tryWrite(s, PREFS_KEY_V2, migrated)
+    return migrated
+  }
+  return emptyPreferences()
+}
+
+export function savePreferences(prefs: PreferencesSnapshot, storage?: Storage): boolean {
+  const s = resolveStorage(storage)
+  if (!s) return false
+  return tryWrite(s, PREFS_KEY_V2, prefs)
 }
 
 export function isSiteFavorited(prefs: PreferencesSnapshot, site: string): boolean {
@@ -140,4 +183,20 @@ export function restoreFavoriteSite(prefs: PreferencesSnapshot, item: FavoriteSi
 export function restoreFavoriteCommand(prefs: PreferencesSnapshot, item: FavoriteCommand): PreferencesSnapshot {
   if (isCommandFavorited(prefs, item.command)) return prefs
   return { ...prefs, favoriteCommands: [...prefs.favoriteCommands, item] }
+}
+
+// —— acknowledgement 管理(Task 8) ——
+// 同一 commandKey 只保留最新一条:指纹变化即整条覆盖,不堆积历史确认记录。
+export function acknowledge(prefs: PreferencesSnapshot, commandKey: string, fingerprint: string, now: number): PreferencesSnapshot {
+  const rest = prefs.acknowledgements.filter((a) => a.commandKey !== commandKey)
+  return { ...prefs, acknowledgements: [...rest, { commandKey, fingerprint, acknowledgedAt: now }] }
+}
+
+export function revokeAcknowledgement(prefs: PreferencesSnapshot, commandKey: string): PreferencesSnapshot {
+  return { ...prefs, acknowledgements: prefs.acknowledgements.filter((a) => a.commandKey !== commandKey) }
+}
+
+// 确认与 fingerprint 绑定:策略/审定形状一变,旧确认对新 fingerprint 即失效(I-P5:防陈旧 UI,不是安全授权)。
+export function isAcknowledged(prefs: PreferencesSnapshot, commandKey: string, fingerprint: string): boolean {
+  return prefs.acknowledgements.some((a) => a.commandKey === commandKey && a.fingerprint === fingerprint)
 }

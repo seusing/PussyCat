@@ -32,8 +32,9 @@ function eventMessage(event: Event): string | undefined {
 function responseError(status: number, payload: unknown): HostRequestError {
   let summary = ''
   let detail = ''
+  let reasonCode: string | undefined
   if (payload && typeof payload === 'object') {
-    const body = payload as { error?: unknown; detail?: unknown; message?: unknown }
+    const body = payload as { error?: unknown; detail?: unknown; message?: unknown; reasonCode?: unknown }
     if (typeof body.error === 'string') summary = body.error
     else if (body.error && typeof body.error === 'object') {
       const nested = body.error as { summary?: unknown; detail?: unknown; message?: unknown }
@@ -43,10 +44,13 @@ function responseError(status: number, payload: unknown): HostRequestError {
     }
     else if (typeof body.message === 'string') summary = body.message
     if (typeof body.detail === 'string') detail = body.detail
+    // Task 8:透传服务端的稳定 reasonCode(host-server.mjs 的 {error,detail,reasonCode} 扁平体)——
+    // 前端 409/428 分派只认这个字段,不认 summary 自然语言文案。
+    if (typeof body.reasonCode === 'string') reasonCode = body.reasonCode
   }
   // detail 兜底回填 HTTP 状态码:服务端给了 summary 时状态码原本在 UI/复制载荷里彻底不可见,
   // 500/代理错误会失去排障抓手(评审观察 1)
-  return new HostRequestError(summary || `HTTP ${status}`, detail || (summary ? `HTTP ${status}` : undefined), status)
+  return new HostRequestError(summary || `HTTP ${status}`, detail || (summary ? `HTTP ${status}` : undefined), status, reasonCode)
 }
 
 function isOutputEvent(value: unknown): value is OutputEvent {

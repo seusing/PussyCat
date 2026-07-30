@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import type { CommandManifest } from '../data/types'
 import type { OutputEvent, DoneEvent } from '../host/types'
+import type { PolicyDecision } from '../data/policy'
 import { transition, type RunState } from './runMachine'
 import {
   emptyPreferences, loadPreferences, savePreferences,
   toggleFavoriteSite, toggleFavoriteCommand, restoreFavoriteSite, restoreFavoriteCommand,
-  pushRecent, staleKeys, type PreferencesSnapshot, type FavoriteSite, type FavoriteCommand,
+  pushRecent, staleKeys, acknowledge, revokeAcknowledgement,
+  type PreferencesSnapshot, type FavoriteSite, type FavoriteCommand,
 } from '../data/preferences'
 
 const SENSITIVE = /password|passcode|secret|token|cookie/i
@@ -61,7 +63,10 @@ function reconcileSelection(
 
 type AppState = {
   commands: CommandManifest[]
-  setCommands: (cmds: CommandManifest[]) => void
+  setCommands: (cmds: CommandManifest[], decisions?: PolicyDecision[]) => void
+  // Host 逐命令判决(I-P1):前端不持有任何准入规则,只存、只读。未连接/降级时为空 Map。
+  decisions: Map<string, PolicyDecision>
+  decisionFor: (commandKey: string) => PolicyDecision | undefined
   catalogStatus: 'loading' | 'ready' | 'error'
   catalogError?: string
   setCatalogStatus: (status: 'loading' | 'ready' | 'error', error?: string) => void
@@ -87,15 +92,26 @@ type AppState = {
   toggleCommandFavorite: (cmd: CommandManifest) => void
   undoLastFavorite: () => void
   dismissUndo: () => void
+  // —— acknowledgement 切片(Task 8):Host 判 acknowledgement-required 时,前端要求用户确认一次并绑定 fingerprint。
+  // acknowledgement 本身不是安全授权(I-P5)——它只防误点/陈旧 UI,执行边界仍由 Host 的 denied/unknown 拒绝把守。
+  pendingAcknowledgement?: { command: CommandManifest; decision: PolicyDecision }
+  requestAcknowledgement: (command: CommandManifest, decision: PolicyDecision) => void
+  dismissAcknowledgement: () => void
+  // 返回是否真正持久化(false = 仅本次会话有效,storage 写入失败时仍要放行内存态确认)
+  acknowledgeCommand: (commandKey: string, fingerprint: string, now?: number) => boolean
+  revokeAcknowledgementCommand: (commandKey: string) => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
   commands: [],
-  setCommands: (commands) => set((s) => ({
+  setCommands: (commands, decisions) => set((s) => ({
     commands, catalogStatus: 'ready', catalogError: undefined,
+    decisions: new Map((decisions ?? []).map((d) => [d.commandKey, d])),
     stale: staleKeys(s.preferences, commands),
     ...reconcileSelection(s.selected, s.values, commands),
   })),
+  decisions: new Map(),
+  decisionFor: (commandKey) => get().decisions.get(commandKey),
   catalogStatus: 'loading',
   catalogError: undefined,
   setCatalogStatus: (status, error) => set({ catalogStatus: status, catalogError: error }),
@@ -177,4 +193,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
   }),
   dismissUndo: () => set({ lastUndo: undefined }),
+  // —— acknowledgement 切片 ——
+  pendingAcknowledgement: undefined,
+  requestAcknowledgement: (command, decision) => set({ pendingAcknowledgement: { command, decision } }),
+  dismissAcknowledgement: () => set({ pendingAcknowledgement: undefined }),
+  acknowledgeCommand: (commandKey, fingerprint, now = Date.now()) => {
+    const preferences = acknowledge(get().preferences, commandKey, fingerprint, now)
+    const persisted = savePreferences(preferences)
+    set({ preferences })   // 内存态无条件更新:即便 persisted=false,本次会话仍视为已确认(IO 边界降级)
+    return persisted
+  },
+  revokeAcknowledgementCommand: (commandKey) => set((s) => {
+    const preferences = revokeAcknowledgement(s.preferences, commandKey)
+    savePreferences(preferences)
+    return { preferences }
+  }),
 }))

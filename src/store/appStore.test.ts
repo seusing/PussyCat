@@ -98,7 +98,8 @@ describe('preferences 切片', () => {
   test('toggleSiteFavorite 收藏并落盘', () => {
     useAppStore.getState().toggleSiteFavorite('xiaohongshu')
     expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['xiaohongshu'])
-    expect(localStorage.getItem('opencli-app:prefs:v1')).toContain('xiaohongshu')
+    // Task 8:savePreferences 改写 v2 key(v1 变为只读迁移源,不再写入)——改写而非删除既有断言(R7)
+    expect(localStorage.getItem('opencli-app:prefs:v2')).toContain('xiaohongshu')
   })
 
   test('toggleCommandFavorite 存 command+site', () => {
@@ -185,6 +186,54 @@ describe('preferences 切片', () => {
     useAppStore.setState({ lastUndo: { kind: 'site', item: { site: 'z', order: 0, createdAt: 1 } } })
     useAppStore.getState().hydratePreferences()
     expect(useAppStore.getState().lastUndo).toBeUndefined()
+  })
+})
+
+describe('acknowledgement 切片(Task 8)', () => {
+  const ackCmd: CommandManifest = {
+    command: 'antigravity/recent-paths', site: 'antigravity', name: 'recent-paths', description: '', access: 'read', browser: false, args: [],
+  }
+  const ackDecision = {
+    commandKey: ackCmd.command, state: 'acknowledgement-required' as const, decisionSource: 'tier-evaluation' as const,
+    fingerprint: 'fp-1',
+    metadata: { executionPath: 'direct-node' as const, authorities: ['ambient-local-files'], exposure: 'personal' as const, effects: [], credentialFlow: 'none' as const, residues: [] },
+  }
+  beforeEach(() => { useAppStore.setState(initialState, true); localStorage.clear() })
+
+  test('requestAcknowledgement/dismissAcknowledgement 切换 pendingAcknowledgement', () => {
+    expect(useAppStore.getState().pendingAcknowledgement).toBeUndefined()
+    useAppStore.getState().requestAcknowledgement(ackCmd, ackDecision)
+    expect(useAppStore.getState().pendingAcknowledgement).toEqual({ command: ackCmd, decision: ackDecision })
+    useAppStore.getState().dismissAcknowledgement()
+    expect(useAppStore.getState().pendingAcknowledgement).toBeUndefined()
+  })
+
+  test('acknowledgeCommand 写入 preferences 并落盘,返回 true', () => {
+    const persisted = useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', 100)
+    expect(persisted).toBe(true)
+    expect(useAppStore.getState().preferences.acknowledgements).toEqual([
+      { commandKey: ackCmd.command, fingerprint: 'fp-1', acknowledgedAt: 100 },
+    ])
+    expect(localStorage.getItem('opencli-app:prefs:v2')).toContain('fp-1')
+  })
+
+  test('acknowledgeCommand 落盘失败时仍更新内存态,返回 false(IO 边界降级为本次会话有效)', () => {
+    // src/vitest.setup.ts 每个用例前用内存对象桩替换全局 localStorage(见其注释:
+    // 本机 Node 原生 localStorage 是坏桩),所以这里 spy 桩实例自身的 setItem,而非 Storage.prototype
+    const setItemSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('quota') })
+    try {
+      const persisted = useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', 100)
+      expect(persisted).toBe(false)
+      expect(useAppStore.getState().preferences.acknowledgements).toHaveLength(1)   // 内存态仍写入
+    } finally {
+      setItemSpy.mockRestore()
+    }
+  })
+
+  test('revokeAcknowledgementCommand 撤销后 preferences 不再含该条', () => {
+    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', 100)
+    useAppStore.getState().revokeAcknowledgementCommand(ackCmd.command)
+    expect(useAppStore.getState().preferences.acknowledgements).toEqual([])
   })
 })
 

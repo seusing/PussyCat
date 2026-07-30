@@ -14,12 +14,13 @@ function fakeStorage(): Storage {
 }
 
 test('emptyPreferences 结构正确', () => {
-  expect(emptyPreferences()).toEqual({ schemaVersion: 1, favoriteSites: [], favoriteCommands: [], recent: [] })
+  // v2 新增 acknowledgements 字段(Task 8);改写而非删除既有断言(R7)
+  expect(emptyPreferences()).toEqual({ schemaVersion: 1, favoriteSites: [], favoriteCommands: [], recent: [], acknowledgements: [] })
 })
 
 test('save→load 往返等值', () => {
   const s = fakeStorage()
-  const prefs = { schemaVersion: 1 as const, favoriteSites: [{ site: 'x', order: 0, createdAt: 1 }], favoriteCommands: [], recent: [{ command: 'x/go', at: 2 }] }
+  const prefs = { schemaVersion: 1 as const, favoriteSites: [{ site: 'x', order: 0, createdAt: 1 }], favoriteCommands: [], recent: [{ command: 'x/go', at: 2 }], acknowledgements: [] }
   savePreferences(prefs, s)
   expect(loadPreferences(s)).toEqual(prefs)
 })
@@ -157,4 +158,91 @@ test('localStorage 属性访问抛 SecurityError → load/save 降级不抛', ()
     if (desc) Object.defineProperty(globalThis, 'localStorage', desc)
     else delete (globalThis as { localStorage?: unknown }).localStorage
   }
+})
+
+// —— Task 8: preferences v2 迁移 + acknowledgement 管理 ——
+import { acknowledge, revokeAcknowledgement, isAcknowledged, PREFS_KEY_V2 } from './preferences'
+import type { Acknowledgement } from './preferences'
+
+function memoryStorage(): Storage { return fakeStorage() }
+
+describe('preferences v2', () => {
+  it('v1 数据自动迁移,收藏与 recent 全部保留', () => {
+    const s = memoryStorage()
+    s.setItem('opencli-app:prefs:v1', JSON.stringify({
+      favoriteSites: [{ site: 'a', createdAt: 1 }],
+      favoriteCommands: [{ command: 'a/b', site: 'a', createdAt: 2 }],
+      recent: [{ command: 'a/b', at: 3 }],
+    }))
+    const prefs = loadPreferences(s)
+    expect(prefs.favoriteSites).toHaveLength(1)
+    expect(prefs.favoriteCommands).toHaveLength(1)
+    expect(prefs.recent).toHaveLength(1)
+    expect(prefs.acknowledgements).toEqual([])
+    expect(s.getItem('opencli-app:prefs:v2')).toBeTruthy()
+  })
+
+  it('坏项逐项丢弃,好项保留', () => {
+    const s = memoryStorage()
+    s.setItem('opencli-app:prefs:v2', JSON.stringify({
+      favoriteSites: [{ site: 'a', createdAt: 1 }, null, { site: 5 }],
+      favoriteCommands: [], recent: [],
+      acknowledgements: [{ commandKey: 'a/b', fingerprint: 'f', acknowledgedAt: 1 }, { commandKey: 7 }],
+    }))
+    const prefs = loadPreferences(s)
+    expect(prefs.favoriteSites).toHaveLength(1)
+    expect(prefs.acknowledgements).toHaveLength(1)
+  })
+
+  it('确认绑 fingerprint —— 指纹变了即失效', () => {
+    let prefs = emptyPreferences()
+    prefs = acknowledge(prefs, 'a/b', 'fp1', 100)
+    expect(isAcknowledged(prefs, 'a/b', 'fp1')).toBe(true)
+    expect(isAcknowledged(prefs, 'a/b', 'fp2')).toBe(false)
+  })
+
+  it('可撤销', () => {
+    let prefs = acknowledge(emptyPreferences(), 'a/b', 'fp1', 100)
+    prefs = revokeAcknowledgement(prefs, 'a/b')
+    expect(isAcknowledged(prefs, 'a/b', 'fp1')).toBe(false)
+  })
+
+  it('同一 commandKey 只保留最新一条(指纹更新覆盖,不堆积)', () => {
+    let prefs = acknowledge(emptyPreferences(), 'a/b', 'fp1', 100)
+    prefs = acknowledge(prefs, 'a/b', 'fp2', 200)
+    expect(prefs.acknowledgements).toHaveLength(1)
+    expect(prefs.acknowledgements[0]).toEqual({ commandKey: 'a/b', fingerprint: 'fp2', acknowledgedAt: 200 })
+  })
+
+  it('storage 不可写时不抛,且返回「本次有效」标记', () => {
+    const failing = { getItem: () => null, setItem: () => { throw new Error('quota') }, removeItem: () => {} }
+    const prefs = acknowledge(emptyPreferences(), 'a/b', 'fp', 1)
+    expect(() => savePreferences(prefs, failing as unknown as Storage)).not.toThrow()
+    expect(savePreferences(prefs, failing as unknown as Storage)).toBe(false)   // false = 未持久化
+  })
+})
+
+test('I-P7 守卫:acknowledgement 落盘 JSON 永不含 values/argv/result/error/detail', () => {
+  const s = memoryStorage()
+  // 模拟一份被污染的 v2 存储:acknowledgement 条目夹带运行期字段
+  const dirty = {
+    commandKey: 'a/b', fingerprint: 'f', acknowledgedAt: 1,
+    values: { secret: 1 }, argv: ['a', 'b'], result: [{ ok: true }], error: 'boom', detail: 'stack trace',
+  }
+  s.setItem(PREFS_KEY_V2, JSON.stringify({
+    schemaVersion: 1, favoriteSites: [], favoriteCommands: [], recent: [], acknowledgements: [dirty],
+  }))
+
+  // 读入内存后必须已被裁剪成三字段
+  const loaded = loadPreferences(s)
+  expect(Object.keys(loaded.acknowledgements[0])).toEqual(['commandKey', 'fingerprint', 'acknowledgedAt'])
+
+  // 喂给 acknowledge() 追加一条新确认,再落盘——全量持久化 JSON 里,五个禁止字段一个都不许出现
+  const next = acknowledge(loaded, 'c/d', 'fp2', 2)
+  savePreferences(next, s)
+  const persisted = JSON.parse(s.getItem(PREFS_KEY_V2)!) as { acknowledgements: Acknowledgement[] }
+  for (const ack of persisted.acknowledgements) {
+    expect(Object.keys(ack)).toEqual(expect.not.arrayContaining(['values', 'argv', 'result', 'error', 'detail']))
+  }
+  expect(persisted.acknowledgements).toHaveLength(2)
 })

@@ -36,7 +36,8 @@ describe('收藏与最近分组', () => {
   beforeEach(() => {
     useAppStore.setState({
       commands: cmds, selected: undefined, values: {},
-      preferences: { schemaVersion: 1, favoriteSites: [{ site: 'xiaohongshu', order: 0, createdAt: 1 }], favoriteCommands: [{ command: '12306/login', site: '12306', order: 0, createdAt: 2 }], recent: [{ command: 'xiaohongshu/download', at: 3 }] },
+      // acknowledgements:Task 8 给 PreferencesSnapshot 新增的必填字段,此处补空数组(纯类型形状修复,不改本测试语义)
+      preferences: { schemaVersion: 1, favoriteSites: [{ site: 'xiaohongshu', order: 0, createdAt: 1 }], favoriteCommands: [{ command: '12306/login', site: '12306', order: 0, createdAt: 2 }], recent: [{ command: 'xiaohongshu/download', at: 3 }], acknowledgements: [] },
       stale: { sites: new Set(), commands: new Set() },
     })
   })

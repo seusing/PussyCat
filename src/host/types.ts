@@ -7,6 +7,11 @@ export type RunRequest = {
   argv: string[]              // buildArgv 产物（[site, name, ...]），唯一执行事实源
   format?: OutputFormat
   mockScenario?: 'success' | 'error'
+  // Host 判决为 acknowledgement-required 时随请求提交；缺失得 428、不匹配得 409（spec §6.3）。
+  // **必须写在类型里**，不能只靠结构化类型经局部变量传进去：那样会绕过 TS 的超额属性检查，
+  // 把字段名拼错（acknowledgment 少个 e）照样编译通过、字段静默不发，表现为「确认了却一直 428」。
+  // 它不是安全授权（I-P5）——安全边界是 Host 对 denied/unknown 的拒绝。
+  acknowledgement?: { fingerprint: string }
 }
 
 export type OutputEvent = {

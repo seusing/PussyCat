@@ -127,6 +127,24 @@ test('无 detail 时回填 HTTP 状态码(排障抓手不丢;评审观察 1)', a
   })
 })
 
+test('reasonCode 透传(Task 8):409/428 分派靠它,不靠 summary 文案', async () => {
+  const eventSource = new FakeEventSource('http://host/events')
+  eventSource.readyState = 1
+  const fetchImpl = vi.fn().mockResolvedValue(response(409, { error: 'Acknowledgement fingerprint is stale', detail: '重新拉取 /catalog/effective 后再确认', reasonCode: 'fingerprint-stale' }))
+  const host = createNodeBridgeHost({ eventSourceFactory: () => eventSource, fetchImpl })
+  await expect(host.startCommand({ runId: 'r', commandKey: 'x/c', argv: [] })).rejects.toMatchObject({
+    summary: 'Acknowledgement fingerprint is stale', status: 409, reasonCode: 'fingerprint-stale',
+  })
+})
+
+test('无 reasonCode 字段时透传为 undefined(既有 403 场景不受影响)', async () => {
+  const eventSource = new FakeEventSource('http://host/events')
+  eventSource.readyState = 1
+  const fetchImpl = vi.fn().mockResolvedValue(response(403, { error: 'Command is outside the P0-B execution policy', detail: 'x/y' }))
+  const host = createNodeBridgeHost({ eventSourceFactory: () => eventSource, fetchImpl })
+  await expect(host.startCommand({ runId: 'r', commandKey: 'x/c', argv: [] })).rejects.toMatchObject({ reasonCode: undefined })
+})
+
 test('body 不可解析 → summary 回落 HTTP <status>,detail 留空(fallback 缺口补测;评审观察 2)', async () => {
   const eventSource = new FakeEventSource('http://host/events')
   eventSource.readyState = 1

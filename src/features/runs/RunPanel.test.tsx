@@ -15,6 +15,12 @@ beforeEach(() => {
     commands: [cmd], selected: cmd, values: {}, currentRun: undefined,
     catalogStatus: 'ready', catalogError: undefined,   // 绕开真实 catalog 加载，直接进 ready 三栏
     runPanelCollapsed: false,   // collapsed 提升进 store 后不再随组件卸载自动重置，按现有惯例显式复位
+    // T7 起运行按钮与 executeSelected 都按 Host 判决闸门放行。本文件测的是**运行面板行为**，
+    // 不是准入——所以给夹具命令播一条最简 ready 判决，把闸门置于「已放行」状态，
+    // 让下面的用例照旧测它们本来要测的东西。准入本身由 App.test.tsx 的两组对抗 fixture 守。
+    decisions: new Map([[cmd.command, {
+      commandKey: cmd.command, state: 'ready' as const, decisionSource: 'legacy-baseline' as const,
+    }]]),
   })
 })
 

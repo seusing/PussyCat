@@ -17,7 +17,14 @@ const cmdB: CommandManifest = {
   args: [{ name: 'url', type: 'str', required: false }],
 }
 
-beforeEach(() => useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined }))
+// P1 Task7:运行按钮现由 Host 判决闸控(I-P1)。这两条命令补一条最简 ready 判决,
+// 否则按钮会因 decisions 为空而 disabled——语义变更,改写而非删除既有断言(R7)。
+const readyDecisions = new Map([
+  [cmd.command, { commandKey: cmd.command, state: 'ready' as const, decisionSource: 'legacy-baseline' as const }],
+  [cmdB.command, { commandKey: cmdB.command, state: 'ready' as const, decisionSource: 'legacy-baseline' as const }],
+])
+
+beforeEach(() => useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined, decisions: readyDecisions }))
 
 test('无选中命令时提示', () => {
   useAppStore.setState({ selected: undefined })
@@ -112,4 +119,40 @@ test('空闲时经 ref 提交:守卫放行,onRun 被调用(反向护栏,防守�
   render(<CommandConfig onRun={onRun} registerSubmit={(fn) => { submit = fn }} />)
   act(() => { submit!() })
   expect(onRun).toHaveBeenCalledTimes(1)
+})
+
+// Task 8 Step 4:acknowledgement-required 且已确认的命令旁给一个撤销入口。
+describe('撤销确认入口(Task 8)', () => {
+  beforeEach(() => { useAppStore.setState({ preferences: emptyPreferences() }) })   // 与其它 describe 块的 acknowledgements 状态隔离
+
+  const ackCmd: CommandManifest = {
+    command: 'antigravity/recent-paths', site: 'antigravity', name: 'recent-paths', description: '', access: 'read', browser: false, args: [],
+  }
+  const ackDecision = {
+    commandKey: ackCmd.command, state: 'acknowledgement-required' as const, decisionSource: 'tier-evaluation' as const,
+    fingerprint: 'fp-1',
+    metadata: { executionPath: 'direct-node' as const, authorities: [] as string[], exposure: 'personal' as const, effects: [] as string[], credentialFlow: 'none' as const, residues: [] as string[] },
+  }
+
+  test('未确认时不显示撤销入口', () => {
+    useAppStore.setState({ selected: ackCmd, values: {}, currentRun: undefined, decisions: new Map([[ackCmd.command, ackDecision]]) })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.queryByTestId('revoke-acknowledge')).not.toBeInTheDocument()
+  })
+
+  test('已确认(fingerprint 匹配)时显示撤销入口;点击后清空该条确认', async () => {
+    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', 100)
+    useAppStore.setState({ selected: ackCmd, values: {}, currentRun: undefined, decisions: new Map([[ackCmd.command, ackDecision]]) })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.getByTestId('revoke-acknowledge')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('revoke-acknowledge'))
+    expect(useAppStore.getState().preferences.acknowledgements).toEqual([])
+  })
+
+  test('fingerprint 不匹配(策略已漂移)时不显示撤销入口', () => {
+    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'stale-fp', 100)
+    useAppStore.setState({ selected: ackCmd, values: {}, currentRun: undefined, decisions: new Map([[ackCmd.command, ackDecision]]) })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.queryByTestId('revoke-acknowledge')).not.toBeInTheDocument()
+  })
 })

@@ -8,6 +8,8 @@ import { liveCatalogSource, type CatalogSource } from './host'
 import { createNodeBridgeHost, type EventSourceLike } from './host/nodeBridgeHost'
 import { normalizeHostError } from './App'
 import { HostRequestError } from './host/errors'
+import type { PolicyDecision } from './data/policy'
+import { renderWithHost } from './testing/renderWithHost'
 
 const initialState = useAppStore.getState()
 beforeEach(() => { useAppStore.setState(initialState, true) })  // true = replace，每个用例前恢复初始态
@@ -21,9 +23,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const cmd: CommandManifest = {
   command: 'x/go', site: 'x', name: 'go', description: '示例', access: 'read', browser: false, args: [],
 }
+// P1 Task7:执行准入现在由 Host 判决闸控(I-P1)。既有用例给自己用到的命令补一条最简 ready
+// 判决,否则运行按钮会因 decisions 为空而 disabled——语义变更,改写而非删除既有断言(R7)。
+const readyDecision = (commandKey: string): PolicyDecision => ({ commandKey, state: 'ready', decisionSource: 'legacy-baseline' })
 
 test('runId 是 UUID（非 run-N 序列），且 host.startCommand 与 store.currentRun 收到同一个值', async () => {
-  useAppStore.setState({ catalogStatus: 'ready', selected: cmd, values: {}, currentRun: undefined })
+  useAppStore.setState({
+    catalogStatus: 'ready', selected: cmd, values: {}, currentRun: undefined,
+    decisions: new Map([[cmd.command, readyDecision(cmd.command)]]),
+  })
   const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
   const host: HostBridge = {
     startCommand,
@@ -189,7 +197,7 @@ describe('键盘层(RE/04 三键,块 C)', () => {
 
   test('Ctrl+Enter 合法表单 → 起跑;活跃 run 期间再按 → 不二次起跑(守卫)', async () => {
     const ok: CommandManifest = { ...CMD_REQ, args: [] }
-    useAppStore.setState({ commands: [ok], catalogStatus: 'ready' })
+    useAppStore.setState({ commands: [ok], catalogStatus: 'ready', decisions: new Map([[ok.command, readyDecision(ok.command)]]) })
     useAppStore.getState().selectCommand(ok)
     render(<App />)
     await screen.findByTestId('nav-search')
@@ -247,7 +255,10 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     render(<App />)
     await screen.findByTestId('nav-search')
     const ok: CommandManifest = { command: 'k/ime', site: 'k', name: 'ime', description: '', access: 'read', browser: false, args: [] }
-    act(() => { useAppStore.setState({ commands: [ok] }); useAppStore.getState().selectCommand(ok) })
+    act(() => {
+      useAppStore.setState({ commands: [ok], decisions: new Map([[ok.command, readyDecision(ok.command)]]) })
+      useAppStore.getState().selectCommand(ok)
+    })
     keydown({ key: 'Enter', ctrlKey: true, isComposing: true })
     expect(useAppStore.getState().currentRun).toBeUndefined()
     keydown({ key: 'Enter', ctrlKey: true })                     // 非 composing 仍可起跑(反向护栏)
@@ -311,7 +322,10 @@ test('真跨层集成:真实 NodeBridge 收 403 错误体 → RunPanel summary �
   render(<App host={host} />)
   await screen.findByTestId('nav-search')
   const ok: CommandManifest = { command: 'x/y', site: 'x', name: 'y', description: '', access: 'read', browser: false, args: [] }
-  act(() => { useAppStore.setState({ commands: [ok] }); useAppStore.getState().selectCommand(ok) })
+  act(() => {
+    useAppStore.setState({ commands: [ok], decisions: new Map([[ok.command, readyDecision(ok.command)]]) })
+    useAppStore.getState().selectCommand(ok)
+  })
   await userEvent.click(screen.getByTestId('run-button'))
 
   // ① store 层:summary/detail 分离(原断言保留)
@@ -344,7 +358,7 @@ class RecordingEventSource implements EventSourceLike {
   close() {}
 }
 
-test('五端点同端口:注入的 baseUrl 经 props 贯穿到 host/catalogSource/HealthPill,/health /catalog /events /start /cancel 全部同源(P1 Task7 验收命门,不得弱化)', async () => {
+test('五端点同端口:注入的 baseUrl 经 props 贯穿到 host/catalogSource/HealthPill,/health /catalog/effective /events /start /cancel 全部同源(P1 Task7 验收命门,不得弱化)', async () => {
   const baseUrl = 'http://127.0.0.1:54321'
   const urls: string[] = []
 
@@ -352,8 +366,19 @@ test('五端点同端口:注入的 baseUrl 经 props 贯穿到 host/catalogSourc
     urls.push(url)
     if (url.endsWith('/health')) return Promise.resolve({ ok: true } as Response)
     // commands 含 cmd(x/go):setCommands 内部 reconcileSelection 按新列表核对 selected,
-    // 列表不含 x/go 会把 selected 顶成 undefined(appStore.ts reconcileSelection),run-button 消失
-    if (url.endsWith('/catalog')) return Promise.resolve({ ok: true, json: async () => SNAP({ commands: [cmd] }) } as Response)
+    // 列表不含 x/go 会把 selected 顶成 undefined(appStore.ts reconcileSelection),run-button 消失。
+    // P1 Task7:liveCatalogSource 改打 /catalog/effective,envelope 里带 ready 判决——
+    // 否则运行按钮会因 decisions 为空而 disabled(I-P1 判决闸)。
+    if (url.endsWith('/catalog/effective')) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          revision: 'r1',
+          snapshot: SNAP({ commands: [cmd] }),
+          policy: { schemaVersion: 1, generatedAt: 1, decisions: [readyDecision(cmd.command)] },
+        }),
+      } as Response)
+    }
     if (url.endsWith('/start')) {
       const body = init?.body ? (JSON.parse(String(init.body)) as { runId?: string }) : {}
       return Promise.resolve({ ok: true, status: 202, json: async () => ({ runId: body.runId }) } as Response)
@@ -369,17 +394,213 @@ test('五端点同端口:注入的 baseUrl 经 props 贯穿到 host/catalogSourc
   })
   const catalogSource = liveCatalogSource(baseUrl)
 
-  useAppStore.setState({ catalogStatus: 'ready', selected: cmd, values: {}, currentRun: undefined })
+  useAppStore.setState({
+    catalogStatus: 'ready', selected: cmd, values: {}, currentRun: undefined,
+    decisions: new Map([[cmd.command, readyDecision(cmd.command)]]),
+  })
   render(<App host={host} catalogSource={catalogSource} mode="connected" baseUrl={baseUrl} />)
 
   await userEvent.click(screen.getByTestId('run-button'))
   await waitFor(() => expect(screen.getByTestId('cancel-button')).toBeInTheDocument())
   await userEvent.click(screen.getByTestId('cancel-button'))
 
-  const endpoints = ['/health', '/catalog', '/events', '/start', '/cancel']
+  const endpoints = ['/health', '/catalog/effective', '/events', '/start', '/cancel']
   await waitFor(() => {
     endpoints.forEach((ep) => expect(urls.some((u) => u.startsWith(`${baseUrl}${ep}`))).toBe(true))
   })
   // 命门断言:五端点全部同一 baseUrl,零例外——弱化此断言即放过"假离线"回归
   urls.forEach((u) => expect(u.startsWith(`${baseUrl}/`)).toBe(true))
+})
+
+// P1 Task7 核心验证:前端不持有任何准入规则,只渲染 Host 下发的判决(I-P1)。
+// 两组 fixture 刻意让 manifest 形状与判决"对着来"——manifest 看起来该放行的被 Host 拒,
+// manifest 看起来该拦的被 Host 放,证明置灰/启用只认 decision.state,不认 access/strategy/browser。
+describe('前端不自行裁决(对抗 fixture)', () => {
+  it('A: manifest 看似满足旧派生条件,但 Host 判 denied → 必须置灰且不发 /start', async () => {
+    const start = vi.fn()
+    renderWithHost({
+      commands: [{
+        command: 'x/looks-ok', site: 'x', name: 'looks-ok', description: '',
+        access: 'read', strategy: 'public', browser: false, args: [], columns: [],
+      }],
+      decisions: [{
+        commandKey: 'x/looks-ok', state: 'denied', decisionSource: 'explicit-deny',
+        reasonCode: 'explicit-deny', reason: '演示用拒绝',
+      }],
+      onStart: start,
+    })
+    await userEvent.click(await screen.findByText('looks-ok'))
+    expect(screen.getByRole('button', { name: /运行任务/ })).toBeDisabled()
+    expect(screen.getByText(/演示用拒绝/)).toBeInTheDocument()
+    expect(start).not.toHaveBeenCalled()
+
+    // 键盘路径(Ctrl+Enter)绕开 DOM disabled 属性,唯一挡住它的是 App.tsx executeSelected 里的
+    // 判决闸——纯点击路径已经被 CommandConfig 自己的 disabled 挡住,实测过:摘掉 App.tsx 的判决闸
+    // 不会让上面那条 start 断言变红(点击从未到达 executeSelected)。这条才是那道守卫的真变异靶点。
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('B: manifest 看似不满足旧条件,但 Host 判 ready → 必须启用', async () => {
+    const start = vi.fn()
+    renderWithHost({
+      commands: [{
+        command: 'y/looks-bad', site: 'y', name: 'looks-bad', description: '',
+        access: 'write', strategy: 'cookie', browser: true, args: [], columns: [],
+      }],
+      decisions: [{
+        commandKey: 'y/looks-bad', state: 'ready', decisionSource: 'tier-evaluation',
+        metadata: {
+          executionPath: 'browser-bridge', authorities: [], exposure: 'public',
+          effects: [], credentialFlow: 'none', residues: [],
+        },
+      }],
+      onStart: start,
+    })
+    await userEvent.click(await screen.findByText('looks-bad'))
+    expect(screen.getByRole('button', { name: /运行任务/ })).toBeEnabled()
+  })
+
+  it('decisions 为空(降级/demo) → 全局未连接徽标出现,运行按钮 disabled(不得编造 decision,I-P1)', async () => {
+    const start = vi.fn()
+    renderWithHost({
+      commands: [{
+        command: 'z/empty', site: 'z', name: 'empty', description: '',
+        access: 'read', strategy: 'public', browser: false, args: [], columns: [],
+      }],
+      decisions: [],
+      onStart: start,
+    })
+    expect(await screen.findByTestId('policy-disconnected')).toBeInTheDocument()
+    await userEvent.click(await screen.findByText('empty'))
+    expect(screen.getByRole('button', { name: /运行任务/ })).toBeDisabled()
+    expect(start).not.toHaveBeenCalled()
+  })
+})
+
+// Task 8:acknowledgement-required 命令的确认闸 + 409/428 分派。
+describe('acknowledgement 流程(Task 8)', () => {
+  const ackCmd: CommandManifest = {
+    command: 'antigravity/recent-paths', site: 'antigravity', name: 'recent-paths', description: '', access: 'read', browser: false, args: [],
+  }
+  const ackDecision: PolicyDecision = {
+    commandKey: ackCmd.command, state: 'acknowledgement-required', decisionSource: 'tier-evaluation',
+    fingerprint: 'fp-1',
+    metadata: { executionPath: 'direct-node', authorities: ['ambient-local-files'], exposure: 'personal', effects: [], credentialFlow: 'none', residues: [] },
+  }
+  const hostOf = (startCommand: (req: RunRequest) => Promise<{ runId: string }>): HostBridge => ({
+    startCommand, cancelCommand: async () => {}, onOutput: () => () => {}, onDone: () => () => {},
+  })
+
+  test('未确认 → 点击运行不发 /start,弹出确认框', async () => {
+    const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
+      decisions: new Map([[ackCmd.command, ackDecision]]),
+    })
+    render(<App host={hostOf(startCommand)} mode="connected" />)
+    await userEvent.click(screen.getByTestId('run-button'))
+    expect(startCommand).not.toHaveBeenCalled()
+    expect(screen.getByTestId('acknowledge-dialog')).toBeInTheDocument()
+  })
+
+  test('已确认且 fingerprint 匹配 → 发 /start 且携带 acknowledgement.fingerprint', async () => {
+    const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
+      decisions: new Map([[ackCmd.command, ackDecision]]),
+    })
+    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', Date.now())
+    render(<App host={hostOf(startCommand)} mode="connected" />)
+    await userEvent.click(screen.getByTestId('run-button'))
+    expect(startCommand).toHaveBeenCalledOnce()
+    expect(startCommand.mock.calls[0][0]).toMatchObject({ commandKey: ackCmd.command, acknowledgement: { fingerprint: 'fp-1' } })
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
+  })
+
+  test('指纹不匹配(策略已漂移)→ 视同未确认:不发 /start,弹确认框', async () => {
+    const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
+      decisions: new Map([[ackCmd.command, ackDecision]]),
+    })
+    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'stale-fp', Date.now())
+    render(<App host={hostOf(startCommand)} mode="connected" />)
+    await userEvent.click(screen.getByTestId('run-button'))
+    expect(startCommand).not.toHaveBeenCalled()
+    expect(screen.getByTestId('acknowledge-dialog')).toBeInTheDocument()
+  })
+
+  test('确认框点确认 → 写入 preferences 并立即触发运行', async () => {
+    const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
+      decisions: new Map([[ackCmd.command, ackDecision]]),
+    })
+    render(<App host={hostOf(startCommand)} mode="connected" />)
+    await userEvent.click(screen.getByTestId('run-button'))
+    await screen.findByTestId('acknowledge-dialog')
+    await userEvent.click(screen.getByTestId('ack-confirm'))
+
+    expect(useAppStore.getState().preferences.acknowledgements).toEqual([
+      { commandKey: ackCmd.command, fingerprint: 'fp-1', acknowledgedAt: expect.any(Number) },
+    ])
+    await waitFor(() => expect(startCommand).toHaveBeenCalledOnce())
+    expect(startCommand.mock.calls[0][0]).toMatchObject({ acknowledgement: { fingerprint: 'fp-1' } })
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
+  })
+
+  test('409(fingerprint-stale)→ 不原样展示,重拉目录 + 作废本地陈旧确认 + 用新 fingerprint 重新弹框', async () => {
+    const err409 = new HostRequestError('Acknowledgement fingerprint is stale', '重新拉取 /catalog/effective 后再确认', 409, 'fingerprint-stale')
+    const startCommand = vi.fn(() => Promise.reject(err409))
+    const freshDecision: PolicyDecision = { ...ackDecision, fingerprint: 'fp-2' }
+    // App 挂载时自己也会跑一次 fetchCatalog() 消耗同一个 catalogSource——第一次返回必须与
+    // 预置的 store 状态(fp-1)一致,否则挂载阶段就把 fingerprint 顶成 fp-2,
+    // 点击时会走"未确认"分支而不是走到本测试要验的 409 分支。第二次(409 触发的重拉)才回 fp-2。
+    let loadCount = 0
+    const catalogSource: CatalogSource = {
+      kind: 'live',
+      load: vi.fn(() => {
+        loadCount += 1
+        return Promise.resolve({ snapshot: SNAP({ commands: [ackCmd] }), decisions: [loadCount === 1 ? ackDecision : freshDecision] })
+      }),
+    }
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
+      decisions: new Map([[ackCmd.command, ackDecision]]),
+    })
+    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', Date.now())   // 陈旧确认(server 端已判定过期)
+    render(<App host={hostOf(startCommand)} catalogSource={catalogSource} mode="connected" />)
+    await waitFor(() => expect(catalogSource.load).toHaveBeenCalledTimes(1))   // 等挂载首拉落定,确认仍是 fp-1
+    await waitFor(() => expect(useAppStore.getState().decisionFor(ackCmd.command)?.fingerprint).toBe('fp-1'))
+
+    await userEvent.click(screen.getByTestId('run-button'))   // 本地判定已确认(fp-1 匹配)→ 直发请求 → 409
+
+    // 不得把 409 原样当普通错误展示给用户
+    await waitFor(() => expect(useAppStore.getState().currentRun?.error).toBeDefined())
+    expect(useAppStore.getState().currentRun?.error?.summary).not.toBe('Acknowledgement fingerprint is stale')
+
+    // 本地陈旧确认被作废
+    await waitFor(() => expect(useAppStore.getState().preferences.acknowledgements).toEqual([]))
+    // 目录已重拉,fingerprint 更新
+    await waitFor(() => expect(useAppStore.getState().decisionFor(ackCmd.command)?.fingerprint).toBe('fp-2'))
+    // 用新 fingerprint 重新弹出确认框(而非把 409 晾在原地)
+    expect(await screen.findByTestId('acknowledge-dialog')).toBeInTheDocument()
+  })
+
+  test('428(acknowledgement-required)→ 不原样展示,弹确认框', async () => {
+    const err428 = new HostRequestError('Command requires an acknowledgement', ackCmd.command, 428, 'acknowledgement-required')
+    const startCommand = vi.fn(() => Promise.reject(err428))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
+      decisions: new Map([[ackCmd.command, ackDecision]]),
+    })
+    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', Date.now())
+    render(<App host={hostOf(startCommand)} mode="connected" />)
+    await userEvent.click(screen.getByTestId('run-button'))
+
+    await waitFor(() => expect(useAppStore.getState().currentRun?.error).toBeDefined())
+    expect(useAppStore.getState().currentRun?.error?.summary).not.toBe('Command requires an acknowledgement')
+    expect(await screen.findByTestId('acknowledge-dialog')).toBeInTheDocument()
+  })
 })
