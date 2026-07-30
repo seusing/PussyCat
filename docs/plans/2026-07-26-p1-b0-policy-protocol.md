@@ -1426,7 +1426,12 @@ git commit -m "feat(policy): /start 按判决分派——202/428/409/403(denied|
 **B. 带 fingerprint 不能救 denied / unknown(I-P5 的正向性质,靠分支顺序保证,无测试)。**
 
 给 `paperreview/review`(denied)与 `trae-solo/state-get`(unknown)各发一次**带看似合法的 `acknowledgement.fingerprint`** 的 `/start` → 必须仍是 **403**,不得变 202/428/409。
-配一处变异:把 `acknowledgement-required` 那块挪到 403 块**之前** → 这两条必须变红。**顺序即语义,和算法第 6/8 步一样,要有东西钉住。**
+
+> ⚠️ **我原本在这里指定了一处变异(把 ack 块挪到 403 块之前),那处变异是错的,已撤销。** 实现者指出并经核实:两个分支的判据是**互斥的 state**(`denied`/`unknown` vs `acknowledgement-required`),交换顺序对 denied 命令毫无影响——该变异红不了任何东西。
+>
+> 更强的一层:`denied`/`unknown` 的判决在算法里 return 得**比 fingerprint 计算还早**(第 1/3/4/5/6/7 步都在第 8 步之前),这些判决**根本没有 `fingerprint` 字段**,任何供给值都不可能匹配。
+>
+> 所以这条性质是**结构性保证**的,不是靠分支顺序——与算法第 6/8 步那种「条件真的重叠、顺序才是语义」不同。**这里的测试是行为固定(把契约写下来防止未来重构改掉),不是可变异守卫。如实这样记账,不要为了凑一处变异而硬造一个。**
 
 **C. `allowedCommands` 加一句注释。**
 
