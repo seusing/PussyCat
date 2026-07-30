@@ -271,6 +271,9 @@ export function createHostServer({
         ...(error && typeof error === 'object' && 'detail' in error && error.detail
           ? { detail: error.detail }
           : {}),
+        // reasonCode 是 wire 上的**稳定标识**(spec §6.1):前端业务逻辑只认它,
+        // summary/detail 是给人看的自然语言,措辞随时会改。
+        ...(error && typeof error === 'object' && error.reasonCode ? { reasonCode: error.reasonCode } : {}),
       })
     }
   })

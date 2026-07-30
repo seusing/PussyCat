@@ -240,3 +240,55 @@ it('buildExecutionPolicy: 三条件不再等于准入 —— 不在基线又不�
 it('buildExecutionPolicy: commands 非数组 → throw', () => {
   expect(() => buildExecutionPolicy({})).toThrow()
 })
+
+describe('确认校验与状态码', () => {
+  const req = (over = {}) => ({
+    runId: 'run-1', commandKey: 'antigravity/recent-paths',
+    argv: ['antigravity', 'recent-paths', '-f', 'json'], ...over,
+  })
+
+  it('需确认但未带 acknowledgement → 428', () => {
+    try { validateStartRequest(req(), policy); throw new Error('应当抛出') }
+    catch (e) { expect(e.statusCode).toBe(428); expect(e.reasonCode).toBe('acknowledgement-required') }
+  })
+
+  it('fingerprint 不匹配 → 409', () => {
+    try { validateStartRequest(req({ acknowledgement: { fingerprint: 'stale' } }), policy); throw new Error('应当抛出') }
+    catch (e) { expect(e.statusCode).toBe(409) }
+  })
+
+  it('fingerprint 匹配 → 放行', () => {
+    const fp = policy.decisionByKey.get('antigravity/recent-paths').fingerprint
+    expect(validateStartRequest(req({ acknowledgement: { fingerprint: fp } }), policy).commandKey)
+      .toBe('antigravity/recent-paths')
+  })
+
+  it('ready 的命令不需要 acknowledgement', () => {
+    expect(validateStartRequest({ runId: 'r', commandKey: 'trae-cn/setup',
+      argv: ['trae-cn', 'setup', '-f', 'json'] }, policy).commandKey).toBe('trae-cn/setup')
+  })
+
+  it('unknown 的命令 → 403 且 reasonCode 区分原因', () => {
+    try {
+      validateStartRequest({ runId: 'r', commandKey: 'trae-solo/state-get',
+        argv: ['trae-solo', 'state-get', '-f', 'json'] }, policy)
+      throw new Error('应当抛出')
+    } catch (e) { expect(e.statusCode).toBe(403); expect(e.reasonCode).toBe('metadata-missing') }
+  })
+
+  it('显式 deny 的命令 → 403,reasonCode 与 unknown 区分得开', () => {
+    try {
+      validateStartRequest({ runId: 'r', commandKey: 'paperreview/review',
+        argv: ['paperreview', 'review', 'tok', '-f', 'json'] }, policy)
+      throw new Error('应当抛出')
+    } catch (e) {
+      expect(e.statusCode).toBe(403)
+      expect(e.reasonCode).toBe('explicit-deny')      // 与 metadata-missing 那条互为对照
+    }
+  })
+
+  it('结构非法 → 400,不被判决分派吞掉', () => {
+    try { validateStartRequest({ runId: 'r', commandKey: 'trae-cn/setup', argv: 'not-an-array' }, policy); throw new Error('应当抛出') }
+    catch (e) { expect(e.statusCode).toBe(400) }
+  })
+})

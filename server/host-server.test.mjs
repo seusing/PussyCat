@@ -1,18 +1,26 @@
 // @vitest-environment node
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { fetch as realFetch } from 'undici'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHostServer } from './host-server.mjs'
 import { createCatalogService } from './catalog-service.mjs'
+import { loadExecutionPolicy } from './policy.mjs'
 import { canonicalJson } from './policy-fingerprint.mjs'
 
 const origin = 'http://127.0.0.1:5173'
+// Task 6 起 `/start` 读的是 **decisionByKey**,不再是 allowedCommands。
+// 夹具随之改形:allowedCommands 已被移除而非并存 —— 留着它,哪天有人把
+// validateStartRequest 退回读 allowedCommands,本文件全部 /start 用例仍会绿。
+// 现在退回去 = decision 恒 undefined = 全部 403,当场红。
 const policy = {
   opencliVersion: '1.8.6',
   description: 'test public read policy',
-  allowedCommands: new Set(['36kr/news']),
+  decisionByKey: new Map([
+    ['36kr/news', { commandKey: '36kr/news', state: 'ready', decisionSource: 'legacy-baseline' }],
+  ]),
 }
 
 class FakeChild extends EventEmitter {
@@ -334,7 +342,9 @@ describe('GET /catalog + 动态 policy', () => {
     const policy = {
       opencliVersion: '9.9.9',
       description: 'refreshed',
-      allowedCommands: new Set(['newsite/hello']),
+      decisionByKey: new Map([
+        ['newsite/hello', { commandKey: 'newsite/hello', state: 'ready', decisionSource: 'legacy-baseline' }],
+      ]),
     }
     let state
     return {
@@ -540,5 +550,90 @@ describe('/catalog/effective', () => {
     // 失败时不得混出半份 envelope —— 否则前端可能拿着 undefined revision 往下走
     expect(body.revision).toBeUndefined()
     expect(body.policy).toBeUndefined()
+  })
+})
+
+// spec §10.1 第 11 道门:状态码表**逐格**。
+//
+// 为什么单元层不够:policy.test.mjs 那七条全是直接调 validateStartRequest 的单元测试,
+// **碰不到 host-server.mjs catch 分支里那行 reasonCode 序列化** —— 把那行整行删掉,
+// 单元层七条照样全绿。reasonCode 是 wire 上的稳定标识(spec §6.1),前端业务逻辑只认它,
+// 所以它必须在**HTTP 响应体**这一层被守住,而不只是在异常对象的属性上。
+//
+// 夹具坑,先看清再改:本文件顶部那个 policy 夹具是手捏的,造不出 acknowledgement-required;
+// 而 reviewShapeHash 含 opencliVersion(spec §4.1.2),任何非 1.8.6 的合成快照都会让
+// 全部 legacy 条目集体漂出基线 → 每条命令都落 unknown/no-tier,428/409 根本不可达。
+// 故本节用**真快照**构造 policy 直接注入:不挂 catalogService,activePolicy() 自然回落到它。
+describe('/start 状态码表逐格(HTTP 层)', () => {
+  const realPolicy = loadExecutionPolicy(resolve('public/catalog.snapshot.json'))
+
+  // 先钉住前提:四个格子各自可达。少了这条,快照一漂移就分不清是「分派错了」
+  // 还是「这条命令压根不是那个状态」——两者的红长得一样,但修法完全不同。
+  it('夹具前提:注入的是真判决,四种 state 各有一条命令承载', () => {
+    expect(realPolicy.decisionByKey.get('trae-cn/setup').state).toBe('ready')
+    expect(realPolicy.decisionByKey.get('antigravity/recent-paths').state).toBe('acknowledgement-required')
+    expect(realPolicy.decisionByKey.get('paperreview/review').state).toBe('denied')
+    expect(realPolicy.decisionByKey.get('trae-solo/state-get').state).toBe('unknown')
+  })
+
+  it('202:ready 的命令直接受理', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-ready-1', commandKey: 'trae-cn/setup', argv: ['trae-cn', 'setup', '-f', 'json'],
+    })
+    expect(res.status).toBe(202)
+    expect(await res.json()).toEqual({ runId: 'r-ready-1' })
+  })
+
+  it('428:需确认却未带 acknowledgement', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-ack-1', commandKey: 'antigravity/recent-paths',
+      argv: ['antigravity', 'recent-paths', '-f', 'json'],
+    })
+    expect(res.status).toBe(428)
+    expect((await res.json()).reasonCode).toBe('acknowledgement-required')
+  })
+
+  it('409:fingerprint 陈旧', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-stale-1', commandKey: 'antigravity/recent-paths',
+      argv: ['antigravity', 'recent-paths', '-f', 'json'],
+      acknowledgement: { fingerprint: 'stale' },
+    })
+    expect(res.status).toBe(409)
+    // 409 与 RunManager 的「runId 重复」撞码 —— 只断状态码分不开,必须断 reasonCode。
+    expect((await res.json()).reasonCode).toBe('fingerprint-stale')
+  })
+
+  it('403(denied):显式 deny', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-deny-1', commandKey: 'paperreview/review',
+      argv: ['paperreview', 'review', 'tok', '-f', 'json'],
+    })
+    expect(res.status).toBe(403)
+    expect((await res.json()).reasonCode).toBe('explicit-deny')
+  })
+
+  it('403(unknown):未审定 —— 与 denied 同码,靠 reasonCode 区分', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-unknown-1', commandKey: 'trae-solo/state-get',
+      argv: ['trae-solo', 'state-get', '-f', 'json'],
+    })
+    expect(res.status).toBe(403)
+    expect((await res.json()).reasonCode).toBe('metadata-missing')
+  })
+
+  it('400:结构非法,不被判决分派吞掉', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-bad-1', commandKey: 'trae-cn/setup', argv: 'not-an-array',
+    })
+    expect(res.status).toBe(400)
+    // 结构错误没有 reasonCode:那行序列化是**条件**的,不是无条件塞一个字段。
+    expect((await res.json()).reasonCode).toBeUndefined()
   })
 })

@@ -199,6 +199,11 @@ export function buildExecutionPolicy(snapshot) {
       .map((d) => d.commandKey),
   )
 
+  // **deniedCommands 只含显式 deny,不是「所有被拒命令」的全集。** 算法第 7 步能产出
+  // denied/tier-threshold,那些命令不进本表;unknown 的更不在。别拿它当全集用——
+  // 要判「这条命令能不能跑」只有一个事实源:decisionByKey。
+  // Task 6 把 validateStartRequest 改成读判决后,本表**已无运行时消费点**,
+  // 只剩下面 description 里的计数;而那句措辞正是「显式 deny K 条」,与本表语义相符。
   const deniedCommands = new Map()
   for (const [commandKey, rule] of Object.entries(COMMAND_POLICY_OVERRIDES)) {
     if (rule?.decision !== 'deny') continue
@@ -275,16 +280,34 @@ export function validateStartRequest(value, policy, {
   if (commandKey !== argvCommandKey) {
     throw new RequestPolicyError(400, 'commandKey does not match argv', `${commandKey} != ${argvCommandKey}`)
   }
-  if (!policy.allowedCommands.has(commandKey)) {
-    // summary 保持不变(冻结契约:前端按 summary 常显 / detail 按需展开)。
-    // 显式 deny 的理由进 detail —— 否则用户只看到"不在策略内",无从知道是三条件没过
-    // 还是被人工裁决拿掉的,后者是可以申诉/推进的,前者不是。
-    const denyReason = policy.deniedCommands?.get(commandKey)
-    throw new RequestPolicyError(
-      403,
-      'Command is outside the P0-B execution policy',
-      denyReason ? `${commandKey}: ${denyReason}` : commandKey,
-    )
+  // 按**判决**分派(spec §6.3 状态码表)。此前这里读的是 allowedCommands.has(),
+  // 而 allowedCommands 含 acknowledgement-required —— 于是 antigravity/recent-paths
+  // 自 Task 4 起可以**无确认执行**。下面的 428 分支就是补上那个洞。
+  const decision = policy.decisionByKey?.get(commandKey)
+  if (!decision || decision.state === 'denied' || decision.state === 'unknown') {
+    // summary 保持不变(冻结契约:前端 summary 常显 / detail 按需展开)。
+    // unknown 与 denied 同归 403——对调用方而言「未审定」同样是拒绝;由 reasonCode 区分。
+    const error = new RequestPolicyError(403, 'Command is outside the P0-B execution policy',
+      decision?.reason ? `${commandKey}: ${decision.reason}` : commandKey)
+    error.reasonCode = decision?.reasonCode ?? 'no-decision'
+    throw error
+  }
+  // 这两支必须早于放行,且**晚于**上面的 denied/unknown ——
+  // 否则带一个 fingerprint 就能把 denied 命令送进执行面。acknowledgement 只防误点,
+  // 不是安全授权 [I-P5];执行边界是上面那道 403。
+  if (decision.state === 'acknowledgement-required') {
+    const supplied = value.acknowledgement?.fingerprint
+    if (typeof supplied !== 'string') {
+      const error = new RequestPolicyError(428, 'Command requires an acknowledgement', commandKey)
+      error.reasonCode = 'acknowledgement-required'
+      throw error
+    }
+    if (supplied !== decision.fingerprint) {
+      const error = new RequestPolicyError(409, 'Acknowledgement fingerprint is stale',
+        '重新拉取 /catalog/effective 后再确认')
+      error.reasonCode = 'fingerprint-stale'
+      throw error
+    }
   }
   if (requestedFormat(argv) !== 'json') {
     throw new RequestPolicyError(400, 'P0-B requires explicit JSON output', 'append -f json to argv')
