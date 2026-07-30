@@ -1417,7 +1417,13 @@ git commit -m "feat(policy): /start 按判决分派——202/428/409/403(denied|
 
 变异⑥ 查实:**全仓没有任何测试把 `/catalog/effective` 与 `/start` 配对**(`/catalog/effective` 的九条从不发 `/start`;守 `activePolicy()` 的那条用的是 `/catalog` + stub)。二者今天同源只是实现巧合——恰好读同一个 `state` 单引用。
 
-存在一类**零成本逃逸**:让 `/catalog/effective` 自己现算一份 policy、`/start` 仍读 `activePolicy()`,全仓 351 条全绿,而用户表现为**「确认了却一直 409」**——点了确认却永远跑不了,且前端无从自愈。
+~~存在一类零成本逃逸:让 `/catalog/effective` 自己现算一份 policy、`/start` 仍读 `activePolicy()`,全仓全绿而用户表现为「确认了却一直 409」。~~
+
+> ⚠️ **上面这句是我说错了,实现者实测推翻**(探针 P2:照此改造后全仓 355 条**全绿**)。同一份 snapshot 上重算是**确定性的**,两端点算出的 fingerprint 必然逐字节相同 —— 那是**行为等价的重构,不是缺陷,也不该被测出来**。
+>
+> 真正会兑现「确认了却一直 409」的是两端点**读到不同的 state**(例如有人给 `/catalog/effective` 加缓存、或预算一份存起来),那一面才是 A 要守的、也确实守住了(探针 P1:重跑变异⑥ 由红 1 变红 2,多出来的正是 A)。
+>
+> **A 的准确表述是「下发与校验的 fingerprint 来自同一份 policy state」** —— 它守不到、也无须守「各自重算但同源」。
 
 补一条真往返:`GET /catalog/effective` → 从 envelope 里取 `antigravity/recent-paths` 的 `fingerprint` → 原样 `POST /start` → **必须 202**。**fingerprint 不得在测试里自己算**,必须来自上一步的响应体——自己算就又变成「拿被测对象自己的输出对照它自己」。
 

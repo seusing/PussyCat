@@ -347,6 +347,14 @@ sha256({ policySchemaVersion, opencliVersion, commands, decisions }).slice(0, 16
 - 摘要里**不得掺时间戳**：掺了客户端就永远算不出来，`revision` 会退化成不透明 nonce，I-P4 随之落空。
 - `generatedAt` 的语义是「这份内容首次生成的时刻」——`revision` 不变则它保持不动（跨 Host 重启除外，`state` 是进程内闭包，重启后首次刷新会取新值而 `revision` 不变）。**跨重启稳定的只有 `revision`。**
 
+**`/catalog/effective` 的 `decisions` 必须取自 `catalogService.current()` 的同一引用，不得旁路缓存或预算一份。**
+
+理由是确认协议的核心承诺：**用户被展示的 fingerprint，必须就是 `/start` 校验时用的那一个**。`/start` 走 `activePolicy()`（同样读 `current()`），两端读同一份 state 时这条自动成立。
+
+注意边界（已实测）：单纯「各自在同一份 snapshot 上重算一次」是**行为等价**的——重算确定性，fingerprint 逐字节相同，不构成缺陷。**危险的是两端读到不同 state**，典型诱因是给本端点加缓存或提前算好存起来。届时用户症状是**「点了确认却一直 409」**，且前端无从自愈（它每次重拉都拿到同一个对不上的 fingerprint）。
+
+测试面守得住「同源 state」（`host-server.test.mjs` 的 envelope→`/start` 往返用例），**守不住「有人日后引入缓存」**——那一步只剩本条约束与 code review。改动本端点时请回看这一段。
+
 ### 6.3 `/start` 与完整状态码表
 
 ```ts
