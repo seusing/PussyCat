@@ -9,6 +9,16 @@ import {
 } from '../data/layout'
 import type { LayoutSnapshot } from '../data/layout'
 
+// 简洁的面板图标:外框代表整个工作区,实心块标出被开关控制的那一侧(左/右)。纯内联 SVG,不引入图标库依赖。
+function PanelIcon({ side }: { side: 'left' | 'right' }) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" />
+      <rect x={side === 'left' ? 2.5 : 9.5} y="3.5" width="4" height="9" fill="currentColor" />
+    </svg>
+  )
+}
+
 export default function AppShell({ nav, config, runs, catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl }: {
   nav: ReactNode
   config: ReactNode
@@ -49,14 +59,64 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
   // 避免每个 pointermove 都写 localStorage。
   const commitLayout = useCallback(() => { saveLayout(layoutRef.current) }, [])
 
+  // 折叠开关是离散的一次性动作(不是拖拽序列),不需要 propose/commit 两段式——直接翻转对应
+  // 字段并立即落盘。navWidth/runsWidth 原样保留在 next 里(spread 自 layoutRef.current),
+  // 隐藏不改写宽度,因此再次显示时自然恢复隐藏前的宽度。
+  const toggleNav = useCallback(() => {
+    const next = { ...layoutRef.current, navHidden: !layoutRef.current.navHidden }
+    layoutRef.current = next
+    setLayout(next)
+    saveLayout(next)
+  }, [])
+  const toggleRuns = useCallback(() => {
+    const next = { ...layoutRef.current, runsHidden: !layoutRef.current.runsHidden }
+    layoutRef.current = next
+    setLayout(next)
+    saveLayout(next)
+  }, [])
+
+  // 隐藏时连同它那条分隔条一起从列模板里去掉,而不是只把宽度设 0——否则分隔条还在 DOM 里,
+  // 仍可被拖拽/聚焦,状态自相矛盾。中栏的 minmax(...) 始终保留,自然吃掉腾出来的空间。
+  const gridTemplateColumns = [
+    !layout.navHidden && `${layout.navWidth}px`,
+    !layout.navHidden && 'auto',
+    `minmax(${CONFIG_MIN}px, 1fr)`,
+    !layout.runsHidden && 'auto',
+    !layout.runsHidden && `${layout.runsWidth}px`,
+  ].filter((x): x is string => !!x).join(' ')
+
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: 'var(--color-line)' }}>
-        <div className="font-semibold">OpenCLI App</div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            data-testid="toggle-nav"
+            aria-label="显示/隐藏导航栏"
+            aria-pressed={!layout.navHidden}
+            onClick={toggleNav}
+            className="flex items-center justify-center rounded p-1"
+            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)', background: layout.navHidden ? 'transparent' : 'var(--color-panel)' }}
+          >
+            <PanelIcon side="left" />
+          </button>
+          <div className="font-semibold">抓抓</div>
+        </div>
         <div className="flex items-center gap-3">
           {headerActions}
           <BrowserBridgeStatus baseUrl={baseUrl} />
           <HealthPill baseUrl={baseUrl} />
+          <button
+            type="button"
+            data-testid="toggle-runs"
+            aria-label="显示/隐藏运行面板"
+            aria-pressed={!layout.runsHidden}
+            onClick={toggleRuns}
+            className="flex items-center justify-center rounded p-1"
+            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)', background: layout.runsHidden ? 'transparent' : 'var(--color-panel)' }}
+          >
+            <PanelIcon side="right" />
+          </button>
         </div>
       </header>
 
@@ -83,20 +143,29 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
       {catalogStatus === 'ready' && (
         <div
           ref={gridRef}
+          data-testid="app-grid"
           className="grid min-h-0 flex-1"
-          style={{ gridTemplateColumns: `${layout.navWidth}px auto minmax(${CONFIG_MIN}px, 1fr) auto ${layout.runsWidth}px` }}
+          style={{ gridTemplateColumns }}
         >
-          <aside data-testid="col-nav" className="min-h-0 overflow-auto" style={{ background: 'var(--color-panel)' }}>{nav}</aside>
-          <ResizableSplit
-            value={layout.navWidth} side="left" min={NAV_MIN} max={NAV_MAX} defaultValue={NAV_DEFAULT}
-            onResize={proposeNav} onCommit={commitLayout} ariaLabel="调整导航栏宽度" testId="separator-nav"
-          />
+          {!layout.navHidden && (
+            <aside data-testid="col-nav" className="min-h-0 overflow-auto" style={{ background: 'var(--color-panel)' }}>{nav}</aside>
+          )}
+          {!layout.navHidden && (
+            <ResizableSplit
+              value={layout.navWidth} side="left" min={NAV_MIN} max={NAV_MAX} defaultValue={NAV_DEFAULT}
+              onResize={proposeNav} onCommit={commitLayout} ariaLabel="调整导航栏宽度" testId="separator-nav"
+            />
+          )}
           <main data-testid="col-config" className="min-h-0 overflow-auto p-4">{config}</main>
-          <ResizableSplit
-            value={layout.runsWidth} side="right" min={RUNS_MIN} max={RUNS_MAX} defaultValue={RUNS_DEFAULT}
-            onResize={proposeRuns} onCommit={commitLayout} ariaLabel="调整运行面板宽度" testId="separator-runs"
-          />
-          <section data-testid="col-runs" className="min-h-0 overflow-auto" style={{ background: 'var(--color-panel)' }}>{runs}</section>
+          {!layout.runsHidden && (
+            <ResizableSplit
+              value={layout.runsWidth} side="right" min={RUNS_MIN} max={RUNS_MAX} defaultValue={RUNS_DEFAULT}
+              onResize={proposeRuns} onCommit={commitLayout} ariaLabel="调整运行面板宽度" testId="separator-runs"
+            />
+          )}
+          {!layout.runsHidden && (
+            <section data-testid="col-runs" className="min-h-0 overflow-auto" style={{ background: 'var(--color-panel)' }}>{runs}</section>
+          )}
         </div>
       )}
     </div>

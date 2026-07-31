@@ -17,12 +17,12 @@ function fakeStorage(): Storage {
 }
 
 test('defaultLayout 结构正确', () => {
-  expect(defaultLayout()).toEqual({ navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT })
+  expect(defaultLayout()).toEqual({ navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false })
 })
 
 test('save→load 往返等值', () => {
   const s = fakeStorage()
-  const layout = { navWidth: 300, runsWidth: 400 }
+  const layout = { navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false }
   saveLayout(layout, s)
   expect(loadLayout(s)).toEqual(layout)
 })
@@ -58,11 +58,11 @@ test('storage 写入抛错(配额满)→ saveLayout 返回 false 不抛', () => 
 // —— normalizeLayout:非法值(负数/字符串/NaN/超界)一律夹回合法区间 ——
 describe('normalizeLayout 守卫', () => {
   it('负数→夹到 MIN', () => {
-    expect(normalizeLayout({ navWidth: -50, runsWidth: -50 })).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_MIN })
+    expect(normalizeLayout({ navWidth: -50, runsWidth: -50 })).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_MIN, navHidden: false, runsHidden: false })
   })
 
   it('超界(过大)→夹到 MAX', () => {
-    expect(normalizeLayout({ navWidth: 99999, runsWidth: 99999 })).toEqual({ navWidth: NAV_MAX, runsWidth: RUNS_MAX })
+    expect(normalizeLayout({ navWidth: 99999, runsWidth: 99999 })).toEqual({ navWidth: NAV_MAX, runsWidth: RUNS_MAX, navHidden: false, runsHidden: false })
   })
 
   it('字符串→回退默认值', () => {
@@ -81,13 +81,33 @@ describe('normalizeLayout 守卫', () => {
   })
 
   it('缺字段→该字段回退默认值,另一字段仍生效', () => {
-    expect(normalizeLayout({ navWidth: 320 })).toEqual({ navWidth: 320, runsWidth: RUNS_DEFAULT })
+    expect(normalizeLayout({ navWidth: 320 })).toEqual({ navWidth: 320, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false })
   })
 
   it('loadLayout 端到端:存储里混入非法项也不抛且落在合法区间', () => {
     const s = fakeStorage()
     s.setItem(LAYOUT_KEY, JSON.stringify({ navWidth: -999, runsWidth: 'huge' }))
-    expect(loadLayout(s)).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_DEFAULT })
+    expect(loadLayout(s)).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false })
+  })
+
+  // —— navHidden/runsHidden:与 navWidth/runsWidth 同款"非法即回退默认值"策略,但判据是
+  // typeof === 'boolean'而非数值区间 ——
+  it('非布尔(字符串/数字)→回退默认值 false', () => {
+    expect(normalizeLayout({ navWidth: 300, runsWidth: 400, navHidden: 'yes', runsHidden: 1 }))
+      .toEqual({ navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false })
+  })
+
+  it('合法布尔值→原样透传(包括 true)', () => {
+    expect(normalizeLayout({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true }))
+      .toEqual({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true })
+  })
+
+  // 向后兼容:老数据只有 navWidth/runsWidth 两个字段(折叠开关上线前写入的 JSON),读出来
+  // 不能抛也不能整份回退——两个新字段各自独立缺省为 false,宽度字段仍按原值生效。
+  it('老数据(无 navHidden/runsHidden 字段)→两个新字段缺省 false,宽度字段不受影响', () => {
+    const s = fakeStorage()
+    s.setItem(LAYOUT_KEY, JSON.stringify({ navWidth: 300, runsWidth: 400 }))
+    expect(loadLayout(s)).toEqual({ navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false })
   })
 })
 

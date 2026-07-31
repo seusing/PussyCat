@@ -16,10 +16,12 @@ export const CONFIG_MIN = 400
 export type LayoutSnapshot = {
   navWidth: number
   runsWidth: number
+  navHidden: boolean
+  runsHidden: boolean
 }
 
 export function defaultLayout(): LayoutSnapshot {
-  return { navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT }
+  return { navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false }
 }
 
 function resolveStorage(storage?: Storage): Storage | undefined {
@@ -37,18 +39,24 @@ export function clamp(n: number, min: number, max: number): number {
 }
 
 const isFiniteNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+const isBool = (x: unknown): x is boolean => typeof x === 'boolean'
 
 // 归一化一份"看起来像 LayoutSnapshot"的原始值。非法字段(负数/字符串/NaN/超界)一律夹回合法区间:
 // 数值但越界→算术夹取;非数值(字符串/NaN/缺失)→退回该字段默认值(默认值本身在合法区间内,
 // 因此结果不变量始终成立:输出的 navWidth 必在 [NAV_MIN,NAV_MAX]、runsWidth 必在 [RUNS_MIN,RUNS_MAX]。
 // 导出供测试直接喂入真实 NaN(JSON 文本本身无法编码 NaN,只能在这一层直接验证)。
+// navHidden/runsHidden 同一套"非法即回退默认值"策略:非布尔(缺失/字符串/数字等)→回退 false。
+// 老数据(只有 navWidth/runsWidth 两个字段的 JSON)天然落入"缺失"分支,两个新字段取 false——
+// 这正是折叠开关的向后兼容语义(见 loadLayout 端到端测试)。
 export function normalizeLayout(raw: unknown): LayoutSnapshot {
   const fallback = defaultLayout()
   if (!raw || typeof raw !== 'object') return fallback
   const o = raw as Record<string, unknown>
   const navWidth = isFiniteNum(o.navWidth) ? clamp(o.navWidth, NAV_MIN, NAV_MAX) : fallback.navWidth
   const runsWidth = isFiniteNum(o.runsWidth) ? clamp(o.runsWidth, RUNS_MIN, RUNS_MAX) : fallback.runsWidth
-  return { navWidth, runsWidth }
+  const navHidden = isBool(o.navHidden) ? o.navHidden : fallback.navHidden
+  const runsHidden = isBool(o.runsHidden) ? o.runsHidden : fallback.runsHidden
+  return { navWidth, runsWidth, navHidden, runsHidden }
 }
 
 export function loadLayout(storage?: Storage): LayoutSnapshot {
