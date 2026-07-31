@@ -12,8 +12,33 @@
   --color-warning: #d29922;
   --color-danger: #f85149;
   --color-on-accent: #ffffff;
+
+  /* 字号上调一档(2026-07-31)。--text-body/--text-dim 是语义基准,body 的 font-size 直接引用它们。
+     仅设 body 基准不够:Tailwind 的 text-xs/text-sm 原子类会显式设置自己的 font-size,覆盖掉从 body
+     继承来的值,而 nav/正文/次要说明当前几乎全靠 text-sm/text-xs 这两个类(仓内 grep 实测),不是"未显式
+     指定字号,靠继承"的情形。处理方式:改写 Tailwind 自身的 --text-xs/--text-sm 主题刻度,直接引用
+     这两个语义变量——组件层不需要挪用任何新类名,现有的 text-xs/text-sm 原样保留,自动吃到新尺寸。
+     text-base/text-lg(标题)没有另起语义名,按同一"+1px"节奏(与 body/dim 的 14→15、12→13 一致,
+     也约等于同比例 16→17.1、18→19.3 四舍五入后的结果)直接改写。line-height 沿用 Tailwind 默认的
+     unitless 比例(未覆盖 --text-*--line-height),会按新字号自动等比重算,不需要跟着改。
+     组件层记忆:text-xs→13px(次要说明)/text-sm→15px(正文)/text-base→17px/text-lg→19px,
+     类名本身不变,继续照常使用即可。 */
+  --text-body: 15px;
+  --text-dim: 13px;
+  --text-xs: var(--text-dim);
+  --text-sm: var(--text-body);
+  --text-base: 17px;
+  --text-lg: 19px;
 }
 
 :root { color-scheme: dark; }
 html, body, #root { height: 100%; }
-body { margin: 0; background: var(--color-canvas); color: var(--color-fg); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--color-canvas); color: var(--color-fg); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: var(--text-body); }
+
+/* 可拖拽分隔条(见 components/ResizableSplit.tsx)的 hover/拖拽变色——内联 style 无法表达 :hover,
+   这是本仓唯一一处不用内联 style 走主题色的地方,原因仅此而已,不是风格漂移。 */
+.resize-handle-line { background: var(--color-line); transition: background-color 120ms ease; }
+.resize-handle:hover .resize-handle-line,
+.resize-handle[data-dragging='true'] .resize-handle-line {
+  background: var(--color-accent);
+}
