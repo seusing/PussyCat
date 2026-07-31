@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { CommandManifest } from '../data/types'
 import type { OutputEvent, DoneEvent } from '../host/types'
 import type { PolicyDecision } from '../data/policy'
+import type { LoginCheckEntry, LoginCheckState } from '../data/loginStatus'
 import { transition, type RunState } from './runMachine'
 import {
   emptyPreferences, loadPreferences, savePreferences,
@@ -83,6 +84,18 @@ type AppState = {
   setRunPanelCollapsed: (v: boolean) => void
   mode: 'demo' | 'connected'
   setMode: (mode: 'demo' | 'connected') => void
+  // 模块切换。**不持久化**:这是浏览姿势(此刻在看哪个模块),不是用户偏好,重开回默认更合理。
+  activeModule: 'commands' | 'login'
+  setActiveModule: (m: 'commands' | 'login') => void
+  // 登录状态校验。队列是**串行**的:Host 侧 maxConcurrentRuns=1,并发发起只会让后来的拿 429。
+  // 驱动逻辑不在 store 里(store 不碰 host),由 App 的 effect 取队首去发起。
+  loginChecks: Record<string, LoginCheckEntry>
+  loginQueue: string[]
+  loginInFlight?: { site: string; runId: string }
+  setLoginEntry: (site: string, patch: Partial<LoginCheckEntry>) => void
+  enqueueLoginChecks: (sites: string[]) => void
+  beginLoginCheck: (site: string, runId: string) => void
+  finishLoginCheck: (runId: string, state: LoginCheckState, detail: string | undefined, at: number) => void
   // —— preferences 切片 ——
   preferences: PreferencesSnapshot
   stale: { sites: Set<string>; commands: Set<string> }
@@ -163,6 +176,37 @@ export const useAppStore = create<AppState>((set, get) => ({
   setRunPanelCollapsed: (v) => set({ runPanelCollapsed: v }),
   mode: 'demo',
   setMode: (mode) => set({ mode }),
+  activeModule: 'commands',
+  setActiveModule: (m) => set({ activeModule: m }),
+  loginChecks: {},
+  loginQueue: [],
+  loginInFlight: undefined,
+  setLoginEntry: (site, patch) => set((s) => ({
+    loginChecks: { ...s.loginChecks, [site]: { ...s.loginChecks[site], site, ...patch } as LoginCheckEntry },
+  })),
+  enqueueLoginChecks: (sites) => set((s) => {
+    // 去重:已排队或正在跑的站点不重复入列,否则连点「全部刷新」会把队列堆成几十条。
+    const busy = new Set([...s.loginQueue, ...(s.loginInFlight ? [s.loginInFlight.site] : [])])
+    const add = sites.filter((x) => !busy.has(x))
+    if (add.length === 0) return s
+    const checks = { ...s.loginChecks }
+    for (const site of add) checks[site] = { ...checks[site], site, state: 'checking' }
+    return { loginQueue: [...s.loginQueue, ...add], loginChecks: checks }
+  }),
+  beginLoginCheck: (site, runId) => set((s) => ({
+    loginQueue: s.loginQueue.filter((x) => x !== site),
+    loginInFlight: { site, runId },
+    loginChecks: { ...s.loginChecks, [site]: { ...s.loginChecks[site], site, state: 'checking' } },
+  })),
+  finishLoginCheck: (runId, state, detail, at) => set((s) => {
+    // 只认当前在飞的那次:迟到的 done(上一轮超时后才回来的)不得覆盖新结果。
+    if (s.loginInFlight?.runId !== runId) return s
+    const site = s.loginInFlight.site
+    return {
+      loginInFlight: undefined,
+      loginChecks: { ...s.loginChecks, [site]: { ...s.loginChecks[site], site, state, detail, checkedAt: at } },
+    }
+  }),
   // —— preferences 切片 ——
   preferences: emptyPreferences(),
   stale: { sites: new Set<string>(), commands: new Set<string>() },

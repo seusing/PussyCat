@@ -10,6 +10,10 @@ import { buildArgv } from './data/command'
 import { createMockHost } from './host/mockHost'
 import { snapshotCatalogSource, type CatalogSource } from './host'
 import { validate } from './features/config/validation'
+import { LoginStatusPanel } from './features/login/LoginStatusPanel'
+import {
+  isLoginCheckRunId, loginCheckRunId, parseWhoamiResult,
+} from './data/loginStatus'
 import type { CommandManifest } from './data/types'
 import type { HostBridge } from './host/types'
 import { HostRequestError } from './host/errors'
@@ -42,6 +46,7 @@ export default function App({
   const setMode = useAppStore((s) => s.setMode)
   const catalogStatus = useAppStore((s) => s.catalogStatus)
   const catalogError = useAppStore((s) => s.catalogError)
+  const activeModule = useAppStore((s) => s.activeModule)
   const [refresh, setRefresh] = useState<{ state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }>({ state: 'idle' })
   const loadGen = useRef(0)   // 请求世代:latest-wins,过期响应(首载或刷新)一律丢弃(三轮复审 F1)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -67,14 +72,72 @@ export default function App({
 
   useEffect(() => {
     setMode(mode)
-    const offOut = host.onOutput((e) => useAppStore.getState().appendOutput(e))
-    const offDone = host.onDone((e) => useAppStore.getState().finishRun(e))
+    // 登录检查的运行走**独立通道**:它是后台自查,不是用户发起的任务。
+    // 承重的是**正向那一半** —— 把 done 路由给 finishLoginCheck,否则检查永远完不成、队列卡死。
+    // 反向那一半(不喂给 appendOutput/finishRun)是**纵深防御**:实测 store 的这两个 action
+    // 本就按 currentRun.id !== e.runId 过滤(appStore.ts:151,154),摘掉这里也污染不了运行面板。
+    // 写清楚以免后人以为这几行是防污染的唯一屏障。
+    const offOut = host.onOutput((e) => {
+      if (isLoginCheckRunId(e.runId)) return
+      useAppStore.getState().appendOutput(e)
+    })
+    const offDone = host.onDone((e) => {
+      if (isLoginCheckRunId(e.runId)) {
+        const { state, detail } = e.outcome === 'success'
+          ? parseWhoamiResult(e.result)
+          : { state: 'error' as const, detail: e.error?.summary ?? '命令未成功结束' }
+        useAppStore.getState().finishLoginCheck(e.runId, state, detail, e.at)
+        return
+      }
+      useAppStore.getState().finishRun(e)
+    })
     fetchCatalog()
     return () => { offOut(); offDone() }
     // fetchCatalog 每次渲染重建，但只在 host 身份变化时需要重新接线/拉取一次，行为与原版 [host, setCommands] 等价
   }, [host, catalogSource, mode, setCommands, setCatalogStatus, setMode])
 
   useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
+
+  // 登录检查的**串行驱动**。Host 侧 maxConcurrentRuns=1,并发发起只会让后来的拿 429;
+  // 且用户手动发起的运行优先——有 run 在飞时本轮不发,等它结束再继续。
+  const loginQueue = useAppStore((s) => s.loginQueue)
+  const loginInFlight = useAppStore((s) => s.loginInFlight)
+  const currentRun = useAppStore((s) => s.currentRun)
+  useEffect(() => {
+    if (loginInFlight || loginQueue.length === 0) return
+    if (currentRun && !isTerminal(currentRun.state)) return   // 不跟用户抢那唯一的并发位
+    const s = useAppStore.getState()
+    const site = loginQueue[0]
+    const cmd = s.commands.find((c) => c.site === site && c.name === 'whoami')
+    const decision = cmd ? s.decisionFor(cmd.command) : undefined
+    if (!cmd || !decision) {
+      s.setLoginEntry(site, { state: 'not-approved' })
+      s.beginLoginCheck(site, `dropped:${site}`)
+      s.finishLoginCheck(`dropped:${site}`, 'not-approved', undefined, Date.now())
+      return
+    }
+    if (!isRunnable(decision)) {
+      // 判决在排队之后收紧了(或本就不可执行):**不发请求**,如实落成不可执行状态。
+      s.beginLoginCheck(site, `dropped:${site}`)
+      s.finishLoginCheck(`dropped:${site}`, 'not-approved', '该命令当前不被 Host 允许执行', Date.now())
+      return
+    }
+    const fp = decision.fingerprint
+    const needsAck = decision.state === 'acknowledgement-required'
+    if (needsAck && (!fp || !isAcknowledged(s.preferences, cmd.command, fp))) {
+      s.beginLoginCheck(site, `dropped:${site}`)
+      s.finishLoginCheck(`dropped:${site}`, 'needs-ack', undefined, Date.now())
+      return
+    }
+    const runId = loginCheckRunId(site, crypto.randomUUID())
+    s.beginLoginCheck(site, runId)
+    void host.startCommand({
+      runId, commandKey: cmd.command, argv: buildArgv(cmd, {}),
+      ...(needsAck && fp ? { acknowledgement: { fingerprint: fp } } : {}),
+    }).catch((err) => {
+      useAppStore.getState().finishLoginCheck(runId, 'error', normalizeHostError(err, 'start').summary, Date.now())
+    })
+  }, [host, loginQueue, loginInFlight, currentRun])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -195,6 +258,7 @@ export default function App({
   return (
     <div data-testid="app-root" className="h-full">
       <AppShell
+        fullPage={activeModule === 'login' ? <LoginStatusPanel /> : undefined}
         nav={<SiteCommandNav searchRef={searchInputRef} />}
         config={<CommandConfig onRun={executeSelected} registerSubmit={registerSubmit} />}
         runs={<RunPanel onCancel={onCancel} onRerun={executeSelected} />}

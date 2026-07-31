@@ -1,0 +1,232 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useAppStore } from '../../store/appStore'
+import { siteLabel } from '../../data/zhCopy'
+import { isAcknowledged } from '../../data/preferences'
+import { stateFromDecision, type LoginCheckState } from '../../data/loginStatus'
+import {
+  AUTO_REFRESH_MAX_MINUTES, AUTO_REFRESH_MIN_MINUTES, clampIntervalMinutes,
+} from '../../data/loginStatus'
+import { loadLayout, saveLayout } from '../../data/layout'
+
+const STATE_TEXT: Record<LoginCheckState, string> = {
+  unchecked: '未检查',
+  checking: '检查中…',
+  'logged-in': '已登录',
+  'logged-out': '需重新登录',
+  error: '检查失败',
+  'needs-ack': '需先确认',
+  'not-approved': '未审定',
+}
+
+const STATE_COLOR: Record<LoginCheckState, string> = {
+  unchecked: 'var(--color-fg-dim)',
+  checking: 'var(--color-fg-dim)',
+  'logged-in': 'var(--color-success)',
+  'logged-out': 'var(--color-danger)',
+  error: 'var(--color-warning)',
+  'needs-ack': 'var(--color-warning)',
+  'not-approved': 'var(--color-fg-dim)',
+}
+
+/** 可检查 = Host 允许执行且用户已确认过。not-approved / needs-ack 都不可直接检查。 */
+const CHECKABLE: LoginCheckState[] = ['unchecked', 'logged-in', 'logged-out', 'error']
+
+function relativeTime(at: number | undefined, now: number): string {
+  if (!at) return '—'
+  const min = Math.floor((now - at) / 60_000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min} 分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} 小时前`
+  return `${Math.floor(hr / 24)} 天前`
+}
+
+export function LoginStatusPanel() {
+  const commands = useAppStore((s) => s.commands)
+  const decisionFor = useAppStore((s) => s.decisionFor)
+  const preferences = useAppStore((s) => s.preferences)
+  const loginChecks = useAppStore((s) => s.loginChecks)
+  const loginQueue = useAppStore((s) => s.loginQueue)
+  const loginInFlight = useAppStore((s) => s.loginInFlight)
+  const enqueueLoginChecks = useAppStore((s) => s.enqueueLoginChecks)
+  const requestAcknowledgement = useAppStore((s) => s.requestAcknowledgement)
+  const selectCommand = useAppStore((s) => s.selectCommand)
+
+  const [auto, setAuto] = useAutoRefresh()
+  const now = Date.now()
+
+  // 站点清单来自目录里所有 whoami 命令 —— **不维护写死的站点列表**。
+  // 哪些能查由 Host 判决说了算(I-P1),这里只负责把判决翻译成一行状态。
+  const rows = useMemo(() => {
+    return commands
+      .filter((c) => c.name === 'whoami')
+      .map((c) => {
+        const decision = decisionFor(c.command)
+        const acked = !!decision?.fingerprint && isAcknowledged(preferences, c.command, decision.fingerprint)
+        const derived = stateFromDecision(decision, acked)
+        const tracked = loginChecks[c.site]
+        // 已经查过的用查过的结果;没查过的用判决推出来的初始态。
+        // 但**判决说不可查时以判决为准** —— 策略可能在上次检查之后收紧了。
+        const state: LoginCheckState = derived === 'not-approved' || derived === 'needs-ack'
+          ? derived
+          : (tracked?.state ?? 'unchecked')
+        return { site: c.site, commandKey: c.command, command: c, decision, state, entry: tracked }
+      })
+      .sort((a, b) => {
+        // 可检查的排前面 —— 未审定的 61 条不该占据视线
+        const rank = (s: LoginCheckState) => (CHECKABLE.includes(s) || s === 'checking' ? 0 : s === 'needs-ack' ? 1 : 2)
+        return rank(a.state) - rank(b.state) || a.site.localeCompare(b.site)
+      })
+  }, [commands, decisionFor, preferences, loginChecks])
+
+  const checkable = rows.filter((r) => CHECKABLE.includes(r.state) || r.state === 'checking')
+  const notApproved = rows.filter((r) => r.state === 'not-approved')
+  const needsAck = rows.filter((r) => r.state === 'needs-ack')
+  const busy = !!loginInFlight || loginQueue.length > 0
+
+  // 自动刷新:**只在应用运行期生效**,组件卸载即清。绝不写操作系统级定时任务。
+  // 只排已确认且判决允许的站点 —— 遇到 needs-ack **跳过而不是弹框**,
+  // 后台定时任务弹出确认对话框会打断用户手上的事。
+  useEffect(() => {
+    if (!auto.enabled) return
+    const tick = () => {
+      const sites = useAppStore.getState().commands
+        .filter((c) => c.name === 'whoami')
+        .filter((c) => {
+          const d = useAppStore.getState().decisionFor(c.command)
+          const acked = !!d?.fingerprint && isAcknowledged(useAppStore.getState().preferences, c.command, d.fingerprint)
+          return CHECKABLE.includes(stateFromDecision(d, acked))
+        })
+        .map((c) => c.site)
+      if (sites.length > 0) useAppStore.getState().enqueueLoginChecks(sites)
+    }
+    const id = setInterval(tick, auto.minutes * 60_000)
+    return () => clearInterval(id)
+  }, [auto.enabled, auto.minutes])
+
+  return (
+    <div className="mx-auto max-w-3xl p-6">
+      <h2 className="mb-1 text-lg font-semibold">登录状态</h2>
+      <p className="mb-4 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+        用各站点的 whoami 命令检查登录态。
+        <strong style={{ color: 'var(--color-fg)' }}> 检查会真的用你浏览器里的登录状态发一次请求</strong>
+        ，因此只对已通过安全审定、且你确认过的命令生效。
+      </p>
+
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3"
+        style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+        <button
+          data-testid="refresh-all-logins"
+          disabled={busy || checkable.length === 0}
+          onClick={() => enqueueLoginChecks(checkable.map((r) => r.site))}
+          className="rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+        >
+          {busy ? `检查中…（剩 ${loginQueue.length + (loginInFlight ? 1 : 0)}）` : '全部刷新'}
+        </button>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            data-testid="auto-refresh-toggle"
+            type="checkbox"
+            checked={auto.enabled}
+            onChange={(e) => setAuto({ ...auto, enabled: e.target.checked })}
+          />
+          自动刷新
+        </label>
+        <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          每
+          <input
+            data-testid="auto-refresh-minutes"
+            type="number"
+            min={AUTO_REFRESH_MIN_MINUTES}
+            max={AUTO_REFRESH_MAX_MINUTES}
+            value={auto.minutes}
+            onChange={(e) => setAuto({ ...auto, minutes: clampIntervalMinutes(Number(e.target.value)) })}
+            className="w-16 rounded px-2 py-1"
+            style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+          />
+          分钟
+        </label>
+
+        <span data-testid="login-summary" className="ml-auto text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          {checkable.length} 个可检查 · {needsAck.length} 个待确认 · {notApproved.length} 个未审定
+        </span>
+      </div>
+
+      {auto.enabled && (
+        <p data-testid="auto-refresh-note" className="mb-4 rounded-lg p-3 text-xs"
+          style={{ background: 'var(--color-panel)', color: 'var(--color-fg-dim)', border: '1px solid var(--color-warning)' }}>
+          自动刷新会**在后台反复**用你的登录态执行 whoami，每次都会开一个浏览器标签。
+          只对已确认的命令生效；需要确认的会被跳过，不会弹窗打断你。关闭应用后不再执行。
+        </p>
+      )}
+
+      <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
+        {rows.map((r) => {
+          const canCheck = CHECKABLE.includes(r.state)
+          return (
+            <div key={r.commandKey} data-testid={`login-row-${r.site}`}
+              className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0"
+              style={{ borderColor: 'var(--color-line)', opacity: r.state === 'not-approved' ? 0.55 : 1 }}>
+              <span className="w-32 shrink-0 truncate text-sm">{siteLabel(r.site)}</span>
+
+              <span data-testid={`login-state-${r.site}`} className="w-24 shrink-0 text-xs"
+                style={{ color: STATE_COLOR[r.state] }}>
+                {STATE_TEXT[r.state]}
+              </span>
+
+              <span className="min-w-0 flex-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                {r.state === 'not-approved'
+                  ? '该站的 whoami 尚未通过安全审定，Host 不会执行'
+                  : (r.entry?.detail ?? '')}
+              </span>
+
+              <span className="w-20 shrink-0 text-right text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                {relativeTime(r.entry?.checkedAt, now)}
+              </span>
+
+              {r.state === 'needs-ack' ? (
+                <button
+                  data-testid={`login-ack-${r.site}`}
+                  onClick={() => { selectCommand(r.command); if (r.decision) requestAcknowledgement(r.command, r.decision) }}
+                  className="shrink-0 rounded px-2 py-1 text-xs"
+                  style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+                >
+                  确认后可检查
+                </button>
+              ) : (
+                <button
+                  data-testid={`login-refresh-${r.site}`}
+                  disabled={!canCheck || busy}
+                  onClick={() => enqueueLoginChecks([r.site])}
+                  title={canCheck ? '重新检查该站点' : '该站点当前不可检查'}
+                  className="shrink-0 rounded px-2 py-1 text-xs disabled:opacity-40"
+                  style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+                >
+                  刷新
+                </button>
+              )}
+            </div>
+          )
+        })}
+        {rows.length === 0 && (
+          <div className="px-3 py-4 text-sm" style={{ color: 'var(--color-fg-dim)' }}>目录里没有 whoami 命令</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 自动刷新配置存在布局那份独立 key 里,**不进 preferences**(那是执行确认的存储,受 I-P7 管辖)。 */
+function useAutoRefresh(): [{ enabled: boolean; minutes: number }, (v: { enabled: boolean; minutes: number }) => void] {
+  const [value, setValue] = useState(() => {
+    const l = loadLayout()
+    return { enabled: l.autoLoginRefresh, minutes: l.autoLoginRefreshMinutes }
+  })
+  const set = (v: { enabled: boolean; minutes: number }) => {
+    setValue(v)
+    saveLayout({ ...loadLayout(), autoLoginRefresh: v.enabled, autoLoginRefreshMinutes: v.minutes })
+  }
+  return [value, set]
+}

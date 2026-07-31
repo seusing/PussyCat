@@ -17,12 +17,12 @@ function fakeStorage(): Storage {
 }
 
 test('defaultLayout 结构正确', () => {
-  expect(defaultLayout()).toEqual({ navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false })
+  expect(defaultLayout()).toEqual({ navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
 })
 
 test('save→load 往返等值', () => {
   const s = fakeStorage()
-  const layout = { navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false }
+  const layout = { navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 }
   saveLayout(layout, s)
   expect(loadLayout(s)).toEqual(layout)
 })
@@ -58,11 +58,11 @@ test('storage 写入抛错(配额满)→ saveLayout 返回 false 不抛', () => 
 // —— normalizeLayout:非法值(负数/字符串/NaN/超界)一律夹回合法区间 ——
 describe('normalizeLayout 守卫', () => {
   it('负数→夹到 MIN', () => {
-    expect(normalizeLayout({ navWidth: -50, runsWidth: -50 })).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_MIN, navHidden: false, runsHidden: false })
+    expect(normalizeLayout({ navWidth: -50, runsWidth: -50 })).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_MIN, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
   })
 
   it('超界(过大)→夹到 MAX', () => {
-    expect(normalizeLayout({ navWidth: 99999, runsWidth: 99999 })).toEqual({ navWidth: NAV_MAX, runsWidth: RUNS_MAX, navHidden: false, runsHidden: false })
+    expect(normalizeLayout({ navWidth: 99999, runsWidth: 99999 })).toEqual({ navWidth: NAV_MAX, runsWidth: RUNS_MAX, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
   })
 
   it('字符串→回退默认值', () => {
@@ -81,25 +81,25 @@ describe('normalizeLayout 守卫', () => {
   })
 
   it('缺字段→该字段回退默认值,另一字段仍生效', () => {
-    expect(normalizeLayout({ navWidth: 320 })).toEqual({ navWidth: 320, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false })
+    expect(normalizeLayout({ navWidth: 320 })).toEqual({ navWidth: 320, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
   })
 
   it('loadLayout 端到端:存储里混入非法项也不抛且落在合法区间', () => {
     const s = fakeStorage()
     s.setItem(LAYOUT_KEY, JSON.stringify({ navWidth: -999, runsWidth: 'huge' }))
-    expect(loadLayout(s)).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false })
+    expect(loadLayout(s)).toEqual({ navWidth: NAV_MIN, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
   })
 
   // —— navHidden/runsHidden:与 navWidth/runsWidth 同款"非法即回退默认值"策略,但判据是
   // typeof === 'boolean'而非数值区间 ——
   it('非布尔(字符串/数字)→回退默认值 false', () => {
     expect(normalizeLayout({ navWidth: 300, runsWidth: 400, navHidden: 'yes', runsHidden: 1 }))
-      .toEqual({ navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false })
+      .toEqual({ navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
   })
 
   it('合法布尔值→原样透传(包括 true)', () => {
-    expect(normalizeLayout({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true }))
-      .toEqual({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true })
+    expect(normalizeLayout({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 }))
+      .toEqual({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
   })
 
   // 向后兼容:老数据只有 navWidth/runsWidth 两个字段(折叠开关上线前写入的 JSON),读出来
@@ -107,7 +107,7 @@ describe('normalizeLayout 守卫', () => {
   it('老数据(无 navHidden/runsHidden 字段)→两个新字段缺省 false,宽度字段不受影响', () => {
     const s = fakeStorage()
     s.setItem(LAYOUT_KEY, JSON.stringify({ navWidth: 300, runsWidth: 400 }))
-    expect(loadLayout(s)).toEqual({ navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false })
+    expect(loadLayout(s)).toEqual({ navWidth: 300, runsWidth: 400, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
   })
 })
 
@@ -144,5 +144,32 @@ describe('clampColumnWidth', () => {
   it('提议值本身就在收紧后的区间内→原样放行(不误夹健康值)', () => {
     const containerWidth = 1200
     expect(clampColumnWidth(300, NAV_MIN, NAV_MAX, RUNS_DEFAULT, containerWidth)).toBe(300)
+  })
+})
+
+describe('自动刷新配置(登录状态)', () => {
+  test('**默认关** —— 这是会反复动用登录态的功能,默认不能是开的', () => {
+    expect(defaultLayout().autoLoginRefresh).toBe(false)
+  })
+
+  test('老数据(没有这两个字段)读出时取默认值,宽度字段不受影响', () => {
+    const s = fakeStorage()
+    s.setItem('opencli-app:layout:v1', JSON.stringify({ navWidth: 300, runsWidth: 400 }))
+    const l = loadLayout(s)
+    expect(l.autoLoginRefresh).toBe(false)
+    expect(l.autoLoginRefreshMinutes).toBe(30)
+    expect(l.navWidth).toBe(300)
+    expect(l.runsWidth).toBe(400)
+  })
+
+  test('开关非布尔 → 回退 false(不得被字符串"true"打开)', () => {
+    expect(normalizeLayout({ autoLoginRefresh: 'true' }).autoLoginRefresh).toBe(false)
+    expect(normalizeLayout({ autoLoginRefresh: 1 }).autoLoginRefresh).toBe(false)
+  })
+
+  test('间隔越界夹回区间、非法退默认', () => {
+    expect(normalizeLayout({ autoLoginRefreshMinutes: 1 }).autoLoginRefreshMinutes).toBe(5)
+    expect(normalizeLayout({ autoLoginRefreshMinutes: 99999 }).autoLoginRefreshMinutes).toBe(240)
+    expect(normalizeLayout({ autoLoginRefreshMinutes: 'x' }).autoLoginRefreshMinutes).toBe(30)
   })
 })

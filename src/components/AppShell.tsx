@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { HealthPill } from './HealthPill'
 import { BrowserBridgeStatus } from './BrowserBridgeStatus'
 import ResizableSplit from './ResizableSplit'
+import { useAppStore } from '../store/appStore'
 import {
   loadLayout, saveLayout, clampColumnWidth,
   NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
@@ -19,10 +20,44 @@ function PanelIcon({ side }: { side: 'left' | 'right' }) {
   )
 }
 
-export default function AppShell({ nav, config, runs, catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl }: {
+
+// 模块切换器。参考界面把模块列表放在左栏,但本应用的左栏本身就是命令导航——
+// 放顶栏能同时服务三栏模式与整页模式,不必为每个模块各造一套壳。
+function ModuleTabs() {
+  const activeModule = useAppStore((s) => s.activeModule)
+  const setActiveModule = useAppStore((s) => s.setActiveModule)
+  const tabs = [
+    { key: 'commands' as const, label: '命令' },
+    { key: 'login' as const, label: '登录状态' },
+  ]
+  return (
+    <div className="flex items-center gap-1" data-testid="module-tabs">
+      {tabs.map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          data-testid={`module-tab-${t.key}`}
+          aria-pressed={activeModule === t.key}
+          onClick={() => setActiveModule(t.key)}
+          className="rounded px-2 py-1 text-xs"
+          style={{
+            background: activeModule === t.key ? 'var(--color-hover)' : 'transparent',
+            color: activeModule === t.key ? 'var(--color-fg)' : 'var(--color-fg-dim)',
+          }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export default function AppShell({ nav, config, runs, fullPage, catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl }: {
   nav: ReactNode
   config: ReactNode
   runs: ReactNode
+  /** 非空时改渲染整页模块(登录状态等),三栏与其分隔条一并让位。 */
+  fullPage?: ReactNode
   catalogStatus: 'loading' | 'ready' | 'error'
   catalogError?: string
   onRetryCatalog: () => void
@@ -89,7 +124,7 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: 'var(--color-line)' }}>
         <div className="flex items-center gap-3">
-          <button
+          {!fullPage && <button
             type="button"
             data-testid="toggle-nav"
             aria-label="显示/隐藏导航栏"
@@ -99,14 +134,15 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
             style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)', background: layout.navHidden ? 'transparent' : 'var(--color-panel)' }}
           >
             <PanelIcon side="left" />
-          </button>
-          <div className="font-semibold">抓抓</div>
+          </button>}
+          <div className="font-semibold">爪爪</div>
+          <ModuleTabs />
         </div>
         <div className="flex items-center gap-3">
           {headerActions}
           <BrowserBridgeStatus baseUrl={baseUrl} />
           <HealthPill baseUrl={baseUrl} />
-          <button
+          {!fullPage && <button
             type="button"
             data-testid="toggle-runs"
             aria-label="显示/隐藏运行面板"
@@ -116,7 +152,7 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
             style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)', background: layout.runsHidden ? 'transparent' : 'var(--color-panel)' }}
           >
             <PanelIcon side="right" />
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -140,7 +176,11 @@ export default function AppShell({ nav, config, runs, catalogStatus, catalogErro
         </div>
       )}
 
-      {catalogStatus === 'ready' && (
+      {catalogStatus === 'ready' && fullPage && (
+        <div data-testid="full-page" className="min-h-0 flex-1 overflow-auto">{fullPage}</div>
+      )}
+
+      {catalogStatus === 'ready' && !fullPage && (
         <div
           ref={gridRef}
           data-testid="app-grid"

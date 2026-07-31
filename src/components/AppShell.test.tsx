@@ -102,10 +102,10 @@ test('隐藏→再显示:恢复隐藏前的宽度(不是重置为默认值),折�
   fireEvent.click(screen.getByTestId('toggle-nav'))   // 隐藏左栏
   expect(screen.queryByTestId('col-nav')).not.toBeInTheDocument()
   expect(gridTemplate()).toBe(`minmax(${CONFIG_MIN}px, 1fr) auto 400px`)
-  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ navWidth: 350, runsWidth: 400, navHidden: true, runsHidden: false })
+  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ navWidth: 350, runsWidth: 400, navHidden: true, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
 
   fireEvent.click(screen.getByTestId('toggle-nav'))   // 再显示:宽度应是隐藏前的 350,不是 NAV_DEFAULT
   expect(screen.getByTestId('col-nav')).toBeInTheDocument()
   expect(gridTemplate()).toBe(`350px auto minmax(${CONFIG_MIN}px, 1fr) auto 400px`)
-  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ navWidth: 350, runsWidth: 400, navHidden: false, runsHidden: false })
+  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ navWidth: 350, runsWidth: 400, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
 })

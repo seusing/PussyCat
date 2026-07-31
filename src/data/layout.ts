@@ -1,5 +1,7 @@
 // 三栏布局宽度持久化——独立 localStorage key,与 preferences.ts(执行确认/收藏,受 I-P7 不落盘约束管辖)
 // 完全分离:这里存的是纯 UI 尺寸偏好,不受那份契约管辖,也不应该混进那份契约。
+import { AUTO_REFRESH_DEFAULT_MINUTES, clampIntervalMinutes } from './loginStatus'
+
 export const LAYOUT_KEY = 'opencli-app:layout:v1'
 
 export const NAV_MIN = 200
@@ -16,12 +18,15 @@ export const CONFIG_MIN = 400
 export type LayoutSnapshot = {
   navWidth: number
   runsWidth: number
+  /** 登录状态的自动刷新开关与间隔。放这里而**不放 preferences**——那是执行确认的存储,受 I-P7 管辖。 */
+  autoLoginRefresh: boolean
+  autoLoginRefreshMinutes: number
   navHidden: boolean
   runsHidden: boolean
 }
 
 export function defaultLayout(): LayoutSnapshot {
-  return { navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false }
+  return { autoLoginRefresh: false, autoLoginRefreshMinutes: AUTO_REFRESH_DEFAULT_MINUTES, navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false }
 }
 
 function resolveStorage(storage?: Storage): Storage | undefined {
@@ -54,9 +59,13 @@ export function normalizeLayout(raw: unknown): LayoutSnapshot {
   const o = raw as Record<string, unknown>
   const navWidth = isFiniteNum(o.navWidth) ? clamp(o.navWidth, NAV_MIN, NAV_MAX) : fallback.navWidth
   const runsWidth = isFiniteNum(o.runsWidth) ? clamp(o.runsWidth, RUNS_MIN, RUNS_MAX) : fallback.runsWidth
+  // 自动刷新配置同样按不可信边界处理:开关非布尔→回退 false(**默认关**,这是会反复动用
+  // 登录态的功能,默认不能是开的);间隔走 clampIntervalMinutes,非法值退默认、越界夹回区间。
+  const autoLoginRefresh = isBool(o.autoLoginRefresh) ? o.autoLoginRefresh : fallback.autoLoginRefresh
+  const autoLoginRefreshMinutes = clampIntervalMinutes(o.autoLoginRefreshMinutes)
   const navHidden = isBool(o.navHidden) ? o.navHidden : fallback.navHidden
   const runsHidden = isBool(o.runsHidden) ? o.runsHidden : fallback.runsHidden
-  return { navWidth, runsWidth, navHidden, runsHidden }
+  return { navWidth, runsWidth, navHidden, runsHidden, autoLoginRefresh, autoLoginRefreshMinutes }
 }
 
 export function loadLayout(storage?: Storage): LayoutSnapshot {

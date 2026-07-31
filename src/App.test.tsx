@@ -608,3 +608,105 @@ describe('acknowledgement 流程(Task 8)', () => {
     expect(await screen.findByTestId('acknowledge-dialog')).toBeInTheDocument()
   })
 })
+
+// ——— 登录检查的两条命门 ————————————————————————————————————————————
+// 这两条都是「写错了也没人发现」的地方:分流漏了会悄悄污染用户的运行面板,
+// 队列漏了会并发打 Host(maxConcurrentRuns=1,后来的直接 429)。
+describe('登录状态检查的接线', () => {
+  const whoami = (site: string) => ({
+    command: `${site}/whoami`, site, name: 'whoami', description: '', access: 'read' as const,
+    strategy: 'cookie', browser: true, args: [], columns: [],
+  })
+  const ackDecision = (site: string) => ({
+    commandKey: `${site}/whoami`, state: 'acknowledgement-required' as const,
+    decisionSource: 'tier-evaluation' as const, fingerprint: `fp-${site}`,
+    metadata: {
+      executionPath: 'browser-bridge' as const, authorities: ['browser-profile'], exposure: 'personal' as const,
+      effects: [] as string[], credentialFlow: 'consume' as const, residues: [] as string[],
+    },
+  })
+
+  /** 渲染 App 并暴露 startCommand 间谍与 onDone 触发器。 */
+  function renderApp(sites: string[]) {
+    const starts: { runId: string; commandKey: string }[] = []
+    let emitDone: ((e: { runId: string; at: number; outcome: 'success' | 'error'; result?: Record<string, unknown>[] }) => void) | undefined
+    const host = {
+      startCommand: vi.fn(async (req: { runId: string; commandKey: string }) => {
+        starts.push({ runId: req.runId, commandKey: req.commandKey })
+        return { runId: req.runId }
+      }),
+      cancelCommand: async () => {},
+      onOutput: () => () => {},
+      onDone: (cb: typeof emitDone) => { emitDone = cb; return () => {} },
+    }
+    const commands = sites.map(whoami)
+    const catalogSource = {
+      kind: 'live' as const,
+      load: async () => ({
+        snapshot: {
+          schemaVersion: 1, generatedAt: 1, opencliVersion: 't', source: 't',
+          listSha256: 't', manifestSha256: 't', commands,
+        },
+        decisions: sites.map(ackDecision),
+      }),
+    }
+    render(<App host={host as never} catalogSource={catalogSource as never} mode="connected" />)
+    return { starts, done: (e: Parameters<NonNullable<typeof emitDone>>[0]) => act(() => emitDone!(e)) }
+  }
+
+  // 实测更正:这条性质**不是 App 的 runId 分流保证的**,而是 store 的 appendOutput/finishRun
+  // 本就按 `currentRun.id !== e.runId` 过滤(appStore.ts:151,154)。摘掉分流后本用例仍然绿,
+  // 红的是下面那条串行队列——因为分流的**正向那一半**(把 done 路由给 finishLoginCheck)才是承重的。
+  // 如实记在这里,免得后人以为这条用例守着分流。
+  it('登录检查的终态不覆盖用户正在看的那次运行(由 store 的 runId 过滤保证)', async () => {
+    const { done } = renderApp(['xiaohongshu'])
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(1))
+    // 造一个用户自己发起的、仍在运行中的 run
+    act(() => { useAppStore.getState().selectCommand(useAppStore.getState().commands[0]); useAppStore.getState().beginRun('user-run-1') })
+    expect(useAppStore.getState().currentRun?.state).toBe('starting')
+
+    // 登录检查的 done 到达
+    done({ runId: 'login-check:xiaohongshu:n1', at: 2, outcome: 'success', result: [{ logged_in: true }] })
+
+    // 用户那次运行**必须原封不动**
+    expect(useAppStore.getState().currentRun?.id).toBe('user-run-1')
+    expect(useAppStore.getState().currentRun?.state).toBe('starting')
+    expect(useAppStore.getState().currentRun?.result).toBeUndefined()
+  })
+
+  it('队列**串行**:两个站点排队时只发一个,前一个回来才发下一个', async () => {
+    const { starts, done } = renderApp(['xiaohongshu', 'bilibili'])
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(2))
+    act(() => {
+      useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+      useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
+      useAppStore.getState().enqueueLoginChecks(['xiaohongshu', 'bilibili'])
+    })
+    await waitFor(() => expect(starts.length).toBe(1))
+    expect(starts.length).toBe(1)   // 关键:**不是 2**。Host 只允许一个并发。
+
+    const first = useAppStore.getState().loginInFlight!.runId
+    done({ runId: first, at: 3, outcome: 'success', result: [{ logged_in: true, username: '甲' }] })
+    await waitFor(() => expect(starts.length).toBe(2))
+  })
+
+  it('acknowledgement 随请求提交 —— 否则 Host 返 428', async () => {
+    const { starts } = renderApp(['xiaohongshu'])
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(1))
+    act(() => {
+      useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+      useAppStore.getState().enqueueLoginChecks(['xiaohongshu'])
+    })
+    await waitFor(() => expect(starts.length).toBe(1))
+    expect(starts[0].commandKey).toBe('xiaohongshu/whoami')
+    expect(starts[0].runId.startsWith('login-check:')).toBe(true)
+  })
+
+  it('未确认的站点**不发请求**,如实落成需先确认', async () => {
+    const { starts } = renderApp(['xiaohongshu'])
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(1))
+    act(() => { useAppStore.getState().enqueueLoginChecks(['xiaohongshu']) })
+    await waitFor(() => expect(useAppStore.getState().loginChecks.xiaohongshu?.state).toBe('needs-ack'))
+    expect(starts.length).toBe(0)
+  })
+})
