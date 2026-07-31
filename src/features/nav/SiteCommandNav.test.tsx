@@ -84,8 +84,40 @@ describe('收藏与最近分组', () => {
   test('点最近项 → selectCommand 载入表单', async () => {
     render(<SiteCommandNav />)
     const recent = screen.getByTestId('group-recent')
-    await userEvent.click(within(recent).getByText('download'))
+    // 最近项现在带站点前缀(见下条用例的理由),定位方式随之改变;断言的主语没变。
+    await userEvent.click(within(recent).getByText('小红书 · download'))
     expect(useAppStore.getState().selected?.command).toBe('xiaohongshu/download')
+  })
+
+  test('最近使用带站点名 —— 同名命令必须能区分是哪个站的', async () => {
+    // 真实场景:whoami / feed / login 在多站重复,最近列表里能同时出现三个 whoami。
+    const multi = [c('xiaohongshu', 'whoami'), c('bilibili', 'whoami'), c('github', 'whoami')]
+    useAppStore.setState({
+      commands: multi,
+      preferences: {
+        schemaVersion: 1, favoriteSites: [], favoriteCommands: [], acknowledgements: [],
+        recent: [{ command: 'xiaohongshu/whoami', at: 3 }, { command: 'bilibili/whoami', at: 2 }, { command: 'github/whoami', at: 1 }],
+      },
+    })
+    render(<SiteCommandNav />)
+    const recent = screen.getByTestId('group-recent')
+    // 试点四站用中文名;其余站点如实用 site key —— 不给 175 个站点编中文名。
+    expect(within(recent).getByText('小红书 · whoami')).toBeInTheDocument()
+    expect(within(recent).getByText('B站 · whoami')).toBeInTheDocument()
+    expect(within(recent).getByText('github · whoami')).toBeInTheDocument()
+    // 反向:光写命令名的旧形态必须不存在,否则三条会长得一模一样
+    expect(within(recent).queryByText('whoami')).not.toBeInTheDocument()
+  })
+
+  test('三个固定分组各自可折叠', async () => {
+    render(<SiteCommandNav />)
+    const toggle = screen.getByTestId('group-recent-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')   // 短列表默认展开
+    await userEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(screen.getByTestId('group-recent')).queryByText(/download/)).not.toBeInTheDocument()
+    // 只收起被点的那组:收藏组不受影响
+    expect(screen.getByTestId('group-fav-sites-toggle')).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('点常用站点 → 精确站点过滤,他站噪声不出现', async () => {

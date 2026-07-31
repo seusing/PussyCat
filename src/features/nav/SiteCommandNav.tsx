@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode, type Ref } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { searchCommands, groupBySite } from '../../data/catalog'
+import { siteLabel } from '../../data/zhCopy'
 import type { CommandManifest } from '../../data/types'
 
 function NavCommandButton({ label, cmd, stale, active, onClick }: {
@@ -22,11 +23,23 @@ function NavCommandButton({ label, cmd, stale, active, onClick }: {
   )
 }
 
-function NavSection({ title, testid, children }: { title: string; testid: string; children: ReactNode }) {
+/** 可折叠分组。标题行本身就是开关 —— 与下面「全部站点」的站点行同一套交互,不另造一种。 */
+function NavSection({ title, testid, open, onToggle, children }: {
+  title: string; testid: string; open: boolean; onToggle: () => void; children: ReactNode
+}) {
   return (
     <div className="mb-3" data-testid={testid}>
-      <div className="px-2 py-1 text-xs uppercase tracking-wide" style={{ color: 'var(--color-fg-dim)' }}>{title}</div>
-      {children}
+      <button
+        data-testid={`${testid}-toggle`}
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-xs uppercase tracking-wide"
+        style={{ color: 'var(--color-fg-dim)' }}
+      >
+        <span aria-hidden className="inline-block w-3 shrink-0">{open ? '▾' : '▸'}</span>
+        <span>{title}</span>
+      </button>
+      {open && children}
     </div>
   )
 }
@@ -43,6 +56,11 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
   // 一千多行的长带,滚轮翻不到底,站点名之间也失去了层次。收起后先看见的是 175 个站点,
   // 想看哪个点开哪个。只存在内存里:这是浏览姿势,不是用户偏好,重开应用回到干净状态更合理。
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  // 三个固定分组默认**展开**:它们是短列表(recent 上限 20、收藏由用户自己攒),
+  // 折叠的价值在于治理长列表,对短列表折叠只会多一次点击。给开关是为了让用户能把不关心的
+  // 那组收掉腾出屏幕,不是为了默认藏起来。
+  const [sectionOpen, setSectionOpen] = useState({ recent: true, favSites: true, favCommands: true })
+  const toggleSection = (k: keyof typeof sectionOpen) => setSectionOpen((s) => ({ ...s, [k]: !s[k] }))
 
   const searching = q.trim() !== ''
   const visible = useMemo(
@@ -94,18 +112,23 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
         {showGroups && (
           <>
             {recent.length > 0 && (
-              <NavSection title="最近使用" testid="group-recent">
+              <NavSection title="最近使用" testid="group-recent"
+                open={sectionOpen.recent} onToggle={() => toggleSection('recent')}>
                 {recent.map((r) => {
                   const cmd = byKey.get(r.command)
+                  // **必须带站点名**:whoami / feed / login 这类命令名在多个站点重复,
+                  // 光看命令名分不清是哪个站的——实测「最近使用」里能同时出现三个 whoami。
                   return (
-                    <NavCommandButton key={r.command} label={cmd ? cmd.name : r.command} cmd={cmd} stale={!cmd}
+                    <NavCommandButton key={r.command} label={cmd ? `${siteLabel(cmd.site)} · ${cmd.name}` : r.command}
+                      cmd={cmd} stale={!cmd}
                       active={selected?.command === r.command} onClick={() => cmd && selectCommand(cmd)} />
                   )
                 })}
               </NavSection>
             )}
             {favSites.length > 0 && (
-              <NavSection title="常用站点" testid="group-fav-sites">
+              <NavSection title="常用站点" testid="group-fav-sites"
+                open={sectionOpen.favSites} onToggle={() => toggleSection('favSites')}>
                 {favSites.map((f) => {
                   const dead = stale.sites.has(f.site)
                   return (
@@ -114,19 +137,20 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
                       title={dead ? '该站点在当前目录中已不存在' : undefined}
                       className="flex w-full items-center rounded-md px-2 py-1.5 text-left"
                       style={{ background: 'transparent', color: 'var(--color-fg)', opacity: dead ? 0.4 : 1, cursor: dead ? 'not-allowed' : 'pointer' }}>
-                      {f.site}
+                      {siteLabel(f.site)}
                     </button>
                   )
                 })}
               </NavSection>
             )}
             {favCommands.length > 0 && (
-              <NavSection title="常用命令" testid="group-fav-commands">
+              <NavSection title="常用命令" testid="group-fav-commands"
+                open={sectionOpen.favCommands} onToggle={() => toggleSection('favCommands')}>
                 {favCommands.map((f) => {
                   const cmd = byKey.get(f.command)
                   const dead = !cmd || stale.commands.has(f.command)
                   return (
-                    <NavCommandButton key={f.command} label={cmd ? `${cmd.site} · ${cmd.name}` : f.command} cmd={cmd} stale={dead}
+                    <NavCommandButton key={f.command} label={cmd ? `${siteLabel(cmd.site)} · ${cmd.name}` : f.command} cmd={cmd} stale={dead}
                       active={selected?.command === f.command} onClick={() => cmd && selectCommand(cmd)} />
                   )
                 })}
@@ -149,7 +173,7 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
                 <span aria-hidden className="inline-block w-3 shrink-0 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
                   {open ? '▾' : '▸'}
                 </span>
-                <span className="truncate">{g.site}</span>
+                <span className="truncate">{siteLabel(g.site)}</span>
                 {/* 条数是**决定要不要点开**的依据,不是装饰:12 条与 240 条的展开代价完全不同 */}
                 <span className="ml-auto shrink-0 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{g.commands.length}</span>
               </button>

@@ -46,6 +46,21 @@ const ZH: Record<string, CommandCopy> = {
   },
 }
 
+// 站点显示名。**同样只覆盖试点四站**,其余站点直接用 manifest 里的 site key。
+// 目录里有 175 个站点,给每个起中文名既没依据(manifest 不带中文名)也没必要——
+// site key 本身("bilibili"、"github")在绝大多数情况下就是最好认的写法。
+const SITE_ZH: Record<string, string> = {
+  xiaohongshu: '小红书',
+  bilibili: 'B站',
+  twitter: 'X',
+  youtube: 'YouTube',
+}
+
+/** 站点显示名:试点四站用中文,其余原样返回 site key。 */
+export function siteLabel(site: string): string {
+  return SITE_ZH[site] ?? site
+}
+
 /** 命令说明:有中文用中文,没有回落 manifest 原文。 */
 export function commandDescription(commandKey: string, fallback?: string): string {
   return ZH[commandKey]?.description ?? fallback ?? ''
