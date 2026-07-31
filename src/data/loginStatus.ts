@@ -8,7 +8,9 @@ import type { PolicyDecision } from './policy'
 
 export type LoginCheckState =
   | 'unchecked'        // 还没查过
-  | 'checking'         // 正在查
+  | 'queued'           // 已排队,等前面的跑完 —— 与 checking 分开:Host 只允许一个并发,
+                       //   把等待中的也显示成"检查中"是在说谎,用户会以为它正在跑
+  | 'checking'         // 正在查(队首那一个)
   | 'logged-in'        // whoami 返回 logged_in 为真
   | 'logged-out'       // whoami 返回 logged_in 为假
   | 'error'            // 命令执行失败(桥接没通、超时、解析失败……)

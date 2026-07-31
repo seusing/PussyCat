@@ -10,6 +10,7 @@ import { loadLayout, saveLayout } from '../../data/layout'
 
 const STATE_TEXT: Record<LoginCheckState, string> = {
   unchecked: '未检查',
+  queued: '排队中',
   checking: '检查中…',
   'logged-in': '已登录',
   'logged-out': '需重新登录',
@@ -20,6 +21,7 @@ const STATE_TEXT: Record<LoginCheckState, string> = {
 
 const STATE_COLOR: Record<LoginCheckState, string> = {
   unchecked: 'var(--color-fg-dim)',
+  queued: 'var(--color-fg-dim)',
   checking: 'var(--color-fg-dim)',
   'logged-in': 'var(--color-success)',
   'logged-out': 'var(--color-danger)',
@@ -74,15 +76,20 @@ export function LoginStatusPanel() {
       })
       .sort((a, b) => {
         // 可检查的排前面 —— 未审定的 61 条不该占据视线
-        const rank = (s: LoginCheckState) => (CHECKABLE.includes(s) || s === 'checking' ? 0 : s === 'needs-ack' ? 1 : 2)
+        const rank = (s: LoginCheckState) => (CHECKABLE.includes(s) || s === 'checking' || s === 'queued' ? 0 : s === 'needs-ack' ? 1 : 2)
         return rank(a.state) - rank(b.state) || a.site.localeCompare(b.site)
       })
   }, [commands, decisionFor, preferences, loginChecks])
 
-  const checkable = rows.filter((r) => CHECKABLE.includes(r.state) || r.state === 'checking')
+  const checkable = rows.filter((r) => CHECKABLE.includes(r.state) || r.state === 'checking' || r.state === 'queued')
   const notApproved = rows.filter((r) => r.state === 'not-approved')
   const needsAck = rows.filter((r) => r.state === 'needs-ack')
-  const busy = !!loginInFlight || loginQueue.length > 0
+  const pending = loginQueue.length + (loginInFlight ? 1 : 0)
+  // **逐行判忙,不再用全局锁。** 之前 busy 一旦为真就把所有刷新按钮一起禁用,
+  // 于是点一个站点会让其余全部变灰——那是把"串行执行"错误地表达成了"全局互斥"。
+  // 执行确实只能串行(Host maxConcurrentRuns=1,且并发会同时开多个浏览器标签抢同一 profile),
+  // 但那是**排队**,不是禁止你继续点:各行各自排队、各自显示自己的状态。
+  const isRowBusy = (site: string) => loginInFlight?.site === site || loginQueue.includes(site)
 
   // 自动刷新:**只在应用运行期生效**,组件卸载即清。绝不写操作系统级定时任务。
   // 只排已确认且判决允许的站点 —— 遇到 needs-ack **跳过而不是弹框**,
@@ -117,12 +124,12 @@ export function LoginStatusPanel() {
         style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
         <button
           data-testid="refresh-all-logins"
-          disabled={busy || checkable.length === 0}
+          disabled={checkable.length === 0}
           onClick={() => enqueueLoginChecks(checkable.map((r) => r.site))}
           className="rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50"
           style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
         >
-          {busy ? `检查中…（剩 ${loginQueue.length + (loginInFlight ? 1 : 0)}）` : '全部刷新'}
+          {pending > 0 ? `全部刷新（排队 ${pending}）` : '全部刷新'}
         </button>
 
         <label className="flex items-center gap-2 text-sm">
@@ -164,7 +171,8 @@ export function LoginStatusPanel() {
 
       <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
         {rows.map((r) => {
-          const canCheck = CHECKABLE.includes(r.state)
+          const rowBusy = isRowBusy(r.site)
+          const canCheck = CHECKABLE.includes(r.state) && !rowBusy
           return (
             <div key={r.commandKey} data-testid={`login-row-${r.site}`}
               className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0"
@@ -198,9 +206,9 @@ export function LoginStatusPanel() {
               ) : (
                 <button
                   data-testid={`login-refresh-${r.site}`}
-                  disabled={!canCheck || busy}
+                  disabled={!canCheck}
                   onClick={() => enqueueLoginChecks([r.site])}
-                  title={canCheck ? '重新检查该站点' : '该站点当前不可检查'}
+                  title={rowBusy ? '该站点已在队列中' : canCheck ? '重新检查该站点' : '该站点当前不可检查'}
                   className="shrink-0 rounded px-2 py-1 text-xs disabled:opacity-40"
                   style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
                 >

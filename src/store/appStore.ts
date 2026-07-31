@@ -190,7 +190,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const add = sites.filter((x) => !busy.has(x))
     if (add.length === 0) return s
     const checks = { ...s.loginChecks }
-    for (const site of add) checks[site] = { ...checks[site], site, state: 'checking' }
+    for (const site of add) checks[site] = { ...checks[site], site, state: 'queued' }
     return { loginQueue: [...s.loginQueue, ...add], loginChecks: checks }
   }),
   beginLoginCheck: (site, runId) => set((s) => ({

@@ -112,10 +112,48 @@ test('自动刷新配置落到布局那份存储,不进 preferences', async () =
   expect(prefsRaw ?? '').not.toContain('autoLoginRefresh')
 })
 
-test('队列非空时按钮进入忙碌态,避免连点把队列堆爆', () => {
+test('**点一个站点不会让其他站点变灰** —— 串行执行是排队,不是全局互斥', async () => {
+  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
+  const prefs = useAppStore.getState().preferences
+  setup({ preferences: prefs })
+  render(<LoginStatusPanel />)
+
+  await userEvent.click(screen.getByTestId('login-refresh-xiaohongshu'))
+
+  // 被点的那个进入队列、按钮禁用(避免重复入列)
+  expect(screen.getByTestId('login-refresh-xiaohongshu')).toBeDisabled()
+  // **其他站点必须仍然可点** —— 这是本次修复的命门
+  expect(screen.getByTestId('login-refresh-bilibili')).toBeEnabled()
+
+  // 点第二个:两个都排上,互不阻塞
+  await userEvent.click(screen.getByTestId('login-refresh-bilibili'))
+  expect(useAppStore.getState().loginQueue.sort()).toEqual(['bilibili', 'xiaohongshu'])
+})
+
+test('排队中与检查中分开显示 —— 等待中的不谎称正在跑', () => {
+  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
+  const prefs = useAppStore.getState().preferences
+  setup({
+    preferences: prefs,
+    loginQueue: ['bilibili'],
+    loginInFlight: { site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' },
+    loginChecks: {
+      xiaohongshu: { site: 'xiaohongshu', state: 'checking' },
+      bilibili: { site: 'bilibili', state: 'queued' },
+    },
+  })
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('检查中')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('排队中')
+  expect(screen.getByTestId('login-state-bilibili')).not.toHaveTextContent('检查中')
+})
+
+test('「全部刷新」在有任务排队时仍可点 —— 它只是把剩下的加进队列', () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   setup({ loginQueue: ['xiaohongshu'], preferences: useAppStore.getState().preferences })
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('refresh-all-logins')).toBeDisabled()
-  expect(screen.getByTestId('refresh-all-logins')).toHaveTextContent('检查中')
+  expect(screen.getByTestId('refresh-all-logins')).toBeEnabled()
+  expect(screen.getByTestId('refresh-all-logins')).toHaveTextContent('排队 1')
 })
