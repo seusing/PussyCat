@@ -59,7 +59,7 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
   // 三个固定分组默认**展开**:它们是短列表(recent 上限 20、收藏由用户自己攒),
   // 折叠的价值在于治理长列表,对短列表折叠只会多一次点击。给开关是为了让用户能把不关心的
   // 那组收掉腾出屏幕,不是为了默认藏起来。
-  const [sectionOpen, setSectionOpen] = useState({ recent: true, favSites: true, favCommands: true })
+  const [sectionOpen, setSectionOpen] = useState({ recent: true, favSites: true, favCommands: true, allSites: true })
   const toggleSection = (k: keyof typeof sectionOpen) => setSectionOpen((s) => ({ ...s, [k]: !s[k] }))
 
   const searching = q.trim() !== ''
@@ -156,10 +156,25 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
                 })}
               </NavSection>
             )}
-            <div className="px-2 py-1 text-xs uppercase tracking-wide" style={{ color: 'var(--color-fg-dim)' }}>全部站点</div>
           </>
         )}
-        {groups.map((g) => {
+        {/* 「全部站点」本身也可整体收起 —— 有收藏与最近使用时,用户常常根本不需要看这 175 行。
+            没有那些分组时(showGroups 为假)不显示标题行:此时站点列表就是导航的全部内容,
+            给它一个能把整个界面清空的开关只会制造困惑。 */}
+        {showGroups && (
+          <button
+            data-testid="group-all-sites-toggle"
+            onClick={() => toggleSection('allSites')}
+            aria-expanded={sectionOpen.allSites}
+            className="flex w-full items-center gap-1.5 px-2 py-1 text-xs uppercase tracking-wide"
+            style={{ color: 'var(--color-fg-dim)' }}
+          >
+            <span aria-hidden className="inline-block w-3 shrink-0">{sectionOpen.allSites ? '▾' : '▸'}</span>
+            <span>全部站点</span>
+            <span className="ml-auto shrink-0">{groups.length}</span>
+          </button>
+        )}
+        {(!showGroups || sectionOpen.allSites) && groups.map((g) => {
           const open = isExpanded(g.site)
           return (
             <div key={g.site} className="mb-0.5">

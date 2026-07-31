@@ -109,6 +109,27 @@ describe('收藏与最近分组', () => {
     expect(within(recent).queryByText('whoami')).not.toBeInTheDocument()
   })
 
+  test('「全部站点」整体可折叠 —— 有收藏/最近时,那 175 行常常根本不需要看', async () => {
+    render(<SiteCommandNav />)
+    const toggle = screen.getByTestId('group-all-sites-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('site-row-12306')).toBeInTheDocument()
+    await userEvent.click(toggle)
+    expect(screen.queryByTestId('site-row-12306')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('site-row-xiaohongshu')).not.toBeInTheDocument()
+    // 收起「全部站点」不影响其它分组
+    expect(screen.getByTestId('group-recent')).toBeInTheDocument()
+  })
+
+  test('没有收藏/最近分组时不显示「全部站点」开关 —— 否则能把整个导航清空', () => {
+    useAppStore.setState({
+      preferences: { schemaVersion: 1, favoriteSites: [], favoriteCommands: [], recent: [], acknowledgements: [] },
+    })
+    render(<SiteCommandNav />)
+    expect(screen.queryByTestId('group-all-sites-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('site-row-12306')).toBeInTheDocument()   // 站点列表照常渲染
+  })
+
   test('三个固定分组各自可折叠', async () => {
     render(<SiteCommandNav />)
     const toggle = screen.getByTestId('group-recent-toggle')
