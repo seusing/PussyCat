@@ -6,6 +6,18 @@ import { validate } from './validation'
 import { DynamicField } from './DynamicField'
 import { CopyButton } from '../../components/CopyButton'
 import { explainDecision, isRunnable } from '../../data/policy'
+import { commandDescription } from '../../data/zhCopy'
+
+// 「已确认」状态条的措辞:必须说清**撤销的是什么**。
+// 原先只有一个孤零零的「撤销确认」链接——用户看不出撤销掉的是哪一项授予,只知道有个东西能撤。
+// 这里把授予内容摊开来讲,撤销按钮跟在它后面,语义自洽。
+const AUTHORITY_GRANT: Record<string, string> = {
+  'browser-profile': '使用浏览器里的登录状态',
+  'public-network': '访问对应网站',
+  'ambient-local-files': '读取本机相关文件',
+  'explicit-local-input': '读取你在表单里填写的内容',
+  'live-local-app': '连接本机正在运行的程序',
+}
 
 export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; registerSubmit?: (fn: (() => void) | null) => void }) {
   const selected = useAppStore((s) => s.selected)
@@ -57,6 +69,11 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
   // 撤销后 isAcknowledged 变 false,下次运行会重新弹确认框——不影响 Host 判决本身(I-P5)。
   const acknowledged = decision?.state === 'acknowledgement-required' && !!decision.fingerprint
     && isAcknowledged(preferences, selected.command, decision.fingerprint)
+  // 授予内容取自 Host 下发的判决 metadata,**不在前端另编一套说法**:
+  // 确认框里写的是什么,这里就复述什么,否则两处措辞会各自漂移。
+  const grants = (decision?.metadata?.authorities ?? [])
+    .map((a) => AUTHORITY_GRANT[a])
+    .filter((label): label is string => !!label)
 
   return (
     <div>
@@ -87,11 +104,12 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
         <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
         {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
       </div>
-      <p className="mb-4 text-sm" style={{ color: 'var(--color-fg-dim)' }}>{selected.description}</p>
+      {/* 试点八条用中文精简说明,其余回落 manifest 原文(见 data/zhCopy.ts:不做机翻) */}
+      <p className="mb-4" style={{ color: 'var(--color-fg-dim)' }}>{commandDescription(selected.command, selected.description)}</p>
 
       <div className="mb-4">
         {selected.args.map((arg) => (
-          <DynamicField key={arg.name} arg={arg} value={values[arg.name]} error={errors[arg.name]}
+          <DynamicField key={arg.name} arg={arg} commandKey={selected.command} value={values[arg.name]} error={errors[arg.name]}
             onChange={(v) => { setValue(arg.name, v); setErrors((e) => { const { [arg.name]: _drop, ...rest } = e; return rest }) }} />
         ))}
         {selected.args.length === 0 && <div className="text-sm" style={{ color: 'var(--color-fg-dim)' }}>此命令无参数</div>}
@@ -113,10 +131,21 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
         </p>
       )}
       {acknowledged && (
-        <button data-testid="revoke-acknowledge" onClick={() => revokeAcknowledgementCommand(selected.command)}
-          className="mt-1 block text-xs underline" style={{ color: 'var(--color-fg-dim)' }}>
-          撤销确认
-        </button>
+        <div data-testid="acknowledged-banner"
+          className="mt-3 flex items-center gap-3 rounded-lg px-3 py-2 text-xs"
+          style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          <span aria-hidden style={{ color: 'var(--color-success)' }}>✓</span>
+          <span style={{ color: 'var(--color-fg-dim)' }}>
+            已允许本命令
+            {grants.length > 0 ? `：${grants.join('、')}` : '按已确认的范围执行'}
+          </span>
+          <button data-testid="revoke-acknowledge" onClick={() => revokeAcknowledgementCommand(selected.command)}
+            className="ml-auto shrink-0 rounded px-2 py-1"
+            title="撤销后再次运行会重新弹出确认框"
+            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}>
+            撤销
+          </button>
+        </div>
       )}
     </div>
   )

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommandConfig } from './CommandConfig'
 import { useAppStore } from '../../store/appStore'
@@ -154,5 +154,70 @@ describe('撤销确认入口(Task 8)', () => {
     useAppStore.setState({ selected: ackCmd, values: {}, currentRun: undefined, decisions: new Map([[ackCmd.command, ackDecision]]) })
     render(<CommandConfig onRun={() => {}} />)
     expect(screen.queryByTestId('revoke-acknowledge')).not.toBeInTheDocument()
+  })
+})
+
+// 已确认状态条:原先只有一个孤零零的「撤销确认」链接,看不出撤销的是什么。
+// 现在把**授予内容**摊开写在撤销按钮旁边,语义自洽。
+describe('已确认状态条说清授予了什么', () => {
+  beforeEach(() => { useAppStore.setState({ preferences: emptyPreferences() }) })
+
+  const pilotCmd: CommandManifest = {
+    command: 'bilibili/hot', site: 'bilibili', name: 'hot', description: 'B站热门视频', access: 'read', browser: true, args: [],
+  }
+  const decisionWith = (authorities: string[]) => new Map([[pilotCmd.command, {
+    commandKey: pilotCmd.command, state: 'acknowledgement-required' as const, decisionSource: 'tier-evaluation' as const,
+    fingerprint: 'fp-hot',
+    metadata: { executionPath: 'browser-bridge' as const, authorities, exposure: 'public' as const, effects: [] as string[], credentialFlow: 'consume' as const, residues: [] as string[] },
+  }]])
+
+  test('列出判决 metadata 里的授予项,而不是前端另编一套说法', () => {
+    useAppStore.getState().acknowledgeCommand(pilotCmd.command, 'fp-hot', 100)
+    useAppStore.setState({ selected: pilotCmd, values: {}, currentRun: undefined, decisions: decisionWith(['browser-profile', 'public-network']) })
+    render(<CommandConfig onRun={() => {}} />)
+    const banner = screen.getByTestId('acknowledged-banner')
+    expect(banner).toHaveTextContent('使用浏览器里的登录状态')
+    expect(banner).toHaveTextContent('访问对应网站')
+    // 撤销按钮在状态条**内部**,与它说明的那件事绑在一起
+    expect(within(banner).getByTestId('revoke-acknowledge')).toBeInTheDocument()
+  })
+
+  test('authorities 为空时不写出空的冒号列表', () => {
+    useAppStore.getState().acknowledgeCommand(pilotCmd.command, 'fp-hot', 100)
+    useAppStore.setState({ selected: pilotCmd, values: {}, currentRun: undefined, decisions: decisionWith([]) })
+    render(<CommandConfig onRun={() => {}} />)
+    const banner = screen.getByTestId('acknowledged-banner')
+    expect(banner).toHaveTextContent('已允许本命令按已确认的范围执行')
+    expect(banner.textContent).not.toContain('：')
+  })
+
+  test('未确认时整条状态条都不出现', () => {
+    useAppStore.setState({ selected: pilotCmd, values: {}, currentRun: undefined, decisions: decisionWith(['browser-profile']) })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.queryByTestId('acknowledged-banner')).not.toBeInTheDocument()
+  })
+})
+
+describe('命令说明:试点八条用中文,其余回落 manifest 原文', () => {
+  test('试点命令显示中文精简说明,不显示英文原文', () => {
+    const timeline: CommandManifest = {
+      command: 'twitter/timeline', site: 'twitter', name: 'timeline',
+      description: "Fetch the logged-in user's home timeline (for-you algorithmic feed by default)",
+      access: 'read', browser: true, args: [],
+    }
+    useAppStore.setState({ selected: timeline, values: {}, currentRun: undefined, decisions: new Map() })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.getByText('读取你的 X 首页时间线')).toBeInTheDocument()
+    expect(screen.queryByText(/Fetch the logged-in user/)).not.toBeInTheDocument()
+  })
+
+  test('非试点命令**如实回落英文原文** —— 不做机翻、不留半截译文', () => {
+    const other: CommandManifest = {
+      command: 'bilibili/history', site: 'bilibili', name: 'history',
+      description: 'List recently watched videos', access: 'read', browser: true, args: [],
+    }
+    useAppStore.setState({ selected: other, values: {}, currentRun: undefined, decisions: new Map() })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.getByText('List recently watched videos')).toBeInTheDocument()
   })
 })
