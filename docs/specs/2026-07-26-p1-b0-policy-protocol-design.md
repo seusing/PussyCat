@@ -516,6 +516,28 @@ type ActivityEntry = {
 
 > **代码 DoD 与真机证据门是两级**：fixture 全过即可合并；真机门待环境具备后补。**未验时不得宣称 1a 真机闭环。**
 
+#### 10.2.1 执行记录 —— 2026-07-31：**已通过，1a 真机闭环成立**
+
+执行人为仓库所有者，在装有 OpenCLI Browser Bridge 扩展、四站点均已登录的 Chrome profile 上，跑**打包安装后的** `OpenCLI App Clone 0.1.0`（NSIS 产物，构建自 `73ebe22`）。上表四条的对象已由三条 `local-direct` 命令**换成 browser-cookie-read-pilot 八条**（`xiaohongshu|bilibili|twitter|youtube` 的 `whoami` 与各自的 feed/hot/timeline/subscriptions），另加两道本里程碑新增面的门。结论：**全部通过，无异常**。
+
+| 门 | 内容 | 结果 |
+|---|---|---|
+| 桥接状态 | 就绪态显示 daemon/扩展/profile 三项；退出 Chrome 后「重新检测」如实转为「扩展未连上」 | ✅ |
+| 八条命令 | 逐条首次运行弹确认框（含「数据敏感度」「将会」两行），确认后取得真实结果；`bilibili/hot` 虽为 `public` 仍弹框 | ✅ |
+| 结果渲染 | `twitter/timeline` 的 `media_urls` / `quoted_tweet` 可读，URL 可点，无 `[object Object]` | ✅ |
+| 拒绝面 | 非试点的 `bilibili/history` 与显式 deny 的 `paperreview/review` 均置灰并就地说明 | ✅ |
+| 确认持久 | 完全退出应用重开后，已确认命令不再弹框 | ✅ |
+| 撤销 | 撤销后再运行，重新要求确认 | ✅ |
+| 指纹漂移 | 改 `bilibili/hot` 的 `exposure` 并重建 Host 后，仅该命令要求重新确认，其余不受影响 | ✅ |
+| Host 断开 | 整体标「未连接」，非逐条置灰 | ✅ |
+
+**两处对本节前提的更正，记在这里免得后人照旧文重做一遍：**
+
+1. **第 4 条的隔离性已转为代码覆盖。** `policy-fingerprint.test.mjs` 的冻结指纹表现覆盖全部 11 条审定记录：注入 `bilibili/hot: public → personal` 后实测**恰好 1 条**失配，其余 10 条不变。「改一条不波及其他」不再依赖人工验证。
+2. **旧文称本门是「无关命令的 deny 变化不作废其他确认」的唯一验证点 —— 该说法不成立。** `matchedDenyRule` 在 `policy.mjs` 中恒为 `null`（命中 deny 的命令在算法第 1 步即 return），**今天没有任何路径能让它非空**，人工操作同样构造不出该场景。代码测不了的原因正是它在现实中还不会发生；真要验证，需先出现「非 deny 的规则类型」。
+
+**`twitter/timeline` 耗时：本轮未单独计时。** 但它**成功返回**这一事实本身给出一个硬上界——超过 Host 的 90s 闸会以 `OpenCLI timed out after 90000ms` 失败（`run-manager.mjs:280`），故本次单次运行 < 90s。这是**一个样本**，不构成 P95。审定文档 §4.4 定的重新裁决触发条件（P95 > 90s）因此**仍然开着**，需多次运行的实测才能关闭。
+
 ---
 
 ## 11. 残余风险与 spike 链接
