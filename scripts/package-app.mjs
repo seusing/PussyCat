@@ -59,11 +59,18 @@ function readStamp() {
   try { return JSON.parse(readFileSync(STAMP, 'utf8')) } catch { return undefined }
 }
 
-/** 当前源码身份:commit + 工作区是否有未提交改动(脏则带 -dirty,永远与已提交态不等值)。 */
-function sourceIdentity() {
+/**
+ * 源码身份快照。**只在开头取一次,全程复用。**
+ *
+ * 曾经的 bug:identity 在脚本开头算、commit 在写 stamp 时又算一遍,中间隔着 1-2 分钟的构建。
+ * 构建期间只要有人提交,两个字段就指向不同的 commit —— 而 stamp 存在的全部意义就是回答
+ * 「这个包是哪个提交打的」,两字段自相矛盾时它一句话都不可信。
+ * 实测撞到过一次(source=c713e2b 而 commit=a8fe82d),不是理论风险。
+ */
+function sourceSnapshot() {
   const commit = git('rev-parse', 'HEAD')
   const dirty = git('status', '--porcelain') !== ''
-  return dirty ? `${commit}-dirty` : commit
+  return { commit, dirty, identity: dirty ? `${commit}-dirty` : commit }
 }
 
 /** 现有产物(只认当前 productName 的那一份)。 */
@@ -97,7 +104,8 @@ function pruneForeignArtifacts(name) {
 }
 
 const name = productName()
-const identity = sourceIdentity()
+const source = sourceSnapshot()
+const identity = source.identity
 const stamp = readStamp()
 const artifacts = currentArtifacts(name)
 const upToDate = !!stamp && stamp.source === identity && stamp.productName === name && artifacts.length > 0
@@ -157,11 +165,20 @@ if (fresh.length === 0) {
 const pruned = pruneForeignArtifacts(name)
 if (pruned.length > 0) console.log(`\n[package] 已清理历代改名残留:${pruned.join(', ')}`)
 
+// 构建期间 HEAD 变了吗?变了说明产物来源是**混合态**:构建读盘就发生在这段时间里,
+// 拿到的可能是变更前、变更后,甚至半新半旧。不失败(产物是真的,多半就是想要的那个),
+// 但必须如实记下并显眼地说 —— 本脚本的承诺是"能说清这个包是哪个提交打的",
+// 说不清时就要说说不清,不能默默给一个好看的 commit。
+const headAfter = git('rev-parse', 'HEAD')
+const treeChangedDuringBuild = headAfter !== source.commit
+
 mkdirSync(dirname(STAMP), { recursive: true })
 writeFileSync(STAMP, `${JSON.stringify({
   productName: name,
   source: identity,
-  commit: git('rev-parse', 'HEAD'),
+  commit: source.commit,
+  dirty: source.dirty,
+  ...(treeChangedDuringBuild ? { treeChangedDuringBuild: true, headAfterBuild: headAfter } : {}),
   builtAt: new Date(startedAt).toISOString(),
   artifacts: fresh,
 }, null, 2)}\n`)
@@ -169,6 +186,10 @@ writeFileSync(STAMP, `${JSON.stringify({
 console.log(`\n[package] ✅ ${name} 打包完成`)
 console.log(`[package] 源码 ${identity}`)
 for (const a of fresh) console.log(`  ${a}`)
-if (identity.endsWith('-dirty')) {
+if (source.dirty) {
   console.log('[package] ⚠️ 工作区有未提交改动,这个包对应的不是任何一个提交。')
+}
+if (treeChangedDuringBuild) {
+  console.log(`[package] ⚠️ 构建期间 HEAD 从 ${source.commit.slice(0, 12)} 变成了 ${headAfter.slice(0, 12)}。`)
+  console.log('[package] 这个包的来源是混合态,归属说不清。建议重跑一次以拿到可归属的产物。')
 }
