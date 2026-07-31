@@ -9,3 +9,4 @@ dist-host/
 !.env.node
 .DS_Store
 coverage/
+.package-stamp.json
