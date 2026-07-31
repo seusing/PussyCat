@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "OpenCLI App Clone",
+  "productName": "抓抓",
   "version": "0.1.0",
   "identifier": "dev.lauseusing.opencli-app-clone",
   "build": {

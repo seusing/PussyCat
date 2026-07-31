@@ -163,7 +163,7 @@ fn open_main_window(app: &tauri::AppHandle, port: u16, pid: u32) -> tauri::Resul
         MAIN_WINDOW_LABEL,
         WebviewUrl::App("index.html".into()),
     )
-    .title("OpenCLI App Clone")
+    .title("抓抓")
     .inner_size(1280.0, 800.0)
     .min_inner_size(960.0, 600.0)
     .center()
@@ -260,7 +260,7 @@ fn error_view_url(error: &HostStartError, log_dir: Option<&str>) -> Url {
 
 fn open_error_window(app: &tauri::AppHandle, url: Url) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, ERROR_WINDOW_LABEL, WebviewUrl::CustomProtocol(url))
-        .title("OpenCLI App Clone — 启动失败")
+        .title("抓抓 — 启动失败")
         .inner_size(780.0, 560.0)
         .center()
         .build()?;

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 「抓抓」应用图标:扁平化英短蓝猫头像。
+       取材自参考照片的三个识别特征——灰蓝毛色、圆脸厚颊、琥珀色圆眼。
+       刻意不用照片裁剪:照片在 16×16(任务栏/托盘最小尺寸)下会糊成一团灰点,
+       而这三个特征用色块表达时在小尺寸仍可辨认。 -->
+  <defs>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8b95a3"/>
+      <stop offset="1" stop-color="#5d6875"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b313c"/>
+      <stop offset="1" stop-color="#1b2028"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- 耳朵:先画,让头部盖住根部 -->
+  <path d="M136 168 L150 66 L246 130 Z" fill="url(#fur)"/>
+  <path d="M376 168 L362 66 L266 130 Z" fill="url(#fur)"/>
+  <path d="M158 158 L167 104 L219 138 Z" fill="#c98b93"/>
+  <path d="M354 158 L345 104 L293 138 Z" fill="#c98b93"/>
+
+  <!-- 头:宽扁的圆,厚颊是英短最强的轮廓特征 -->
+  <ellipse cx="256" cy="286" rx="164" ry="146" fill="url(#fur)"/>
+
+  <!-- 眼睛:琥珀色,占比刻意放大——小尺寸下这是唯一还能读出"猫"的元素 -->
+  <ellipse cx="192" cy="268" rx="42" ry="44" fill="#f0a318"/>
+  <ellipse cx="320" cy="268" rx="42" ry="44" fill="#f0a318"/>
+  <ellipse cx="192" cy="270" rx="21" ry="30" fill="#14181f"/>
+  <ellipse cx="320" cy="270" rx="21" ry="30" fill="#14181f"/>
+  <circle cx="201" cy="252" r="9" fill="#ffffff" opacity="0.9"/>
+  <circle cx="329" cy="252" r="9" fill="#ffffff" opacity="0.9"/>
+
+  <!-- 鼻与嘴:小三角 + 一道浅弧,不画细节 -->
+  <path d="M240 336 L272 336 L256 356 Z" fill="#2f3540"/>
+  <path d="M256 356 v14" stroke="#2f3540" stroke-width="9" stroke-linecap="round"/>
+  <path d="M256 370 q-26 22 -46 4" stroke="#2f3540" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M256 370 q26 22 46 4" stroke="#2f3540" stroke-width="9" fill="none" stroke-linecap="round"/>
+</svg>
