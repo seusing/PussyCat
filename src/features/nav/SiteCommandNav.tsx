@@ -12,11 +12,12 @@ function NavCommandButton({ label, cmd, stale, active, onClick }: {
       onClick={onClick}
       disabled={disabled}
       title={stale ? '该命令在当前目录中已不存在' : undefined}
-      className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm"
+      className="flex w-full items-center rounded-md px-2 py-1.5 text-left"
       style={{ background: active ? 'var(--color-hover)' : 'transparent', color: 'var(--color-fg)', opacity: stale ? 0.4 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
     >
+      {/* access(read/write)**不在导航里显示** —— 它是命令的属性,不是找命令的线索,
+          放在这里只是给 1278 行每行加一列噪声。详情页有徽标,那里才是它该在的位置。 */}
       <span className="truncate">{label}</span>
-      {cmd && <span className="text-xs" style={{ color: cmd.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{cmd.access}</span>}
     </button>
   )
 }
@@ -38,7 +39,12 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
   const stale = useAppStore((s) => s.stale)
   const [q, setQ] = useState('')
   const [siteFilter, setSiteFilter] = useState<string | null>(null)
+  // 手动展开的站点。**默认全收起** —— 全目录 175 站点 / 1278 命令,平铺展开时导航是一条
+  // 一千多行的长带,滚轮翻不到底,站点名之间也失去了层次。收起后先看见的是 175 个站点,
+  // 想看哪个点开哪个。只存在内存里:这是浏览姿势,不是用户偏好,重开应用回到干净状态更合理。
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
+  const searching = q.trim() !== ''
   const visible = useMemo(
     () => (siteFilter ? commands.filter((c) => c.site === siteFilter) : searchCommands(commands, q)),
     [commands, q, siteFilter],
@@ -48,7 +54,22 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
   const favSites = useMemo(() => [...preferences.favoriteSites].sort((a, b) => a.createdAt - b.createdAt), [preferences.favoriteSites])
   const favCommands = useMemo(() => [...preferences.favoriteCommands].sort((a, b) => a.createdAt - b.createdAt), [preferences.favoriteCommands])
   const recent = preferences.recent
-  const showGroups = q.trim() === '' && !siteFilter && (recent.length + favSites.length + favCommands.length) > 0
+  const showGroups = !searching && !siteFilter && (recent.length + favSites.length + favCommands.length) > 0
+
+  const toggleSite = (site: string) => setExpanded((prev) => {
+    const next = new Set(prev)
+    if (next.has(site)) next.delete(site)
+    else next.add(site)
+    return next
+  })
+
+  // 三种情况下不需要用户再点一次展开:
+  //   · 搜索中 —— 结果本就是筛过的少量,收起等于把搜出来的东西又藏起来;
+  //   · 站点过滤中 —— 用户已明确表达"只看这个站";
+  //   · 该站点含当前选中的命令 —— 否则选中项会藏在收起的行里,看不见高亮。
+  const isExpanded = (site: string) => (
+    searching || siteFilter === site || selected?.site === site || expanded.has(site)
+  )
 
   return (
     <div className="flex h-full flex-col">
@@ -59,7 +80,7 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
           value={q}
           onChange={(e) => { setQ(e.target.value); setSiteFilter(null) }}
           placeholder="搜索服务或命令"
-          className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+          className="w-full rounded-lg px-3 py-2 outline-none"
           style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
         />
       </div>
@@ -91,7 +112,7 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
                     <button key={f.site} data-testid={`fav-site-nav-${f.site}`}
                       onClick={() => { setSiteFilter(f.site); setQ('') }} disabled={dead}
                       title={dead ? '该站点在当前目录中已不存在' : undefined}
-                      className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm"
+                      className="flex w-full items-center rounded-md px-2 py-1.5 text-left"
                       style={{ background: 'transparent', color: 'var(--color-fg)', opacity: dead ? 0.4 : 1, cursor: dead ? 'not-allowed' : 'pointer' }}>
                       {f.site}
                     </button>
@@ -114,26 +135,41 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
             <div className="px-2 py-1 text-xs uppercase tracking-wide" style={{ color: 'var(--color-fg-dim)' }}>全部站点</div>
           </>
         )}
-        {groups.map((g) => (
-          <div key={g.site} className="mb-3">
-            <div className="px-2 py-1 text-xs uppercase tracking-wide" style={{ color: 'var(--color-fg-dim)' }}>{g.site}</div>
-            {g.commands.map((cmd) => {
-              const active = selected?.command === cmd.command
-              return (
-                <button
-                  key={cmd.command}
-                  onClick={() => selectCommand(cmd)}
-                  className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm"
-                  style={{ background: active ? 'var(--color-hover)' : 'transparent', color: 'var(--color-fg)' }}
-                >
-                  <span>{cmd.name}</span>
-                  <span className="text-xs" style={{ color: cmd.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{cmd.access}</span>
-                </button>
-              )
-            })}
-          </div>
-        ))}
-        {groups.length === 0 && <div className="px-3 py-2 text-sm" style={{ color: 'var(--color-fg-dim)' }}>无匹配命令</div>}
+        {groups.map((g) => {
+          const open = isExpanded(g.site)
+          return (
+            <div key={g.site} className="mb-0.5">
+              <button
+                data-testid={`site-row-${g.site}`}
+                onClick={() => toggleSite(g.site)}
+                aria-expanded={open}
+                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left"
+                style={{ color: 'var(--color-fg)' }}
+              >
+                <span aria-hidden className="inline-block w-3 shrink-0 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                  {open ? '▾' : '▸'}
+                </span>
+                <span className="truncate">{g.site}</span>
+                {/* 条数是**决定要不要点开**的依据,不是装饰:12 条与 240 条的展开代价完全不同 */}
+                <span className="ml-auto shrink-0 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{g.commands.length}</span>
+              </button>
+              {open && g.commands.map((cmd) => {
+                const active = selected?.command === cmd.command
+                return (
+                  <button
+                    key={cmd.command}
+                    onClick={() => selectCommand(cmd)}
+                    className="flex w-full items-center rounded-md py-1.5 pl-7 pr-2 text-left"
+                    style={{ background: active ? 'var(--color-hover)' : 'transparent', color: 'var(--color-fg)' }}
+                  >
+                    <span className="truncate">{cmd.name}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })}
+        {groups.length === 0 && <div className="px-3 py-2" style={{ color: 'var(--color-fg-dim)' }}>无匹配命令</div>}
       </nav>
     </div>
   )

@@ -429,6 +429,8 @@ describe('前端不自行裁决(对抗 fixture)', () => {
       }],
       onStart: start,
     })
+    // 导航站点默认收起,先展开再点命令 —— 只是到达路径变了,断言的对抗语义原样保留
+    await userEvent.click(await screen.findByTestId('site-row-x'))
     await userEvent.click(await screen.findByText('looks-ok'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeDisabled()
     expect(screen.getByText(/演示用拒绝/)).toBeInTheDocument()
@@ -457,6 +459,7 @@ describe('前端不自行裁决(对抗 fixture)', () => {
       }],
       onStart: start,
     })
+    await userEvent.click(await screen.findByTestId('site-row-y'))
     await userEvent.click(await screen.findByText('looks-bad'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeEnabled()
   })
@@ -472,6 +475,7 @@ describe('前端不自行裁决(对抗 fixture)', () => {
       onStart: start,
     })
     expect(await screen.findByTestId('policy-disconnected')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('site-row-z'))
     await userEvent.click(await screen.findByText('empty'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeDisabled()
     expect(start).not.toHaveBeenCalled()

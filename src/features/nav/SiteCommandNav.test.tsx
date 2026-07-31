@@ -12,13 +12,28 @@ beforeEach(() => {
   useAppStore.setState({ commands: [c('12306', 'login'), c('12306', 'orders'), c('xiaohongshu', 'download')], selected: undefined, values: {} })
 })
 
-test('渲染站点分组与命令', () => {
+test('站点默认收起:先看见站点行与条数,命令不平铺', () => {
   render(<SiteCommandNav />)
   expect(screen.getByText('12306')).toBeInTheDocument()
-  expect(screen.getByText('download')).toBeInTheDocument()
+  expect(screen.getByTestId('site-row-12306')).toHaveAttribute('aria-expanded', 'false')
+  // 断言的是「默认不平铺」这条新语义,而不是把旧的正向断言翻成反向:
+  // 下一条用例立刻证明展开后它确实在。
+  expect(screen.queryByText('orders')).not.toBeInTheDocument()
 })
 
-test('搜索过滤命令', async () => {
+test('点站点行展开该站命令,再点收起', async () => {
+  render(<SiteCommandNav />)
+  await userEvent.click(screen.getByTestId('site-row-12306'))
+  expect(screen.getByTestId('site-row-12306')).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByText('orders')).toBeInTheDocument()
+  expect(screen.getByText('login')).toBeInTheDocument()
+  // 只展开被点的那个:他站仍收起
+  expect(screen.queryByText('download')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('site-row-12306'))
+  expect(screen.queryByText('orders')).not.toBeInTheDocument()
+})
+
+test('搜索时自动展开命中站点 —— 搜出来的东西不该再被收起藏住', async () => {
   render(<SiteCommandNav />)
   await userEvent.type(screen.getByTestId('nav-search'), 'download')
   expect(screen.getByText('download')).toBeInTheDocument()
@@ -27,8 +42,25 @@ test('搜索过滤命令', async () => {
 
 test('点击命令写入 selected', async () => {
   render(<SiteCommandNav />)
+  await userEvent.click(screen.getByTestId('site-row-12306'))
   await userEvent.click(screen.getByText('login'))
   expect(useAppStore.getState().selected?.command).toBe('12306/login')
+})
+
+test('选中项所在站点自动展开 —— 否则高亮藏在收起的行里看不见', () => {
+  useAppStore.setState({ selected: c('xiaohongshu', 'download') })
+  render(<SiteCommandNav />)
+  expect(screen.getByTestId('site-row-xiaohongshu')).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByText('download')).toBeInTheDocument()
+  // 对照:无关站点仍收起,证明上面不是"全都展开了"
+  expect(screen.getByTestId('site-row-12306')).toHaveAttribute('aria-expanded', 'false')
+})
+
+test('导航项不显示 read/write —— 那是命令属性,不是找命令的线索', async () => {
+  render(<SiteCommandNav />)
+  await userEvent.click(screen.getByTestId('site-row-12306'))
+  const row = screen.getByText('login').closest('button')!
+  expect(row.textContent).toBe('login')
 })
 
 describe('收藏与最近分组', () => {
@@ -73,9 +105,12 @@ describe('收藏与最近分组', () => {
   test('清除 chip → 回全列表;输入搜索 → 退出站点过滤', async () => {
     render(<SiteCommandNav />)
     await userEvent.click(screen.getByTestId('fav-site-nav-xiaohongshu'))
+    // 先钉住过滤态:他站**确实不在**。少了这句,下面"回来了"在任何状态下都成立。
+    expect(screen.queryByTestId('site-row-12306')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('site-filter-clear'))
     expect(screen.queryByTestId('site-filter-chip')).not.toBeInTheDocument()
-    expect(screen.getByText('login')).toBeInTheDocument()          // 12306 回来了
+    // 站点默认收起后,"12306 回来了"的观察点从命令名移到站点行——主语没变,事实源变了。
+    expect(screen.getByTestId('site-row-12306')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('fav-site-nav-xiaohongshu'))
     await userEvent.type(screen.getByTestId('nav-search'), 'or')
     expect(screen.queryByTestId('site-filter-chip')).not.toBeInTheDocument()
