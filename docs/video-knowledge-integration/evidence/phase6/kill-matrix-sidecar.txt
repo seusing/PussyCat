@@ -1,0 +1,15 @@
+PASS one python child running mid-flight — pids=17880
+PASS typed crash diagnostic — sidecar-exited
+PASS old in-memory job id is gone after restart (documented lifetime)
+PASS restart reconcile marked the orphan run interrupted — [["run:6e426647-d8e1-41ff-ae6f-2bd698c5ef6b","interrupted"]]
+PASS restart itself spent zero (no new model calls) — calls=2
+PASS stale upload id is rejected after restart (process-lifetime contract)
+PASS explicit resubmit completes after crash — status=done
+PASS resubmit spend is exactly one fresh run (chapter+claim) — calls=4
+PASS sqlite integrity ok after hard kill — ok
+PASS zero orphan python at the end
+{
+  "vkKillMatrix": true,
+  "modelCalls": 4,
+  "checks": 10
+}
