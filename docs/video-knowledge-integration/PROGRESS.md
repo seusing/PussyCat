@@ -40,7 +40,7 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
 | phase2 持久化与幂等 | complete | evidence/phase2/ + vk docs/evidence/vk-shell-v1-phase2-persistence.v1.json（endpoint c59e778,api 1.1.0）。Node 脱敏影子→phase3 落地;三层 kill 矩阵→phase6 验收 |
 | phase3 Node Host 集成 | complete | evidence/phase3/(红/绿/真机冒烟 11 项)+ 本仓 3958bfd/cda6365/cb52f11 + vk api 1.2.0(endpoint 380d56a) |
 | phase4 视频解析标签页 | complete | evidence/phase4/(绿门+浏览器真机六项实录)+ 本仓 5e8d109/a488fe1/54dfc89 |
-| phase5 运行时与数据生命周期 | todo | - |
+| phase5 运行时与数据生命周期 | complete(机器侧) | evidence/phase5/ + 本仓 071de7b/ff84f62 + vk@18da94a(wheel 762649c0…,SBOM 25 组件,凭据 0/0,跨项目 import 0)。遗留归 phase6:安装包捆 wheel+uv、media-asr 真装入 runtime、卸载真机验证 |
 | phase6 测试与真实验收 | todo | - |
 
 ## Log
@@ -111,3 +111,21 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
     404——改保留冒号的 path 编码(测试红→绿抓获)。
   - 浏览器真机:真 vite+真 Node+真 Python——标签切换、api 1.2.0 握手、
     全链路预检(引擎解析默认值)、费用对话框弹出与取消,逐项实录入证据。
+- 2026-08-01 phase5 完成(机器侧;vitest 627 不动、cargo 19→20):
+  - **固定 SHA wheel**(vk@18da94a):video_knowledge-0.1.0 sha256
+    762649c0…,uv 原生 cyclonedx1.5 SBOM(25 组件)+ 第三方 licenses
+    (3 个诚实 UNKNOWN)+ 既有 inventory 工具全跑(凭据扫描 repo/wheel 0/0、
+    跨项目 import 0)。
+  - **版本化独立 runtime**:uv 独立 CPython venv、四道 smoke(import/console/
+    真 gui API 握手 1.2.0/临时库迁移 001..007)全绿才 active.json 原子切换;
+    坏 wheel 注入实证 FAIL 后 active 稳在旧版;真实 vk.db 迁移前备份、
+    失败自动还原。**MAX_PATH 实测坑**:深路径下 uv(\\?\)写得进、Python
+    io.open 读不出→装完即坏,已加 home>100 字符预检拒绝。
+  - **数据生命周期**:report/verify(integrity+悬空,经 active runtime 零新
+    依赖)/export/clean(dry-run 默认)/purge 全流程真跑;purge 后 db_exists=
+    false、仅 runtime 存留。
+  - **Rust 打包态**:configure_host_env 只信 %LOCALAPPDATA%\爪爪-data\runtime\
+    active.json(fail-closed 单测),数据根与安装目录分离=卸载默认保留知识库。
+  - 归 phase6:安装包捆 wheel+uv 与安装时装 runtime、media-asr 真装
+    (最小复现:`node scripts/install-vk-runtime.mjs --wheel <whl> --home %LOCALAPPDATA%\爪爪-data --extra media-asr`,
+    预检 5GiB)、卸载/保留真机矩阵。
