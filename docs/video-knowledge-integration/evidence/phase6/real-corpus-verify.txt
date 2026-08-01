@@ -1,0 +1,11 @@
+PASS historical real runs listed from vk.db — done runs=10 total rows=10
+PASS real ledger costs surface on rows — sum=8.3279 CNY(历史已付,非本次)
+PASS run view rebuilds outputs — note=out_a2f91ca2a8e1421e8a2ca3bcbdf7e51e
+PASS view carries zero absolute paths
+PASS real note downloadable with substance — bytes=10096
+PASS real-corpus query answers with citations — status=answered citations=5
+PASS zero orphan python
+{
+  "vkRealCorpus": true,
+  "checks": 7
+}

@@ -1,0 +1,3 @@
+=== installer hashes ===
+dd4a490071ac4fcf63628c53a7efc98e974338fdd2f22b137c18622772fabafb */c/Users/Lauseusing/Developer/opencli-app-clone/src-tauri/target/release/bundle/nsis/爪爪_0.1.0_x64-setup.exe
+f873a7d68e620c2c77b5ab2d6f2cde825fa7369b135acd1037e2b3a3b6216844 */c/Users/Lauseusing/Developer/opencli-app-clone/src-tauri/target/release/bundle/msi/爪爪_0.1.0_x64_zh-CN.msi
