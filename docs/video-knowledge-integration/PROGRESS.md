@@ -41,7 +41,7 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
 | phase3 Node Host 集成 | complete | evidence/phase3/(红/绿/真机冒烟 11 项)+ 本仓 3958bfd/cda6365/cb52f11 + vk api 1.2.0(endpoint 380d56a) |
 | phase4 视频解析标签页 | complete | evidence/phase4/(绿门+浏览器真机六项实录)+ 本仓 5e8d109/a488fe1/54dfc89 |
 | phase5 运行时与数据生命周期 | complete(机器侧) | evidence/phase5/ + 本仓 071de7b/ff84f62 + vk@18da94a(wheel 762649c0…,SBOM 25 组件,凭据 0/0,跨项目 import 0)。遗留归 phase6:安装包捆 wheel+uv、media-asr 真装入 runtime、卸载真机验证 |
-| phase6 测试与真实验收 | todo | - |
+| phase6 测试与真实验收 | complete(机器侧;外部项见 BLOCKED B1–B5) | evidence/phase6/(fixture E2E 16/16、kill 矩阵 10/10、Playwright 5/5、真实语料 7/7、安装载荷 E2E、七类反向映射、安装包哈希)+ FINAL-INVENTORY.md |
 
 ## Log
 
@@ -129,3 +129,24 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
   - 归 phase6:安装包捆 wheel+uv 与安装时装 runtime、media-asr 真装
     (最小复现:`node scripts/install-vk-runtime.mjs --wheel <whl> --home %LOCALAPPDATA%\爪爪-data --extra media-asr`,
     预检 5GiB)、卸载/保留真机矩阵。
+- 2026-08-01 phase6 完成(机器侧;剩余外部项 BLOCKED B1–B5 各附三点验证+
+  责任边界+下一动作):
+  - **零费 fixture E2E 16/16**:本机 LLM stub + 真三层栈完整闭环——上传→预检→
+    费用确认→真 DAG done(恰 2 次模型调用)→产物/证据覆盖/查询 5 引用→幂等
+    同任务→完整 cache hit(0 费 0 调用)→零孤儿。vk 真校验还当场咬出 stub
+    章节片尾越界(quarantined),修正后绿——校验门是活的。
+  - **sidecar kill 矩阵 10/10**:执行中强杀→sidecar-exited 类型化诊断→懒重拉
+    +reconcile interrupted→重启零自动扣费(调用计数冻结)→旧 upload id 按
+    进程生命周期契约 404→重传重提交 done(+2 次=新决策)→SQLite ok→零孤儿。
+  - **Playwright 5/5**(chromium,真 vite node 模式+真 Host 43199+真 sidecar):
+    宽/窄/键盘/错误恢复(坏 upload 源在提交边界类型化报错后修正恢复)/
+    UI 闭环(预检→费用对话框→确认→已完成行(实际费用)→详情→笔记→查询引用)。
+  - **真实语料 7/7(零新费用)**:sidecar 指向仓外 M4 真库(先备份
+    vk.db.backup-vk-shell-verify-*,boot 迁移把真库前移 001..007、integrity ok)
+    ——10 条真实 run 台账重现(历史实付 ¥8.3279 原样)、真笔记 10096B 经
+    opaque id 下载、"帕鲁" 真 FTS 查询 5 引用、零绝对路径。
+  - **安装包**:npm run package 全门后产 NSIS+MSI(哈希入册);msiexec /a
+    零登记抽取→vk 载荷四件在包→抽出 exe 真启动拉起 Node 子进程→收树零孤儿;
+    用户现有安装目录全程未读未写。
+  - **七类反向注入映射**:协议版本/字段截断/预算越界/路径泄露/幂等/崩溃/
+    token 泄露 → 逐条锚到红→绿测试(adversarial-negative-map.md)。
