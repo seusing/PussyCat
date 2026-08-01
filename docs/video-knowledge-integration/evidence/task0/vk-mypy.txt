@@ -1,0 +1,2 @@
+Success: no issues found in 85 source files
+EXITCODE=0

@@ -1,0 +1,44 @@
+warning: linker stdout: 正在创建库 C:\Users\Lauseusing\Developer\opencli-app-clone\src-tauri\target\debug\deps\opencli_app_lib.dll.lib 和对象 C:\Users\Lauseusing\Developer\opencli-app-clone\src-tauri\target\debug\deps\opencli_app_lib.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `opencli-app-clone` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.12s
+     Running unittests src\lib.rs (target\debug\deps\opencli_app_lib-7662e9b2caff1db8.exe)
+
+running 19 tests
+test host_supervisor::tests::host_entry_resource_is_relative_and_mirrors_topology ... ok
+test host_supervisor::tests::parse_major_accepts_v_prefix_and_bare_version ... ok
+test host_supervisor::tests::supervision_requires_at_least_one_real_channel ... ok
+test tests::every_error_kind_is_routed_by_the_error_page ... ok
+test host_supervisor::tests::verdict_branches_stay_distinguishable ... ok
+test tests::boot_script_injects_a_json_literal ... ok
+test tests::resource_path_is_handed_to_node_without_the_verbatim_prefix ... ok
+test tests::untrusted_text_survives_the_query_round_trip ... ok
+test host_supervisor::tests::system_tools_resolve_under_system32 ... ok
+test tests::detail_is_dropped_when_empty_and_clamped_when_huge ... ok
+test host_supervisor::tests::resolve_program_only_trusts_absolute_path_entries ... ok
+test host_supervisor::tests::host_env_surface_is_fully_pinned ... ok
+test host_supervisor::tests::kill_on_job_close_actually_terminates_the_child ... ok
+test host_supervisor::tests::start_host_reports_process_failed_when_host_exits_early ... ok
+test host_supervisor::tests::kill_on_job_close_terminates_the_whole_subtree ... ok
+test host_supervisor::tests::wait_for_exit_is_bounded_and_terminate_reaps ... ok
+test host_supervisor::tests::start_host_reaps_child_when_host_reports_failure ... ok
+test host_supervisor::tests::start_host_reaps_child_when_readiness_line_is_malformed ... ok
+test host_supervisor::tests::abandon_reaps_a_child_that_ignores_stdin_eof ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.27s
+
+     Running unittests src\main.rs (target\debug\deps\opencli_app_clone-92ecaa62d42edb9b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests opencli_app_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+EXITCODE=0

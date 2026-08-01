@@ -1,0 +1,76 @@
+{
+  "schema": "vk-integration-baseline.v1",
+  "captured_at": "2026-08-01",
+  "goal_source": "用户 goal.txt(2026-08-01 下发,85 行,爪爪视频解析闭环)",
+  "install_dir_readonly": "C:\\Users\\Lauseusing\\AppData\\Local\\爪爪",
+  "remote_policy": "远端 push=0;远端标签发布=0;原作者 remote 修改=0",
+  "repos": {
+    "video-knowledge": {
+      "path": "C:\\Users\\Lauseusing\\Developer\\video-knowledge-m1-productization",
+      "start_branch": "integration/m1-productization",
+      "work_branch": "integration/vk-shell-v1",
+      "fork_head": "db4bb40cbceeab2ea7f8476b77f4a7b60997a07d",
+      "clean_at_fork": true,
+      "task0_drift_fix_commit": "6abd39e",
+      "code_endpoint_after_task0": "db4bb40cbceeab2ea7f8476b77f4a7b60997a07d",
+      "drift_found_and_fixed": [
+        "state gate FAIL: endpoint d83aa7b lagged HEAD db4bb40 by non-docs commit (tools/render_m4_candidates_html.py) → endpoint re-anchored at db4bb40, gate PASS 8/8",
+        "M4-ACCEPTANCE.md lacked its own superseded banner while ledger said m4-pass1 superseded → banner added, body unchanged, history preserved"
+      ],
+      "remote": {
+        "upstream_fetch": "https://github.com/ALBEDO-TABAI/video-expert-analyzer-vnext.git",
+        "upstream_push": "no_push://upstream"
+      },
+      "tags": [
+        "m0-complete", "m0-k-v1.1", "m1-anon-youtube-v1.0", "m1-dag-v1.0",
+        "m1-m2a-v1.0", "m1-m2b-v1.0", "m1-p0-v1.0", "m1-p1-v1.0",
+        "m1-p15-v1.0", "m1-p3a-v1.0", "m1-xhs-research-v1.0",
+        "m1a-v1.0", "m1a-v1.0.1", "upstream-baseline"
+      ],
+      "sibling_worktrees": [
+        "video-knowledge [main @caefe21]",
+        "video-knowledge-anon-research [research/anonymous-youtube-20260729]",
+        "video-knowledge-integration [integration/m1a-product-entry]",
+        "video-knowledge-m1a [m1a-platform-session]",
+        "video-knowledge-m2a-benchmark [benchmark/m2a-whisperx-20260729]",
+        "video-knowledge-m2b-benchmark [benchmark/m2b-pyannote-20260730]",
+        "video-knowledge-m3a-visual [feature/m3a-visual-20260730]",
+        "video-knowledge-xhs-research [research/xhs-single-note-20260731]"
+      ],
+      "verification": {
+        "pytest": { "command": "uv run --no-sync pytest", "summary": "1123 passed, 6 skipped, 2 deselected, 23 warnings in 37.88s", "exit_code": 0, "evidence": "evidence/task0/vk-pytest.txt" },
+        "ruff": { "command": "uv run --no-sync ruff check", "summary": "All checks passed!", "exit_code": 0, "evidence": "evidence/task0/vk-ruff.txt" },
+        "mypy": { "command": "uv run --no-sync mypy", "summary": "Success: no issues found in 85 source files", "exit_code": 0, "evidence": "evidence/task0/vk-mypy.txt" },
+        "uv_lock_check": { "command": "uv lock --check", "summary": "Resolved 215 packages in 1ms", "exit_code": 0, "evidence": "evidence/task0/vk-uv-lock.txt" }
+      },
+      "matches_known_baseline": true,
+      "known_baseline": "HEAD db4bb40;1123 passed、6 skipped、2 deselected;Ruff、strict mypy 85 files、uv lock --check 通过"
+    },
+    "opencli-app-clone": {
+      "path": "C:\\Users\\Lauseusing\\Developer\\opencli-app-clone",
+      "start_branch": "p1b0/policy-protocol-spec",
+      "work_branch": "integration/vk-shell-v1",
+      "fork_head": "54ddac4672ec5633f48fcb6f8c240e472b65309c",
+      "clean_at_fork": true,
+      "remote": {
+        "origin_fetch": "https://github.com/seusing/opencli-app-clone.git",
+        "origin_push": "https://github.com/seusing/opencli-app-clone.git",
+        "note": "push URL 可用但按目标书纪律禁止 push;不修改 remote 配置"
+      },
+      "tags": [ "p1-a-complete" ],
+      "verification": {
+        "vitest": { "command": "npm run test", "summary": "Test Files 47 passed (47); Tests 583 passed (583)", "exit_code": 0, "evidence": "evidence/task0/oc-vitest.txt" },
+        "cargo": { "command": "cargo test (src-tauri)", "summary": "test result: ok. 19 passed; 0 failed (main suite) + 2 empty targets", "exit_code": 0, "evidence": "evidence/task0/oc-cargo.txt" },
+        "build": { "command": "npm run build (tsc && vite build)", "summary": "built in 1.13s; dist/index.html + assets emitted", "exit_code": 0, "evidence": "evidence/task0/oc-build.txt" }
+      },
+      "matches_known_baseline": true,
+      "known_baseline": "HEAD 54ddac4;Vitest 583、Cargo 19、npm build 通过"
+    }
+  },
+  "ratchet_floors": {
+    "vk_pytest_passed": 1123,
+    "vk_mypy_files": 85,
+    "oc_vitest_passed": 583,
+    "oc_cargo_passed": 19
+  }
+}

@@ -1,0 +1,77 @@
+
+> opencli-app-clone@0.0.0 test
+> vitest run
+
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mC:/Users/Lauseusing/Developer/opencli-app-clone[39m
+
+ [32m✓[39m src/data/zhCopy.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m src/data/policy.test.ts [2m([22m[2m16 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+ [32m✓[39m src/shared/normalize.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+ [32m✓[39m src/data/loginStatus.test.ts [2m([22m[2m18 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m src/data/command.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m src/features/config/validation.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+ [32m✓[39m src/host/mockHost.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m src/data/layout.test.ts [2m([22m[2m25 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m src/lib/clipboard.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+ [32m✓[39m src/data/copyPayload.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m src/store/runMachine.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+ [32m✓[39m src/shared/catalogSchema.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+ [32m✓[39m src/host/catalogSource.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+ [32m✓[39m src/data/preferences.test.ts [2m([22m[2m23 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+ [32m✓[39m src/data/preferences.fuzz.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+ [32m✓[39m src/data/catalog.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 24[2mms[22m[39m
+ [32m✓[39m src/host/nodeBridgeHost.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+ [32m✓[39m src/store/appStore.test.ts [2m([22m[2m32 tests[22m[2m)[22m[90m 26[2mms[22m[39m
+ [32m✓[39m src/host/index.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m src/components/ResizableSplit.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[90m 106[2mms[22m[39m
+ [32m✓[39m src/features/runs/renderCellValue.test.tsx [2m([22m[2m14 tests[22m[2m)[22m[90m 76[2mms[22m[39m
+ [32m✓[39m src/components/HealthPill.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[90m 120[2mms[22m[39m
+ [32m✓[39m src/components/BrowserBridgeStatus.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[90m 219[2mms[22m[39m
+ [32m✓[39m src/components/AppShell.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[90m 180[2mms[22m[39m
+ [32m✓[39m src/features/config/AcknowledgeDialog.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 351[2mms[22m[39m
+ [32m✓[39m server/browser-bridge-health.test.mjs [2m([22m[2m12 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m server/run-manager.test.mjs [2m([22m[2m10 tests[22m[2m)[22m[90m 19[2mms[22m[39m
+ [32m✓[39m src/features/login/LoginStatusPanel.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 447[2mms[22m[39m
+ [32m✓[39m server/opencli-entry.test.mjs [2m([22m[2m3 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+ [32m✓[39m server/policy-fingerprint.test.mjs [2m([22m[2m21 tests[22m[2m)[22m[90m 42[2mms[22m[39m
+ [32m✓[39m server/policy-types.test.mjs [2m([22m[2m12 tests[22m[2m)[22m[90m 34[2mms[22m[39m
+ [32m✓[39m server/catalog-service.test.mjs [2m([22m[2m13 tests[22m[2m)[22m[90m 44[2mms[22m[39m
+ [32m✓[39m server/policy-legacy-baseline.test.mjs [2m([22m[2m5 tests[22m[2m)[22m[90m 54[2mms[22m[39m
+ [32m✓[39m server/policy.test.mjs [2m([22m[2m37 tests[22m[2m)[22m[90m 72[2mms[22m[39m
+ [32m✓[39m src/features/config/CommandConfig.test.tsx [2m([22m[2m18 tests[22m[2m)[22m[33m 798[2mms[22m[39m
+ [32m✓[39m server/policy-decisions.test.mjs [2m([22m[2m41 tests[22m[2m)[22m[33m 375[2mms[22m[39m
+[90mstderr[2m | server/host-server.test.mjs[2m > [22m[2mNode Host HTTP/SSE[2m > [22m[2mSSE 重启补发:gap 之后必须补发新进程已缓存的全部事件(评审 P1——旧实现全过滤掉)
+[22m[39m[opencli-host] SSE replay gap (restart): client resumed at 99, lost 1-? (bufferSize=2048)
+
+[90mstderr[2m | server/host-server.test.mjs[2m > [22m[2mNode Host HTTP/SSE[2m > [22m[2mSSE 补发缺口:服务端重启(客户端游标超前)同样告知 reason=restart(评审 I-3)
+[22m[39m[opencli-host] SSE replay gap (restart): client resumed at 99, lost 1-? (bufferSize=2048)
+
+[90mstderr[2m | server/host-server.test.mjs[2m > [22m[2mNode Host HTTP/SSE[2m > [22m[2mSSE 补发缺口:被驱逐的事件段以 gap 事件显式告知(不再静默丢失)
+[22m[39m[opencli-host] SSE replay gap (evicted): client resumed at 1, lost 2-2 (bufferSize=2)
+
+[90mstderr[2m | server/host-server.test.mjs[2m > [22m[2m/browser-bridge/health[2m > [22m[2m受 Origin 白名单管辖 —— 非法 Origin 拿不到诊断
+[22m[39m[opencli-host] rejected Origin: http://evil.example (allowed: http://127.0.0.1:5173)
+
+ [32m✓[39m server/host-server.test.mjs [2m([22m[2m38 tests[22m[2m)[22m[90m 257[2mms[22m[39m
+ [32m✓[39m src/features/runs/RunPanel.test.tsx [2m([22m[2m17 tests[22m[2m)[22m[33m 1031[2mms[22m[39m
+   [33m[2m✓[22m[39m 端到端：运行一条 mock 命令走到成功终态并出表格 [33m320[2mms[22m[39m
+ [32m✓[39m src/features/nav/SiteCommandNav.test.tsx [2m([22m[2m16 tests[22m[2m)[22m[33m 1208[2mms[22m[39m
+ [32m✓[39m src/host/errors.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+ [32m✓[39m src/data/inputKind.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+ [32m✓[39m src/errorPage.test.ts [2m([22m[2m11 tests[22m[2m)[22m[90m 164[2mms[22m[39m
+ [32m✓[39m src/components/CopyButton.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 1776[2mms[22m[39m
+   [33m[2m✓[22m[39m 1.5s 后文案回弹 [33m1551[2mms[22m[39m
+ [32m✓[39m src/components/UndoToast.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 119[2mms[22m[39m
+ [32m✓[39m src/App.test.tsx [2m([22m[2m37 tests[22m[2m)[22m[33m 2191[2mms[22m[39m
+ [32m✓[39m scripts/check-legacy-baseline.test.mjs [2m([22m[2m6 tests[22m[2m)[22m[33m 2073[2mms[22m[39m
+ [32m✓[39m server/readiness.test.mjs [2m([22m[2m7 tests[22m[2m)[22m[33m 2582[2mms[22m[39m
+   [33m[2m✓[22m[39m readiness 协议[2m > [22m成功:恰一行机器可读 JSON,含真实随机端口与 policy 计数 [33m301[2mms[22m[39m
+   [33m[2m✓[22m[39m 父进程存活通道(stdin EOF 看门狗)[2m > [22m开关不设(默认):stdin 关闭后进程照活——看门狗由开关控制,dev:server 行为不变 [33m1638[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m47 passed[39m[22m[90m (47)[39m
+[2m      Tests [22m [1m[32m583 passed[39m[22m[90m (583)[39m
+[2m   Start at [22m 18:52:56
+[2m   Duration [22m 6.58s[2m (transform 4.12s, setup 14.90s, collect 15.71s, tests 14.57s, environment 59.47s, prepare 11.20s)[22m
+
+EXITCODE=0
