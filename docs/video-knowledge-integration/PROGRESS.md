@@ -39,7 +39,7 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
 | phase1 vk-shell-v1 契约冻结 | complete | evidence/phase1/ + vk 契约 docs/SHELL-INTEGRATION-CONTRACT.md + 本地 tag vk-shell-v1（endpoint 0f784c3） |
 | phase2 持久化与幂等 | complete | evidence/phase2/ + vk docs/evidence/vk-shell-v1-phase2-persistence.v1.json（endpoint c59e778,api 1.1.0）。Node 脱敏影子→phase3 落地;三层 kill 矩阵→phase6 验收 |
 | phase3 Node Host 集成 | complete | evidence/phase3/(红/绿/真机冒烟 11 项)+ 本仓 3958bfd/cda6365/cb52f11 + vk api 1.2.0(endpoint 380d56a) |
-| phase4 视频解析标签页 | todo | - |
+| phase4 视频解析标签页 | complete | evidence/phase4/(绿门+浏览器真机六项实录)+ 本仓 5e8d109/a488fe1/54dfc89 |
 | phase5 运行时与数据生命周期 | todo | - |
 | phase6 测试与真实验收 | todo | - |
 
@@ -97,3 +97,17 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
     由 supervisor 显式设值);cargo env 面扫描测试红→绿。
   - **真机双进程闭环**:真 Node spawn 真 Python 487ms ready、preview 全链路、
     优雅关停零孤儿(scripts/verify-vk-sidecar.mjs,11/11)。
+- 2026-08-01 phase4 完成(本仓 3 commits;vitest 606→627、tsc 零错、build ✓、
+  浏览器真机六项实录):
+  - **「视频解析」第三标签页**:健康条(api 版本+环境能力真实状态,
+    missing_dependency 如实展示)、全字段提交表单、预检显示引擎解析投影+
+    输出目标+区间估算(M0 实测为据,缺样本 unknown+原因)、**费用确认对话框**
+    (拍板 5.5:每次都弹、估算不是承诺、不存储)、任务列表与详情(真实状态/
+    已耗时/实际费用,零推测百分比;budget_stop 横幅;证据覆盖;产物下载;
+    cancel/retry/强制重跑)、会话诊断、知识库查询(带引用)。
+  - **「送去视频解析」**:采集结果行 URL 嗅探,store 只交接规范化 URL+脱敏
+    provenance(commandKey/collectedAt),零行数据、零第二种 manifest。
+  - **真实缺陷修复**:run:<id> 的冒号被 encodeURIComponent 编码致真实链路
+    404——改保留冒号的 path 编码(测试红→绿抓获)。
+  - 浏览器真机:真 vite+真 Node+真 Python——标签切换、api 1.2.0 握手、
+    全链路预检(引擎解析默认值)、费用对话框弹出与取消,逐项实录入证据。
