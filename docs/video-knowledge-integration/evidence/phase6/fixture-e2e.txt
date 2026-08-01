@@ -1,0 +1,21 @@
+PASS upload returns opaque upload_id (no path)
+PASS preview resolves full request
+PASS job created
+PASS real DAG completed — status=done elapsed=1s
+PASS actual cost recorded and within cap — cost=0.005
+PASS request_fingerprint exposed for the shadow
+PASS model stub called exactly twice (chapter+claim) — calls=2
+PASS evidence coverage: search+query available — {"search_document":"available","query_ready":"available"}
+PASS job view carries zero absolute paths
+PASS markdown note downloadable with claim content — bytes=1030
+PASS product artifact downloadable
+PASS query answered with citations — citations=5
+PASS idempotent resubmit returns the same job with zero new model calls
+PASS full cache hit: done with zero cost and zero new model calls — cost=0 calls=2
+PASS jobs listing shows both jobs
+PASS graceful shutdown leaves zero orphan python
+{
+  "vkFixtureE2E": true,
+  "modelCalls": 2,
+  "checks": 16
+}
