@@ -9,5 +9,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/vitest.setup.ts'],
+    // e2e/ 属 Playwright(独立 runner),不进 vitest 收集面
+    exclude: ['**/node_modules/**', '**/dist/**', '**/dist-host/**', 'e2e/**'],
   },
 })

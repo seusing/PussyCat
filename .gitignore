@@ -10,3 +10,7 @@ dist-host/
 .DS_Store
 coverage/
 .package-stamp.json
+
+# Playwright artifacts
+test-results/
+playwright-report/
