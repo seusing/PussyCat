@@ -1,0 +1,6 @@
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1152 passed, 6 skipped, 2 deselected, 23 warnings in 36.07s
+All checks passed!
+Success: no issues found in 86 source files
+Resolved 215 packages in 1ms
+DIFFCHECK=clean

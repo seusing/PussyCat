@@ -1,0 +1,8 @@
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\knowledge\test_web_shell_contract.py:19: in <module>
+    from video_knowledge.web_ui import SHELL_API_VERSION, create_web_server
+E   ImportError: cannot import name 'SHELL_API_VERSION' from 'video_knowledge.web_ui' (C:\Users\Lauseusing\Developer\video-knowledge-m1-productization\src\video_knowledge\web_ui.py)
+=========================== short test summary info ===========================
+ERROR tests/knowledge/test_web_shell_contract.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.53s

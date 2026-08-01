@@ -36,7 +36,7 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
 | Stage | Status | Evidence |
 | --- | --- | --- |
 | task0 事实基线 | complete | BASELINE.json + evidence/task0/ + vk@6abd39e |
-| phase1 vk-shell-v1 契约冻结 | todo | - |
+| phase1 vk-shell-v1 契约冻结 | complete | evidence/phase1/ + vk 契约 docs/SHELL-INTEGRATION-CONTRACT.md + 本地 tag vk-shell-v1（endpoint 0f784c3） |
 | phase2 持久化与幂等 | todo | - |
 | phase3 Node Host 集成 | todo | - |
 | phase4 视频解析标签页 | todo | - |
@@ -53,3 +53,18 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
     tools/ 脚本的 db4bb40)→ endpoint 重锚 db4bb40;M4-ACCEPTANCE.md 补
     superseded 横幅(正文原样保留)。门重跑 PASS 8/8。vk 提交 `6abd39e`。
   - 专用分支 `integration/vk-shell-v1` 两仓建立,起点 clean。
+- 2026-08-01 phase1 完成(vk 仓 8 commits,db4bb40→30e9ab1,tag `vk-shell-v1`):
+  - **契约冻结**:`docs/SHELL-INTEGRATION-CONTRACT.md`——/api/meta 握手(api 1.0.0/
+    schema 1.1.0/包版本/环境级能力五态)、GET /api/jobs 列表、POST preview/jobs 接受
+    完整 ProcessingRequest 并 schema 校验(默认值只在 vk 解析一次)、retry+refresh
+    均复用同一请求对象且带 parent_job_id(refresh 显式绕过来源版本缓存)、
+    VK_UI_TOKEN shell 模式全路由认证、opaque out_/up_ id、响应与错误文本零绝对路径。
+  - **max_cost_cny 硬上限**:中央模型调用边界每次 transport 前按最坏情况预估,
+    越界零发送终止;typed reason/actual/limit 落 pipeline_runs(migration 007)+
+    IngestReport.budget_stop + 视图;CLI 退出码 6。指纹画布冻结在 1.0.0 投影,
+    既有语料 run cache 逐字节存活(oracle 测试为证)。
+  - **红→绿**:红证据 evidence/phase1/red-*.txt;绿收口 1152 passed/6 skipped/
+    2 deselected(棘轮 1123→1134→1148→1152)+ ruff/mypy 86/lock/diff 全过
+    (evidence/phase1/green-vk-phase1-gates.txt);vk 状态一致性门 PASS 8/8。
+  - **两个载荷级发现**:gui ready 行管道下被块缓冲(Node spawn 场景握手必死)→
+    flush 入契约;存量 queued-cancel 竞态(原码 8 跑 4 挂)→ 确定性化且断言加强。
