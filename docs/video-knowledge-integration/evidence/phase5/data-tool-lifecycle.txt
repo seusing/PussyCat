@@ -1,0 +1,42 @@
+=== report ===
+[vk-data] home=C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo
+[vk-data] runtime  0.047GiB
+[vk-data] models   0.000GiB
+[vk-data] data     0.000GiB
+[vk-data] cache    0.000GiB
+[vk-data] temp     0.000GiB
+[vk-data] disk-free 283.979GiB
+=== verify (expect integrity ok, dangling 0) ===
+{
+  "db_exists": true,
+  "integrity": "ok",
+  "counts": {
+    "artifacts": 0,
+    "search_documents": 0,
+    "link_edges": 0,
+    "pipeline_runs": 0
+  },
+  "dangling_artifact_files": [],
+  "upload_files": 0
+}
+verify_exit=0
+=== export ===
+[vk-data] exported -> C:\Users\Lauseusing\AppData\Local\Temp\vk-kb-export.zip
+=== clean dry-run ===
+[vk-data] dry-run: would clean cache (0.000GiB) at C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\cache
+[vk-data] dry-run: would clean temp (0.000GiB) at C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\temp
+=== clean --yes ===
+[vk-data] cleaned cache (0.000GiB)
+[vk-data] cleaned temp (0.000GiB)
+=== purge --yes ===
+[vk-data] purged data
+[vk-data] purged cache
+[vk-data] purged temp
+[vk-data] purged models
+=== verify after purge (db_exists false) ===
+{
+  "db_exists": false,
+  "upload_files": 0
+}
+final_exit=0
+runtime

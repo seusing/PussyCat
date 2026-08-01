@@ -1,0 +1,10 @@
+[vk-runtime] preflight: free=286.56GiB required>=1.00GiB
+[vk-runtime] venv: uv venv --python 3.12 C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\runtime\versions\v0.1.0-762649c0
+[vk-runtime] install: uv pip install --link-mode copy --python C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\runtime\versions\v0.1.0-762649c0\Scripts\python.exe C:\Users\Lauseusing\Developer\video-knowledge-m1-productization\dist\video_knowledge-0.1.0-py3-none-any.whl
+[vk-runtime] smoke-import: C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\runtime\versions\v0.1.0-762649c0\Scripts\python.exe -c import video_knowledge, importlib.metadata as m; print("import ok", m.version("video-knowledge"))
+import ok 0.1.0
+[vk-runtime] smoke-console: C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\runtime\versions\v0.1.0-762649c0\Scripts\python.exe -m video_knowledge -h
+[vk-runtime] smoke-api: handshake ok api_version=1.2.0 package=0.1.0
+[vk-runtime] smoke-migrate: C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\runtime\versions\v0.1.0-762649c0\Scripts\python.exe -c import sys, json; from pathlib import Path; from video_knowledge.adapters.storage.db import connect, migrate, default_migrations_dir; conn = connect(Path(sys.argv[1]) / "vk.db"); print(json.dumps(migrate(conn, default_migrations_dir()))) C:\Users\LAUSEU~1\AppData\Local\Temp\vk-smoke-VmHhnp\migrate-smoke
+[vk-runtime] activate: active -> v0.1.0-762649c0
+{"vkRuntimeInstalled":true,"version":"v0.1.0-762649c0","pythonPath":"C:\\Users\\Lauseusing\\AppData\\Local\\Temp\\vk-home-demo\\runtime\\versions\\v0.1.0-762649c0\\Scripts\\python.exe"}

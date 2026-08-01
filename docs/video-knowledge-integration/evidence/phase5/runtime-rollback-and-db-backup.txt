@@ -1,0 +1,16 @@
+=== seed real db via active runtime ===
+["001", "002", "003", "004", "005", "006", "007"]
+=== reinstall v2: real-db backup+migrate path ===
+Activate with: C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\runtime\versions\v0.1.0-762649c0-r2\Scripts\activate
+[vk-runtime] db-migrate: 已备份真实库 -> C:\Users\Lauseusing\AppData\Local\Temp\vk-home-demo\data\vk.db.backup-v0.1.0-762649c0-r2-1785588789368
+[vk-runtime] db-migrate: 真实库迁移完成 applied=[]
+[vk-runtime] activate: active -> v0.1.0-762649c0-r2(替换旧指针)
+{"vkRuntimeInstalled":true,"version":"v0.1.0-762649c0-r2","pythonPath":"C:\\Users\\Lauseusing\\AppData\\Local\\Temp\\vk-home-demo\\runtime\\versions\\v0.1.0-762649c0-r2\\Scripts\\python.exe"}
+=== broken wheel injection: must fail and keep active at r2 ===
+[vk-runtime] FAIL install: exit 2
+[vk-runtime] 旧 runtime 与旧 DB 未被触碰,继续可用。
+=== active.json after broken attempt ===
+  "version": "v0.1.0-762649c0-r2",
+  "pythonPath": "C:\\Users\\Lauseusing\\AppData\\Local\\Temp\\vk-home-demo\\runtime\\versions\\v0.1.0-762649c0-r2\\Scripts\\python.exe",
+  "wheel": "video_knowledge-0.1.0-py3-none-any.whl",
+vk.db.backup-v0.1.0-762649c0-r2-1785588789368
