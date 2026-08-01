@@ -29,6 +29,7 @@ function ModuleTabs() {
   const tabs = [
     { key: 'commands' as const, label: '命令' },
     { key: 'login' as const, label: '登录状态' },
+    { key: 'vk' as const, label: '视频解析' },
   ]
   return (
     <div className="flex items-center gap-1" data-testid="module-tabs">

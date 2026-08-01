@@ -1,0 +1,514 @@
+// 「视频解析」整页模块(vk-shell-v1 契约消费端)。
+//
+// 边界:React 只访问 Node 的 /vk/v1/* 代理,永不直连 Python、永不接触 sidecar
+// token。进度只显示真实状态/已耗时/实际费用,不造百分比(拍板 4)。
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAppStore } from '../../store/appStore'
+import { HostRequestError } from '../../host/errors'
+import {
+  downloadVkOutput,
+  fetchVkDiagnostic,
+  fetchVkHealth,
+  fetchVkJob,
+  fetchVkJobs,
+  postVkJob,
+  postVkJobAction,
+  postVkPreview,
+  postVkQuery,
+} from '../../host/vkClient'
+import type {
+  VkHealth,
+  VkJobRow,
+  VkJobView,
+  VkPreviewProjection,
+  VkProcessingRequest,
+  VkQueryAnswer,
+} from '../../host/vkClient'
+import { estimateForPreset, formatEstimate } from './vkEstimates'
+import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
+
+const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
+const CONTENT_TYPES = ['auto', 'course_lecture', 'interview_podcast', 'science_explainer', 'tutorial', 'other_knowledge', 'generic_knowledge']
+const MEDIA_POLICIES = ['subtitle_only', 'audio_transcript', 'low_res_visual', 'video_required']
+const QUALITY_PROFILES = ['fast', 'balanced', 'thorough']
+const BUDGET_PROFILES = ['economy', 'standard', 'quality']
+const CAPABILITIES = ['word_timestamps', 'speaker_diarization', 'visual_evidence', 'query_ready']
+
+const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested'])
+
+function errorText(error: unknown, fallback: string): string {
+  if (error instanceof HostRequestError) {
+    return error.reasonCode ? `${error.summary}(${error.reasonCode})` : error.summary
+  }
+  if (error instanceof Error) return error.message || fallback
+  return fallback
+}
+
+function elapsedLabel(row: { submitted_at: string; finished_at: string | null }): string {
+  const start = Date.parse(row.submitted_at)
+  if (Number.isNaN(start)) return '—'
+  const end = row.finished_at ? Date.parse(row.finished_at) : Date.now()
+  const seconds = Math.max(0, Math.round((end - start) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m${seconds % 60}s`
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  queued: '排队中',
+  running: '运行中',
+  cancel_requested: '取消请求已发出',
+  cancelled: '已取消',
+  completed_after_cancel_request: '取消前已完成',
+  failed: '失败',
+  done: '已完成',
+  partial: '部分完成',
+  quarantined: '已隔离',
+  interrupted: '已中断(重启回收)',
+  submitted: '已提交',
+}
+
+const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
+const fieldStyle = { background: 'var(--color-canvas)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
+const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
+const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
+
+export function VkPanel({ baseUrl }: { baseUrl?: string }) {
+  const base = baseUrl
+  // —— 健康(BrowserBridgeStatus 姿势:进入时查一次 + 手动重检;前端只渲染不解释)——
+  const [health, setHealth] = useState<VkHealth | null>(null)
+  const [healthChecking, setHealthChecking] = useState(false)
+  const healthGen = useRef(0)
+  const checkHealth = useCallback(async () => {
+    const gen = ++healthGen.current
+    setHealthChecking(true)
+    try {
+      const result = await fetchVkHealth(base)
+      if (gen === healthGen.current) setHealth(result)
+    } catch {
+      if (gen === healthGen.current) setHealth(null)
+    } finally {
+      if (gen === healthGen.current) setHealthChecking(false)
+    }
+  }, [base])
+  useEffect(() => { void checkHealth() }, [checkHealth])
+
+  // —— 表单(组件本地;store 只承担跨模块 handoff)——
+  const [source, setSource] = useState('')
+  const [preset, setPreset] = useState('quick-summary')
+  const [contentType, setContentType] = useState('')
+  const [mediaPolicy, setMediaPolicy] = useState('')
+  const [quality, setQuality] = useState('')
+  const [budgetProfile, setBudgetProfile] = useState('')
+  const [caps, setCaps] = useState<string[]>([])
+  const [audit, setAudit] = useState(false)
+  const [maxCost, setMaxCost] = useState('')
+  const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
+
+  const handoff = useAppStore((s) => s.vkHandoff)
+  useEffect(() => {
+    if (!handoff) return
+    setSource(handoff.url)
+    setProvenance({ commandKey: handoff.commandKey, collectedAt: handoff.collectedAt })
+    useAppStore.getState().clearVkHandoff()
+  }, [handoff])
+
+  // —— 预检 → 费用确认 → 提交 ——
+  const [preview, setPreview] = useState<VkProcessingRequest | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [pendingSubmit, setPendingSubmit] = useState<PendingVkSubmit | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const doPreview = async () => {
+    setPreviewError(null)
+    setPreview(null)
+    const projection: VkPreviewProjection = {
+      source: source.trim(),
+      preset,
+      ...(contentType ? { content_type: contentType } : {}),
+      ...(mediaPolicy ? { media_policy: mediaPolicy } : {}),
+      ...(quality ? { quality_profile: quality } : {}),
+      ...(budgetProfile ? { budget_profile: budgetProfile } : {}),
+      ...(caps.length ? { capabilities: caps } : {}),
+      ...(audit ? { audit: true } : {}),
+      ...(maxCost.trim() ? { max_cost_cny: Number(maxCost) } : {}),
+      ...(provenance
+        ? {
+            user_metadata: {
+              origin: 'opencli-result',
+              source_command: provenance.commandKey,
+              collected_at: new Date(provenance.collectedAt).toISOString(),
+            },
+          }
+        : {}),
+    }
+    try {
+      setPreview(await postVkPreview(projection, base))
+    } catch (error) {
+      setPreviewError(errorText(error, '预检失败'))
+    }
+  }
+
+  const requestSubmit = () => {
+    if (!preview) return
+    setPendingSubmit({ request: preview, estimate: estimateForPreset(preview.preset) })
+  }
+
+  const confirmSubmit = async () => {
+    if (!pendingSubmit) return
+    setSubmitError(null)
+    try {
+      await postVkJob({
+        request: pendingSubmit.request,
+        idempotency_key: crypto.randomUUID(),
+        client_job_id: crypto.randomUUID(),
+      }, base)
+      setPendingSubmit(null)
+      setPreview(null)
+      await refreshJobs()
+    } catch (error) {
+      setPendingSubmit(null)
+      setSubmitError(errorText(error, '任务提交失败'))
+    }
+  }
+
+  // —— 任务列表与详情(vk.db 真源;轮询只在有活跃任务时)——
+  const [jobs, setJobs] = useState<VkJobRow[]>([])
+  const [jobsError, setJobsError] = useState<string | null>(null)
+  const [selectedJob, setSelectedJob] = useState<VkJobView | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [diagnostic, setDiagnostic] = useState<string | null>(null)
+  const jobsGen = useRef(0)
+
+  const refreshJobs = useCallback(async () => {
+    const gen = ++jobsGen.current
+    try {
+      const rows = await fetchVkJobs(base)
+      if (gen === jobsGen.current) {
+        setJobs(rows)
+        setJobsError(null)
+      }
+    } catch (error) {
+      if (gen === jobsGen.current) setJobsError(errorText(error, '任务列表获取失败'))
+    }
+  }, [base])
+  useEffect(() => { void refreshJobs() }, [refreshJobs])
+  useEffect(() => {
+    if (!jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
+    const timer = setInterval(() => { void refreshJobs() }, 3000)
+    return () => clearInterval(timer)
+  }, [jobs, refreshJobs])
+
+  const openJob = async (jobId: string) => {
+    setActionError(null)
+    try {
+      setSelectedJob(await fetchVkJob(jobId, base))
+    } catch (error) {
+      setActionError(errorText(error, '任务详情获取失败'))
+    }
+  }
+
+  const jobAction = async (jobId: string, action: 'cancel' | 'retry' | 'refresh') => {
+    setActionError(null)
+    try {
+      await postVkJobAction(jobId, action, base)
+      await refreshJobs()
+      await openJob(jobId)
+    } catch (error) {
+      setActionError(errorText(error, '任务操作失败'))
+    }
+  }
+
+  const showDiagnostic = async () => {
+    try {
+      setDiagnostic(JSON.stringify(await fetchVkDiagnostic(base), null, 2))
+    } catch (error) {
+      setDiagnostic(errorText(error, '诊断获取失败'))
+    }
+  }
+
+  // —— 知识库查询 ——
+  const [queryText, setQueryText] = useState('')
+  const [queryAnswer, setQueryAnswer] = useState<VkQueryAnswer | null>(null)
+  const [queryError, setQueryError] = useState<string | null>(null)
+  const runQuery = async () => {
+    setQueryError(null)
+    setQueryAnswer(null)
+    try {
+      setQueryAnswer(await postVkQuery(queryText, base))
+    } catch (error) {
+      setQueryError(errorText(error, '知识库查询失败'))
+    }
+  }
+
+  const previewEstimate = preview ? formatEstimate(estimateForPreset(preview.preset)) : null
+
+  return (
+    <div className="mx-auto max-w-3xl p-6" data-testid="vk-panel">
+      {/* 健康条 */}
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+        <span className="text-sm font-medium">视频解析引擎</span>
+        <span data-testid="vk-health-summary" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          {healthChecking ? '检测中…' : health ? `${health.summary}${health.apiVersion ? `(api ${health.apiVersion})` : ''}` : 'Host 不可达'}
+        </span>
+        <button type="button" data-testid="vk-health-recheck" onClick={() => { void checkHealth() }} className={outlineButton} style={outlineStyle}>
+          重新检测
+        </button>
+        <button type="button" data-testid="vk-diagnostic-button" onClick={() => { void showDiagnostic() }} className={outlineButton} style={outlineStyle}>
+          会话诊断
+        </button>
+      </div>
+      {diagnostic && (
+        <pre data-testid="vk-diagnostic" className="mb-4 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{diagnostic}</pre>
+      )}
+
+      {/* 提交表单 */}
+      <div className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+        <div className="mb-2 text-sm font-medium">新解析任务</div>
+        {provenance && (
+          <div data-testid="vk-provenance" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            来自采集结果:{provenance.commandKey}
+          </div>
+        )}
+        <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          视频链接
+          <input
+            data-testid="vk-source"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            placeholder="https://…"
+            className={`${fieldClass} mt-1`}
+            style={fieldStyle}
+          />
+        </label>
+        <div className="mb-2 grid grid-cols-2 gap-2">
+          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            preset
+            <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+              {PRESETS.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            内容类型(默认随 preset)
+            <select data-testid="vk-content-type" value={contentType} onChange={(e) => setContentType(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+              <option value="">preset 默认</option>
+              {CONTENT_TYPES.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            媒体策略
+            <select data-testid="vk-media-policy" value={mediaPolicy} onChange={(e) => setMediaPolicy(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+              <option value="">preset 默认</option>
+              {MEDIA_POLICIES.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            质量档
+            <select data-testid="vk-quality" value={quality} onChange={(e) => setQuality(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+              <option value="">preset 默认</option>
+              {QUALITY_PROFILES.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            预算档位(路由)
+            <select data-testid="vk-budget-profile" value={budgetProfile} onChange={(e) => setBudgetProfile(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+              <option value="">preset 默认</option>
+              {BUDGET_PROFILES.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            费用硬上限(¥,后端强制)
+            <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder="不设 = 无上限" className={`${fieldClass} mt-1`} style={fieldStyle} />
+          </label>
+        </div>
+        <fieldset className="mb-2 rounded-lg p-2 text-xs" style={{ border: '1px solid var(--color-line)' }}>
+          <legend style={{ color: 'var(--color-fg-dim)' }}>capabilities</legend>
+          <div className="flex flex-wrap gap-3">
+            {CAPABILITIES.map((value) => (
+              <label key={value} className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  data-testid={`vk-cap-${value}`}
+                  checked={caps.includes(value)}
+                  onChange={(e) => setCaps((current) => (
+                    e.target.checked ? [...current, value] : current.filter((item) => item !== value)
+                  ))}
+                />
+                {value}
+              </label>
+            ))}
+            <label className="flex items-center gap-1">
+              <input type="checkbox" data-testid="vk-audit" checked={audit} onChange={(e) => setAudit(e.target.checked)} />
+              生成 Audit
+            </label>
+          </div>
+        </fieldset>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="vk-preview-button"
+            disabled={!source.trim()}
+            onClick={() => { void doPreview() }}
+            className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+          >
+            预检
+          </button>
+          <button
+            type="button"
+            data-testid="vk-submit-button"
+            disabled={!preview}
+            onClick={requestSubmit}
+            className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+          >
+            提交解析
+          </button>
+        </div>
+        {previewError && <div data-testid="vk-preview-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{previewError}</div>}
+        {submitError && <div data-testid="vk-submit-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{submitError}</div>}
+        {preview && previewEstimate && (
+          <div data-testid="vk-preview" className="mt-3 rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)' }}>
+            <div className="mb-1 font-medium" style={{ color: 'var(--color-fg)' }}>请求投影(默认值已由引擎解析)</div>
+            <div style={{ color: 'var(--color-fg-dim)' }}>
+              preset={preview.preset} · 内容类型={preview.content_type} · 媒体策略={preview.media_policy} · 质量={preview.quality_profile} · 预算档={preview.budget_profile}
+            </div>
+            <div style={{ color: 'var(--color-fg-dim)' }}>
+              输出目标(由 preset 决定):{preview.output_targets.join('、')}
+            </div>
+            <div style={{ color: 'var(--color-fg-dim)' }}>
+              capabilities:{preview.requested_capabilities.length ? preview.requested_capabilities.join('、') : '无'} · audit:{preview.audit_requested ? '是' : '否'}
+            </div>
+            <div data-testid="vk-preview-estimates" style={{ color: 'var(--color-fg-dim)' }}>
+              预估费用 {previewEstimate.cost} · 预估耗时 {previewEstimate.duration}
+            </div>
+            <div style={{ color: 'var(--color-fg-dim)' }}>
+              费用硬上限:{preview.max_cost_cny != null ? `¥${preview.max_cost_cny}` : '未设置'}
+            </div>
+            {health && health.capabilities.length > 0 && (
+              <div data-testid="vk-runtime-caps" style={{ color: 'var(--color-fg-dim)' }}>
+                环境能力:{health.capabilities.map((item) => `${item.capability}=${item.runtime}`).join('、')}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 任务列表 */}
+      <div className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-medium">任务</span>
+          <button type="button" data-testid="vk-jobs-refresh" onClick={() => { void refreshJobs() }} className={outlineButton} style={outlineStyle}>刷新</button>
+        </div>
+        {jobsError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{jobsError}</div>}
+        {jobs.length === 0 && !jobsError && (
+          <div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>暂无任务</div>
+        )}
+        {jobs.length > 0 && (
+          <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
+            {jobs.map((row) => (
+              <div key={row.job_id} data-testid="vk-job-row" className="flex items-center gap-3 border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: 'var(--color-line)' }}>
+                <span className="min-w-20 font-medium">{STATUS_LABELS[row.status] ?? row.status}</span>
+                <span style={{ color: 'var(--color-fg-dim)' }}>{row.kind}</span>
+                <span style={{ color: 'var(--color-fg-dim)' }}>已耗时 {elapsedLabel(row)}</span>
+                {row.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 ¥{row.cost_cny.toFixed(4)}</span>}
+                <span className="ml-auto" />
+                <button type="button" data-testid={`vk-job-open-${row.job_id}`} onClick={() => { void openJob(row.job_id) }} className={outlineButton} style={outlineStyle}>详情</button>
+                {ACTIVE_STATUSES.has(row.status) && (
+                  <button type="button" onClick={() => { void jobAction(row.job_id, 'cancel') }} className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-danger)' }}>取消</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 任务详情 */}
+      {selectedJob && (
+        <div data-testid="vk-job-detail" className="mb-4 rounded-lg p-3 text-xs" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-sm font-medium">{STATUS_LABELS[selectedJob.status] ?? selectedJob.status}</span>
+            <span style={{ color: 'var(--color-fg-dim)' }}>已耗时 {elapsedLabel(selectedJob)}</span>
+            {selectedJob.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 ¥{selectedJob.cost_cny.toFixed(4)}</span>}
+            <span className="ml-auto" />
+            <button type="button" data-testid="vk-job-retry" onClick={() => { void jobAction(selectedJob.job_id, 'retry') }} className={outlineButton} style={outlineStyle}>重试</button>
+            <button type="button" data-testid="vk-job-refresh" title="绕过来源版本缓存重新解析" onClick={() => { void jobAction(selectedJob.job_id, 'refresh') }} className={outlineButton} style={outlineStyle}>强制重跑</button>
+            <button type="button" onClick={() => setSelectedJob(null)} className="rounded-lg px-2 py-1 text-sm leading-none" style={{ color: 'var(--color-fg-dim)' }}>×</button>
+          </div>
+          {selectedJob.error && <div className="mb-2" style={{ color: 'var(--color-danger)' }}>{selectedJob.error}</div>}
+          {selectedJob.budget_stop && (
+            <div data-testid="vk-budget-stop" className="mb-2 rounded-lg p-2" style={{ background: 'var(--color-canvas)', color: 'var(--color-warning)' }}>
+              已按费用上限终止:{selectedJob.budget_stop.reason}
+              (实际 ¥{selectedJob.budget_stop.actual_cost_cny ?? 0} / 上限 ¥{selectedJob.budget_stop.limit_cny ?? '—'},阶段 {selectedJob.budget_stop.stage ?? '—'})
+            </div>
+          )}
+          {selectedJob.request?.source && (
+            <div className="mb-2 break-all" style={{ color: 'var(--color-fg-dim)' }}>来源:{String(selectedJob.request.source)}</div>
+          )}
+          {selectedJob.capabilities && selectedJob.capabilities.length > 0 && (
+            <div data-testid="vk-evidence-coverage" className="mb-2" style={{ color: 'var(--color-fg-dim)' }}>
+              证据覆盖:{selectedJob.capabilities.map((item) => `${item.capability}=${item.state}${item.reason ? `(${item.reason})` : ''}`).join('、')}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {selectedJob.outputs?.note_path && (
+              <button type="button" data-testid="vk-output-note" onClick={() => { void downloadVkOutput(selectedJob.outputs!.note_path!, base) }} className={outlineButton} style={outlineStyle}>笔记</button>
+            )}
+            {selectedJob.outputs?.audit_path && (
+              <button type="button" data-testid="vk-output-audit" onClick={() => { void downloadVkOutput(selectedJob.outputs!.audit_path!, base) }} className={outlineButton} style={outlineStyle}>Audit</button>
+            )}
+            {(selectedJob.outputs?.product_artifacts ?? []).map((artifact, index) => (
+              <span key={artifact.sha256} className="flex gap-1">
+                <button type="button" data-testid={`vk-output-product-json-${index}`} onClick={() => { void downloadVkOutput(artifact.json, base) }} className={outlineButton} style={outlineStyle}>{artifact.preset} JSON</button>
+                <button type="button" data-testid={`vk-output-product-md-${index}`} onClick={() => { void downloadVkOutput(artifact.markdown, base) }} className={outlineButton} style={outlineStyle}>{artifact.preset} MD</button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {actionError && <div data-testid="vk-action-error" className="mb-4 text-xs" style={{ color: 'var(--color-danger)' }}>{actionError}</div>}
+
+      {/* 知识库查询 */}
+      <div className="rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+        <div className="mb-2 text-sm font-medium">知识库查询</div>
+        <div className="flex gap-2">
+          <input
+            data-testid="vk-query-input"
+            value={queryText}
+            onChange={(e) => setQueryText(e.target.value)}
+            placeholder="问题或检索词"
+            className={fieldClass}
+            style={fieldStyle}
+          />
+          <button
+            type="button"
+            data-testid="vk-query-button"
+            disabled={!queryText.trim()}
+            onClick={() => { void runQuery() }}
+            className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+          >
+            检索
+          </button>
+        </div>
+        {queryError && <div className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{queryError}</div>}
+        {queryAnswer && (
+          <div data-testid="vk-query-answer" className="mt-3 rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)' }}>
+            <div className="mb-1" style={{ color: 'var(--color-fg)' }}>{queryAnswer.answer}</div>
+            <div style={{ color: 'var(--color-fg-dim)' }}>状态:{queryAnswer.status}</div>
+            {(queryAnswer.citations ?? []).map((citation) => (
+              <div key={citation.document_id} data-testid="vk-query-citation" style={{ color: 'var(--color-fg-dim)' }}>
+                引用 {citation.kind} · {citation.document_id.slice(0, 8)}… · revision {citation.source_revision_id.slice(0, 8)}…
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <VkCostConfirmDialog
+        pending={pendingSubmit}
+        onCancel={() => setPendingSubmit(null)}
+        onConfirm={() => { void confirmSubmit() }}
+      />
+    </div>
+  )
+}

@@ -82,7 +82,19 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
           )}
 
           {showTable && tab === 'result'
-            ? <ResultsTable columns={columns} rows={run.result ?? []} />
+            ? <ResultsTable
+                columns={columns}
+                rows={run.result ?? []}
+                onSendToVk={(url) => {
+                  // 跨模块交接:规范化 URL + 脱敏 provenance(命令键/采集时刻),
+                  // 严禁携带行数据,严禁另造第二种 manifest 格式。
+                  useAppStore.getState().setVkHandoff({
+                    url,
+                    commandKey: run.command.command,
+                    collectedAt: run.startedAt,
+                  })
+                }}
+              />
             : <StreamLog lines={run.lines} />}
         </>
       )}

@@ -85,8 +85,13 @@ type AppState = {
   mode: 'demo' | 'connected'
   setMode: (mode: 'demo' | 'connected') => void
   // 模块切换。**不持久化**:这是浏览姿势(此刻在看哪个模块),不是用户偏好,重开回默认更合理。
-  activeModule: 'commands' | 'login'
-  setActiveModule: (m: 'commands' | 'login') => void
+  activeModule: 'commands' | 'login' | 'vk'
+  setActiveModule: (m: 'commands' | 'login' | 'vk') => void
+  // —— vk 切片(视频解析)——跨模块交接:「送去视频解析」只传规范化 URL 与脱敏
+  // provenance(commandKey/collectedAt),严禁携带行数据或第二种 manifest 格式。
+  vkHandoff?: { url: string; commandKey: string; collectedAt: number }
+  setVkHandoff: (handoff: { url: string; commandKey: string; collectedAt: number }) => void
+  clearVkHandoff: () => void
   // 登录状态校验。队列是**串行**的:Host 侧 maxConcurrentRuns=1,并发发起只会让后来的拿 429。
   // 驱动逻辑不在 store 里(store 不碰 host),由 App 的 effect 取队首去发起。
   loginChecks: Record<string, LoginCheckEntry>
@@ -178,6 +183,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMode: (mode) => set({ mode }),
   activeModule: 'commands',
   setActiveModule: (m) => set({ activeModule: m }),
+  // —— vk 切片 ——
+  vkHandoff: undefined,
+  setVkHandoff: (handoff) => set({ vkHandoff: handoff, activeModule: 'vk' }),
+  clearVkHandoff: () => set({ vkHandoff: undefined }),
   loginChecks: {},
   loginQueue: [],
   loginInFlight: undefined,
