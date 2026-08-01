@@ -498,6 +498,10 @@ const HOST_ENV_KEYS: &[&str] = &[
     "OPENCLI_HOST_CANCEL_GRACE_MS",
     "OPENCLI_HOST_COMMAND_TIMEOUT_MS",
     "OPENCLI_HOST_MAX_CONCURRENT_RUNS",
+    "OPENCLI_HOST_VK_PYTHON",
+    "OPENCLI_HOST_VK_ROOT",
+    "OPENCLI_HOST_VK_CONFIG_DIR",
+    "OPENCLI_HOST_VK_STATE_DIR",
 ];
 
 /// Host 的配置面必须**完全**由 supervisor 决定:凡 Host 会读的变量,这里要么显式设值,
@@ -535,6 +539,16 @@ fn configure_host_env(cmd: &mut Command) {
         .env_remove("OPENCLI_HOST_CANCEL_GRACE_MS")
         .env_remove("OPENCLI_HOST_COMMAND_TIMEOUT_MS")
         .env_remove("OPENCLI_HOST_MAX_CONCURRENT_RUNS");
+
+    // video-knowledge sidecar 配置面(vk-shell-v1):`VK_PYTHON` 决定 Host 会 spawn
+    // 哪个可执行文件 —— 放任继承等于把 spawn 向量交给任何能设用户环境变量的东西,
+    // 比改写监听地址更危险,必须移除。打包形态(阶段 5)由 supervisor 从安装的
+    // 版本化 runtime 路径显式设值;移除后 sidecar 呈 not-configured 类型化诊断,
+    // 不影响 Host 其余功能。开发直连(npm run dev:server)不经本函数,不受影响。
+    cmd.env_remove("OPENCLI_HOST_VK_PYTHON")
+        .env_remove("OPENCLI_HOST_VK_ROOT")
+        .env_remove("OPENCLI_HOST_VK_CONFIG_DIR")
+        .env_remove("OPENCLI_HOST_VK_STATE_DIR");
 }
 
 /// `node` 必须是 [`probe_node`] 解析出来的**绝对路径**:探测一个 node、启动另一个 node

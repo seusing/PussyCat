@@ -7,8 +7,56 @@ import {
 } from './policy.mjs'
 import { POLICY_SCHEMA_VERSION } from './policy-fingerprint.mjs'
 import { checkBrowserBridgeHealth } from './browser-bridge-health.mjs'
+import { VkSidecarError } from './vk-sidecar.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
+
+// /vk/v1/* 白名单(vk-shell-v1 契约路由表的投影)。不在表内的路径一律 404,
+// 连转发都不发生——sidecar 的攻击面不因代理而扩大。
+const VK_UPLOAD_MAX_BYTES = 8 * 1024 * 1024
+const VK_ROUTES = [
+  { method: 'GET', pattern: /^\/vk\/v1\/meta$/, target: () => '/api/meta' },
+  { method: 'GET', pattern: /^\/vk\/v1\/jobs$/, target: () => '/api/jobs' },
+  { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)$/, target: (m) => `/api/jobs/${m[1]}`, tap: 'view' },
+  { method: 'GET', pattern: /^\/vk\/v1\/outputs\/([^/]+)$/, target: (m) => `/api/outputs/${m[1]}` },
+  { method: 'GET', pattern: /^\/vk\/v1\/outputs\/([^/]+)\/([^/]+)$/, target: (m) => `/api/outputs/${m[1]}/${m[2]}` },
+  { method: 'GET', pattern: /^\/vk\/v1\/diagnostic$/, target: () => '/api/diagnostic' },
+  { method: 'POST', pattern: /^\/vk\/v1\/preview$/, target: () => '/api/preview', kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/jobs$/, target: () => '/api/jobs', kind: 'json', tap: 'submit' },
+  { method: 'POST', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/(cancel|retry|refresh)$/, target: (m) => `/api/jobs/${m[1]}/${m[2]}`, kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/query$/, target: () => '/api/query', kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/uploads$/, target: (_m, url) => `/api/uploads${url.search}`, kind: 'raw' },
+]
+
+function matchVkRoute(method, pathname) {
+  for (const route of VK_ROUTES) {
+    if (route.method !== method) continue
+    const match = route.pattern.exec(pathname)
+    if (match) return { route, match }
+  }
+  return null
+}
+
+async function readRawBody(request, maxBytes) {
+  const chunks = []
+  let length = 0
+  for await (const chunk of request) {
+    length += chunk.length
+    if (length > maxBytes) {
+      throw new RequestPolicyError(413, 'Request body is too large')
+    }
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
+}
+
+function safeParseJson(buffer) {
+  try {
+    return JSON.parse(buffer.toString('utf8'))
+  } catch {
+    return null
+  }
+}
 
 class SseBroker {
   constructor({ bufferSize = 2048, heartbeatMs = 15_000 } = {}) {
@@ -120,6 +168,8 @@ export function createHostServer({
   runManagerOptions = {},
   sseOptions = {},
   browserBridgeHealth = checkBrowserBridgeHealth,
+  vkSidecar = null,
+  vkJobShadow = null,
 } = {}) {
   if (!policy) throw new Error('policy is required')
   const activePolicy = () => catalogService?.current()?.policy ?? policy
@@ -254,6 +304,84 @@ export function createHostServer({
         return
       }
 
+      // video-knowledge sidecar 健康:Node 侧投影(browser-bridge 同款),永不 5xx、
+      // 永不转发——sidecar 没起来时诊断本身就是答案。
+      if (url.pathname === '/vk/v1/health' && request.method === 'GET') {
+        writeJson(response, 200, vkSidecar ? vkSidecar.health() : {
+          status: 'not-configured',
+          reasonCode: 'not-configured',
+          summary: 'video-knowledge sidecar 未接线',
+          apiVersion: null,
+          packageVersion: null,
+          capabilities: [],
+          checkedAt: new Date().toISOString(),
+          retryable: false,
+        })
+        return
+      }
+
+      if (url.pathname.startsWith('/vk/')) {
+        const matched = matchVkRoute(request.method ?? 'GET', url.pathname)
+        if (!matched) {
+          writeJson(response, 404, {
+            error: 'vk route is not allowed',
+            reasonCode: 'vk-route-not-allowed',
+          })
+          return
+        }
+        if (!vkSidecar) {
+          writeJson(response, 503, {
+            error: 'video-knowledge sidecar 未接线',
+            reasonCode: 'not-configured',
+          })
+          return
+        }
+        const { route, match } = matched
+        let clientJobId = null
+        let idempotencyKey = null
+        const init = { method: request.method }
+        if (route.kind === 'json') {
+          const body = await readJson(request, maxBodyBytes)
+          if (route.tap === 'submit') {
+            // client_job_id 是 shell 自己的关联键,不进 vk 的请求面。
+            clientJobId = typeof body.client_job_id === 'string' ? body.client_job_id : null
+            idempotencyKey = typeof body.idempotency_key === 'string' ? body.idempotency_key : null
+            delete body.client_job_id
+          }
+          init.headers = { 'Content-Type': 'application/json' }
+          init.body = JSON.stringify(body)
+        } else if (route.kind === 'raw') {
+          init.headers = {
+            'Content-Type': request.headers['content-type'] ?? 'application/octet-stream',
+          }
+          init.body = await readRawBody(request, VK_UPLOAD_MAX_BYTES)
+        }
+        await vkSidecar.ensureStarted()
+        const upstream = await vkSidecar.fetchApi(route.target(match, url), init)
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        if (vkJobShadow && upstream.status < 400) {
+          if (route.tap === 'submit') {
+            const submitted = safeParseJson(buffer)
+            if (submitted?.job_id) {
+              vkJobShadow.recordSubmit({
+                vkJobId: submitted.job_id,
+                clientJobId,
+                idempotencyKey,
+              })
+            }
+          } else if (route.tap === 'view') {
+            const view = safeParseJson(buffer)
+            if (view) vkJobShadow.observeView(view)
+          }
+        }
+        response.writeHead(upstream.status, {
+          'Content-Type': upstream.headers.get('content-type') ?? JSON_CONTENT_TYPE,
+          'Cache-Control': 'no-store',
+        })
+        response.end(buffer)
+        return
+      }
+
       if (url.pathname === '/start' && request.method === 'POST') {
         const body = await readJson(request, maxBodyBytes)
         const command = validateStartRequest(body, activePolicy())
@@ -274,7 +402,9 @@ export function createHostServer({
       writeJson(response, 404, { error: 'Not found' })
     } catch (error) {
       const statusCode = (
-        error instanceof RequestPolicyError || error instanceof RunManagerError
+        error instanceof RequestPolicyError
+          || error instanceof RunManagerError
+          || error instanceof VkSidecarError
           ? error.statusCode
           : 500
       )
@@ -306,6 +436,7 @@ export function createHostServer({
     async close() {
       catalogService?.close()
       runManager.close()
+      await vkSidecar?.stop()
       broker.close()
       if (!server.listening) return
       const closed = new Promise((resolve, reject) => {

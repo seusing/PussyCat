@@ -4,6 +4,8 @@ import { createHostServer } from './host-server.mjs'
 import { resolveOpenCliEntry, resolveManifestPath } from './opencli-entry.mjs'
 import { loadExecutionPolicy } from './policy.mjs'
 import { createCatalogService } from './catalog-service.mjs'
+import { VkSidecarManager } from './vk-sidecar.mjs'
+import { createVkJobShadow } from './vk-job-shadow.mjs'
 
 // Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
 // 注:20 已 EOL,是"最低可运行"而非推荐;推荐当前 LTS(22/24)。
@@ -78,11 +80,24 @@ try {
     opencliEntry,
     resolveManifest: () => resolveManifestPath(opencliEntry),
   })
+  // video-knowledge sidecar(vk-shell-v1 契约):未配置时照常启动,/vk/v1/*
+  // 返回类型化 not-configured 诊断;配置后首个请求按需拉起。
+  const vkSidecar = new VkSidecarManager({
+    pythonPath: process.env.OPENCLI_HOST_VK_PYTHON,
+    rootDir: process.env.OPENCLI_HOST_VK_ROOT,
+    configDir: process.env.OPENCLI_HOST_VK_CONFIG_DIR,
+  })
+  const vkStateDir = process.env.OPENCLI_HOST_VK_STATE_DIR
+  const vkJobShadow = createVkJobShadow({
+    stateFile: vkStateDir ? resolve(vkStateDir, 'vk-job-shadow.json') : undefined,
+  })
   app = createHostServer({
     opencliEntry,
     policy,
     catalogService,
     allowedOrigins,
+    vkSidecar,
+    vkJobShadow,
     runManagerOptions: {
       cancelGraceMs: Number.parseInt(process.env.OPENCLI_HOST_CANCEL_GRACE_MS ?? '2000', 10),
       commandTimeoutMs: Number.parseInt(process.env.OPENCLI_HOST_COMMAND_TIMEOUT_MS ?? '90000', 10),
