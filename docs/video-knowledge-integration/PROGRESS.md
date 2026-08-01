@@ -37,7 +37,7 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
 | --- | --- | --- |
 | task0 事实基线 | complete | BASELINE.json + evidence/task0/ + vk@6abd39e |
 | phase1 vk-shell-v1 契约冻结 | complete | evidence/phase1/ + vk 契约 docs/SHELL-INTEGRATION-CONTRACT.md + 本地 tag vk-shell-v1（endpoint 0f784c3） |
-| phase2 持久化与幂等 | todo | - |
+| phase2 持久化与幂等 | complete | evidence/phase2/ + vk docs/evidence/vk-shell-v1-phase2-persistence.v1.json（endpoint c59e778,api 1.1.0）。Node 脱敏影子→phase3 落地;三层 kill 矩阵→phase6 验收 |
 | phase3 Node Host 集成 | todo | - |
 | phase4 视频解析标签页 | todo | - |
 | phase5 运行时与数据生命周期 | todo | - |
@@ -68,3 +68,14 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
     (evidence/phase1/green-vk-phase1-gates.txt);vk 状态一致性门 PASS 8/8。
   - **两个载荷级发现**:gui ready 行管道下被块缓冲(Node spawn 场景握手必死)→
     flush 入契约;存量 queued-cancel 竞态(原码 8 跑 4 挂)→ 确定性化且断言加强。
+- 2026-08-01 phase2 完成(vk 4 commits,endpoint c59e778,api 1.1.0,门 PASS 8/8,
+  棘轮 1152→1159):
+  - vk.db 为 run/stage/artifact/cost 真源:`GET /api/jobs` 合并 live 与历史
+    `run:<run_id>` 行(去重);`run:` 视图从 DB 重建 note/product/audit 产物
+    (相对 uri→opaque id,零绝对路径)。
+  - 重启 reconcile:孤儿 running→interrupted,只翻状态**绝不自动重跑**——重启
+    本身零新增扣费;显式 retry/refresh 才是新执行决策且受 max_cost_cny 管辖。
+  - 幂等:相同 idempotency_key 重复提交返回同一 job 且执行体只跑一次;跨重启
+    执行级幂等由 run cache 承担(零下载零模型调用的机器锁既有)。
+  - 契约 1.1.0 加法升版(版本历史入契约 §10);Node 侧只存脱敏四元组的规则
+    写入契约 §7(实现落 phase3);三层 kill 矩阵排入 phase6。

@@ -1,0 +1,6 @@
+E   ImportError: cannot import name 'reconcile_stale_runs' from 'video_knowledge.desktop' (C:\Users\Lauseusing\Developer\video-knowledge-m1-productization\src\video_knowledge\desktop.py)
+=========================== short test summary info ===========================
+ERROR tests/knowledge/test_desktop_persistence.py
+ERROR tests/knowledge/test_web_persistence_contract.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!
+2 errors in 0.49s
