@@ -542,13 +542,42 @@ fn configure_host_env(cmd: &mut Command) {
 
     // video-knowledge sidecar 配置面(vk-shell-v1):`VK_PYTHON` 决定 Host 会 spawn
     // 哪个可执行文件 —— 放任继承等于把 spawn 向量交给任何能设用户环境变量的东西,
-    // 比改写监听地址更危险,必须移除。打包形态(阶段 5)由 supervisor 从安装的
-    // 版本化 runtime 路径显式设值;移除后 sidecar 呈 not-configured 类型化诊断,
-    // 不影响 Host 其余功能。开发直连(npm run dev:server)不经本函数,不受影响。
+    // 比改写监听地址更危险,必须移除。开发直连(npm run dev:server)不经本函数。
     cmd.env_remove("OPENCLI_HOST_VK_PYTHON")
         .env_remove("OPENCLI_HOST_VK_ROOT")
         .env_remove("OPENCLI_HOST_VK_CONFIG_DIR")
         .env_remove("OPENCLI_HOST_VK_STATE_DIR");
+
+    // 打包形态(阶段 5):supervisor 是 VK_* 的唯一权威来源 —— 只信
+    // %LOCALAPPDATA%\爪爪-data\runtime\active.json 这个由安装器原子写入的指针,
+    // 指针不在/损坏/指向不存在的 python 时保持 not-configured(类型化诊断),
+    // 绝不回落到环境继承。
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let home = Path::new(&local_app_data).join(VK_DATA_HOME_DIR);
+        if let Some(python) = vk_active_python(&home) {
+            cmd.env("OPENCLI_HOST_VK_PYTHON", &python)
+                .env("OPENCLI_HOST_VK_ROOT", home.join("data"))
+                .env("OPENCLI_HOST_VK_CONFIG_DIR", home.join("config"))
+                .env("OPENCLI_HOST_VK_STATE_DIR", home.join("node-state"));
+        }
+    }
+}
+
+/// 爪爪的 vk 数据根目录名。与 NSIS 安装目录(productName「爪爪」)分离,
+/// 卸载默认不触碰 —— 知识库保留是默认行为,清空走 vk-data-tool 的显式 purge。
+const VK_DATA_HOME_DIR: &str = "爪爪-data";
+
+/// 读取安装器原子写入的 active 指针;任何一步不满足即 None(fail-closed)。
+fn vk_active_python(home: &Path) -> Option<PathBuf> {
+    let pointer = home.join("runtime").join("active.json");
+    let raw = std::fs::read_to_string(pointer).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let python = PathBuf::from(parsed.get("pythonPath")?.as_str()?);
+    if python.is_absolute() && python.is_file() {
+        Some(python)
+    } else {
+        None
+    }
 }
 
 /// `node` 必须是 [`probe_node`] 解析出来的**绝对路径**:探测一个 node、启动另一个 node
@@ -1101,6 +1130,36 @@ mod tests {
         assert!(!supervision_ok(false, true, false), "只设了环境变量、Host 没挂看门狗 → 不算通道");
         assert!(!supervision_ok(false, false, true), "没握写端 → 不算通道");
         assert!(!supervision_ok(false, false, false));
+    }
+
+    #[test]
+    fn vk_active_python_is_fail_closed() {
+        let home = std::env::temp_dir().join(format!(
+            "opencli-vk-active-tests-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        // 无指针 → None
+        assert!(vk_active_python(&home).is_none());
+        let runtime = home.join("runtime");
+        std::fs::create_dir_all(&runtime).unwrap();
+        // 坏 JSON → None
+        std::fs::write(runtime.join("active.json"), "{not json").unwrap();
+        assert!(vk_active_python(&home).is_none());
+        // 指向不存在的 python → None
+        let missing = home.join("versions").join("v1").join("python.exe");
+        std::fs::write(
+            runtime.join("active.json"),
+            format!("{{\"pythonPath\": {:?}}}", missing.to_string_lossy()),
+        )
+        .unwrap();
+        assert!(vk_active_python(&home).is_none());
+        // 真实存在的绝对路径 → Some(该路径)
+        std::fs::create_dir_all(missing.parent().unwrap()).unwrap();
+        std::fs::write(&missing, b"stub").unwrap();
+        let resolved = vk_active_python(&home).expect("existing pointer resolves");
+        assert_eq!(resolved, missing);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// C1:探测必须有时限。`probe_node` 的全部时限就来自 `wait_for_exit(_, PROBE_TIMEOUT)`,
