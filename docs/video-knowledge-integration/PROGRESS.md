@@ -38,7 +38,7 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
 | task0 事实基线 | complete | BASELINE.json + evidence/task0/ + vk@6abd39e |
 | phase1 vk-shell-v1 契约冻结 | complete | evidence/phase1/ + vk 契约 docs/SHELL-INTEGRATION-CONTRACT.md + 本地 tag vk-shell-v1（endpoint 0f784c3） |
 | phase2 持久化与幂等 | complete | evidence/phase2/ + vk docs/evidence/vk-shell-v1-phase2-persistence.v1.json（endpoint c59e778,api 1.1.0）。Node 脱敏影子→phase3 落地;三层 kill 矩阵→phase6 验收 |
-| phase3 Node Host 集成 | todo | - |
+| phase3 Node Host 集成 | complete | evidence/phase3/(红/绿/真机冒烟 11 项)+ 本仓 3958bfd/cda6365/cb52f11 + vk api 1.2.0(endpoint 380d56a) |
 | phase4 视频解析标签页 | todo | - |
 | phase5 运行时与数据生命周期 | todo | - |
 | phase6 测试与真实验收 | todo | - |
@@ -79,3 +79,21 @@ plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
     执行级幂等由 run cache 承担(零下载零模型调用的机器锁既有)。
   - 契约 1.1.0 加法升版(版本历史入契约 §10);Node 侧只存脱敏四元组的规则
     写入契约 §7(实现落 phase3);三层 kill 矩阵排入 phase6。
+- 2026-08-01 phase3 完成(本仓 3 commits;vitest 583→606、cargo 19 红→绿、
+  verify:host 9/9、真机冒烟 11/11):
+  - **VkSidecarManager**(独立类,不复用 RunManager 90 秒语义):随机 loopback
+    端口 + VK_UI_TOKEN 环境注入 + ready 行握手 + /api/meta 版本兼容检查
+    (major=1/minor≥1/shell_mode 必真)+ 按需单飞拉起;四类可操作诊断
+    (not-configured/runtime-missing/spawn-timeout/protocol-mismatch)+ 崩溃
+    sidecar-exited 带脱敏 stderr 尾;首诊不被 close 覆盖。
+  - **/vk/v1/\* 白名单代理**:注入认证、Origin 门管辖、白名单外 404 零转发、
+    typed 503、uploads 8MiB 原始通道、client_job_id 转发前剥离;
+    /vk/v1/health 为 Node 投影(零 pid/port/token/路径)。
+  - **脱敏影子**(I-P7 逐字段重建):仅持久化 clientJobId/idempotencyKey/
+    requestFingerprint/runId/displayStatus(+updatedAt),vkJobId 仅内存;
+    vk 视图新增 request_fingerprint(契约 1.2.0)供影子取数。
+  - **Rust 配置面收口**:4 个 OPENCLI_HOST_VK_* 入 HOST_ENV_KEYS 且
+    configure_host_env 显式移除(VK_PYTHON 是 spawn 向量;打包形态阶段5
+    由 supervisor 显式设值);cargo env 面扫描测试红→绿。
+  - **真机双进程闭环**:真 Node spawn 真 Python 487ms ready、preview 全链路、
+    优雅关停零孤儿(scripts/verify-vk-sidecar.mjs,11/11)。
