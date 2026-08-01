@@ -1,0 +1,14 @@
+=== vitest ===
+[2m   Start at [22m 20:24:12
+[2m   Duration [22m 6.05s[2m (transform 3.08s, setup 14.45s, collect 13.10s, tests 14.02s, environment 53.27s, prepare 10.92s)[22m
+
+=== cargo ===
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+=== npm build ===
+[2mdist/[22m[36massets/index-CAz6dA_0.js   [39m[1m[2m209.43 kB[22m[1m[22m[2m │ gzip: 66.94 kB[22m
+[32m✓ built in 999ms[39m
+=== verify:host ===
+
+=== 闭包硬闸:9/9 通过 ===

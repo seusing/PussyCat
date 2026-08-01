@@ -1,0 +1,66 @@
+PASS host ready line — port=54800
+PASS idle health is stopped (lazy spawn) — stopped
+PASS meta proxied via real python sidecar — in 487ms
+PASS api version compatible — 1.1.0
+PASS sidecar entered shell mode (env token enforced)
+PASS exactly one python child under host — pids=42680
+PASS preview resolves a full ProcessingRequest — preset=quick-summary
+PASS health ok after handshake
+PASS health projection carries no port/pid/paths
+PASS origin gate still guards vk routes
+PASS graceful shutdown leaves zero orphan python
+{
+  "vkSidecarSmoke": true,
+  "checks": [
+    {
+      "name": "host ready line",
+      "passed": true,
+      "detail": "port=54800"
+    },
+    {
+      "name": "idle health is stopped (lazy spawn)",
+      "passed": true,
+      "detail": "stopped"
+    },
+    {
+      "name": "meta proxied via real python sidecar",
+      "passed": true,
+      "detail": "in 487ms"
+    },
+    {
+      "name": "api version compatible",
+      "passed": true,
+      "detail": "1.1.0"
+    },
+    {
+      "name": "sidecar entered shell mode (env token enforced)",
+      "passed": true
+    },
+    {
+      "name": "exactly one python child under host",
+      "passed": true,
+      "detail": "pids=42680"
+    },
+    {
+      "name": "preview resolves a full ProcessingRequest",
+      "passed": true,
+      "detail": "preset=quick-summary"
+    },
+    {
+      "name": "health ok after handshake",
+      "passed": true
+    },
+    {
+      "name": "health projection carries no port/pid/paths",
+      "passed": true
+    },
+    {
+      "name": "origin gate still guards vk routes",
+      "passed": true
+    },
+    {
+      "name": "graceful shutdown leaves zero orphan python",
+      "passed": true
+    }
+  ]
+}
