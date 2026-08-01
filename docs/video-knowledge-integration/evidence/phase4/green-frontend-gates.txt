@@ -1,0 +1,8 @@
+=== tsc ===
+no errors
+=== vitest ===
+[2m Test Files [22m [1m[32m56 passed[39m[22m[90m (56)[39m
+[2m      Tests [22m [1m[32m627 passed[39m[22m[90m (627)[39m
+=== build ===
+[2mdist/[22m[36massets/index-ByxphETZ.js   [39m[1m[2m231.46 kB[22m[1m[22m[2m │ gzip: 72.27 kB[22m
+[32m✓ built in 982ms[39m
