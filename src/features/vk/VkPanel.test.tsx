@@ -216,6 +216,56 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-query-citation').textContent).toContain('transcript')
   })
 
+  it('first-run: renders the runtime install card, posts install, shows live log while installing', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': {
+        body: {
+          status: 'not-configured', reasonCode: 'not-installed',
+          summary: 'video-knowledge runtime 未安装', apiVersion: null,
+          packageVersion: null, capabilities: [], checkedAt: 't', retryable: false,
+        },
+      },
+      'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
+      'GET /vk/v1/runtime/status': {
+        body: { state: 'not-installed', version: null, reasonCode: null, summary: '解析引擎未安装', log: [], checkedAt: 't' },
+      },
+      'POST /vk/v1/runtime/install': {
+        status: 202,
+        body: { state: 'installing', version: null, reasonCode: null, summary: '正在安装解析引擎', log: ['manifest 核验通过', 'venv: uv.exe venv'], checkedAt: 't' },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
+    expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('未安装')
+    await user.click(screen.getByTestId('vk-runtime-install'))
+    await waitFor(() => {
+      expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('正在安装')
+    })
+    expect(screen.getByTestId('vk-runtime-log').textContent).toContain('manifest 核验通过')
+    expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/install')).toBe(true)
+  })
+
+  it('first-run: failed install shows typed reason with retry', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': {
+        body: {
+          status: 'not-configured', reasonCode: 'not-installed',
+          summary: '未安装', apiVersion: null, packageVersion: null,
+          capabilities: [], checkedAt: 't', retryable: false,
+        },
+      },
+      'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
+      'GET /vk/v1/runtime/status': {
+        body: { state: 'failed', version: null, reasonCode: 'offline', summary: '网络不可达,独立 Python 下载失败', log: ['error sending request'], checkedAt: 't' },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
+    expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('offline')
+    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('重试安装')
+  })
+
   it('shows a typed reason when the sidecar is not wired', async () => {
     stubRoutes({
       'GET /vk/v1/health': {
