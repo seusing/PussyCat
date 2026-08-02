@@ -90,6 +90,8 @@ export class VkSidecarManager {
     healthTimeoutMs = 5_000,
     requiredApiMajor = 1,
     requiredApiMinor = 1,
+    requiredSchemaMajor = 1,
+    requiredSchemaMinor = 1,
     maxWorkers = 1,
     stderrTailLines = 40,
     baseEnv = process.env,
@@ -107,6 +109,8 @@ export class VkSidecarManager {
     this.healthTimeoutMs = healthTimeoutMs
     this.requiredApiMajor = requiredApiMajor
     this.requiredApiMinor = requiredApiMinor
+    this.requiredSchemaMajor = requiredSchemaMajor
+    this.requiredSchemaMinor = requiredSchemaMinor
     this.maxWorkers = maxWorkers
     this.stderrTailLines = stderrTailLines
     this.baseEnv = baseEnv
@@ -143,6 +147,7 @@ export class VkSidecarManager {
       summary,
       ...(this.#diagnostic?.detail ? { detail: this.#diagnostic.detail } : {}),
       apiVersion: this.#meta?.api_version ?? null,
+      schemaVersion: this.#meta?.processing_request_schema_version ?? null,
       packageVersion: this.#meta?.package_version ?? null,
       capabilities: this.#meta?.capabilities ?? [],
       checkedAt: this.now(),
@@ -274,16 +279,25 @@ export class VkSidecarManager {
       child.kill('SIGKILL')
       throw this.#typedError()
     }
+    // 握手三校验(v2 阶段4):service、api_version、processing_request_schema_version。
+    // 任何一项不兼容都拒绝启动——请求形状与路由形状各有版本,只校验其一等于放过另一半。
     const version = parseApiVersion(meta?.api_version)
+    const schema = parseApiVersion(meta?.processing_request_schema_version)
     const compatible = meta?.service === 'video-knowledge'
       && version !== null
       && version.major === this.requiredApiMajor
       && version.minor >= this.requiredApiMinor
+      && schema !== null
+      && schema.major === this.requiredSchemaMajor
+      && schema.minor >= this.requiredSchemaMinor
     if (!compatible) {
       this.#fail(
         'protocol-mismatch',
         'sidecar 协议版本不兼容',
-        `需要 api ${this.requiredApiMajor}.${this.requiredApiMinor}+,拿到 service=${meta?.service ?? '?'} api_version=${meta?.api_version ?? '?'}`,
+        `需要 service=video-knowledge api ${this.requiredApiMajor}.${this.requiredApiMinor}+ `
+        + `processing_request_schema_version ${this.requiredSchemaMajor}.${this.requiredSchemaMinor}+;`
+        + `拿到 service=${meta?.service ?? '?'} api_version=${meta?.api_version ?? '?'} `
+        + `processing_request_schema_version=${meta?.processing_request_schema_version ?? '?'}`,
       )
       child.kill('SIGKILL')
       throw this.#typedError()

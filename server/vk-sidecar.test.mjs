@@ -20,7 +20,7 @@ class FakeChild extends EventEmitter {
 
 const META_OK = {
   service: 'video-knowledge',
-  api_version: '1.1.0',
+  api_version: '1.3.0',
   package_version: '0.1.0',
   processing_request_schema_version: '1.1.0',
   shell_mode: true,
@@ -103,7 +103,8 @@ describe('VkSidecarManager', () => {
     const health = manager.health()
     expect(health.status).toBe('ok')
     expect(health.reasonCode).toBe('ok')
-    expect(health.apiVersion).toBe('1.1.0')
+    expect(health.apiVersion).toBe('1.3.0')
+    expect(health.schemaVersion).toBe('1.1.0')
     expect(health.packageVersion).toBe('0.1.0')
     expect(health.capabilities).toHaveLength(1)
     expect(health.retryable).toBe(false)
@@ -151,6 +152,37 @@ describe('VkSidecarManager', () => {
     expect(error.reasonCode).toBe('protocol-mismatch')
     expect(error.detail).toContain('2.0.0')
     expect(child.kills.length).toBeGreaterThan(0)
+  })
+
+  it('rejects an incompatible processing_request_schema_version', async () => {
+    const { child, manager } = setup({
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ ...META_OK, processing_request_schema_version: '2.0.0' }),
+      }),
+    })
+    const failure = manager.ensureStarted().catch((error) => error)
+    emitReady(child)
+    const error = await failure
+    expect(error).toBeInstanceOf(VkSidecarError)
+    expect(error.reasonCode).toBe('protocol-mismatch')
+    expect(error.detail).toContain('processing_request_schema_version')
+    expect(error.detail).toContain('2.0.0')
+    expect(child.kills.length).toBeGreaterThan(0)
+  })
+
+  it('rejects a sidecar whose service name is not video-knowledge', async () => {
+    const { child, manager } = setup({
+      fetchImpl: async () => ({
+        ok: true, status: 200, json: async () => ({ ...META_OK, service: 'something-else' }),
+      }),
+    })
+    const failure = manager.ensureStarted().catch((error) => error)
+    emitReady(child)
+    const error = await failure
+    expect(error.reasonCode).toBe('protocol-mismatch')
+    expect(error.detail).toContain('something-else')
   })
 
   it('rejects a sidecar that did not enter shell mode', async () => {
