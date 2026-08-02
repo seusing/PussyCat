@@ -11,6 +11,18 @@
    Playwright 5/5(evidence/v2-phase0/)。
 5. 顺序执行 §三 0–6;同门三连败即记录转下一项;新增真实付费默认 0。
 
+## 任务书 v2 进度
+
+| v2 阶段 | 状态 | 证据 |
+| --- | --- | --- |
+| 0 重建基线 | complete | evidence/v2-phase0/ + 范围 diff-check 双仓归零(oc 347 处证据尾随空格修正) |
+| 1 统一凭据边界 | complete | vk 1163(哨兵三测:执行对象唯一持有/HTTP 全表面/sources.url/vk.db/工件全扫零);api 1.3.0(preview 公开投影、投影提交正路);React 切投影通道;Node 面哨兵;Playwright 5/5 |
+| 2 数据库级幂等与历史重放 | complete | vk 1171(migration 008 shell_jobs、事务 get-or-create、409/428 类型化、重启双实例零执行、历史 retry/refresh 保 parent/cache、凭据历史 428);kill 矩阵 13/13(重启原 key 同 job_id 零调用、旧 job 从 vk.db 存活) |
+| 3 全新安装与首启 | in_flight | - |
+| 4 真实运行状态与协议 | todo | - |
+| 5 用户真实入口 E2E | todo | - |
+| 6 收口证据 | todo | - |
+
 任务书:用户 goal.txt(2026-08-01 下发)。**断线重连后:先读本文件,再读 BLOCKED.md;
 已验收阶段只做回归,不重做。** 基线事实见 BASELINE.json,证据在 evidence/。
 
