@@ -9,8 +9,6 @@
 // 注入,不落日志、不进 health 投影、不回传前端;stderr 诊断先脱敏再保留。
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 
 export class VkSidecarError extends Error {
   constructor(statusCode, message, { reasonCode = 'sidecar-error', detail } = {}) {
@@ -78,6 +76,7 @@ export class VkSidecarManager {
 
   constructor({
     pythonPath,
+    runtimeResolver,
     homeDir,
     rootDir,
     configDir,
@@ -97,6 +96,7 @@ export class VkSidecarManager {
     baseEnv = process.env,
   } = {}) {
     this.pythonPath = pythonPath
+    this.runtimeResolver = runtimeResolver
     this.homeDir = homeDir
     this.rootDir = rootDir
     this.configDir = configDir
@@ -117,20 +117,17 @@ export class VkSidecarManager {
     this.#state = (pythonPath || homeDir) ? 'stopped' : 'not-configured'
   }
 
-  // spawn 时动态解析:显式 env python 优先,否则读 home 的 active.json 指针——
+  // spawn 时动态调用统一 resolver；adopt 先 stop，下一次请求即可读取新 active，
   // 首启安装完成后**无需重启 Node** 即可拉起 sidecar(v2 阶段3)。
   #resolvePython() {
     if (this.pythonPath) return this.pythonPath
-    if (!this.homeDir) return null
     try {
-      const pointer = JSON.parse(
-        readFileSync(join(this.homeDir, 'runtime', 'active.json'), 'utf8'),
-      )
-      const python = typeof pointer.pythonPath === 'string' ? pointer.pythonPath : null
-      return python && existsSync(python) ? python : null
+      const runtime = this.runtimeResolver?.()
+      if (runtime?.pythonPath) return runtime.pythonPath
     } catch {
-      return null
+      // 统一落到下方显式开发注入或 not-installed 诊断。
     }
+    return null
   }
 
   // 环境级健康投影(浏览器桥同款纪律):正向枚举字段,pid/port/token/路径一律不出现。

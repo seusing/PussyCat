@@ -12,11 +12,12 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
-  renameSync, rmSync, statfsSync, writeFileSync,
+  rmSync, statfsSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { scrubSidecarText } from './vk-sidecar.mjs'
+import { writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
 
 const MIN_FREE_BYTES = 1 * 1024 ** 3
 const HEAVY_FREE_BYTES = 5 * 1024 ** 3
@@ -53,6 +54,7 @@ export async function installVkRuntime({
   extras = [],
   log = () => {},
   spawnImpl = spawn,
+  fetchImpl = fetch,
 }) {
   const resolvedHome = resolve(home)
   const manifestFile = manifestPath ?? (bundleDir ? join(bundleDir, 'runtime-manifest.json') : undefined)
@@ -151,6 +153,7 @@ export async function installVkRuntime({
   await runStep('smoke-console', pythonExe, ['-m', 'video_knowledge', '-h'])
 
   const smokeRoot = mkdtempSync(join(tmpdir(), 'vk-rt-smoke-'))
+  let smokeMeta = null
   try {
     const token = 'runtime-smoke-token-0123456789abcdef'
     const gui = spawnImpl(pythonExe, ['-m', 'video_knowledge', 'gui', '--root', join(smokeRoot, 'data'), '--config-dir', join(smokeRoot, 'config'), '--port', '0', '--no-browser'], {
@@ -168,11 +171,12 @@ export async function installVkRuntime({
         })
         gui.once('exit', (code) => rejectPort(new VkRuntimeInstallError('smoke-api', `gui 提前退出(${code})`)))
       })
-      const response = await fetch(`http://127.0.0.1:${port}/api/meta`, { headers: { 'X-VK-Token': token } })
+      const response = await fetchImpl(`http://127.0.0.1:${port}/api/meta`, { headers: { 'X-VK-Token': token } })
       const meta = await response.json()
       if (!response.ok || meta.service !== 'video-knowledge' || meta.shell_mode !== true) {
         throw new VkRuntimeInstallError('smoke-api', `meta 握手异常 status=${response.status}`)
       }
+      smokeMeta = meta
       log(`smoke-api: handshake ok api_version=${meta.api_version}`)
     } finally {
       gui.kill('SIGKILL')
@@ -200,8 +204,9 @@ export async function installVkRuntime({
   }
 
   // —— 原子切换 ——
-  const activePath = join(resolvedHome, 'runtime', 'active.json')
-  const payload = JSON.stringify({
+  const receipt = writeRuntimeReceipt(resolvedHome, {
+    schema: 'vk-runtime-receipt@1',
+    source: 'app-owned',
     version: versionLabel,
     pythonPath: pythonExe,
     wheel: manifest?.wheel?.name,
@@ -209,9 +214,11 @@ export async function installVkRuntime({
     uvSha256: manifest?.uv?.sha256,
     installedAt: new Date().toISOString(),
     extras,
-  }, null, 2)
-  writeFileSync(`${activePath}.tmp`, payload, 'utf8')
-  renameSync(`${activePath}.tmp`, activePath)
+    apiVersion: smokeMeta?.api_version ?? null,
+    schemaVersion: smokeMeta?.processing_request_schema_version ?? null,
+    capabilities: Array.isArray(smokeMeta?.capabilities) ? smokeMeta.capabilities : [],
+  })
+  writeActiveRuntime(resolvedHome, receipt)
   log(`active -> ${versionLabel}`)
   return { version: versionLabel, pythonPath: pythonExe }
 }

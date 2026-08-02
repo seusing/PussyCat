@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { VkRuntimeManager } from './vk-runtime.mjs'
+import { writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
 
 const dirs = []
 function tempDir(prefix) {
@@ -34,10 +35,15 @@ describe('VkRuntimeManager', () => {
       bundleDir: bundleDir(),
       installImpl: async ({ log }) => {
         log('step one')
-        const python = join(home, 'runtime', 'versions', 'v1', 'python.exe')
-        mkdirSync(join(home, 'runtime', 'versions', 'v1'), { recursive: true })
+        const python = join(home, 'runtime', 'versions', 'v1', 'Scripts', 'python.exe')
+        mkdirSync(join(home, 'runtime', 'versions', 'v1', 'Scripts'), { recursive: true })
         writeFileSync(python, 'stub')
-        writeFileSync(join(home, 'runtime', 'active.json'), JSON.stringify({ version: 'v1', pythonPath: python }))
+        const receipt = writeRuntimeReceipt(home, {
+          schema: 'vk-runtime-receipt@1', source: 'app-owned', version: 'v1', pythonPath: python,
+          wheelSha256: 'a'.repeat(64), apiVersion: '1.4.0', schemaVersion: '1.1.0',
+          capabilities: [], extras: [], installedAt: '2026-08-02T00:00:00Z',
+        })
+        writeActiveRuntime(home, receipt)
         return { version: 'v1', pythonPath: python }
       },
     })
@@ -46,6 +52,10 @@ describe('VkRuntimeManager', () => {
     const status = manager.status()
     expect(status.state).toBe('installed')
     expect(status.version).toBe('v1')
+    expect(status).toMatchObject({
+      source: 'app-owned', pythonPath: expect.stringContaining('python.exe'),
+      capabilities: [], extras: [],
+    })
     expect(status.log).toContain('step one')
   })
 
@@ -76,5 +86,26 @@ describe('VkRuntimeManager', () => {
     expect(status.state).toBe('failed')
     expect(status.reasonCode).toBe('disk')
     expect(status.log).toContain('trying')
+  })
+
+  it('安装进行中拒绝 adopt，防止两个流程竞写 active 指针', async () => {
+    let release
+    const gate = new Promise((resolveGate) => { release = resolveGate })
+    const pythonPath = 'C:\\fixture\\developer\\.venv\\Scripts\\python.exe'
+    const manager = new VkRuntimeManager({
+      home: tempDir('vk-home-'), bundleDir: bundleDir(),
+      installImpl: async () => { await gate },
+      discoverImpl: () => [{ pythonPath, source: 'developer-venv' }],
+      probeImpl: async ({ source }) => ({
+        pythonPath, source, version: '0.1.0', apiVersion: '1.4.0', schemaVersion: '1.1.0',
+        capabilities: [], compatible: true, reason: null,
+      }),
+    })
+    await manager.detect()
+    const installing = manager.install()
+    const error = await manager.adopt(pythonPath).catch((item) => item)
+    expect(error).toMatchObject({ statusCode: 409, reasonCode: 'runtime-busy' })
+    release()
+    await installing
   })
 })

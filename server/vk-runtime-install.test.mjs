@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -88,5 +88,38 @@ describe('installVkRuntime', () => {
     expect(error).toBeInstanceOf(VkRuntimeInstallError)
     expect(error.reasonCode).toBe('offline')
     expect(existsSync(join(home, 'runtime', 'active.json'))).toBe(false)
+  })
+
+  it('四门全绿后先写 app-owned receipt 再原子激活', async () => {
+    const bundle = makeBundle()
+    const home = tempDir('vk-home-')
+    const spawnImpl = (_program, argv) => {
+      const child = new FakeChild()
+      queueMicrotask(() => {
+        if (argv.includes('gui')) {
+          child.stdout.write('gui=http://127.0.0.1:45678\n')
+        } else {
+          if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
+          child.emit('close', 0)
+        }
+      })
+      return child
+    }
+    const result = await installVkRuntime({
+      home, bundleDir: bundle, spawnImpl,
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({
+        service: 'video-knowledge', shell_mode: true, package_version: '0.1.0',
+        api_version: '1.4.0', processing_request_schema_version: '1.1.0',
+        capabilities: [{ capability: 'query_ready', runtime: 'ready' }],
+      }) }),
+    })
+    const versionDir = join(home, 'runtime', 'versions', result.version)
+    const receipt = JSON.parse(readFileSync(join(versionDir, 'runtime-receipt.json'), 'utf8'))
+    const active = JSON.parse(readFileSync(join(home, 'runtime', 'active.json'), 'utf8'))
+    expect(receipt).toMatchObject({
+      schema: 'vk-runtime-receipt@1', source: 'app-owned', version: result.version,
+      apiVersion: '1.4.0', schemaVersion: '1.1.0',
+    })
+    expect(active).toMatchObject({ source: 'app-owned', receiptPath: join(versionDir, 'runtime-receipt.json') })
   })
 })

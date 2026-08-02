@@ -1,11 +1,22 @@
 // runtime 安装编排(v2 阶段3):首启检测 active.json,缺失时经 /vk/v1/runtime/*
 // 提供 not-installed/installing/installed/failed 类型化状态与单飞安装。
 // 进度=安装核心逐行透传的真实输出(已脱敏),不造百分比。
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { installVkRuntime } from './vk-runtime-install.mjs'
+import { resolveActiveRuntime, writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
+import { discoverVkRuntimePaths, probeVkRuntime } from './vk-runtime-probe.mjs'
 
 const LOG_TAIL_LINES = 60
+
+export class VkRuntimeError extends Error {
+  constructor(statusCode, reasonCode, message) {
+    super(message)
+    this.name = 'VkRuntimeError'
+    this.statusCode = statusCode
+    this.reasonCode = reasonCode
+  }
+}
 
 export class VkRuntimeManager {
   #state = 'unknown'
@@ -13,28 +24,33 @@ export class VkRuntimeManager {
   #summary = null
   #log = []
   #installing = null
+  #adopting = false
 
-  constructor({ home, bundleDir, installImpl = installVkRuntime, now = () => new Date().toISOString() } = {}) {
+  constructor({
+    home,
+    bundleDir,
+    installImpl = installVkRuntime,
+    discoverImpl = discoverVkRuntimePaths,
+    probeImpl = probeVkRuntime,
+    env = process.env,
+    now = () => new Date().toISOString(),
+  } = {}) {
     this.home = home
     this.bundleDir = bundleDir
     this.installImpl = installImpl
+    this.discoverImpl = discoverImpl
+    this.probeImpl = probeImpl
+    this.env = env
     this.now = now
+    this.detected = new Map()
   }
 
-  #activePointer() {
-    if (!this.home) return null
-    const pointer = join(this.home, 'runtime', 'active.json')
-    if (!existsSync(pointer)) return null
-    try {
-      const parsed = JSON.parse(readFileSync(pointer, 'utf8'))
-      return typeof parsed.pythonPath === 'string' && existsSync(parsed.pythonPath) ? parsed : null
-    } catch {
-      return null
-    }
+  activeRuntime() {
+    return resolveActiveRuntime({ home: this.home, bundleDir: this.bundleDir })
   }
 
   status() {
-    const active = this.#activePointer()
+    const active = this.activeRuntime()
     if (this.#installing) {
       return {
         state: 'installing',
@@ -49,6 +65,10 @@ export class VkRuntimeManager {
       return {
         state: 'installed',
         version: String(active.version ?? 'unknown'),
+        source: active.source,
+        pythonPath: active.pythonPath,
+        capabilities: Array.isArray(active.capabilities) ? active.capabilities : [],
+        extras: Array.isArray(active.extras) ? active.extras : [],
         reasonCode: null,
         summary: `解析引擎已就绪(${active.version ?? 'unknown'})`,
         log: this.#log.slice(-LOG_TAIL_LINES),
@@ -78,14 +98,69 @@ export class VkRuntimeManager {
     return {
       state: 'not-installed',
       version: null,
+      source: null,
       reasonCode: null,
-      summary: '解析引擎未安装;点击安装开始(需要网络下载独立 Python)',
+      summary: '解析引擎待初始化；将创建专用环境，并复用本机 Python 3.12 与 uv 缓存',
       log: this.#log.slice(-LOG_TAIL_LINES),
       checkedAt: this.now(),
     }
   }
 
+  async detect() {
+    const paths = this.discoverImpl({ home: this.home, bundleDir: this.bundleDir, env: this.env })
+    const candidates = []
+    this.detected.clear()
+    for (const path of paths) {
+      const candidate = await this.probeImpl(path)
+      candidates.push(candidate)
+      this.detected.set(String(candidate.pythonPath).toLowerCase(), path.source)
+    }
+    return { candidates, checkedAt: this.now() }
+  }
+
+  async adopt(pythonPath, beforeActivate = async () => {}) {
+    if (this.#installing || this.#adopting) {
+      throw new VkRuntimeError(409, 'runtime-busy', '解析环境正在安装，请完成后再接管')
+    }
+    if (typeof pythonPath !== 'string') {
+      throw new VkRuntimeError(400, 'invalid-python-path', 'pythonPath 必须是字符串')
+    }
+    const known = this.detected.get(pythonPath.toLowerCase())
+    if (!known) {
+      throw new VkRuntimeError(400, 'candidate-not-detected', '请先执行受控发现，再选择候选环境')
+    }
+    this.#adopting = true
+    try {
+      const candidate = await this.probeImpl({ pythonPath, source: known })
+      if (!candidate.compatible) {
+        throw new VkRuntimeError(409, candidate.reason ?? 'protocol-mismatch', '候选解析环境未通过兼容探针')
+      }
+      await beforeActivate()
+      const receipt = writeRuntimeReceipt(this.home, {
+        schema: 'vk-runtime-receipt@1',
+        source: 'external',
+        version: candidate.version,
+        pythonPath: candidate.pythonPath,
+        apiVersion: candidate.apiVersion,
+        schemaVersion: candidate.schemaVersion,
+        capabilities: candidate.capabilities,
+        adoptedAt: this.now(),
+        discoveredAs: known,
+      })
+      writeActiveRuntime(this.home, receipt)
+      this.#state = 'installed'
+      this.#reasonCode = null
+      this.#summary = null
+      return this.status()
+    } finally {
+      this.#adopting = false
+    }
+  }
+
   async install() {
+    if (this.#adopting) {
+      throw new VkRuntimeError(409, 'runtime-busy', '正在接管已有解析环境，请完成后再安装')
+    }
     if (this.#installing) return this.#installing
     const snapshot = this.status()
     if (snapshot.state === 'installed') return snapshot

@@ -85,9 +85,15 @@ try {
   // 返回类型化诊断;配置后首个请求按需拉起。v2 阶段3:HOME 指数据根,
   // python 优先 env、否则 spawn 时读 active.json(装完免重启)。
   const vkHome = process.env.OPENCLI_HOST_VK_HOME
+  const vkRuntime = new VkRuntimeManager({
+    home: vkHome,
+    bundleDir: process.env.OPENCLI_HOST_VK_BUNDLE_DIR,
+  })
   const vkSidecar = new VkSidecarManager({
+    // 开发直连的显式 override 保持最高优先级；打包版 Rust 会先清除此环境变量。
     pythonPath: process.env.OPENCLI_HOST_VK_PYTHON,
     homeDir: vkHome,
+    runtimeResolver: () => vkRuntime.activeRuntime(),
     rootDir: process.env.OPENCLI_HOST_VK_ROOT
       ?? (vkHome ? resolve(vkHome, 'data') : undefined),
     configDir: process.env.OPENCLI_HOST_VK_CONFIG_DIR
@@ -97,10 +103,6 @@ try {
     ?? (vkHome ? resolve(vkHome, 'node-state') : undefined)
   const vkJobShadow = createVkJobShadow({
     stateFile: vkStateDir ? resolve(vkStateDir, 'vk-job-shadow.json') : undefined,
-  })
-  const vkRuntime = new VkRuntimeManager({
-    home: vkHome,
-    bundleDir: process.env.OPENCLI_HOST_VK_BUNDLE_DIR,
   })
   app = createHostServer({
     opencliEntry,

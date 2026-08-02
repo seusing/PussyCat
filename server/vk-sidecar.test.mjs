@@ -269,6 +269,52 @@ describe('VkSidecarManager', () => {
     expect(manager.health().status).toBe('stopped')
     await manager.stop() // 幂等
   })
+
+  it('re-resolves the active runtime after stop so adoption needs no Host restart', async () => {
+    const children = []
+    const calls = []
+    let activePython = 'C:\\fixture\\runtime-a\\python.exe'
+    const manager = new VkSidecarManager({
+      runtimeResolver: () => ({ pythonPath: activePython, source: 'external' }),
+      rootDir: 'C:\\fixture\\vk-data',
+      configDir: 'C:\\fixture\\vk-config',
+      spawnImpl: (...args) => {
+        calls.push(args)
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => META_OK }),
+      randomToken: () => 'fixture-token-0123456789abcdef0123456789',
+    })
+
+    const first = manager.ensureStarted()
+    emitReady(children[0])
+    await first
+    const stopped = manager.stop()
+    children[0].emit('close', 0, null)
+    await stopped
+
+    activePython = 'C:\\fixture\\runtime-b\\python.exe'
+    const second = manager.ensureStarted()
+    emitReady(children[1])
+    await second
+    expect(calls.map(([program]) => program)).toEqual([
+      'C:\\fixture\\runtime-a\\python.exe',
+      'C:\\fixture\\runtime-b\\python.exe',
+    ])
+  })
+
+  it('keeps the explicit developer Python override ahead of an active receipt', async () => {
+    const { child, calls, manager } = setup({
+      pythonPath: 'C:\\fixture\\developer\\python.exe',
+      runtimeResolver: () => ({ pythonPath: 'C:\\fixture\\owned\\python.exe', source: 'app-owned' }),
+    })
+    const started = manager.ensureStarted()
+    emitReady(child)
+    await started
+    expect(calls[0][0]).toBe('C:\\fixture\\developer\\python.exe')
+  })
 })
 
 describe('scrubSidecarText', () => {

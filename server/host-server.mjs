@@ -8,6 +8,7 @@ import {
 import { POLICY_SCHEMA_VERSION } from './policy-fingerprint.mjs'
 import { checkBrowserBridgeHealth } from './browser-bridge-health.mjs'
 import { VkSidecarError } from './vk-sidecar.mjs'
+import { VkRuntimeError } from './vk-runtime.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
 
@@ -343,6 +344,20 @@ export function createHostServer({
         writeJson(response, 202, vkRuntime.status())
         return
       }
+      if (url.pathname === '/vk/v1/runtime/detect' && request.method === 'POST') {
+        await readJson(request, maxBodyBytes)
+        if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
+        const detected = await vkRuntime.detect()
+        writeJson(response, 200, { ...detected, checkedAt: detected.checkedAt ?? new Date().toISOString() })
+        return
+      }
+      if (url.pathname === '/vk/v1/runtime/adopt' && request.method === 'POST') {
+        const body = await readJson(request, maxBodyBytes)
+        if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
+        const status = await vkRuntime.adopt(body?.pythonPath, async () => { await vkSidecar?.stop() })
+        writeJson(response, 200, status)
+        return
+      }
 
       if (url.pathname.startsWith('/vk/')) {
         const matched = matchVkRoute(request.method ?? 'GET', url.pathname)
@@ -429,6 +444,7 @@ export function createHostServer({
         error instanceof RequestPolicyError
           || error instanceof RunManagerError
           || error instanceof VkSidecarError
+          || error instanceof VkRuntimeError
           ? error.statusCode
           : 500
       )
