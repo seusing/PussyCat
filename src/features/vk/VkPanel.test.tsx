@@ -116,7 +116,13 @@ describe('VkPanel', () => {
     })
     const submit = calls.find((item) => item.key === 'POST /vk/v1/jobs')
     const payload = JSON.parse(String(submit!.init!.body))
-    expect(payload.request).toMatchObject({ preset: 'quick-summary', max_cost_cny: 1.5 })
+    // 1.3.0:提交走投影(原始 source 只在执行通道),不回投 preview 的脱敏回显
+    expect(payload.request).toBeUndefined()
+    expect(payload).toMatchObject({
+      source: 'https://example.com/v',
+      preset: 'quick-summary',
+      max_cost_cny: 1.5,
+    })
     expect(payload.idempotency_key).toMatch(/[0-9a-f-]{36}/)
     expect(payload.client_job_id).toMatch(/[0-9a-f-]{36}/)
     await waitFor(() => expect(screen.queryByTestId('vk-cost-dialog')).toBeNull())

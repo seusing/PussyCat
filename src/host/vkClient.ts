@@ -132,8 +132,9 @@ export interface VkQueryAnswer {
   [key: string]: unknown
 }
 
-export interface VkSubmitPayload {
-  request: VkProcessingRequest
+// 1.3.0 契约:投影提交(全字段+原始 source)是正路;{"request": …} 保留给
+// 干净源/upload: 的程序化通道。二者都必须携带幂等键与 client_job_id。
+export type VkSubmitPayload = Record<string, unknown> & {
   idempotency_key: string
   client_job_id: string
 }

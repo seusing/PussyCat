@@ -204,6 +204,32 @@ describe('/vk/v1 proxy', () => {
     expect(forwarded.init.body.length).toBe(payload.length)
   })
 
+  it('sentinel: raw URL rides only the execution channel — shadow and Node state stay clean', async () => {
+    const SENTINEL = 'SENTINELxsec0123456789'
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    vkSidecar.respond('POST /api/jobs', { job_id: 'job-s', kind: 'request' }, { status: 201 })
+
+    const response = await fetch(`${baseUrl}/vk/v1/jobs`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        source: `https://www.xiaohongshu.com/item/x?xsec_token=${SENTINEL}`,
+        preset: 'quick-summary',
+        idempotency_key: 'idem-s',
+        client_job_id: 'client-s',
+      }),
+    })
+    expect(response.status).toBe(201)
+    // 执行通道:转发体携带原始 URL(vk 端只让它进执行对象)
+    const forwarded = JSON.parse(vkSidecar.requests[0].init.body)
+    expect(forwarded.source).toContain(SENTINEL)
+    expect(forwarded.client_job_id).toBeUndefined()
+    // Node 持久面零哨兵:影子结构性不存 URL
+    expect(JSON.stringify(vkJobShadow.list())).not.toContain(SENTINEL)
+    expect(JSON.stringify(vkJobShadow.list())).not.toContain('xiaohongshu')
+  })
+
   it('tears the sidecar down on close()', async () => {
     const { app, vkSidecar } = await setup()
     await app.close()

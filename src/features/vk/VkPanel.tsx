@@ -118,31 +118,34 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   const [pendingSubmit, setPendingSubmit] = useState<PendingVkSubmit | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  // 投影是唯一携带原始 URL 的通道(1.3.0 凭据边界):preview 用它取公开回显,
+  // submit 用它执行——preview 响应是脱敏投影,不能作为提交载荷。
+  const buildProjection = (): VkPreviewProjection => ({
+    source: source.trim(),
+    preset,
+    ...(contentType ? { content_type: contentType } : {}),
+    ...(mediaPolicy ? { media_policy: mediaPolicy } : {}),
+    ...(quality ? { quality_profile: quality } : {}),
+    ...(budgetProfile ? { budget_profile: budgetProfile } : {}),
+    ...(caps.length ? { capabilities: caps } : {}),
+    ...(audit ? { audit: true } : {}),
+    ...(maxCost.trim() ? { max_cost_cny: Number(maxCost) } : {}),
+    ...(provenance
+      ? {
+          user_metadata: {
+            origin: 'opencli-result',
+            source_command: provenance.commandKey,
+            collected_at: new Date(provenance.collectedAt).toISOString(),
+          },
+        }
+      : {}),
+  })
+
   const doPreview = async () => {
     setPreviewError(null)
     setPreview(null)
-    const projection: VkPreviewProjection = {
-      source: source.trim(),
-      preset,
-      ...(contentType ? { content_type: contentType } : {}),
-      ...(mediaPolicy ? { media_policy: mediaPolicy } : {}),
-      ...(quality ? { quality_profile: quality } : {}),
-      ...(budgetProfile ? { budget_profile: budgetProfile } : {}),
-      ...(caps.length ? { capabilities: caps } : {}),
-      ...(audit ? { audit: true } : {}),
-      ...(maxCost.trim() ? { max_cost_cny: Number(maxCost) } : {}),
-      ...(provenance
-        ? {
-            user_metadata: {
-              origin: 'opencli-result',
-              source_command: provenance.commandKey,
-              collected_at: new Date(provenance.collectedAt).toISOString(),
-            },
-          }
-        : {}),
-    }
     try {
-      setPreview(await postVkPreview(projection, base))
+      setPreview(await postVkPreview(buildProjection(), base))
     } catch (error) {
       setPreviewError(errorText(error, '预检失败'))
     }
@@ -158,7 +161,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     setSubmitError(null)
     try {
       await postVkJob({
-        request: pendingSubmit.request,
+        ...buildProjection(),
         idempotency_key: crypto.randomUUID(),
         client_job_id: crypto.randomUUID(),
       }, base)
