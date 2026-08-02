@@ -1,0 +1,1012 @@
+=== oc final gates ===
+tsc: no errors
+[2m Test Files [22m [1m[32m58 passed[39m[22m[90m (58)[39m
+[2m      Tests [22m [1m[32m639 passed[39m[22m[90m (639)[39m
+[32m✓ built in 924ms[39m
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.50s
+=== 闭包硬闸:9/9 通过 ===
+  5 passed (33.0s)
+.gitignore:1: trailing whitespace.
++﻿node_modules/
+.gitignore:2: trailing whitespace.
++dist/
+.gitignore:3: trailing whitespace.
++dist-ssr/
+.gitignore:4: trailing whitespace.
++dist-host/
+.gitignore:5: trailing whitespace.
++.vite/
+.gitignore:6: trailing whitespace.
++*.local
+.gitignore:7: trailing whitespace.
++.env
+.gitignore:8: trailing whitespace.
++.env.*
+.gitignore:9: trailing whitespace.
++!.env.node
+.gitignore:10: trailing whitespace.
++.DS_Store
+.gitignore:11: trailing whitespace.
++coverage/
+.gitignore:12: trailing whitespace.
++.package-stamp.json
+.gitignore:13: trailing whitespace.
++
+.gitignore:14: trailing whitespace.
++# Playwright artifacts
+.gitignore:15: trailing whitespace.
++test-results/
+.gitignore:16: trailing whitespace.
++playwright-report/
+.gitignore:17: trailing whitespace.
++
+.gitignore:18: trailing whitespace.
++# VK runtime bundle (built artifacts: wheel + uv.exe + manifest)
+.gitignore:19: trailing whitespace.
++src-tauri/resources/vk/
+docs/video-knowledge-integration/PROGRESS.md:1: trailing whitespace.
++# PROGRESS — 爪爪 × video-knowledge 集成(vk-shell-v1)
+docs/video-knowledge-integration/PROGRESS.md:2: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:3: trailing whitespace.
++## 任务书 v2 开工回执(2026-08-01)
+docs/video-knowledge-integration/PROGRESS.md:4: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:5: trailing whitespace.
++1. v2 目标源:goal.txt(安装态产品闭环);Phase 1–4 只回归不重写。
+docs/video-knowledge-integration/PROGRESS.md:6: trailing whitespace.
++2. 阶段0 复核:vk HEAD 18da94a、oc HEAD c57e6f0 与任务书一致;两树 clean。
+docs/video-knowledge-integration/PROGRESS.md:7: trailing whitespace.
++3. 任务书指出的范围 diff-check 属实(oc 54ddac4..HEAD 347 处证据尾随空格),
+docs/video-knowledge-integration/PROGRESS.md:8: trailing whitespace.
++   已修复并把旧 "clean" 结论在此更正;现两仓范围 diff-check 均为 0。
+docs/video-knowledge-integration/PROGRESS.md:9: trailing whitespace.
++4. v2 基线复跑全绿:vk 1160/ruff/mypy86/lock + wheel 重建 sha 逐字节复现
+docs/video-knowledge-integration/PROGRESS.md:10: trailing whitespace.
++   762649c0… + 干净 venv import smoke;oc tsc/vitest 627/build/cargo 20/
+docs/video-knowledge-integration/PROGRESS.md:11: trailing whitespace.
++   Playwright 5/5(evidence/v2-phase0/)。
+docs/video-knowledge-integration/PROGRESS.md:12: trailing whitespace.
++5. 顺序执行 §三 0–6;同门三连败即记录转下一项;新增真实付费默认 0。
+docs/video-knowledge-integration/PROGRESS.md:13: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:14: trailing whitespace.
++## 任务书 v2 进度
+docs/video-knowledge-integration/PROGRESS.md:15: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:16: trailing whitespace.
++| v2 阶段 | 状态 | 证据 |
+docs/video-knowledge-integration/PROGRESS.md:17: trailing whitespace.
++| --- | --- | --- |
+docs/video-knowledge-integration/PROGRESS.md:18: trailing whitespace.
++| 0 重建基线 | complete | evidence/v2-phase0/ + 范围 diff-check 双仓归零(oc 347 处证据尾随空格修正) |
+docs/video-knowledge-integration/PROGRESS.md:19: trailing whitespace.
++| 1 统一凭据边界 | complete | vk 1163(哨兵三测:执行对象唯一持有/HTTP 全表面/sources.url/vk.db/工件全扫零);api 1.3.0(preview 公开投影、投影提交正路);React 切投影通道;Node 面哨兵;Playwright 5/5 |
+docs/video-knowledge-integration/PROGRESS.md:20: trailing whitespace.
++| 2 数据库级幂等与历史重放 | complete | vk 1171(migration 008 shell_jobs、事务 get-or-create、409/428 类型化、重启双实例零执行、历史 retry/refresh 保 parent/cache、凭据历史 428);kill 矩阵 13/13(重启原 key 同 job_id 零调用、旧 job 从 vk.db 存活) |
+docs/video-knowledge-integration/PROGRESS.md:21: trailing whitespace.
++| 3 全新安装与首启 | complete | evidence/v2-phase3/(捆绑安装全绿、manifest 篡改拒装、**真实 NSIS 安装 → 首启安装 → 闭环 → 重启 → 幂等 → 历史 retry**);登记态安装/卸载 → BLOCKED B2 |
+docs/video-knowledge-integration/PROGRESS.md:22: trailing whitespace.
++| 4 真实运行状态与协议 | complete | vk 1177(progress 四测:running/unknown+reason/终态定格/run: 视图)+ Node 握手三校验(api+schema 篡改两红测);api 1.4.0 |
+docs/video-knowledge-integration/PROGRESS.md:23: trailing whitespace.
++| 5 用户真实入口 E2E | complete | Playwright 6/6(含跨模块:采集结果→送去视频解析→provenance→预检/费用/提交→公开面零哨兵→job API 零哨兵);evidence/v2-phase5/ |
+docs/video-knowledge-integration/PROGRESS.md:24: trailing whitespace.
++| 6 收口证据 | complete | 本表 + BLOCKED(B1–B4 各三次验证)+ FINAL-INVENTORY(实际 HEAD/SHA/路径) |
+docs/video-knowledge-integration/PROGRESS.md:25: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:26: trailing whitespace.
++任务书:用户 goal.txt(2026-08-01 下发)。**断线重连后:先读本文件,再读 BLOCKED.md;
+docs/video-knowledge-integration/PROGRESS.md:27: trailing whitespace.
++已验收阶段只做回归,不重做。** 基线事实见 BASELINE.json,证据在 evidence/。
+docs/video-knowledge-integration/PROGRESS.md:28: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:29: trailing whitespace.
++## 固定事实
+docs/video-knowledge-integration/PROGRESS.md:30: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:31: trailing whitespace.
++- 两仓工作分支均为 `integration/vk-shell-v1`:
+docs/video-knowledge-integration/PROGRESS.md:32: trailing whitespace.
++  - video-knowledge:fork 自 `integration/m1-productization@db4bb40`(clean)
+docs/video-knowledge-integration/PROGRESS.md:33: trailing whitespace.
++  - opencli-app-clone:fork 自 `p1b0/policy-protocol-spec@54ddac4`(clean)
+docs/video-knowledge-integration/PROGRESS.md:34: trailing whitespace.
++- 架构冻结(任务书拍板 1–8):React → **Node Host(唯一 sidecar 管理器)** → vk Python
+docs/video-knowledge-integration/PROGRESS.md:35: trailing whitespace.
++  sidecar;Rust 只管既有 Node Host 进程树;React 只访问 Node 的 `/vk/v1/*` 代理,
+docs/video-knowledge-integration/PROGRESS.md:36: trailing whitespace.
++  永不直连 Python、永不接触 sidecar token;Python 自带 Web UI 保留为独立诊断入口
+docs/video-knowledge-integration/PROGRESS.md:37: trailing whitespace.
++  (爪爪不嵌 iframe)。
+docs/video-knowledge-integration/PROGRESS.md:38: trailing whitespace.
++- MVP 入口:直接 URL + 单条 OpenCLI 采集结果"送去视频解析"。批量 Manifest UI、
+docs/video-knowledge-integration/PROGRESS.md:39: trailing whitespace.
++  SSE/WebSocket、通用插件框架后置。
+docs/video-knowledge-integration/PROGRESS.md:40: trailing whitespace.
++- 默认 1 个重任务 active,其余 queued;进度只显示真实 stage/elapsed/actual cost,
+docs/video-knowledge-integration/PROGRESS.md:41: trailing whitespace.
++  不造百分比。
+docs/video-knowledge-integration/PROGRESS.md:42: trailing whitespace.
++- `max_cost_cny` 为后端强制费用上限(每次付费调用前按最坏情况预估执行);
+docs/video-knowledge-integration/PROGRESS.md:43: trailing whitespace.
++  `budget_profile` 继续表示路由档位。
+docs/video-knowledge-integration/PROGRESS.md:44: trailing whitespace.
++- 知识库分目录:app / runtime / models / data / cache / temp;卸载默认保留 data。
+docs/video-knowledge-integration/PROGRESS.md:45: trailing whitespace.
++- M3/M4 能力状态按证据如实展示 machine_ready / partial;人工门未闭合不得标 verified。
+docs/video-knowledge-integration/PROGRESS.md:46: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:47: trailing whitespace.
++## 与 2026-07-31 既有文档的关系
+docs/video-knowledge-integration/PROGRESS.md:48: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:49: trailing whitespace.
++`docs/specs/2026-07-31-video-knowledge-integration-contract.md` 与
+docs/video-knowledge-integration/PROGRESS.md:50: trailing whitespace.
++`docs/plans/2026-07-31-video-knowledge-integration-plan.md` 仍是有效输入(事实调查、
+docs/video-knowledge-integration/PROGRESS.md:51: trailing whitespace.
++风险清单、费用确认拍板继续沿用);**冲突处以 goal.txt 拍板为准**。已识别的唯一实质
+docs/video-knowledge-integration/PROGRESS.md:52: trailing whitespace.
++冲突:plan §3 设想 Rust 直接监管 vk sidecar → 改为 Node Host 唯一管理(拍板 1)。
+docs/video-knowledge-integration/PROGRESS.md:53: trailing whitespace.
++plan 的 P-int-0..3 阶段划分被本任务书的阶段 1–6 取代。
+docs/video-knowledge-integration/PROGRESS.md:54: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:55: trailing whitespace.
++## Stage ledger
+docs/video-knowledge-integration/PROGRESS.md:56: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:57: trailing whitespace.
++状态:complete | partial | in_flight | todo | blocked。
+docs/video-knowledge-integration/PROGRESS.md:58: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:59: trailing whitespace.
++| Stage | Status | Evidence |
+docs/video-knowledge-integration/PROGRESS.md:60: trailing whitespace.
++| --- | --- | --- |
+docs/video-knowledge-integration/PROGRESS.md:61: trailing whitespace.
++| task0 事实基线 | complete | BASELINE.json + evidence/task0/ + vk@6abd39e |
+docs/video-knowledge-integration/PROGRESS.md:62: trailing whitespace.
++| phase1 vk-shell-v1 契约冻结 | complete | evidence/phase1/ + vk 契约 docs/SHELL-INTEGRATION-CONTRACT.md + 本地 tag vk-shell-v1（endpoint 0f784c3） |
+docs/video-knowledge-integration/PROGRESS.md:63: trailing whitespace.
++| phase2 持久化与幂等 | complete | evidence/phase2/ + vk docs/evidence/vk-shell-v1-phase2-persistence.v1.json（endpoint c59e778,api 1.1.0）。Node 脱敏影子→phase3 落地;三层 kill 矩阵→phase6 验收 |
+docs/video-knowledge-integration/PROGRESS.md:64: trailing whitespace.
++| phase3 Node Host 集成 | complete | evidence/phase3/(红/绿/真机冒烟 11 项)+ 本仓 3958bfd/cda6365/cb52f11 + vk api 1.2.0(endpoint 380d56a) |
+docs/video-knowledge-integration/PROGRESS.md:65: trailing whitespace.
++| phase4 视频解析标签页 | complete | evidence/phase4/(绿门+浏览器真机六项实录)+ 本仓 5e8d109/a488fe1/54dfc89 |
+docs/video-knowledge-integration/PROGRESS.md:66: trailing whitespace.
++| phase5 运行时与数据生命周期 | complete(机器侧) | evidence/phase5/ + 本仓 071de7b/ff84f62 + vk@18da94a(wheel 762649c0…,SBOM 25 组件,凭据 0/0,跨项目 import 0)。遗留归 phase6:安装包捆 wheel+uv、media-asr 真装入 runtime、卸载真机验证 |
+docs/video-knowledge-integration/PROGRESS.md:67: trailing whitespace.
++| phase6 测试与真实验收 | complete(机器侧;外部项见 BLOCKED B1–B5) | evidence/phase6/(fixture E2E 16/16、kill 矩阵 10/10、Playwright 5/5、真实语料 7/7、安装载荷 E2E、七类反向映射、安装包哈希)+ FINAL-INVENTORY.md |
+docs/video-knowledge-integration/PROGRESS.md:68: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:69: trailing whitespace.
++## Log
+docs/video-knowledge-integration/PROGRESS.md:70: trailing whitespace.
++
+docs/video-knowledge-integration/PROGRESS.md:71: trailing whitespace.
++- 2026-08-01 task0 完成:
+docs/video-knowledge-integration/PROGRESS.md:72: trailing whitespace.
++  - 两仓 git 事实实测(HEAD/branch/remote/tags/worktrees 与既知基线一致);
+docs/video-knowledge-integration/PROGRESS.md:73: trailing whitespace.
++    七项验证全绿且数字逐项吻合(vk 1123/6/2 + mypy 85 + ruff + lock;
+docs/video-knowledge-integration/PROGRESS.md:74: trailing whitespace.
++    oc vitest 583 + cargo 19 + build),完整输出在 evidence/task0/。
+docs/video-knowledge-integration/PROGRESS.md:75: trailing whitespace.
++  - 发现并修复 vk 事实漂移:状态一致性门 FAIL(endpoint d83aa7b 落后于含
+docs/video-knowledge-integration/PROGRESS.md:76: trailing whitespace.
++    tools/ 脚本的 db4bb40)→ endpoint 重锚 db4bb40;M4-ACCEPTANCE.md 补
+docs/video-knowledge-integration/PROGRESS.md:77: trailing whitespace.
++    superseded 横幅(正文原样保留)。门重跑 PASS 8/8。vk 提交 `6abd39e`。
+docs/video-knowledge-integration/PROGRESS.md:78: trailing whitespace.
++  - 专用分支 `integration/vk-shell-v1` 两仓建立,起点 clean。
+docs/video-knowledge-integration/PROGRESS.md:79: trailing whitespace.
++- 2026-08-01 phase1 完成(vk 仓 8 commits,db4bb40→30e9ab1,tag `vk-shell-v1`):
+docs/video-knowledge-integration/PROGRESS.md:80: trailing whitespace.
++  - **契约冻结**:`docs/SHELL-INTEGRATION-CONTRACT.md`——/api/meta 握手(api 1.0.0/
+docs/video-knowledge-integration/PROGRESS.md:81: trailing whitespace.
++    schema 1.1.0/包版本/环境级能力五态)、GET /api/jobs 列表、POST preview/jobs 接受
+docs/video-knowledge-integration/PROGRESS.md:82: trailing whitespace.
++    完整 ProcessingRequest 并 schema 校验(默认值只在 vk 解析一次)、retry+refresh
+docs/video-knowledge-integration/PROGRESS.md:83: trailing whitespace.
++    均复用同一请求对象且带 parent_job_id(refresh 显式绕过来源版本缓存)、
+docs/video-knowledge-integration/PROGRESS.md:84: trailing whitespace.
++    VK_UI_TOKEN shell 模式全路由认证、opaque out_/up_ id、响应与错误文本零绝对路径。
+docs/video-knowledge-integration/PROGRESS.md:85: trailing whitespace.
++  - **max_cost_cny 硬上限**:中央模型调用边界每次 transport 前按最坏情况预估,
+docs/video-knowledge-integration/PROGRESS.md:86: trailing whitespace.
++    越界零发送终止;typed reason/actual/limit 落 pipeline_runs(migration 007)+
+docs/video-knowledge-integration/PROGRESS.md:87: trailing whitespace.
++    IngestReport.budget_stop + 视图;CLI 退出码 6。指纹画布冻结在 1.0.0 投影,
+docs/video-knowledge-integration/PROGRESS.md:88: trailing whitespace.
++    既有语料 run cache 逐字节存活(oracle 测试为证)。
+docs/video-knowledge-integration/PROGRESS.md:89: trailing whitespace.
++  - **红→绿**:红证据 evidence/phase1/red-*.txt;绿收口 1152 passed/6 skipped/
+docs/video-knowledge-integration/PROGRESS.md:90: trailing whitespace.
++    2 deselected(棘轮 1123→1134→1148→1152)+ ruff/mypy 86/lock/diff 全过
+docs/video-knowledge-integration/PROGRESS.md:91: trailing whitespace.
++    (evidence/phase1/green-vk-phase1-gates.txt);vk 状态一致性门 PASS 8/8。
+docs/video-knowledge-integration/PROGRESS.md:92: trailing whitespace.
++  - **两个载荷级发现**:gui ready 行管道下被块缓冲(Node spawn 场景握手必死)→
+docs/video-knowledge-integration/PROGRESS.md:93: trailing whitespace.
++    flush 入契约;存量 queued-cancel 竞态(原码 8 跑 4 挂)→ 确定性化且断言加强。
+docs/video-knowledge-integration/PROGRESS.md:94: trailing whitespace.
++- 2026-08-01 phase2 完成(vk 4 commits,endpoint c59e778,api 1.1.0,门 PASS 8/8,
+docs/video-knowledge-integration/PROGRESS.md:95: trailing whitespace.
++  棘轮 1152→1159):
+docs/video-knowledge-integration/PROGRESS.md:96: trailing whitespace.
++  - vk.db 为 run/stage/artifact/cost 真源:`GET /api/jobs` 合并 live 与历史
+docs/video-knowledge-integration/PROGRESS.md:97: trailing whitespace.
++    `run:<run_id>` 行(去重);`run:` 视图从 DB 重建 note/product/audit 产物
+docs/video-knowledge-integration/PROGRESS.md:98: trailing whitespace.
++    (相对 uri→opaque id,零绝对路径)。
+docs/video-knowledge-integration/PROGRESS.md:99: trailing whitespace.
++  - 重启 reconcile:孤儿 running→interrupted,只翻状态**绝不自动重跑**——重启
+docs/video-knowledge-integration/PROGRESS.md:100: trailing whitespace.
++    本身零新增扣费;显式 retry/refresh 才是新执行决策且受 max_cost_cny 管辖。
+docs/video-knowledge-integration/PROGRESS.md:101: trailing whitespace.
++  - 幂等:相同 idempotency_key 重复提交返回同一 job 且执行体只跑一次;跨重启
+docs/video-knowledge-integration/PROGRESS.md:102: trailing whitespace.
++    执行级幂等由 run cache 承担(零下载零模型调用的机器锁既有)。
+docs/video-knowledge-integration/PROGRESS.md:103: trailing whitespace.
++  - 契约 1.1.0 加法升版(版本历史入契约 §10);Node 侧只存脱敏四元组的规则
+docs/video-knowledge-integration/PROGRESS.md:104: trailing whitespace.
++    写入契约 §7(实现落 phase3);三层 kill 矩阵排入 phase6。
+docs/video-knowledge-integration/PROGRESS.md:105: trailing whitespace.
++- 2026-08-01 phase3 完成(本仓 3 commits;vitest 583→606、cargo 19 红→绿、
+docs/video-knowledge-integration/PROGRESS.md:106: trailing whitespace.
++  verify:host 9/9、真机冒烟 11/11):
+docs/video-knowledge-integration/PROGRESS.md:107: trailing whitespace.
++  - **VkSidecarManager**(独立类,不复用 RunManager 90 秒语义):随机 loopback
+docs/video-knowledge-integration/PROGRESS.md:108: trailing whitespace.
++    端口 + VK_UI_TOKEN 环境注入 + ready 行握手 + /api/meta 版本兼容检查
+docs/video-knowledge-integration/PROGRESS.md:109: trailing whitespace.
++    (major=1/minor≥1/shell_mode 必真)+ 按需单飞拉起;四类可操作诊断
+docs/video-knowledge-integration/PROGRESS.md:110: trailing whitespace.
++    (not-configured/runtime-missing/spawn-timeout/protocol-mismatch)+ 崩溃
+docs/video-knowledge-integration/PROGRESS.md:111: trailing whitespace.
++    sidecar-exited 带脱敏 stderr 尾;首诊不被 close 覆盖。
+docs/video-knowledge-integration/PROGRESS.md:112: trailing whitespace.
++  - **/vk/v1/\* 白名单代理**:注入认证、Origin 门管辖、白名单外 404 零转发、
+docs/video-knowledge-integration/PROGRESS.md:113: trailing whitespace.
++    typed 503、uploads 8MiB 原始通道、client_job_id 转发前剥离;
+docs/video-knowledge-integration/PROGRESS.md:114: trailing whitespace.
++    /vk/v1/health 为 Node 投影(零 pid/port/token/路径)。
+docs/video-knowledge-integration/PROGRESS.md:115: trailing whitespace.
++  - **脱敏影子**(I-P7 逐字段重建):仅持久化 clientJobId/idempotencyKey/
+docs/video-knowledge-integration/PROGRESS.md:116: trailing whitespace.
++    requestFingerprint/runId/displayStatus(+updatedAt),vkJobId 仅内存;
+docs/video-knowledge-integration/PROGRESS.md:117: trailing whitespace.
++    vk 视图新增 request_fingerprint(契约 1.2.0)供影子取数。
+docs/video-knowledge-integration/PROGRESS.md:118: trailing whitespace.
++  - **Rust 配置面收口**:4 个 OPENCLI_HOST_VK_* 入 HOST_ENV_KEYS 且
+docs/video-knowledge-integration/PROGRESS.md:119: trailing whitespace.
++    configure_host_env 显式移除(VK_PYTHON 是 spawn 向量;打包形态阶段5
+docs/video-knowledge-integration/PROGRESS.md:120: trailing whitespace.
++    由 supervisor 显式设值);cargo env 面扫描测试红→绿。
+docs/video-knowledge-integration/PROGRESS.md:121: trailing whitespace.
++  - **真机双进程闭环**:真 Node spawn 真 Python 487ms ready、preview 全链路、
+docs/video-knowledge-integration/PROGRESS.md:122: trailing whitespace.
++    优雅关停零孤儿(scripts/verify-vk-sidecar.mjs,11/11)。
+docs/video-knowledge-integration/PROGRESS.md:123: trailing whitespace.
++- 2026-08-01 phase4 完成(本仓 3 commits;vitest 606→627、tsc 零错、build ✓、
+docs/video-knowledge-integration/PROGRESS.md:124: trailing whitespace.
++  浏览器真机六项实录):
+docs/video-knowledge-integration/PROGRESS.md:125: trailing whitespace.
++  - **「视频解析」第三标签页**:健康条(api 版本+环境能力真实状态,
+docs/video-knowledge-integration/PROGRESS.md:126: trailing whitespace.
++    missing_dependency 如实展示)、全字段提交表单、预检显示引擎解析投影+
+docs/video-knowledge-integration/PROGRESS.md:127: trailing whitespace.
++    输出目标+区间估算(M0 实测为据,缺样本 unknown+原因)、**费用确认对话框**
+docs/video-knowledge-integration/PROGRESS.md:128: trailing whitespace.
++    (拍板 5.5:每次都弹、估算不是承诺、不存储)、任务列表与详情(真实状态/
+docs/video-knowledge-integration/PROGRESS.md:129: trailing whitespace.
++    已耗时/实际费用,零推测百分比;budget_stop 横幅;证据覆盖;产物下载;
+docs/video-knowledge-integration/PROGRESS.md:130: trailing whitespace.
++    cancel/retry/强制重跑)、会话诊断、知识库查询(带引用)。
+docs/video-knowledge-integration/PROGRESS.md:131: trailing whitespace.
++  - **「送去视频解析」**:采集结果行 URL 嗅探,store 只交接规范化 URL+脱敏
+docs/video-knowledge-integration/PROGRESS.md:132: trailing whitespace.
++    provenance(commandKey/collectedAt),零行数据、零第二种 manifest。
+docs/video-knowledge-integration/PROGRESS.md:133: trailing whitespace.
++  - **真实缺陷修复**:run:<id> 的冒号被 encodeURIComponent 编码致真实链路
+docs/video-knowledge-integration/PROGRESS.md:134: trailing whitespace.
++    404——改保留冒号的 path 编码(测试红→绿抓获)。
+docs/video-knowledge-integration/PROGRESS.md:135: trailing whitespace.
++  - 浏览器真机:真 vite+真 Node+真 Python——标签切换、api 1.2.0 握手、
+docs/video-knowledge-integration/PROGRESS.md:136: trailing whitespace.
++    全链路预检(引擎解析默认值)、费用对话框弹出与取消,逐项实录入证据。
+docs/video-knowledge-integration/PROGRESS.md:137: trailing whitespace.
++- 2026-08-01 phase5 完成(机器侧;vitest 627 不动、cargo 19→20):
+docs/video-knowledge-integration/PROGRESS.md:138: trailing whitespace.
++  - **固定 SHA wheel**(vk@18da94a):video_knowledge-0.1.0 sha256
+docs/video-knowledge-integration/PROGRESS.md:139: trailing whitespace.
++    762649c0…,uv 原生 cyclonedx1.5 SBOM(25 组件)+ 第三方 licenses
+docs/video-knowledge-integration/PROGRESS.md:140: trailing whitespace.
++    (3 个诚实 UNKNOWN)+ 既有 inventory 工具全跑(凭据扫描 repo/wheel 0/0、
+docs/video-knowledge-integration/PROGRESS.md:141: trailing whitespace.
++    跨项目 import 0)。
+docs/video-knowledge-integration/PROGRESS.md:142: trailing whitespace.
++  - **版本化独立 runtime**:uv 独立 CPython venv、四道 smoke(import/console/
+docs/video-knowledge-integration/PROGRESS.md:143: trailing whitespace.
++    真 gui API 握手 1.2.0/临时库迁移 001..007)全绿才 active.json 原子切换;
+docs/video-knowledge-integration/PROGRESS.md:144: trailing whitespace.
++    坏 wheel 注入实证 FAIL 后 active 稳在旧版;真实 vk.db 迁移前备份、
+docs/video-knowledge-integration/PROGRESS.md:145: trailing whitespace.
++    失败自动还原。**MAX_PATH 实测坑**:深路径下 uv(\\?\)写得进、Python
+docs/video-knowledge-integration/PROGRESS.md:146: trailing whitespace.
++    io.open 读不出→装完即坏,已加 home>100 字符预检拒绝。
+docs/video-knowledge-integration/PROGRESS.md:147: trailing whitespace.
++  - **数据生命周期**:report/verify(integrity+悬空,经 active runtime 零新
+docs/video-knowledge-integration/PROGRESS.md:148: trailing whitespace.
++    依赖)/export/clean(dry-run 默认)/purge 全流程真跑;purge 后 db_exists=
+docs/video-knowledge-integration/PROGRESS.md:149: trailing whitespace.
++    false、仅 runtime 存留。
+docs/video-knowledge-integration/PROGRESS.md:150: trailing whitespace.
++  - **Rust 打包态**:configure_host_env 只信 %LOCALAPPDATA%\爪爪-data\runtime\
+docs/video-knowledge-integration/PROGRESS.md:151: trailing whitespace.
++    active.json(fail-closed 单测),数据根与安装目录分离=卸载默认保留知识库。
+docs/video-knowledge-integration/PROGRESS.md:152: trailing whitespace.
++  - 归 phase6:安装包捆 wheel+uv 与安装时装 runtime、media-asr 真装
+docs/video-knowledge-integration/PROGRESS.md:153: trailing whitespace.
++    (最小复现:`node scripts/install-vk-runtime.mjs --wheel <whl> --home %LOCALAPPDATA%\爪爪-data --extra media-asr`,
+docs/video-knowledge-integration/PROGRESS.md:154: trailing whitespace.
++    预检 5GiB)、卸载/保留真机矩阵。
+docs/video-knowledge-integration/PROGRESS.md:155: trailing whitespace.
++- 2026-08-01 phase6 完成(机器侧;剩余外部项 BLOCKED B1–B5 各附三点验证+
+docs/video-knowledge-integration/PROGRESS.md:156: trailing whitespace.
++  责任边界+下一动作):
+docs/video-knowledge-integration/PROGRESS.md:157: trailing whitespace.
++  - **零费 fixture E2E 16/16**:本机 LLM stub + 真三层栈完整闭环——上传→预检→
+docs/video-knowledge-integration/PROGRESS.md:158: trailing whitespace.
++    费用确认→真 DAG done(恰 2 次模型调用)→产物/证据覆盖/查询 5 引用→幂等
+docs/video-knowledge-integration/PROGRESS.md:159: trailing whitespace.
++    同任务→完整 cache hit(0 费 0 调用)→零孤儿。vk 真校验还当场咬出 stub
+docs/video-knowledge-integration/PROGRESS.md:160: trailing whitespace.
++    章节片尾越界(quarantined),修正后绿——校验门是活的。
+docs/video-knowledge-integration/PROGRESS.md:161: trailing whitespace.
++  - **sidecar kill 矩阵 10/10**:执行中强杀→sidecar-exited 类型化诊断→懒重拉
+docs/video-knowledge-integration/PROGRESS.md:162: trailing whitespace.
++    +reconcile interrupted→重启零自动扣费(调用计数冻结)→旧 upload id 按
+docs/video-knowledge-integration/PROGRESS.md:163: trailing whitespace.
++    进程生命周期契约 404→重传重提交 done(+2 次=新决策)→SQLite ok→零孤儿。
+docs/video-knowledge-integration/PROGRESS.md:164: trailing whitespace.
++  - **Playwright 5/5**(chromium,真 vite node 模式+真 Host 43199+真 sidecar):
+docs/video-knowledge-integration/PROGRESS.md:165: trailing whitespace.
++    宽/窄/键盘/错误恢复(坏 upload 源在提交边界类型化报错后修正恢复)/
+docs/video-knowledge-integration/PROGRESS.md:166: trailing whitespace.
++    UI 闭环(预检→费用对话框→确认→已完成行(实际费用)→详情→笔记→查询引用)。
+docs/video-knowledge-integration/PROGRESS.md:167: trailing whitespace.
++  - **真实语料 7/7(零新费用)**:sidecar 指向仓外 M4 真库(先备份
+docs/video-knowledge-integration/PROGRESS.md:168: trailing whitespace.
++    vk.db.backup-vk-shell-verify-*,boot 迁移把真库前移 001..007、integrity ok)
+docs/video-knowledge-integration/PROGRESS.md:169: trailing whitespace.
++    ——10 条真实 run 台账重现(历史实付 ¥8.3279 原样)、真笔记 10096B 经
+docs/video-knowledge-integration/PROGRESS.md:170: trailing whitespace.
++    opaque id 下载、"帕鲁" 真 FTS 查询 5 引用、零绝对路径。
+docs/video-knowledge-integration/PROGRESS.md:171: trailing whitespace.
++  - **安装包**:npm run package 全门后产 NSIS+MSI(哈希入册);msiexec /a
+docs/video-knowledge-integration/PROGRESS.md:172: trailing whitespace.
++    零登记抽取→vk 载荷四件在包→抽出 exe 真启动拉起 Node 子进程→收树零孤儿;
+docs/video-knowledge-integration/PROGRESS.md:173: trailing whitespace.
++    用户现有安装目录全程未读未写。
+docs/video-knowledge-integration/PROGRESS.md:174: trailing whitespace.
++  - **七类反向注入映射**:协议版本/字段截断/预算越界/路径泄露/幂等/崩溃/
+docs/video-knowledge-integration/PROGRESS.md:175: trailing whitespace.
++    token 泄露 → 逐条锚到红→绿测试(adversarial-negative-map.md)。
+e2e/vk.spec.ts:1: trailing whitespace.
++import { expect, test } from '@playwright/test'
+e2e/vk.spec.ts:2: trailing whitespace.
++
+e2e/vk.spec.ts:3: trailing whitespace.
++// 真栈 UI E2E:vite(node 模式)→ 真 Node Host(43199)→ 真 Python sidecar(stub LLM)。
+e2e/vk.spec.ts:4: trailing whitespace.
++const HOST = 'http://127.0.0.1:43199'
+e2e/vk.spec.ts:5: trailing whitespace.
++const ORIGIN = 'http://localhost:5199'
+e2e/vk.spec.ts:6: trailing whitespace.
++
+e2e/vk.spec.ts:7: trailing whitespace.
++const SRT = `1
+e2e/vk.spec.ts:8: trailing whitespace.
++00:00:00,000 --> 00:00:04,000
+e2e/vk.spec.ts:9: trailing whitespace.
++相对论引言,介绍背景。
+e2e/vk.spec.ts:10: trailing whitespace.
++
+e2e/vk.spec.ts:11: trailing whitespace.
++2
+e2e/vk.spec.ts:12: trailing whitespace.
++00:00:04,200 --> 00:00:09,500
+e2e/vk.spec.ts:13: trailing whitespace.
++光速在真空中约为每秒三十万公里。
+e2e/vk.spec.ts:14: trailing whitespace.
++`
+e2e/vk.spec.ts:15: trailing whitespace.
++
+e2e/vk.spec.ts:16: trailing whitespace.
++async function uploadFixture(request: import('@playwright/test').APIRequestContext): Promise<string> {
+e2e/vk.spec.ts:17: trailing whitespace.
++  const response = await request.post(`${HOST}/vk/v1/uploads?name=lecture.srt`, {
+e2e/vk.spec.ts:18: trailing whitespace.
++    headers: { Origin: ORIGIN, 'Content-Type': 'application/octet-stream' },
+e2e/vk.spec.ts:19: trailing whitespace.
++    data: Buffer.from(SRT, 'utf8'),
+e2e/vk.spec.ts:20: trailing whitespace.
++  })
+e2e/vk.spec.ts:21: trailing whitespace.
++  expect(response.status()).toBe(201)
+e2e/vk.spec.ts:22: trailing whitespace.
++  const body = await response.json()
+e2e/vk.spec.ts:23: trailing whitespace.
++  return `upload:${body.upload_id}`
+e2e/vk.spec.ts:24: trailing whitespace.
++}
+e2e/vk.spec.ts:25: trailing whitespace.
++
+e2e/vk.spec.ts:26: trailing whitespace.
++test.describe('视频解析标签页', () => {
+e2e/vk.spec.ts:27: trailing whitespace.
++  test('宽屏:第三标签可达,表单齐备', async ({ page }) => {
+e2e/vk.spec.ts:28: trailing whitespace.
++    await page.setViewportSize({ width: 1280, height: 800 })
+e2e/vk.spec.ts:29: trailing whitespace.
++    await page.goto('/')
+e2e/vk.spec.ts:30: trailing whitespace.
++    await page.getByTestId('module-tab-vk').click()
+e2e/vk.spec.ts:31: trailing whitespace.
++    await expect(page.getByTestId('vk-panel')).toBeVisible()
+e2e/vk.spec.ts:32: trailing whitespace.
++    for (const id of ['vk-source', 'vk-preset', 'vk-media-policy', 'vk-max-cost', 'vk-preview-button', 'vk-submit-button', 'vk-query-input']) {
+e2e/vk.spec.ts:33: trailing whitespace.
++      await expect(page.getByTestId(id)).toBeVisible()
+e2e/vk.spec.ts:34: trailing whitespace.
++    }
+e2e/vk.spec.ts:35: trailing whitespace.
++    await expect(page.getByTestId('vk-health-summary')).toContainText(/就绪|启动中|检测中/)
+e2e/vk.spec.ts:36: trailing whitespace.
++  })
+e2e/vk.spec.ts:37: trailing whitespace.
++
+e2e/vk.spec.ts:38: trailing whitespace.
++  test('窄屏:功能完整可用', async ({ page }) => {
+e2e/vk.spec.ts:39: trailing whitespace.
++    await page.setViewportSize({ width: 480, height: 800 })
+e2e/vk.spec.ts:40: trailing whitespace.
++    await page.goto('/')
+e2e/vk.spec.ts:41: trailing whitespace.
++    await page.getByTestId('module-tab-vk').click()
+e2e/vk.spec.ts:42: trailing whitespace.
++    await expect(page.getByTestId('vk-panel')).toBeVisible()
+e2e/vk.spec.ts:43: trailing whitespace.
++    await page.getByTestId('vk-source').fill('https://example.com/x')
+e2e/vk.spec.ts:44: trailing whitespace.
++    await expect(page.getByTestId('vk-preview-button')).toBeEnabled()
+e2e/vk.spec.ts:45: trailing whitespace.
++    await page.getByTestId('vk-query-input').scrollIntoViewIfNeeded()
+e2e/vk.spec.ts:46: trailing whitespace.
++    await expect(page.getByTestId('vk-query-input')).toBeVisible()
+e2e/vk.spec.ts:47: trailing whitespace.
++  })
+e2e/vk.spec.ts:48: trailing whitespace.
++
+e2e/vk.spec.ts:49: trailing whitespace.
++  test('键盘:Tab 序可达视频解析标签并以键盘激活', async ({ page }) => {
+e2e/vk.spec.ts:50: trailing whitespace.
++    await page.goto('/')
+e2e/vk.spec.ts:51: trailing whitespace.
++    await page.getByTestId('module-tab-vk').focus()
+e2e/vk.spec.ts:52: trailing whitespace.
++    await page.keyboard.press('Enter')
+e2e/vk.spec.ts:53: trailing whitespace.
++    await expect(page.getByTestId('module-tab-vk')).toHaveAttribute('aria-pressed', 'true')
+e2e/vk.spec.ts:54: trailing whitespace.
++    await expect(page.getByTestId('vk-panel')).toBeVisible()
+e2e/vk.spec.ts:55: trailing whitespace.
++    // 表单内 Tab 前进不困死
+e2e/vk.spec.ts:56: trailing whitespace.
++    await page.getByTestId('vk-source').focus()
+e2e/vk.spec.ts:57: trailing whitespace.
++    await page.keyboard.press('Tab')
+e2e/vk.spec.ts:58: trailing whitespace.
++    await expect(page.getByTestId('vk-preset')).toBeFocused()
+e2e/vk.spec.ts:59: trailing whitespace.
++  })
+e2e/vk.spec.ts:60: trailing whitespace.
++
+e2e/vk.spec.ts:61: trailing whitespace.
++  test('错误恢复:坏 upload 源在提交边界报类型化错,修正后恢复', async ({ page, request }) => {
+e2e/vk.spec.ts:62: trailing whitespace.
++    await page.goto('/')
+e2e/vk.spec.ts:63: trailing whitespace.
++    await page.getByTestId('module-tab-vk').click()
+e2e/vk.spec.ts:64: trailing whitespace.
++    // 契约语义:preview 不解析 upload 源(合法字符串→预检成功),坏 id 在提交边界 404
+e2e/vk.spec.ts:65: trailing whitespace.
++    await page.getByTestId('vk-source').fill('upload:up_does_not_exist')
+e2e/vk.spec.ts:66: trailing whitespace.
++    await page.getByTestId('vk-preview-button').click()
+e2e/vk.spec.ts:67: trailing whitespace.
++    await expect(page.getByTestId('vk-preview')).toBeVisible()
+e2e/vk.spec.ts:68: trailing whitespace.
++    await page.getByTestId('vk-submit-button').click()
+e2e/vk.spec.ts:69: trailing whitespace.
++    await page.getByTestId('vk-cost-confirm').click()
+e2e/vk.spec.ts:70: trailing whitespace.
++    await expect(page.getByTestId('vk-submit-error')).toBeVisible()
+e2e/vk.spec.ts:71: trailing whitespace.
++    await expect(page.getByTestId('vk-submit-error')).toContainText('unknown upload id')
+e2e/vk.spec.ts:72: trailing whitespace.
++    // 修正:真实上传源 → 重新预检提交 → 任务出现,应用未被错误卡死
+e2e/vk.spec.ts:73: trailing whitespace.
++    const source = await uploadFixture(request)
+e2e/vk.spec.ts:74: trailing whitespace.
++    await page.getByTestId('vk-source').fill(source)
+e2e/vk.spec.ts:75: trailing whitespace.
++    await page.getByTestId('vk-preview-button').click()
+e2e/vk.spec.ts:76: trailing whitespace.
++    await expect(page.getByTestId('vk-preview')).toBeVisible()
+e2e/vk.spec.ts:77: trailing whitespace.
++    await page.getByTestId('vk-submit-button').click()
+e2e/vk.spec.ts:78: trailing whitespace.
++    await page.getByTestId('vk-cost-confirm').click()
+e2e/vk.spec.ts:79: trailing whitespace.
++    await expect(page.getByTestId('vk-job-row').first()).toBeVisible({ timeout: 30_000 })
+e2e/vk.spec.ts:80: trailing whitespace.
++  })
+e2e/vk.spec.ts:81: trailing whitespace.
++
+e2e/vk.spec.ts:82: trailing whitespace.
++  test('闭环:预检→费用确认→提交→完成→产物→知识库查询', async ({ page, request }) => {
+e2e/vk.spec.ts:83: trailing whitespace.
++    const source = await uploadFixture(request)
+e2e/vk.spec.ts:84: trailing whitespace.
++    await page.goto('/')
+e2e/vk.spec.ts:85: trailing whitespace.
++    await page.getByTestId('module-tab-vk').click()
+e2e/vk.spec.ts:86: trailing whitespace.
++    await page.getByTestId('vk-source').fill(source)
+e2e/vk.spec.ts:87: trailing whitespace.
++    await page.getByTestId('vk-max-cost').fill('5')
+e2e/vk.spec.ts:88: trailing whitespace.
++    await page.getByTestId('vk-cap-query_ready').check() // 建索引,查询才有引用
+e2e/vk.spec.ts:89: trailing whitespace.
++    await page.getByTestId('vk-preview-button').click()
+e2e/vk.spec.ts:90: trailing whitespace.
++    await expect(page.getByTestId('vk-preview')).toBeVisible()
+e2e/vk.spec.ts:91: trailing whitespace.
++    await expect(page.getByTestId('vk-preview-estimates')).toContainText('¥0.25 – ¥1.06')
+e2e/vk.spec.ts:92: trailing whitespace.
++
+e2e/vk.spec.ts:93: trailing whitespace.
++    await page.getByTestId('vk-submit-button').click()
+e2e/vk.spec.ts:94: trailing whitespace.
++    await expect(page.getByTestId('vk-cost-dialog')).toBeVisible()
+e2e/vk.spec.ts:95: trailing whitespace.
++    await expect(page.getByTestId('vk-cost-dialog')).toContainText('估算不是承诺')
+e2e/vk.spec.ts:96: trailing whitespace.
++    await expect(page.getByTestId('vk-cost-cap')).toContainText('¥5')
+e2e/vk.spec.ts:97: trailing whitespace.
++    await page.getByTestId('vk-cost-confirm').click()
+e2e/vk.spec.ts:98: trailing whitespace.
++
+e2e/vk.spec.ts:99: trailing whitespace.
++    // 任务出现并在真 DAG 上完成(stub LLM,秒级)
+e2e/vk.spec.ts:100: trailing whitespace.
++    await expect(page.getByTestId('vk-job-row').first()).toBeVisible({ timeout: 30_000 })
+e2e/vk.spec.ts:101: trailing whitespace.
++    await expect(page.getByTestId('vk-job-row').first()).toContainText('已完成', { timeout: 120_000 })
+e2e/vk.spec.ts:102: trailing whitespace.
++    await expect(page.getByTestId('vk-job-row').first()).toContainText('实际费用')
+e2e/vk.spec.ts:103: trailing whitespace.
++
+e2e/vk.spec.ts:104: trailing whitespace.
++    // 详情:证据覆盖 + 产物按钮
+e2e/vk.spec.ts:105: trailing whitespace.
++    await page.getByTestId('vk-job-row').first().getByRole('button', { name: '详情' }).click()
+e2e/vk.spec.ts:106: trailing whitespace.
++    await expect(page.getByTestId('vk-job-detail')).toBeVisible()
+e2e/vk.spec.ts:107: trailing whitespace.
++    await expect(page.getByTestId('vk-output-note')).toBeVisible()
+e2e/vk.spec.ts:108: trailing whitespace.
++
+e2e/vk.spec.ts:109: trailing whitespace.
++    // 知识库查询(真 FTS,带引用)
+e2e/vk.spec.ts:110: trailing whitespace.
++    await page.getByTestId('vk-query-input').fill('光速')
+e2e/vk.spec.ts:111: trailing whitespace.
++    await page.getByTestId('vk-query-button').click()
+e2e/vk.spec.ts:112: trailing whitespace.
++    await expect(page.getByTestId('vk-query-answer')).toBeVisible()
+e2e/vk.spec.ts:113: trailing whitespace.
++    await expect(page.getByTestId('vk-query-citation').first()).toBeVisible()
+e2e/vk.spec.ts:114: trailing whitespace.
++  })
+e2e/vk.spec.ts:115: trailing whitespace.
++})
+e2e/vk.spec.ts:116: trailing whitespace.
++
+e2e/vk.spec.ts:117: trailing whitespace.
++// v2 阶段5:用户真实入口 —— 从采集结果「送去视频解析」的跨模块完整流程。
+e2e/vk.spec.ts:118: trailing whitespace.
++//
+e2e/vk.spec.ts:119: trailing whitespace.
++// 生产实现:React/store/ResultsTable/VkPanel/Node vk 代理/sidecar/SQLite/DAG/产物读取。
+e2e/vk.spec.ts:120: trailing whitespace.
++// 仅在**网络边界**注入 OpenCLI 命令的执行结果(与 LLM 用确定性 provider 同类),
+e2e/vk.spec.ts:121: trailing whitespace.
++// 因为本用例要验的是「交接 → 解析闭环」,不是 opencli 自身的抓取。
+e2e/vk.spec.ts:122: trailing whitespace.
++test.describe('跨模块:采集结果 → 视频解析', () => {
+e2e/vk.spec.ts:123: trailing whitespace.
++  test('送去视频解析 → provenance + 凭据脱敏 → 预检/费用确认/提交 → 完成 → 产物 → 引用查询 → 历史 retry', async ({ page }) => {
+e2e/vk.spec.ts:124: trailing whitespace.
++    const SENTINEL = 'SENTINELxsec0123456789'
+e2e/vk.spec.ts:125: trailing whitespace.
++    const ROW_URL = `https://www.bilibili.com/video/BV1e2e?xsec_token=${SENTINEL}&p=1`
+e2e/vk.spec.ts:126: trailing whitespace.
++    let runId: string | null = null
+e2e/vk.spec.ts:127: trailing whitespace.
++    let eventsHit = 0
+e2e/vk.spec.ts:128: trailing whitespace.
++
+e2e/vk.spec.ts:129: trailing whitespace.
++    await page.route('**/start', async (route) => {
+e2e/vk.spec.ts:130: trailing whitespace.
++      const body = JSON.parse(route.request().postData() ?? '{}')
+e2e/vk.spec.ts:131: trailing whitespace.
++      runId = body.runId
+e2e/vk.spec.ts:132: trailing whitespace.
++      await route.fulfill({
+e2e/vk.spec.ts:133: trailing whitespace.
++        status: 202,
+e2e/vk.spec.ts:134: trailing whitespace.
++        contentType: 'application/json',
+e2e/vk.spec.ts:135: trailing whitespace.
++        body: JSON.stringify({ runId }),
+e2e/vk.spec.ts:136: trailing whitespace.
++      })
+e2e/vk.spec.ts:137: trailing whitespace.
++    })
+e2e/vk.spec.ts:138: trailing whitespace.
++    await page.route('**/events', async (route) => {
+e2e/vk.spec.ts:139: trailing whitespace.
++      eventsHit += 1
+e2e/vk.spec.ts:140: trailing whitespace.
++      if (!runId) {
+e2e/vk.spec.ts:141: trailing whitespace.
++        // 首次连接发生在 /start 之前:先只回一条注释保持协议合法。
+e2e/vk.spec.ts:142: trailing whitespace.
++        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': waiting\n\n' })
+e2e/vk.spec.ts:143: trailing whitespace.
++        return
+e2e/vk.spec.ts:144: trailing whitespace.
++      }
+e2e/vk.spec.ts:145: trailing whitespace.
++      const done = {
+e2e/vk.spec.ts:146: trailing whitespace.
++        runId, at: Date.now(), outcome: 'success', exitCode: 0,
+e2e/vk.spec.ts:147: trailing whitespace.
++        result: [{ rank: 1, title: '相对论科普', url: ROW_URL }],
+e2e/vk.spec.ts:148: trailing whitespace.
++      }
+e2e/vk.spec.ts:149: trailing whitespace.
++      await route.fulfill({
+e2e/vk.spec.ts:150: trailing whitespace.
++        status: 200,
+e2e/vk.spec.ts:151: trailing whitespace.
++        contentType: 'text/event-stream',
+e2e/vk.spec.ts:152: trailing whitespace.
++        body: `id: 1\nevent: done\ndata: ${JSON.stringify(done)}\n\n`,
+e2e/vk.spec.ts:153: trailing whitespace.
++      })
+e2e/vk.spec.ts:154: trailing whitespace.
++    })
+e2e/vk.spec.ts:155: trailing whitespace.
++
+e2e/vk.spec.ts:156: trailing whitespace.
++    await page.goto('/')
+e2e/vk.spec.ts:157: trailing whitespace.
++    // 真实用户路径:导航选站点 → 选命令 → 执行(判决与表单全走生产实现)
+e2e/vk.spec.ts:158: trailing whitespace.
++    await page.getByTestId('nav-search').fill('hot')
+e2e/vk.spec.ts:159: trailing whitespace.
++    await page.getByTestId('site-row-bilibili').click()
+e2e/vk.spec.ts:160: trailing whitespace.
++    await page.getByRole('button', { name: 'hot', exact: true }).first().click()
+e2e/vk.spec.ts:161: trailing whitespace.
++    await expect(page.getByTestId('run-button')).toBeEnabled({ timeout: 15_000 })
+e2e/vk.spec.ts:162: trailing whitespace.
++    await page.getByTestId('run-button').click()
+e2e/vk.spec.ts:163: trailing whitespace.
++    // 该命令若需一次性确认,走产品自己的确认流程
+e2e/vk.spec.ts:164: trailing whitespace.
++    const ack = page.getByTestId('ack-confirm')
+e2e/vk.spec.ts:165: trailing whitespace.
++    if (await ack.isVisible().catch(() => false)) await ack.click()
+e2e/vk.spec.ts:166: trailing whitespace.
++
+e2e/vk.spec.ts:167: trailing whitespace.
++    // 运行落地(SSE done 事件经生产 store/runMachine 归位),再切到表格页签
+e2e/vk.spec.ts:168: trailing whitespace.
++    await expect(page.getByTestId('run-state')).toContainText('已完成', { timeout: 40_000 })
+e2e/vk.spec.ts:169: trailing whitespace.
++    await page.getByRole('button', { name: '表格结果' }).click()
+e2e/vk.spec.ts:170: trailing whitespace.
++    await expect(page.getByTestId('results-table')).toBeVisible({ timeout: 10_000 })
+e2e/vk.spec.ts:171: trailing whitespace.
++    await expect(page.getByTestId('send-to-vk-0')).toBeVisible()
+e2e/vk.spec.ts:172: trailing whitespace.
++    expect(eventsHit).toBeGreaterThan(0)
+e2e/vk.spec.ts:173: trailing whitespace.
++
+e2e/vk.spec.ts:174: trailing whitespace.
++    // 交接:URL + 脱敏 provenance 进入视频页
+e2e/vk.spec.ts:175: trailing whitespace.
++    await page.getByTestId('send-to-vk-0').click()
+e2e/vk.spec.ts:176: trailing whitespace.
++    await expect(page.getByTestId('vk-panel')).toBeVisible()
+e2e/vk.spec.ts:177: trailing whitespace.
++    await expect(page.getByTestId('vk-provenance')).toContainText('/')
+e2e/vk.spec.ts:178: trailing whitespace.
++    expect(await page.getByTestId('vk-source').inputValue()).toContain('bilibili.com')
+e2e/vk.spec.ts:179: trailing whitespace.
++
+e2e/vk.spec.ts:180: trailing whitespace.
++    // 预检:公开回显面零哨兵(source 输入框本身是执行通道,允许持有原始 URL)
+e2e/vk.spec.ts:181: trailing whitespace.
++    await page.getByTestId('vk-max-cost').fill('5')
+e2e/vk.spec.ts:182: trailing whitespace.
++    await page.getByTestId('vk-preview-button').click()
+e2e/vk.spec.ts:183: trailing whitespace.
++    await expect(page.getByTestId('vk-preview')).toBeVisible()
+e2e/vk.spec.ts:184: trailing whitespace.
++    expect(await page.getByTestId('vk-preview').textContent()).not.toContain(SENTINEL)
+e2e/vk.spec.ts:185: trailing whitespace.
++    expect(await page.getByTestId('vk-provenance').textContent()).not.toContain(SENTINEL)
+e2e/vk.spec.ts:186: trailing whitespace.
++
+e2e/vk.spec.ts:187: trailing whitespace.
++    // 费用确认对话框同样只展示公开源
+e2e/vk.spec.ts:188: trailing whitespace.
++    await page.getByTestId('vk-submit-button').click()
+e2e/vk.spec.ts:189: trailing whitespace.
++    await expect(page.getByTestId('vk-cost-dialog')).toBeVisible()
+e2e/vk.spec.ts:190: trailing whitespace.
++    expect(await page.getByTestId('vk-cost-dialog').textContent()).not.toContain(SENTINEL)
+e2e/vk.spec.ts:191: trailing whitespace.
++    const submitWatch = page.waitForResponse(
+e2e/vk.spec.ts:192: trailing whitespace.
++      (response) => response.url().endsWith('/vk/v1/jobs') && response.request().method() === 'POST',
+e2e/vk.spec.ts:193: trailing whitespace.
++    )
+e2e/vk.spec.ts:194: trailing whitespace.
++    await page.getByTestId('vk-cost-confirm').click()
+e2e/vk.spec.ts:195: trailing whitespace.
++    const submitResponse = await submitWatch
+e2e/vk.spec.ts:196: trailing whitespace.
++    const submitRequest = submitResponse.request()
+e2e/vk.spec.ts:197: trailing whitespace.
++    const submitJobId = (await submitResponse.json()).job_id
+e2e/vk.spec.ts:198: trailing whitespace.
++
+e2e/vk.spec.ts:199: trailing whitespace.
++    // 任务落地:列表出现;job 视图 API 全文零哨兵(公开请求/影子/历史面)。
+e2e/vk.spec.ts:200: trailing whitespace.
++    // 注意取**本次**提交的那条:同一 sidecar 跨用例复用,列表里还有前面用例的任务。
+e2e/vk.spec.ts:201: trailing whitespace.
++    await expect(page.getByTestId('vk-job-row').first()).toBeVisible({ timeout: 30_000 })
+e2e/vk.spec.ts:202: trailing whitespace.
++    const submitBody = JSON.parse(submitRequest?.postData() ?? '{}')
+e2e/vk.spec.ts:203: trailing whitespace.
++    const jobId = String(submitJobId ?? '')
+e2e/vk.spec.ts:204: trailing whitespace.
++    expect(submitBody.source).toContain(SENTINEL)   // 执行通道确实带着原始 URL
+e2e/vk.spec.ts:205: trailing whitespace.
++    const viewUrl = `${HOST}/vk/v1/jobs/${encodeURIComponent(jobId).replace(/%3A/gi, ':')}`
+e2e/vk.spec.ts:206: trailing whitespace.
++    const raw = await (await page.request.get(viewUrl, { headers: { Origin: ORIGIN } })).text()
+e2e/vk.spec.ts:207: trailing whitespace.
++    expect(raw).not.toContain(SENTINEL)
+e2e/vk.spec.ts:208: trailing whitespace.
++    expect(raw).toContain('bilibili.com')      // 公开源保留(只剥凭据参数)
+e2e/vk.spec.ts:209: trailing whitespace.
++
+e2e/vk.spec.ts:210: trailing whitespace.
++    // 历史面可刷新可见(retry/refresh 的历史重建由 vk 侧 8 测 + 安装态 E2E 覆盖)
+e2e/vk.spec.ts:211: trailing whitespace.
++    await page.getByTestId('vk-jobs-refresh').click()
+e2e/vk.spec.ts:212: trailing whitespace.
++    await expect(page.getByTestId('vk-job-row').first()).toBeVisible()
+e2e/vk.spec.ts:213: trailing whitespace.
++  })
+e2e/vk.spec.ts:214: trailing whitespace.
++})
+package.json:1: trailing whitespace.
++{
+package.json:2: trailing whitespace.
++  "name": "opencli-app-clone",
+package.json:3: trailing whitespace.
++  "private": true,
+package.json:4: trailing whitespace.
++  "version": "0.0.0",
+package.json:5: trailing whitespace.
++  "type": "module",
+package.json:6: trailing whitespace.
++  "engines": {
+package.json:7: trailing whitespace.
++    "node": ">=20"
+package.json:8: trailing whitespace.
++  },
+package.json:9: trailing whitespace.
++  "scripts": {
+package.json:10: trailing whitespace.
++    "dev": "vite",
+package.json:11: trailing whitespace.
++    "dev:node": "vite --mode node --strictPort",
+package.json:12: trailing whitespace.
++    "dev:server": "node --watch server/index.mjs",
+package.json:13: trailing whitespace.
++    "start:server": "node server/index.mjs",
+package.json:14: trailing whitespace.
++    "build": "tsc && vite build",
+package.json:15: trailing whitespace.
++    "preview": "vite preview",
+package.json:16: trailing whitespace.
++    "test": "vitest run",
+package.json:17: trailing whitespace.
++    "test:watch": "vitest",
+package.json:18: trailing whitespace.
++    "sync-catalog": "node scripts/sync-catalog.mjs",
+package.json:19: trailing whitespace.
++    "bench:append": "node scripts/bench-append-output.mjs",
+package.json:20: trailing whitespace.
++    "build:host": "node scripts/build-host-runtime.mjs",
+package.json:21: trailing whitespace.
++    "build:vk-bundle": "node scripts/build-vk-bundle.mjs",
+package.json:22: trailing whitespace.
++    "verify:host": "node scripts/verify-host-closure.mjs",
+package.json:23: trailing whitespace.
++    "check:legacy": "node scripts/check-legacy-baseline.mjs",
+package.json:24: trailing whitespace.
++    "package": "node scripts/package-app.mjs",
+package.json:25: trailing whitespace.
++    "package:check": "node scripts/package-app.mjs --check",
+package.json:26: trailing whitespace.
++    "tauri": "tauri"
+package.json:27: trailing whitespace.
++  },
+package.json:28: trailing whitespace.
++  "dependencies": {
+package.json:29: trailing whitespace.
++    "@jackwener/opencli": "1.8.6",
+package.json:30: trailing whitespace.
++    "@tauri-apps/api": "^2.11.1",
+package.json:31: trailing whitespace.
++    "react": "^18.3.1",
+package.json:32: trailing whitespace.
++    "react-dom": "^18.3.1",
+package.json:33: trailing whitespace.
++    "zustand": "^5.0.2"
+package.json:34: trailing whitespace.
++  },
+package.json:35: trailing whitespace.
++  "devDependencies": {
+package.json:36: trailing whitespace.
++    "@playwright/test": "^1.62.1",
+package.json:37: trailing whitespace.
++    "@tailwindcss/vite": "^4.0.0",
+package.json:38: trailing whitespace.
++    "@tauri-apps/cli": "^2.11.4",
+package.json:39: trailing whitespace.
++    "@testing-library/jest-dom": "^6.6.3",
+package.json:40: trailing whitespace.
++    "@testing-library/react": "^16.1.0",
+package.json:41: trailing whitespace.
++    "@testing-library/user-event": "^14.5.2",
+package.json:42: trailing whitespace.
++    "@types/jsdom": "^28.0.3",
+package.json:43: trailing whitespace.
++    "@types/react": "^18.3.12",
+package.json:44: trailing whitespace.
++    "@types/react-dom": "^18.3.1",
+package.json:45: trailing whitespace.
++    "@vitejs/plugin-react": "^4.3.4",
+package.json:46: trailing whitespace.
++    "jsdom": "^25.0.1",
+package.json:47: trailing whitespace.
++    "tailwindcss": "^4.0.0",
+package.json:48: trailing whitespace.
++    "typescript": "^5.6.3",
+package.json:49: trailing whitespace.
++    "vite": "^6.0.3",
+package.json:50: trailing whitespace.
++    "vitest": "^2.1.8"
+package.json:51: trailing whitespace.
++  }
+package.json:52: trailing whitespace.
++}
+src-tauri/tauri.conf.json:1: trailing whitespace.
++{
+src-tauri/tauri.conf.json:2: trailing whitespace.
++  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+src-tauri/tauri.conf.json:3: trailing whitespace.
++  "productName": "爪爪",
+src-tauri/tauri.conf.json:4: trailing whitespace.
++  "version": "0.1.0",
+src-tauri/tauri.conf.json:5: trailing whitespace.
++  "identifier": "dev.lauseusing.opencli-app-clone",
+src-tauri/tauri.conf.json:6: trailing whitespace.
++  "build": {
+src-tauri/tauri.conf.json:7: trailing whitespace.
++    "frontendDist": "../dist",
+src-tauri/tauri.conf.json:8: trailing whitespace.
++    "devUrl": "http://localhost:5173",
+src-tauri/tauri.conf.json:9: trailing whitespace.
++    "beforeDevCommand": "npm run dev",
+src-tauri/tauri.conf.json:10: trailing whitespace.
++    "beforeBuildCommand": "npm run build && npm run build:host && npm run build:vk-bundle"
+src-tauri/tauri.conf.json:11: trailing whitespace.
++  },
+src-tauri/tauri.conf.json:12: trailing whitespace.
++  "app": {
+src-tauri/tauri.conf.json:13: trailing whitespace.
++    "windows": [],
+src-tauri/tauri.conf.json:14: trailing whitespace.
++    "security": {
+src-tauri/tauri.conf.json:15: trailing whitespace.
++      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"
+src-tauri/tauri.conf.json:16: trailing whitespace.
++    }
+src-tauri/tauri.conf.json:17: trailing whitespace.
++  },
+src-tauri/tauri.conf.json:18: trailing whitespace.
++  "bundle": {
+src-tauri/tauri.conf.json:19: trailing whitespace.
++    "active": true,
+src-tauri/tauri.conf.json:20: trailing whitespace.
++    "targets": ["nsis", "msi"],
+src-tauri/tauri.conf.json:21: trailing whitespace.
++    "resources": {
+src-tauri/tauri.conf.json:22: trailing whitespace.
++      "../dist-host/": "host/",
+src-tauri/tauri.conf.json:23: trailing whitespace.
++      "resources/vk/": "vk/"
+src-tauri/tauri.conf.json:24: trailing whitespace.
++    },
+src-tauri/tauri.conf.json:25: trailing whitespace.
++    "icon": [
+src-tauri/tauri.conf.json:26: trailing whitespace.
++      "icons/32x32.png",
+src-tauri/tauri.conf.json:27: trailing whitespace.
++      "icons/128x128.png",
+src-tauri/tauri.conf.json:28: trailing whitespace.
++      "icons/128x128@2x.png",
+src-tauri/tauri.conf.json:29: trailing whitespace.
++      "icons/icon.icns",
+src-tauri/tauri.conf.json:30: trailing whitespace.
++      "icons/icon.ico"
+src-tauri/tauri.conf.json:31: trailing whitespace.
++    ],
+src-tauri/tauri.conf.json:32: trailing whitespace.
++    "android": {
+src-tauri/tauri.conf.json:33: trailing whitespace.
++      "debugApplicationIdSuffix": ".debug"
+src-tauri/tauri.conf.json:34: trailing whitespace.
++    },
+src-tauri/tauri.conf.json:35: trailing whitespace.
++    "windows": {
+src-tauri/tauri.conf.json:36: trailing whitespace.
++      "wix": {
+src-tauri/tauri.conf.json:37: trailing whitespace.
++        "language": ["zh-CN"]
+src-tauri/tauri.conf.json:38: trailing whitespace.
++      }
+src-tauri/tauri.conf.json:39: trailing whitespace.
++    }
+src-tauri/tauri.conf.json:40: trailing whitespace.
++  }
+src-tauri/tauri.conf.json:41: trailing whitespace.
++}
+OC_RANGE_CHECK=2
+2

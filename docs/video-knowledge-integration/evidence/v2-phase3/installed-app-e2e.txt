@@ -1,5 +1,5 @@
 PASS first run reports not-installed — 解析引擎未安装;点击安装开始(需要网络下载独立 Python)
-PASS runtime installed from bundled wheel+uv — version=video_knowledge-0.1.0-py3-none-any+03e8bf64 in 10s
+PASS runtime installed from bundled wheel+uv — version=video_knowledge-0.1.0-py3-none-any+308b58d3 in 10s
 PASS install log carries real steps — 60 lines
 PASS installed app completes a real DAG — status=done cost=0.005
 PASS progress projects real stages and cost — ["acquire","normalize","chapter","claim","qc","note","product","index","query_prepare"]
@@ -8,10 +8,10 @@ PASS knowledge query answers with citations — citations=5
 PASS history survives restart — 1 rows
 PASS same idempotency key returns the same job_id after restart
 PASS restart + replay adds zero model calls — calls=2
-PASS history retry keeps parent — child=f36e18f3-c5aa-4a6b-a146-dc0d390f7589
-FAIL history retry completes as a cache hit with zero new model calls — status=failed calls=2
+PASS history retry keeps parent — child=162dcfcd-0368-4cc8-a777-59672943c2cd
+PASS history retry completes as a cache hit with zero new model calls — status=done calls=2
 {
-  "vkInstalledE2E": false,
+  "vkInstalledE2E": true,
   "modelCalls": 2,
   "checks": 12
 }
