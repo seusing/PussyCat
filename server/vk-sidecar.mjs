@@ -9,6 +9,8 @@
 // 注入,不落日志、不进 health 投影、不回传前端;stderr 诊断先脱敏再保留。
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 export class VkSidecarError extends Error {
   constructor(statusCode, message, { reasonCode = 'sidecar-error', detail } = {}) {
@@ -76,6 +78,7 @@ export class VkSidecarManager {
 
   constructor({
     pythonPath,
+    homeDir,
     rootDir,
     configDir,
     spawnImpl = spawn,
@@ -92,6 +95,7 @@ export class VkSidecarManager {
     baseEnv = process.env,
   } = {}) {
     this.pythonPath = pythonPath
+    this.homeDir = homeDir
     this.rootDir = rootDir
     this.configDir = configDir
     this.spawnImpl = spawnImpl
@@ -106,7 +110,23 @@ export class VkSidecarManager {
     this.maxWorkers = maxWorkers
     this.stderrTailLines = stderrTailLines
     this.baseEnv = baseEnv
-    this.#state = pythonPath ? 'stopped' : 'not-configured'
+    this.#state = (pythonPath || homeDir) ? 'stopped' : 'not-configured'
+  }
+
+  // spawn 时动态解析:显式 env python 优先,否则读 home 的 active.json 指针——
+  // 首启安装完成后**无需重启 Node** 即可拉起 sidecar(v2 阶段3)。
+  #resolvePython() {
+    if (this.pythonPath) return this.pythonPath
+    if (!this.homeDir) return null
+    try {
+      const pointer = JSON.parse(
+        readFileSync(join(this.homeDir, 'runtime', 'active.json'), 'utf8'),
+      )
+      const python = typeof pointer.pythonPath === 'string' ? pointer.pythonPath : null
+      return python && existsSync(python) ? python : null
+    } catch {
+      return null
+    }
   }
 
   // 环境级健康投影(浏览器桥同款纪律):正向枚举字段,pid/port/token/路径一律不出现。
@@ -147,13 +167,17 @@ export class VkSidecarManager {
     if (this.#state === 'ok' && this.#child) {
       return { port: this.#port, token: this.#token }
     }
-    if (!this.pythonPath || !this.rootDir) {
+    const resolvedPython = this.#resolvePython()
+    if (!resolvedPython || !this.rootDir) {
       this.#state = 'not-configured'
-      throw new VkSidecarError(503, 'video-knowledge runtime 未配置', {
-        reasonCode: 'not-configured',
-        detail: '设置 OPENCLI_HOST_VK_PYTHON 与 OPENCLI_HOST_VK_ROOT 后重试',
+      throw new VkSidecarError(503, 'video-knowledge runtime 未安装或未配置', {
+        reasonCode: this.homeDir ? 'not-installed' : 'not-configured',
+        detail: this.homeDir
+          ? '解析引擎尚未安装:走 /vk/v1/runtime/install 首启安装'
+          : '设置 OPENCLI_HOST_VK_PYTHON 或 OPENCLI_HOST_VK_HOME 后重试',
       })
     }
+    this.resolvedPythonPath = resolvedPython
     if (!this.#starting) {
       this.#starting = this.#start().finally(() => {
         this.#starting = null
@@ -175,7 +199,7 @@ export class VkSidecarManager {
     if (this.configDir) argv.push('--config-dir', this.configDir)
     argv.push('--port', '0', '--no-browser', '--max-workers', String(this.maxWorkers))
 
-    const child = this.spawnImpl(this.pythonPath, argv, {
+    const child = this.spawnImpl(this.resolvedPythonPath ?? this.pythonPath, argv, {
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],

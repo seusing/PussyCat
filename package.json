@@ -18,6 +18,7 @@
     "sync-catalog": "node scripts/sync-catalog.mjs",
     "bench:append": "node scripts/bench-append-output.mjs",
     "build:host": "node scripts/build-host-runtime.mjs",
+    "build:vk-bundle": "node scripts/build-vk-bundle.mjs",
     "verify:host": "node scripts/verify-host-closure.mjs",
     "check:legacy": "node scripts/check-legacy-baseline.mjs",
     "package": "node scripts/package-app.mjs",

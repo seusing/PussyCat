@@ -502,6 +502,8 @@ const HOST_ENV_KEYS: &[&str] = &[
     "OPENCLI_HOST_VK_ROOT",
     "OPENCLI_HOST_VK_CONFIG_DIR",
     "OPENCLI_HOST_VK_STATE_DIR",
+    "OPENCLI_HOST_VK_HOME",
+    "OPENCLI_HOST_VK_BUNDLE_DIR",
 ];
 
 /// Host 的配置面必须**完全**由 supervisor 决定:凡 Host 会读的变量,这里要么显式设值,
@@ -546,19 +548,34 @@ fn configure_host_env(cmd: &mut Command) {
     cmd.env_remove("OPENCLI_HOST_VK_PYTHON")
         .env_remove("OPENCLI_HOST_VK_ROOT")
         .env_remove("OPENCLI_HOST_VK_CONFIG_DIR")
-        .env_remove("OPENCLI_HOST_VK_STATE_DIR");
+        .env_remove("OPENCLI_HOST_VK_STATE_DIR")
+        .env_remove("OPENCLI_HOST_VK_HOME")
+        .env_remove("OPENCLI_HOST_VK_BUNDLE_DIR");
 
-    // 打包形态(阶段 5):supervisor 是 VK_* 的唯一权威来源 —— 只信
-    // %LOCALAPPDATA%\爪爪-data\runtime\active.json 这个由安装器原子写入的指针,
-    // 指针不在/损坏/指向不存在的 python 时保持 not-configured(类型化诊断),
-    // 绝不回落到环境继承。
+    // 打包形态:supervisor 是 VK_* 的唯一权威来源。HOME 恒指
+    // %LOCALAPPDATA%\爪爪-data(Node 由此派生 data/config/node-state);
+    // python 只信安装器原子写入的 active.json 指针(fail-closed),
+    // 指针缺失时 Node 呈 not-installed 并可经 runtime 安装编排首启安装。
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         let home = Path::new(&local_app_data).join(VK_DATA_HOME_DIR);
+        cmd.env("OPENCLI_HOST_VK_HOME", &home);
         if let Some(python) = vk_active_python(&home) {
-            cmd.env("OPENCLI_HOST_VK_PYTHON", &python)
-                .env("OPENCLI_HOST_VK_ROOT", home.join("data"))
-                .env("OPENCLI_HOST_VK_CONFIG_DIR", home.join("config"))
-                .env("OPENCLI_HOST_VK_STATE_DIR", home.join("node-state"));
+            cmd.env("OPENCLI_HOST_VK_PYTHON", &python);
+        }
+    }
+}
+
+/// vk 捆绑件目录(wheel+uv+manifest)随资源发货:<resources>/vk。
+/// 由 start_host 依据 Host 入口路径推导并注入;目录不存在(dev 形态)则不设。
+fn configure_vk_bundle_env(cmd: &mut Command, host_entry: &Path) {
+    let resource_root = host_entry
+        .ancestors()
+        .nth(3)
+        .map(Path::to_path_buf);
+    if let Some(root) = resource_root {
+        let bundle = root.join("vk");
+        if bundle.join("runtime-manifest.json").is_file() {
+            cmd.env("OPENCLI_HOST_VK_BUNDLE_DIR", bundle);
         }
     }
 }
@@ -588,6 +605,7 @@ pub fn start_host(node: &Path, entry: &Path) -> Result<HostHandle, HostStartErro
     let mut cmd = Command::new(node);
     cmd.arg(entry);
     configure_host_env(&mut cmd);
+    configure_vk_bundle_env(&mut cmd, entry);
 
     cmd
         .stdin(Stdio::piped())

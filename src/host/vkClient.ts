@@ -226,6 +226,25 @@ export async function postVkQuery(text: string, baseUrl = DEFAULT_BASE_URL): Pro
   return parseVkResponse<VkQueryAnswer>(response, '知识库查询失败')
 }
 
+export interface VkRuntimeStatus {
+  state: string
+  version: string | null
+  reasonCode: string | null
+  summary: string
+  log: string[]
+  checkedAt: string
+}
+
+export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/status`)
+  return parseVkResponse<VkRuntimeStatus>(response, '解析引擎状态获取失败')
+}
+
+export async function postVkRuntimeInstall(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/install`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+  return parseVkResponse<VkRuntimeStatus>(response, '解析引擎安装启动失败')
+}
+
 export function vkOutputPath(outputId: string): string {
   return `/vk/v1/outputs/${encodeURIComponent(outputId)}`
 }

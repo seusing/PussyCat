@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build && npm run build:host"
+    "beforeBuildCommand": "npm run build && npm run build:host && npm run build:vk-bundle"
   },
   "app": {
     "windows": [],
@@ -19,7 +19,8 @@
     "active": true,
     "targets": ["nsis", "msi"],
     "resources": {
-      "../dist-host/": "host/"
+      "../dist-host/": "host/",
+      "resources/vk/": "vk/"
     },
     "icon": [
       "icons/32x32.png",

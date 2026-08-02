@@ -170,6 +170,7 @@ export function createHostServer({
   browserBridgeHealth = checkBrowserBridgeHealth,
   vkSidecar = null,
   vkJobShadow = null,
+  vkRuntime = null,
 } = {}) {
   if (!policy) throw new Error('policy is required')
   const activePolicy = () => catalogService?.current()?.policy ?? policy
@@ -317,6 +318,29 @@ export function createHostServer({
           checkedAt: new Date().toISOString(),
           retryable: false,
         })
+        return
+      }
+
+      // 首启 runtime 安装编排(v2 阶段3):状态永 200 结构化;安装 202 单飞。
+      if (url.pathname === '/vk/v1/runtime/status' && request.method === 'GET') {
+        writeJson(response, 200, vkRuntime ? vkRuntime.status() : {
+          state: 'not-available', version: null, reasonCode: 'bundle-missing',
+          summary: 'runtime 安装编排未接线', log: [], checkedAt: new Date().toISOString(),
+        })
+        return
+      }
+      if (url.pathname === '/vk/v1/runtime/install' && request.method === 'POST') {
+        if (!vkRuntime) {
+          writeJson(response, 503, { error: 'runtime 安装编排未接线', reasonCode: 'bundle-missing' })
+          return
+        }
+        const before = vkRuntime.status()
+        if (before.state === 'not-available') {
+          writeJson(response, 503, { error: before.summary, reasonCode: before.reasonCode ?? 'bundle-missing' })
+          return
+        }
+        void vkRuntime.install().catch(() => {})   // 结果经 status 轮询消费;错误已在 manager 里定型
+        writeJson(response, 202, vkRuntime.status())
         return
       }
 

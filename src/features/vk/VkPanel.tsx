@@ -11,10 +11,12 @@ import {
   fetchVkHealth,
   fetchVkJob,
   fetchVkJobs,
+  fetchVkRuntimeStatus,
   postVkJob,
   postVkJobAction,
   postVkPreview,
   postVkQuery,
+  postVkRuntimeInstall,
 } from '../../host/vkClient'
 import type {
   VkHealth,
@@ -23,6 +25,7 @@ import type {
   VkPreviewProjection,
   VkProcessingRequest,
   VkQueryAnswer,
+  VkRuntimeStatus,
 } from '../../host/vkClient'
 import { estimateForPreset, formatEstimate } from './vkEstimates'
 import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
@@ -91,6 +94,39 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     }
   }, [base])
   useEffect(() => { void checkHealth() }, [checkHealth])
+
+  // —— 首启 runtime 安装(v2 阶段3):sidecar 未安装时给安装卡;
+  //    installing 期间 2s 轮询真实安装输出(不造百分比)——
+  const [runtime, setRuntime] = useState<VkRuntimeStatus | null>(null)
+  const [installError, setInstallError] = useState<string | null>(null)
+  const refreshRuntime = useCallback(async () => {
+    try {
+      setRuntime(await fetchVkRuntimeStatus(base))
+    } catch {
+      setRuntime(null)
+    }
+  }, [base])
+  const needsRuntime = health != null && health.status !== 'ok'
+    && ['not-installed', 'not-configured', 'stopped'].includes(health.reasonCode)
+  useEffect(() => {
+    if (needsRuntime) void refreshRuntime()
+  }, [needsRuntime, refreshRuntime])
+  useEffect(() => {
+    if (runtime?.state !== 'installing') return
+    const timer = setInterval(() => { void refreshRuntime() }, 2000)
+    return () => clearInterval(timer)
+  }, [runtime?.state, refreshRuntime])
+  useEffect(() => {
+    if (runtime?.state === 'installed') void checkHealth()
+  }, [runtime?.state, checkHealth])
+  const startInstall = async () => {
+    setInstallError(null)
+    try {
+      setRuntime(await postVkRuntimeInstall(base))
+    } catch (error) {
+      setInstallError(errorText(error, '安装启动失败'))
+    }
+  }
 
   // —— 表单(组件本地;store 只承担跨模块 handoff)——
   const [source, setSource] = useState('')
@@ -262,6 +298,35 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
       </div>
       {diagnostic && (
         <pre data-testid="vk-diagnostic" className="mb-4 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{diagnostic}</pre>
+      )}
+
+      {/* 首启安装卡:引擎未安装/安装中/安装失败 */}
+      {runtime && runtime.state !== 'installed' && (
+        <div data-testid="vk-runtime-card" className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          <div className="mb-1 text-sm font-medium">解析引擎安装</div>
+          <div data-testid="vk-runtime-summary" className="mb-2 text-xs" style={{ color: runtime.state === 'failed' ? 'var(--color-danger)' : 'var(--color-fg-dim)' }}>
+            {runtime.summary}
+            {runtime.reasonCode ? `(${runtime.reasonCode})` : ''}
+          </div>
+          <div className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            步骤:核验捆绑件 SHA → 独立 Python venv → 安装 wheel → 四项 smoke(import/console/API 握手/DB 迁移)→ 原子激活;失败保留旧 runtime 与旧数据。
+          </div>
+          {runtime.log.length > 0 && (
+            <pre data-testid="vk-runtime-log" className="mb-2 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{runtime.log.join('\n')}</pre>
+          )}
+          {installError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{installError}</div>}
+          {runtime.state !== 'installing' && runtime.state !== 'not-available' && (
+            <button
+              type="button"
+              data-testid="vk-runtime-install"
+              onClick={() => { void startInstall() }}
+              className="rounded-lg px-4 py-2 text-sm font-medium"
+              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+            >
+              {runtime.state === 'failed' ? '重试安装' : '安装解析引擎'}
+            </button>
+          )}
+        </div>
       )}
 
       {/* 提交表单 */}

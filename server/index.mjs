@@ -6,6 +6,7 @@ import { loadExecutionPolicy } from './policy.mjs'
 import { createCatalogService } from './catalog-service.mjs'
 import { VkSidecarManager } from './vk-sidecar.mjs'
 import { createVkJobShadow } from './vk-job-shadow.mjs'
+import { VkRuntimeManager } from './vk-runtime.mjs'
 
 // Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
 // 注:20 已 EOL,是"最低可运行"而非推荐;推荐当前 LTS(22/24)。
@@ -81,15 +82,25 @@ try {
     resolveManifest: () => resolveManifestPath(opencliEntry),
   })
   // video-knowledge sidecar(vk-shell-v1 契约):未配置时照常启动,/vk/v1/*
-  // 返回类型化 not-configured 诊断;配置后首个请求按需拉起。
+  // 返回类型化诊断;配置后首个请求按需拉起。v2 阶段3:HOME 指数据根,
+  // python 优先 env、否则 spawn 时读 active.json(装完免重启)。
+  const vkHome = process.env.OPENCLI_HOST_VK_HOME
   const vkSidecar = new VkSidecarManager({
     pythonPath: process.env.OPENCLI_HOST_VK_PYTHON,
-    rootDir: process.env.OPENCLI_HOST_VK_ROOT,
-    configDir: process.env.OPENCLI_HOST_VK_CONFIG_DIR,
+    homeDir: vkHome,
+    rootDir: process.env.OPENCLI_HOST_VK_ROOT
+      ?? (vkHome ? resolve(vkHome, 'data') : undefined),
+    configDir: process.env.OPENCLI_HOST_VK_CONFIG_DIR
+      ?? (vkHome ? resolve(vkHome, 'config') : undefined),
   })
   const vkStateDir = process.env.OPENCLI_HOST_VK_STATE_DIR
+    ?? (vkHome ? resolve(vkHome, 'node-state') : undefined)
   const vkJobShadow = createVkJobShadow({
     stateFile: vkStateDir ? resolve(vkStateDir, 'vk-job-shadow.json') : undefined,
+  })
+  const vkRuntime = new VkRuntimeManager({
+    home: vkHome,
+    bundleDir: process.env.OPENCLI_HOST_VK_BUNDLE_DIR,
   })
   app = createHostServer({
     opencliEntry,
@@ -98,6 +109,7 @@ try {
     allowedOrigins,
     vkSidecar,
     vkJobShadow,
+    vkRuntime,
     runManagerOptions: {
       cancelGraceMs: Number.parseInt(process.env.OPENCLI_HOST_CANCEL_GRACE_MS ?? '2000', 10),
       commandTimeoutMs: Number.parseInt(process.env.OPENCLI_HOST_COMMAND_TIMEOUT_MS ?? '90000', 10),
