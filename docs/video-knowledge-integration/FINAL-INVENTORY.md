@@ -7,7 +7,7 @@
 
 | 仓库 | 分支 | 起点 | 代码 endpoint | HEAD |
 |---|---|---|---|---|
-| video-knowledge-m1-productization | integration/vk-shell-v1 | `db4bb40`(= integration/m1-productization) | `142ef2354ff10a6a72b7be5f4d54b3ec4b0f0e19` | 见 §7 |
+| video-knowledge-m1-productization | integration/vk-shell-v1 | `db4bb40`(= integration/m1-productization) | `86878f5`(完整见 §7) | 见 §7 |
 | opencli-app-clone | integration/vk-shell-v1 | `54ddac4`(= p1b0/policy-protocol-spec) | 同 HEAD | 见 §7 |
 
 - 远端 push = 0;远端标签发布 = 0;原作者 remote 修改 = 0。
@@ -32,7 +32,7 @@
 
 | 构件 | SHA-256 |
 |---|---|
-| `video_knowledge-0.1.0-py3-none-any.whl`(源树 = endpoint `142ef23`) | `03e8bf6458ee7fb4789096fde26a85c469403d55d7dc83fe7fc10659410979b4` |
+| `video_knowledge-0.1.0-py3-none-any.whl`(源树 = endpoint `86878f5`) | `308b58d35dd7f3a1b8027b04f766d95d217c14fedaaea0f4fe4b57df56e6ffe7` |
 | `uv.exe`(0.11.31,随包) | `f9984f1375c8…`(全值见 `src-tauri/resources/vk/runtime-manifest.json`) |
 | `runtime-manifest.json` | 构建期生成;安装端实算 digest 比对 |
 | NSIS / MSI | 见 §7(每次打包重算) |
@@ -56,7 +56,7 @@ wheel 内跨项目 import **0**(`vk-shell-v1-wheel-inventory.v1.json`)。
 
 | 门 | v2 起点 | v2 收口 |
 |---|---|---|
-| vk pytest | 1160 | **1177** passed, 6 skipped, 2 deselected |
+| vk pytest | 1160 | **1178** passed, 6 skipped, 2 deselected |
 | vk strict mypy | 86 | 86 files |
 | vk ruff / uv lock / diff-check / 状态一致性门 | 过 | 过(门 PASS) |
 | oc vitest | 627 | **637** |
@@ -74,10 +74,21 @@ wheel 内跨项目 import **0**(`vk-shell-v1-wheel-inventory.v1.json`)。
   与本地 FTS。真实语料门只读既有 M4 库(历史实付 ¥8.3279 原样浮出,零新增)。
 - `max_cost_cny` 为后端强制上限:每次付费调用前按最坏情况预估,越界零发送终止。
 
-## 7. 本次收口的实际值(打包后回填)
+## 7. 本次收口的实际值
 
-- vk HEAD:见下方"回填"节。
-- oc HEAD:见下方"回填"节。
-- NSIS / MSI SHA-256:见下方"回填"节。
+| 项 | 值 |
+|---|---|
+| vk HEAD(完整) | `86fab43d2c3407065029f69d9198be275d091898` |
+| vk 代码 endpoint | `86878f5a8041f8b9e37ed9ccb82043885c6622ec` |
+| oc HEAD(完整,本文件所在提交的父) | `85ee3be42f4f0929e1e5b7905bd5b40fbbcaebc3` |
+| wheel | `308b58d35dd7f3a1b8027b04f766d95d217c14fedaaea0f4fe4b57df56e6ffe7` |
+| NSIS `爪爪_0.1.0_x64-setup.exe`(源码 `85ee3be`) | `d7f952beab5262f28a05a2372940741ce79b670e07efd9cbd55e052cbfc25062` |
+| MSI `爪爪_0.1.0_x64_zh-CN.msi`(源码 `85ee3be`) | `fcc1b9676ec6675de6c921a33767c402f9af6a36c2ee1e52ad99acca641546d8` |
 
-> 回填由收口提交完成;若本节仍为占位,说明收口提交未落地,以 git 为准。
+安装态验收(evidence/v2-phase3/installed-app-e2e.txt,**12/12**):
+真 NSIS 安装 → 首启 not-installed → 捆绑 wheel+uv 安装 runtime(10s,60 行真实
+日志)→ 提交 fixture → 真 DAG done(实付 0.005 stub 币)→ progress 九阶段真实投影 →
+笔记产物 1030B → 引用查询 5 条 → 重启 Node+Python → 历史可看 → 同 key 同 job_id
+零新增调用 → 历史 retry 保 parent 且 cache hit 零调用。
+
+> 若 §7 与 git 不符,以 git 为准(本节由收口提交写入,oc HEAD 指其父提交)。
