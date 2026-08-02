@@ -1,0 +1,4 @@
+[vk-runtime] FAIL sha-mismatch: wheel SHA-256 与 manifest 不符,拒绝安装
+expected=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff actual=0cdc0c1f6921da8aefe6afaf5caa426fc6eaa6b1813234d2cf39ba52396a78e4
+[vk-runtime] 旧 runtime 与旧 DB 未被触碰,继续可用。
+active.json ABSENT (correct)
