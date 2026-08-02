@@ -59,7 +59,7 @@ wheel 内跨项目 import **0**(`vk-shell-v1-wheel-inventory.v1.json`)。
 | vk pytest | 1160 | **1178** passed, 6 skipped, 2 deselected |
 | vk strict mypy | 86 | 86 files |
 | vk ruff / uv lock / diff-check / 状态一致性门 | 过 | 过(门 PASS) |
-| oc vitest | 627 | **637** |
+| oc vitest | 627 | **639** |
 | oc cargo | 20 | **20** |
 | oc tsc / npm build / verify:host | 过 | 过 |
 | Playwright | 5 | **6**(新增跨模块入口) |

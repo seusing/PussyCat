@@ -21,7 +21,7 @@
 | 3 全新安装与首启 | complete | evidence/v2-phase3/(捆绑安装全绿、manifest 篡改拒装、**真实 NSIS 安装 → 首启安装 → 闭环 → 重启 → 幂等 → 历史 retry**);登记态安装/卸载 → BLOCKED B2 |
 | 4 真实运行状态与协议 | complete | vk 1177(progress 四测:running/unknown+reason/终态定格/run: 视图)+ Node 握手三校验(api+schema 篡改两红测);api 1.4.0 |
 | 5 用户真实入口 E2E | complete | Playwright 6/6(含跨模块:采集结果→送去视频解析→provenance→预检/费用/提交→公开面零哨兵→job API 零哨兵);evidence/v2-phase5/ |
-| 6 收口证据 | complete | 本表 + BLOCKED(B1–B4 各三次验证)+ FINAL-INVENTORY(实际 HEAD/SHA/路径) |
+| 6 收口证据 | complete | evidence/v2-final/(双仓终局门)+ BLOCKED(B1–B4 各三次验证)+ FINAL-INVENTORY(实际 HEAD/SHA/路径/安装态 12/12)。终局:vk 1178+ruff+mypy86+lock+状态门 PASS;oc tsc+vitest 639+build+cargo 20+verify:host 9/9+Playwright 6/6;两仓范围 diff-check 0、树净 |
 
 任务书:用户 goal.txt(2026-08-01 下发)。**断线重连后:先读本文件,再读 BLOCKED.md;
 已验收阶段只做回归,不重做。** 基线事实见 BASELINE.json,证据在 evidence/。
