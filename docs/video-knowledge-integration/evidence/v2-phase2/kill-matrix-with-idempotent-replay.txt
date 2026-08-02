@@ -1,0 +1,18 @@
+PASS one python child running mid-flight — pids=12356
+PASS typed crash diagnostic — sidecar-exited
+PASS old job id SURVIVES restart from vk.db (v2 persistence)
+PASS restart reconcile marked the orphan run interrupted — [["2f4b48b5-f005-4bea-9e76-753ee40153eb","interrupted"],["run:486711b3-e7ac-48e4-aae5-ff6e78b7f1e3","interrupted"]]
+PASS restart itself spent zero (no new model calls) — calls=2
+PASS same idempotency key after restart returns the same job_id — job=2f4b48b5-f005-4bea-9e76-753ee40153eb
+PASS same-key replay spends zero model calls — calls=2
+PASS replayed job is trackable from vk.db with interrupted status
+PASS stale upload id is rejected for a NEW key after restart (process-lifetime contract)
+PASS explicit resubmit completes after crash — status=done
+PASS resubmit spend is exactly one fresh run (chapter+claim) — calls=4
+PASS sqlite integrity ok after hard kill — ok
+PASS zero orphan python at the end
+{
+  "vkKillMatrix": true,
+  "modelCalls": 4,
+  "checks": 13
+}

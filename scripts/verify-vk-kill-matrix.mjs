@@ -158,8 +158,16 @@ try {
   const uploaded = await (await fetch(`${base}/vk/v1/uploads?name=lecture.srt`, {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream' }, body: Buffer.from(SRT, 'utf8'),
   })).json()
-  const preview = await posted('/vk/v1/preview', { source: `upload:${uploaded.upload_id}`, preset: 'quick-summary', max_cost_cny: 5 })
-  const created = await posted('/vk/v1/jobs', { request: preview, idempotency_key: crypto.randomUUID(), client_job_id: crypto.randomUUID() })
+  // 投影提交(1.3.0 正路):幂等指纹基于客户端形态,重启后原 key 原 body 可精确重放
+  const idempotencyKey = crypto.randomUUID()
+  const projection = {
+    source: `upload:${uploaded.upload_id}`,
+    preset: 'quick-summary',
+    max_cost_cny: 5,
+    idempotency_key: idempotencyKey,
+    client_job_id: crypto.randomUUID(),
+  }
+  const created = await posted('/vk/v1/jobs', projection)
 
   // 等 claim 真正到达 stub(执行中),再强杀 Python
   await Promise.race([claimReachedPromise, new Promise((_r, reject) => setTimeout(() => reject(new Error('claim never reached stub')), 60_000))])
@@ -172,21 +180,30 @@ try {
   // 类型化崩溃诊断;绝不自动重跑
   const health = await (await fetch(`${base}/vk/v1/health`, { headers })).json()
   check('typed crash diagnostic', health.status === 'failed' && health.reasonCode === 'sidecar-exited' && health.retryable === true, `${health.reasonCode}`)
-  const goneView = await fetch(`${base}/vk/v1/jobs/${created.job_id}`, { headers })
-  // 懒重拉已发生(此请求拉起新 sidecar);老 job 是上个进程的内存态 → 404
-  check('old in-memory job id is gone after restart (documented lifetime)', goneView.status === 404)
+  const survivedView = await fetch(`${base}/vk/v1/jobs/${created.job_id}`, { headers })
+  // v2 阶段2:job 真源在 vk.db(shell_jobs)——重启后旧 job id 依然可看,
+  // 状态由 reconcile 归为 interrupted(v1 时代是内存态 404,已升级)。
+  check('old job id SURVIVES restart from vk.db (v2 persistence)', survivedView.status === 200)
   const rows = await (await fetch(`${base}/vk/v1/jobs`, { headers })).json()
   const interrupted = rows.filter((row) => row.kind === 'run' && row.status === 'interrupted')
   check('restart reconcile marked the orphan run interrupted', interrupted.length === 1, JSON.stringify(rows.map((r) => [r.job_id, r.status])))
   check('restart itself spent zero (no new model calls)', modelCalls === callsAtKill, `calls=${modelCalls}`)
 
+  // v2 阶段2:重启后原 key 原 body 重放 → 同一 job_id、零新增模型调用。
+  // 命中路径完全不解析 upload 暂存(公开指纹用客户端形态),故旧 id 不碍事。
+  const replay = await posted('/vk/v1/jobs', { ...projection, client_job_id: crypto.randomUUID() })
+  check('same idempotency key after restart returns the same job_id', replay.job_id === created.job_id, `job=${replay.job_id}`)
+  check('same-key replay spends zero model calls', modelCalls === callsAtKill, `calls=${modelCalls}`)
+  const replayView = await (await fetch(`${base}/vk/v1/jobs/${created.job_id}`, { headers })).json()
+  check('replayed job is trackable from vk.db with interrupted status', replayView.status === 'interrupted' && replayView.request?.preset === 'quick-summary')
+
   // 显式重提交 = 新决策;快速模式完成。
-  // upload id 是 sidecar 进程生命周期(契约 §6):重启后旧 id 失效,重传是正路。
+  // upload id 是 sidecar 进程生命周期(契约 §6):重启后旧 id 对**新建**失效,重传是正路。
   const staleUpload = await fetch(`${base}/vk/v1/jobs`, {
     method: 'POST', headers: json,
-    body: JSON.stringify({ request: preview, idempotency_key: crypto.randomUUID(), client_job_id: crypto.randomUUID() }),
+    body: JSON.stringify({ ...projection, idempotency_key: crypto.randomUUID(), client_job_id: crypto.randomUUID() }),
   })
-  check('stale upload id is rejected after restart (process-lifetime contract)', staleUpload.status === 404)
+  check('stale upload id is rejected for a NEW key after restart (process-lifetime contract)', staleUpload.status === 404)
   slowMode = false
   const reuploaded = await (await fetch(`${base}/vk/v1/uploads?name=lecture.srt`, {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream' }, body: Buffer.from(SRT, 'utf8'),
