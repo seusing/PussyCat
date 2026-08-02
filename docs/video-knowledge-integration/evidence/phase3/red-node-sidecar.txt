@@ -5,4 +5,3 @@
 [2m      Tests [22m [2mno tests[22m
 [2m   Start at [22m 20:15:34
 [2m   Duration [22m 767ms[2m (transform 74ms, setup 454ms, collect 0ms, tests 0ms, environment 0ms, prepare 489ms)[22m
-
