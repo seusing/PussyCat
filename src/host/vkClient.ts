@@ -233,6 +233,25 @@ export interface VkRuntimeStatus {
   summary: string
   log: string[]
   checkedAt: string
+  source?: string | null
+  pythonPath?: string | null
+  capabilities?: VkRuntimeCapability[]
+}
+
+export interface VkRuntimeCandidate {
+  pythonPath: string
+  source: string
+  version: string | null
+  apiVersion: string | null
+  schemaVersion: string | null
+  capabilities: VkRuntimeCapability[]
+  compatible: boolean
+  reason: string | null
+}
+
+export interface VkRuntimeDetectResponse {
+  candidates: VkRuntimeCandidate[]
+  checkedAt: string
 }
 
 export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
@@ -243,6 +262,16 @@ export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<
 export async function postVkRuntimeInstall(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
   const response = await fetch(`${baseUrl}/vk/v1/runtime/install`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
   return parseVkResponse<VkRuntimeStatus>(response, '解析引擎安装启动失败')
+}
+
+export async function postVkRuntimeDetect(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeDetectResponse> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/detect`, jsonInit({}))
+  return parseVkResponse<VkRuntimeDetectResponse>(response, '已有环境检测失败')
+}
+
+export async function postVkRuntimeAdopt(pythonPath: string, baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/adopt`, jsonInit({ pythonPath }))
+  return parseVkResponse<VkRuntimeStatus>(response, '已有环境接入失败')
 }
 
 export function vkOutputPath(outputId: string): string {

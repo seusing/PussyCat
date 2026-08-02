@@ -266,6 +266,81 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-runtime-install').textContent).toContain('重试安装')
   })
 
+  it('detects an existing Python environment and adopts only a compatible candidate', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured', reasonCode: 'not-installed', summary: '未安装' } },
+      'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
+      'GET /vk/v1/runtime/status': {
+        body: { state: 'not-installed', version: null, reasonCode: null, summary: '解析引擎未安装', log: [], checkedAt: 't' },
+      },
+      'POST /vk/v1/runtime/detect': {
+        body: {
+          candidates: [{
+            pythonPath: 'C:/Python312/python.exe', source: '本机 PATH', version: '3.12.8', apiVersion: '1.2.0',
+            schemaVersion: '1.1.0', capabilities: [
+              { capability: 'word_timestamps', runtime: 'missing_dependency', detail: 'whisperx' },
+              { capability: 'visual_evidence', runtime: 'ready', detail: null },
+            ], compatible: true, reason: null,
+          }, {
+            pythonPath: 'C:/Python311/python.exe', source: '本机 PATH', version: '3.11.9', apiVersion: null,
+            schemaVersion: null, capabilities: [], compatible: false, reason: 'Python 版本不兼容',
+          }],
+          checkedAt: 't',
+        },
+      },
+      'POST /vk/v1/runtime/adopt': {
+        body: { state: 'installed', version: 'external-3.12.8', reasonCode: null, summary: '外部环境已就绪', log: [], checkedAt: 't' },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
+    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('初始化爪爪专用解析环境（基础版）')
+    await user.click(screen.getByTestId('vk-runtime-detect'))
+    await waitFor(() => expect(screen.getByTestId('vk-runtime-candidates')).toBeInTheDocument())
+    expect(screen.getByTestId('vk-runtime-candidates').textContent).toContain('本机 PATH')
+    expect(screen.getByTestId('vk-runtime-candidates').textContent).toContain('Python 版本不兼容')
+    expect(screen.getAllByTestId('vk-runtime-capabilities')[0].textContent).toContain('word_timestamps')
+    expect(screen.getByTestId('vk-runtime-adopt-0')).toBeEnabled()
+    expect(screen.getByTestId('vk-runtime-adopt-1')).toBeDisabled()
+    await user.click(screen.getByTestId('vk-runtime-adopt-0'))
+    await waitFor(() => expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/adopt')).toBe(true))
+    const adopt = calls.find((item) => item.key === 'POST /vk/v1/runtime/adopt')
+    expect(JSON.parse(String(adopt!.init!.body))).toEqual({ pythonPath: 'C:/Python312/python.exe' })
+    expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('外部环境')
+  })
+
+  it('surfaces detect and adopt failures without hiding the dedicated install retry', async () => {
+    const user = userEvent.setup()
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured', reasonCode: 'not-installed', summary: '未安装' } },
+      'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
+      'GET /vk/v1/runtime/status': { body: { state: 'failed', version: null, reasonCode: 'offline', summary: '安装失败', log: [], checkedAt: 't' } },
+      'POST /vk/v1/runtime/detect': { status: 503, body: { error: '检测失败', reasonCode: 'detect-failed' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
+    await user.click(screen.getByTestId('vk-runtime-detect'))
+    await waitFor(() => expect(screen.getByTestId('vk-runtime-detect-error').textContent).toContain('检测失败'))
+    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('重试安装')
+  })
+
+  it('does not poll-loop when an installed runtime is displayed', async () => {
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': {
+        body: { state: 'installed', version: 'v1', reasonCode: null, summary: '解析引擎已就绪(v1)', log: [], checkedAt: 't' },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
+    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('重建爪爪专用环境')
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(calls.filter((item) => item.key === 'GET /vk/v1/health').length).toBeLessThanOrEqual(2)
+    expect(calls.filter((item) => item.key === 'GET /vk/v1/runtime/status').length).toBeLessThanOrEqual(2)
+  })
+
   it('shows a typed reason when the sidecar is not wired', async () => {
     stubRoutes({
       'GET /vk/v1/health': {

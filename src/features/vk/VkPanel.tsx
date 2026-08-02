@@ -12,6 +12,8 @@ import {
   fetchVkJob,
   fetchVkJobs,
   fetchVkRuntimeStatus,
+  postVkRuntimeAdopt,
+  postVkRuntimeDetect,
   postVkJob,
   postVkJobAction,
   postVkPreview,
@@ -26,6 +28,7 @@ import type {
   VkProcessingRequest,
   VkQueryAnswer,
   VkRuntimeStatus,
+  VkRuntimeCandidate,
 } from '../../host/vkClient'
 import { estimateForPreset, formatEstimate } from './vkEstimates'
 import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
@@ -98,7 +101,14 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   // —— 首启 runtime 安装(v2 阶段3):sidecar 未安装时给安装卡;
   //    installing 期间 2s 轮询真实安装输出(不造百分比)——
   const [runtime, setRuntime] = useState<VkRuntimeStatus | null>(null)
+  const [runtimeSource, setRuntimeSource] = useState<'dedicated' | 'external' | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
+  const [runtimeCandidates, setRuntimeCandidates] = useState<VkRuntimeCandidate[] | null>(null)
+  const [runtimeDetecting, setRuntimeDetecting] = useState(false)
+  const [runtimeDetectError, setRuntimeDetectError] = useState<string | null>(null)
+  const [runtimeAdoptError, setRuntimeAdoptError] = useState<string | null>(null)
+  const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(false)
+  const previousRuntimeState = useRef<string | null>(null)
   const refreshRuntime = useCallback(async () => {
     try {
       setRuntime(await fetchVkRuntimeStatus(base))
@@ -106,25 +116,49 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
       setRuntime(null)
     }
   }, [base])
-  const needsRuntime = health != null && health.status !== 'ok'
-    && ['not-installed', 'not-configured', 'stopped'].includes(health.reasonCode)
   useEffect(() => {
-    if (needsRuntime) void refreshRuntime()
-  }, [needsRuntime, refreshRuntime])
+    if (health) void refreshRuntime()
+  }, [health, refreshRuntime])
   useEffect(() => {
     if (runtime?.state !== 'installing') return
     const timer = setInterval(() => { void refreshRuntime() }, 2000)
     return () => clearInterval(timer)
   }, [runtime?.state, refreshRuntime])
   useEffect(() => {
-    if (runtime?.state === 'installed') void checkHealth()
+    const state = runtime?.state ?? null
+    if (state === 'installed' && previousRuntimeState.current !== 'installed') void checkHealth()
+    previousRuntimeState.current = state
   }, [runtime?.state, checkHealth])
   const startInstall = async () => {
     setInstallError(null)
     try {
+      setRuntimeSource('dedicated')
       setRuntime(await postVkRuntimeInstall(base))
     } catch (error) {
       setInstallError(errorText(error, '安装启动失败'))
+    }
+  }
+  const detectRuntime = async () => {
+    setRuntimeDetecting(true)
+    setRuntimeDetectError(null)
+    try {
+      const result = await postVkRuntimeDetect(base)
+      setRuntimeCandidates(result.candidates)
+      setRuntimeDetailsOpen(true)
+    } catch (error) {
+      setRuntimeDetectError(errorText(error, '已有环境检测失败'))
+    } finally {
+      setRuntimeDetecting(false)
+    }
+  }
+  const adoptRuntime = async (candidate: VkRuntimeCandidate) => {
+    setRuntimeAdoptError(null)
+    try {
+      setRuntime(await postVkRuntimeAdopt(candidate.pythonPath, base))
+      setRuntimeSource('external')
+      await checkHealth()
+    } catch (error) {
+      setRuntimeAdoptError(errorText(error, '已有环境接入失败'))
     }
   }
 
@@ -300,22 +334,29 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
         <pre data-testid="vk-diagnostic" className="mb-4 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{diagnostic}</pre>
       )}
 
-      {/* 首启安装卡:引擎未安装/安装中/安装失败 */}
-      {runtime && runtime.state !== 'installed' && (
+      {/* 解析环境卡:专用 runtime、已有环境检测与能力管理 */}
+      {runtime && (
         <div data-testid="vk-runtime-card" className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-          <div className="mb-1 text-sm font-medium">解析引擎安装</div>
+          <div className="mb-1 text-sm font-medium">解析环境</div>
           <div data-testid="vk-runtime-summary" className="mb-2 text-xs" style={{ color: runtime.state === 'failed' ? 'var(--color-danger)' : 'var(--color-fg-dim)' }}>
             {runtime.summary}
             {runtime.reasonCode ? `(${runtime.reasonCode})` : ''}
           </div>
-          <div className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            步骤:核验捆绑件 SHA → 独立 Python venv → 安装 wheel → 四项 smoke(import/console/API 握手/DB 迁移)→ 原子激活;失败保留旧 runtime 与旧数据。
-          </div>
+          {runtime.state !== 'installed' && <div className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            初始化爪爪专用解析环境（基础版）：复用本机 Python 3.12 与 uv 缓存。基础版含核心、字幕、下载，不含本地 ASR；安装会核验 SHA、创建独立环境并运行 smoke 检查。
+          </div>}
+          {runtime.state === 'installed' && <div className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            当前环境：{runtime.source ?? (runtimeSource === 'external' ? '已有环境（外部）' : '爪爪专用环境')}{runtime.pythonPath ? ` · ${runtime.pythonPath}` : ''}
+            。重建按钮会重新创建爪爪专用环境，不会修改外部环境。
+          </div>}
           {runtime.log.length > 0 && (
             <pre data-testid="vk-runtime-log" className="mb-2 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{runtime.log.join('\n')}</pre>
           )}
           {installError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{installError}</div>}
-          {runtime.state !== 'installing' && runtime.state !== 'not-available' && (
+          {runtimeDetectError && <div data-testid="vk-runtime-detect-error" className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{runtimeDetectError}</div>}
+          {runtimeAdoptError && <div data-testid="vk-runtime-adopt-error" className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{runtimeAdoptError}</div>}
+          <div className="mb-2 flex flex-wrap gap-2">
+            {runtime.state !== 'installing' && runtime.state !== 'not-available' && (
             <button
               type="button"
               data-testid="vk-runtime-install"
@@ -323,9 +364,31 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
               className="rounded-lg px-4 py-2 text-sm font-medium"
               style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
             >
-              {runtime.state === 'failed' ? '重试安装' : '安装解析引擎'}
+              {runtime.state === 'installed'
+                ? '重建爪爪专用环境'
+                : runtime.state === 'failed'
+                  ? '重试安装：初始化爪爪专用解析环境（基础版）'
+                  : '初始化爪爪专用解析环境（基础版）'}
             </button>
-          )}
+            )}
+            {runtime.state !== 'not-available' && <button type="button" data-testid="vk-runtime-detect" onClick={() => { void detectRuntime() }} disabled={runtimeDetecting} className={outlineButton} style={outlineStyle}>
+              {runtimeDetecting ? '检测中…' : '检测已有环境'}
+            </button>}
+            {runtime.state === 'installed' && <button type="button" data-testid="vk-runtime-details-toggle" onClick={() => setRuntimeDetailsOpen((open) => !open)} className={outlineButton} style={outlineStyle}>
+              {runtimeDetailsOpen ? '收起环境与能力' : '环境与能力管理'}
+            </button>}
+          </div>
+          {runtimeDetailsOpen && runtimeCandidates && <div data-testid="vk-runtime-candidates" className="mt-2 space-y-2 text-xs">
+            {runtimeCandidates.map((candidate, index) => <div key={candidate.pythonPath} className="rounded-lg p-2" style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
+              <div className="font-medium">{candidate.source} · Python {candidate.version ?? '未知'}</div>
+              <div>{candidate.pythonPath}</div>
+              <div>{candidate.apiVersion ? `api ${candidate.apiVersion}` : 'API 未知'} · {candidate.schemaVersion ? `schema ${candidate.schemaVersion}` : 'schema 未知'}</div>
+              <div data-testid="vk-runtime-capabilities">能力：{candidate.capabilities.length ? candidate.capabilities.map((cap) => `${cap.capability}=${cap.runtime}${cap.detail ? `(${cap.detail})` : ''}`).join('、') : '未返回能力'}</div>
+              {!candidate.compatible && <div style={{ color: 'var(--color-danger)' }}>不兼容：{candidate.reason ?? '版本或契约不匹配'}</div>}
+              <button type="button" data-testid={`vk-runtime-adopt-${index}`} disabled={!candidate.compatible} onClick={() => { void adoptRuntime(candidate) }} className={outlineButton} style={outlineStyle}>使用此环境</button>
+            </div>)}
+            {!runtimeCandidates.length && <div>未发现可用的本机环境</div>}
+          </div>}
         </div>
       )}
 
