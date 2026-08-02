@@ -1,0 +1,6 @@
+=========================== short test summary info ===========================
+FAILED tests/knowledge/test_runtime_progress.py::test_running_view_projects_real_stage_and_cost
+FAILED tests/knowledge/test_runtime_progress.py::test_progress_without_a_run_is_unknown_with_reason
+FAILED tests/knowledge/test_runtime_progress.py::test_finished_run_projects_terminal_totals
+FAILED tests/knowledge/test_runtime_progress.py::test_run_view_also_carries_progress
+4 failed in 1.73s
