@@ -1,5 +1,16 @@
 # PROGRESS — 爪爪 × video-knowledge 集成(vk-shell-v1)
 
+## 任务书 v2 开工回执(2026-08-01)
+
+1. v2 目标源:goal.txt(安装态产品闭环);Phase 1–4 只回归不重写。
+2. 阶段0 复核:vk HEAD 18da94a、oc HEAD c57e6f0 与任务书一致;两树 clean。
+3. 任务书指出的范围 diff-check 属实(oc 54ddac4..HEAD 347 处证据尾随空格),
+   已修复并把旧 "clean" 结论在此更正;现两仓范围 diff-check 均为 0。
+4. v2 基线复跑全绿:vk 1160/ruff/mypy86/lock + wheel 重建 sha 逐字节复现
+   762649c0… + 干净 venv import smoke;oc tsc/vitest 627/build/cargo 20/
+   Playwright 5/5(evidence/v2-phase0/)。
+5. 顺序执行 §三 0–6;同门三连败即记录转下一项;新增真实付费默认 0。
+
 任务书:用户 goal.txt(2026-08-01 下发)。**断线重连后:先读本文件,再读 BLOCKED.md;
 已验收阶段只做回归,不重做。** 基线事实见 BASELINE.json,证据在 evidence/。
 

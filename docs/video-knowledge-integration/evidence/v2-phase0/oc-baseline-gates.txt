@@ -1,0 +1,8 @@
+tsc: no errors
+[2m Test Files [22m [1m[32m56 passed[39m[22m[90m (56)[39m
+[2m      Tests [22m [1m[32m627 passed[39m[22m[90m (627)[39m
+[32m✓ built in 1.60s[39m
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.35s
+
+  5 passed (17.1s)
+OC_RANGE_CHECK=0

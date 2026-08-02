@@ -1,0 +1,10 @@
+1160 passed, 6 skipped, 2 deselected, 23 warnings in 54.98s
+All checks passed!
+Success: no issues found in 86 source files
+Resolved 215 packages in 1ms
+Successfully built dist\video_knowledge-0.1.0-py3-none-any.whl
+762649c05d9026de0fa24802591ac2e9a833977a33b3779e239dd3f31f4487ba *dist/video_knowledge-0.1.0-py3-none-any.whl
+Activate with: C:\Users\Lauseusing\AppData\Local\Temp\vk-wheel-smoke\Scripts\activate
+ + yt-dlp-ejs==0.8.0
+wheel smoke import ok 0.1.0
+VK_RANGE_CHECK=0
