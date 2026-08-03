@@ -164,13 +164,27 @@ export class VkRuntimeManager {
     }
   }
 
-  async install() {
+  /**
+   * 安装(或重建)爪爪专用解析环境。
+   *
+   * `rebuild` 存在的理由:没有它时,已装状态下 install() 会**静默返回**,而界面上
+   * 那个按钮恰恰只在已装时才叫「重建」—— 于是它在唯一被叫做重建的场景里保证空转,
+   * 既没禁用也没变灰,点了就是没反应。底层其实完全支持重建
+   * (vk-runtime-install.mjs 会先删掉旧版本目录再建),缺的只是这条通路。
+   *
+   * `beforeRebuild` 与 adopt 的 beforeActivate 同款,用来先停 sidecar:重建要删掉
+   * 版本目录,而 Windows 上正在跑的 python.exe 会把目录锁住,不停就是 EBUSY。
+   */
+  async install({ rebuild = false, beforeRebuild = async () => {} } = {}) {
     if (this.#adopting) {
       throw new VkRuntimeError(409, 'runtime-busy', '正在接管已有解析环境，请完成后再安装')
     }
     if (this.#installing) return this.#installing
     const snapshot = this.status()
-    if (snapshot.state === 'installed') return snapshot
+    if (snapshot.state === 'installed') {
+      if (!rebuild) return snapshot
+      await beforeRebuild()
+    }
     if (snapshot.state === 'not-available') {
       const error = new Error(snapshot.summary)
       error.reasonCode = 'bundle-missing'

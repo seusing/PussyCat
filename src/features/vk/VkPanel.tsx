@@ -157,11 +157,12 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     if (state === 'installed' && previousRuntimeState.current !== 'installed') void checkHealth()
     previousRuntimeState.current = state
   }, [runtime?.state, checkHealth])
-  const startInstall = async () => {
+  const startInstall = async ({ rebuild = false }: { rebuild?: boolean } = {}) => {
     setInstallError(null)
     try {
       setRuntimeSource('dedicated')
-      setRuntime(await postVkRuntimeInstall(base))
+      // 已装状态下不带 rebuild 的话 Host 会按幂等直接返回现状 —— 按钮就成了空转。
+      setRuntime(await postVkRuntimeInstall(base, { rebuild }))
     } catch (error) {
       setInstallError(errorText(error, '安装启动失败'))
     }
@@ -399,7 +400,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             <button
               type="button"
               data-testid="vk-runtime-install"
-              onClick={() => { void startInstall() }}
+              onClick={() => { void startInstall({ rebuild: runtime.state === 'installed' }) }}
               className="rounded-lg px-4 py-2 text-sm font-medium"
               style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
             >

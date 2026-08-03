@@ -23,6 +23,41 @@ function bundleDir() {
 }
 
 describe('VkRuntimeManager', () => {
+  it('已装状态下 install() 不带 rebuild 是幂等的 —— 但带上就必须真重建', async () => {
+    // 这条钉的是一个真实 bug:界面上那个按钮只在已装时才显示成「重建」,而 install()
+    // 在已装时直接静默返回。按钮没禁用、没变灰,点了就是没反应。
+    const home = tempDir('vk-home-')
+    let installs = 0
+    const stopped = []
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      installImpl: async () => {
+        installs += 1
+        const python = join(home, 'runtime', 'versions', 'v1', 'Scripts', 'python.exe')
+        mkdirSync(join(home, 'runtime', 'versions', 'v1', 'Scripts'), { recursive: true })
+        writeFileSync(python, 'stub')
+        writeActiveRuntime(home, writeRuntimeReceipt(home, {
+          schema: 'vk-runtime-receipt@1', source: 'app-owned', version: 'v1', pythonPath: python,
+          wheelSha256: 'a'.repeat(64), apiVersion: '1.4.0', schemaVersion: '1.1.0',
+          capabilities: [], extras: [], installedAt: '2026-08-02T00:00:00Z',
+        }))
+        return { version: 'v1', pythonPath: python }
+      },
+    })
+
+    await manager.install()
+    expect(installs).toBe(1)
+
+    await manager.install()                       // 幂等:不重装
+    expect(installs).toBe(1)
+
+    await manager.install({ rebuild: true, beforeRebuild: async () => { stopped.push('sidecar') } })
+    expect(installs).toBe(2)                      // 真的重建了
+    // 重建要删版本目录,Windows 上跑着的 python.exe 会锁住它 —— 必须先停 sidecar。
+    expect(stopped).toEqual(['sidecar'])
+  })
+
   it('无捆绑件 → not-available(bundle-missing)', () => {
     const manager = new VkRuntimeManager({ home: tempDir('vk-home-'), bundleDir: undefined })
     expect(manager.status()).toMatchObject({ state: 'not-available', reasonCode: 'bundle-missing' })

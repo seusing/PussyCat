@@ -356,12 +356,19 @@ export function createHostServer({
           writeJson(response, 503, { error: 'runtime 安装编排未接线', reasonCode: 'bundle-missing' })
           return
         }
+        // 读掉请求体:客户端要传 { rebuild: true } 时不读会把连接吊住。
+        const body = await readJson(request, maxBodyBytes)
         const before = vkRuntime.status()
         if (before.state === 'not-available') {
           writeJson(response, 503, { error: before.summary, reasonCode: before.reasonCode ?? 'bundle-missing' })
           return
         }
-        void vkRuntime.install().catch(() => {})   // 结果经 status 轮询消费;错误已在 manager 里定型
+        // 结果经 status 轮询消费;错误已在 manager 里定型。重建前先停 sidecar
+        // (与 adopt 同款),否则 Windows 上正在跑的 python.exe 会锁住待删目录。
+        void vkRuntime.install({
+          rebuild: body?.rebuild === true,
+          beforeRebuild: async () => { await vkSidecar?.stop() },
+        }).catch(() => {})
         writeJson(response, 202, vkRuntime.status())
         return
       }

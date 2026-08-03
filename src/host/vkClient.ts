@@ -260,8 +260,12 @@ export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<
   return parseVkResponse<VkRuntimeStatus>(response, '解析引擎状态获取失败')
 }
 
-export async function postVkRuntimeInstall(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
-  const response = await fetch(`${baseUrl}/vk/v1/runtime/install`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+/** rebuild=true 才会在**已装**状态下真正重建;否则 Host 按幂等处理、直接返回现状。 */
+export async function postVkRuntimeInstall(
+  baseUrl = DEFAULT_BASE_URL,
+  { rebuild = false }: { rebuild?: boolean } = {},
+): Promise<VkRuntimeStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/install`, jsonInit({ rebuild }))
   return parseVkResponse<VkRuntimeStatus>(response, '解析引擎安装启动失败')
 }
 
