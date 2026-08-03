@@ -34,8 +34,9 @@ const MACHINE_FIXABLE = new Set(['daemon-stopped', 'daemon-unreachable', 'daemon
 const NEXT_STEP = {
   'extension-disconnected':
     '在 Chrome 里打开装有 OpenCLI 扩展的窗口,并确认该扩展处于启用状态;完成后再点一次「检测并修复」。',
+  // 不写「在下面选一个」——选择器还没做,承诺一个不存在的控件比不给指令更糟。
   'profile-required':
-    '当前有多个浏览器 profile 连着,需要指定用哪一个 —— 在下面选一个即可。',
+    '当前有多个浏览器 profile 连着,需要指定用哪一个:在终端执行 opencli profile list 看清单,再执行 opencli profile use <别名>。',
   'profile-disconnected':
     '之前指定的浏览器 profile 现在没连上:打开那个 Chrome profile,或改选另一个。',
 }

@@ -84,7 +84,7 @@ describe('修复阶梯', () => {
 
     expect(result.needsProfileChoice).toBe(true)
     expect(result.steps).toEqual([])                    // 没有任何机器动作可做
-    expect(result.nextStep).toContain('选一个')
+    expect(result.nextStep).toContain('opencli profile use')
   })
 
   test('禁用浏览器拉起时不碰浏览器 —— 副作用要能关掉', async () => {
