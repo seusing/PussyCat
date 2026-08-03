@@ -126,10 +126,11 @@ export function LoginStatusPanel() {
           data-testid="refresh-all-logins"
           disabled={checkable.length === 0}
           onClick={() => enqueueLoginChecks(checkable.map((r) => r.site))}
+          title="检查全部登录状态；可能唤起或切换浏览器标签页"
           className="rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50"
           style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
         >
-          {pending > 0 ? `全部刷新（排队 ${pending}）` : '全部刷新'}
+          {pending > 0 ? `检查全部登录状态（排队 ${pending}）` : '检查全部登录状态'}
         </button>
 
         <label className="flex items-center gap-2 text-sm">
@@ -139,7 +140,7 @@ export function LoginStatusPanel() {
             checked={auto.enabled}
             onChange={(e) => setAuto({ ...auto, enabled: e.target.checked })}
           />
-          自动刷新
+          定时检查
         </label>
         <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           每
@@ -164,7 +165,7 @@ export function LoginStatusPanel() {
       {auto.enabled && (
         <p data-testid="auto-refresh-note" className="mb-4 rounded-lg p-3 text-xs"
           style={{ background: 'var(--color-panel)', color: 'var(--color-fg-dim)', border: '1px solid var(--color-warning)' }}>
-          自动刷新会**在后台反复**用你的登录态执行 whoami，每次都会开一个浏览器标签。
+          定时检查会**在后台反复**用你的登录态执行 whoami，可能唤起或切换浏览器标签页。
           只对已确认的命令生效；需要确认的会被跳过，不会弹窗打断你。关闭应用后不再执行。
         </p>
       )}
@@ -208,11 +209,11 @@ export function LoginStatusPanel() {
                   data-testid={`login-refresh-${r.site}`}
                   disabled={!canCheck}
                   onClick={() => enqueueLoginChecks([r.site])}
-                  title={rowBusy ? '该站点已在队列中' : canCheck ? '重新检查该站点' : '该站点当前不可检查'}
+                  title={rowBusy ? '该站点已在队列中' : canCheck ? '检查该站点；可能唤起或切换浏览器标签页' : '该站点当前不可检查'}
                   className="shrink-0 rounded px-2 py-1 text-xs disabled:opacity-40"
                   style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
                 >
-                  刷新
+                  检查
                 </button>
               )}
             </div>

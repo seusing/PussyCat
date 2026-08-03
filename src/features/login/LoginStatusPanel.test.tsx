@@ -62,10 +62,13 @@ test('已确认 → 可检查,单站刷新只把该站入队', async () => {
   expect(useAppStore.getState().loginQueue).toEqual(['xiaohongshu'])
 })
 
-test('全部刷新只排可检查的站点 —— 未审定与待确认的不入队', async () => {
+test('检查全部登录状态只排可检查的站点 —— 未审定与待确认的不入队', async () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
   render(<LoginStatusPanel />)
+  expect(screen.getByTestId('refresh-all-logins')).toHaveTextContent('检查全部登录状态')
+  expect(screen.getByTestId('refresh-all-logins')).toHaveAttribute('title', expect.stringContaining('可能唤起或切换浏览器标签'))
+  expect(screen.getByTestId('auto-refresh-toggle').parentElement).toHaveTextContent('定时检查')
   await userEvent.click(screen.getByTestId('refresh-all-logins'))
   const q = useAppStore.getState().loginQueue
   expect(q.sort()).toEqual(['bilibili', 'xiaohongshu'])
@@ -90,7 +93,7 @@ test('判决在检查之后收紧 → 以判决为准,不沿用旧的「已登�
   expect(screen.getByTestId('login-state-chatgpt')).not.toHaveTextContent('已登录')
 })
 
-test('自动刷新默认关,且开启后给出明确说明', async () => {
+test('定时检查默认关,且开启后给出明确说明', async () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   render(<LoginStatusPanel />)
   const toggle = screen.getByTestId('auto-refresh-toggle')
@@ -100,6 +103,7 @@ test('自动刷新默认关,且开启后给出明确说明', async () => {
   // 文案必须说清它会**反复**动用登录态,而不是含糊的"定时检查"
   expect(screen.getByTestId('auto-refresh-note')).toHaveTextContent('反复')
   expect(screen.getByTestId('auto-refresh-note')).toHaveTextContent('登录态')
+  expect(screen.getByTestId('auto-refresh-note')).toHaveTextContent('可能唤起或切换浏览器标签')
 })
 
 test('自动刷新配置落到布局那份存储,不进 preferences', async () => {
@@ -150,7 +154,7 @@ test('排队中与检查中分开显示 —— 等待中的不谎称正在跑', 
   expect(screen.getByTestId('login-state-bilibili')).not.toHaveTextContent('检查中')
 })
 
-test('「全部刷新」在有任务排队时仍可点 —— 它只是把剩下的加进队列', () => {
+test('「检查全部登录状态」在有任务排队时仍可点 —— 它只是把剩下的加进队列', () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   setup({ loginQueue: ['xiaohongshu'], preferences: useAppStore.getState().preferences })
   render(<LoginStatusPanel />)

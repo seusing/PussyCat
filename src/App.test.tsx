@@ -84,9 +84,19 @@ test('刷新成功 → 目录更新 + generatedAt 显示', async () => {
   ])
   render(<App catalogSource={source} />)
   await screen.findByTestId('refresh-catalog')
+  expect(screen.getByTestId('refresh-catalog')).toHaveTextContent('更新命令列表')
+  expect(screen.getByTestId('refresh-catalog')).toHaveAttribute('title', expect.stringContaining('OpenCLI'))
   await userEvent.click(screen.getByTestId('refresh-catalog'))
   await waitFor(() => expect(useAppStore.getState().commands[0].command).toBe('c/d'))
   expect(screen.getByTestId('catalog-meta')).toBeInTheDocument()
+})
+
+test('登录和视频模块不显示命令列表操作', async () => {
+  useAppStore.setState({ activeModule: 'login' })
+  render(<App />)
+  expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
+  useAppStore.setState({ activeModule: 'vk' })
+  expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
 })
 
 test('刷新失败 → 目录保持 ready(不出错误屏),按钮旁提示', async () => {

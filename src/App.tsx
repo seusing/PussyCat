@@ -272,7 +272,7 @@ export default function App({
         catalogStatus={catalogStatus}
         catalogError={catalogError}
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
-        headerActions={<CatalogRefresh refresh={refresh} onRefresh={onRefreshCatalog} />}
+        headerActions={activeModule === 'commands' ? <CatalogRefresh refresh={refresh} onRefresh={onRefreshCatalog} /> : undefined}
         baseUrl={baseUrl}
       />
       <UndoToast />
@@ -311,8 +311,9 @@ function CatalogRefresh({ refresh, onRefresh }: {
       )}
       <button data-testid="refresh-catalog" disabled={refresh.state === 'refreshing'} onClick={onRefresh}
         className="rounded-lg px-2 py-1 disabled:opacity-50"
-        style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}>
-        {refresh.state === 'refreshing' ? '刷新中…' : '刷新目录'}
+        style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+        title="更新 OpenCLI 可用命令和执行许可">
+        {refresh.state === 'refreshing' ? '更新中…' : '更新命令列表'}
       </button>
     </div>
   )

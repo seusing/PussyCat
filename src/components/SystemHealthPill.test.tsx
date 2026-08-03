@@ -43,7 +43,7 @@ describe('三路合一的总结论', () => {
   const ok = { demo: false, host: 'online' as const, bridge: bridge(), bridgeState: 'idle' as const, vk: 'ok' }
 
   test('三路都好 → 全部正常', () => {
-    expect(aggregate(ok)).toMatchObject({ tone: 'ok', label: '全部正常' })
+    expect(aggregate(ok)).toMatchObject({ tone: 'ok', label: '基础连接正常', canRepair: false })
   })
 
   test('Host 挂了压过一切 —— 它挂了别的都不用谈', () => {
@@ -58,15 +58,19 @@ describe('三路合一的总结论', () => {
     expect(v).toMatchObject({ tone: 'warn', label: '浏览器扩展未连接', canRepair: true })
   })
 
-  test('视频解析真失败才算故障', () => {
-    expect(aggregate({ ...ok, vk: 'failed' })).toMatchObject({ tone: 'warn', label: '视频解析异常' })
+  test('视频解析真失败才算故障且不提供浏览器修复', () => {
+    expect(aggregate({ ...ok, vk: 'failed' })).toMatchObject({ tone: 'warn', label: '视频解析异常', canRepair: false })
   })
 
   test('视频解析的 not-configured / stopped / starting 是空闲态,不是故障', () => {
     // sidecar 按需启动,把"没在跑"当异常会让这颗灯长期挂黄,黄久了等于没有灯。
-    for (const status of ['not-configured', 'stopped', 'starting', undefined]) {
-      expect(aggregate({ ...ok, vk: status }).label).toBe('全部正常')
+    for (const status of ['not-configured', 'stopped', 'starting']) {
+      expect(aggregate({ ...ok, vk: status }).label).toBe('基础连接正常')
     }
+  })
+
+  test('视频解析状态未知不冒充正常且不提供浏览器修复', () => {
+    expect(aggregate({ ...ok, vk: undefined })).toMatchObject({ tone: 'warn', label: '视频解析状态未知', canRepair: false })
   })
 
   test('演示模式如实标演示,不冒充健康', () => {
@@ -90,11 +94,11 @@ test('connected 初态「检查中…」—— 首 ping 落定前不得显示已
   expect(screen.getByTestId('health-label')).toHaveTextContent('检查中…')
 })
 
-test('ping ok → 全部正常;ping fail → 爪爪服务离线', async () => {
+test('ping ok → 基础连接正常;ping fail → 爪爪服务离线', async () => {
   routeFetch()
   connected()
   const { unmount } = render(<SystemHealthPill baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('全部正常'))
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
   unmount()
 
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('down')))
@@ -125,10 +129,10 @@ test('慢旧响应不倒灌(世代 latest-wins)', async () => {
     render(<SystemHealthPill baseUrl={BASE} />)
     await act(async () => { vi.advanceTimersByTime(5000) })   // 第 2 发发出并落定 online
     await act(async () => {})
-    expect(screen.getByTestId('health-label')).toHaveTextContent('全部正常')
+    expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常')
     resolveSlow({ ok: false })                                // 旧响应姗姗来迟
     await act(async () => {})
-    expect(screen.getByTestId('health-label')).toHaveTextContent('全部正常')   // 未被倒灌
+    expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常')   // 未被倒灌
   } finally { vi.useRealTimers() }
 })
 
@@ -175,7 +179,7 @@ test('就绪时只给结论,不内联 daemon/扩展/profile 及版本明细', as
   routeFetch()
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('全部正常'))
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
   const text = screen.getByTestId('health-pill').textContent ?? ''
   expect(text).not.toContain('1.8.6')
   expect(text).not.toContain('daemon')
@@ -209,14 +213,14 @@ test('窗口重获焦点时自动重探 —— 你去开了浏览器,切回来�
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000)      // 越过去重窗口
   window.dispatchEvent(new Event('focus'))
 
-  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('全部正常'))
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
 })
 
 test('去重窗口内的连发只探一次 —— focus 与 visibilitychange 常常连着各来一发', async () => {
   const spy = routeFetch()
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('全部正常'))
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
   const before = spy.mock.calls.filter((c) => String(c[0]).includes('/browser-bridge/health')).length
 
   window.dispatchEvent(new Event('focus'))
@@ -225,6 +229,25 @@ test('去重窗口内的连发只探一次 —— focus 与 visibilitychange 常
 
   const after = spy.mock.calls.filter((c) => String(c[0]).includes('/browser-bridge/health')).length
   expect(after).toBe(before)
+})
+
+test('全部正常时按钮为重新检查状态,仅 GET 健康检查且不发 repair POST', async () => {
+  const spy = routeFetch()
+  connected()
+  render(<SystemHealthPill baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+  const button = screen.getByTestId('health-repair')
+  expect(button).toHaveTextContent('重新检查状态')
+  await userEvent.click(button)
+  await waitFor(() => expect(spy.mock.calls.filter((c) => String(c[0]).includes('/browser-bridge/health')).length).toBeGreaterThanOrEqual(2))
+  expect(spy.mock.calls.some((c) => String(c[0]).includes('/browser-bridge/repair'))).toBe(false)
+})
+
+test('检测中不显示修复动作', () => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+  connected()
+  render(<SystemHealthPill baseUrl={BASE} />)
+  expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
 })
 
 // ─────────────────────────── 检测并修复 ───────────────────────────
@@ -237,10 +260,11 @@ test('点「检测并修复」打 POST,并采信 Host 复检后的 health', asyn
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器服务未运行'))
+  expect(screen.getByTestId('health-repair')).toHaveTextContent('修复浏览器连接')
 
   await userEvent.click(screen.getByTestId('health-repair'))
 
-  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('全部正常'))
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
   const call = spy.mock.calls.find((c) => String(c[0]).includes('/browser-bridge/repair'))
   expect(call?.[0]).toBe(`${BASE}/browser-bridge/repair`)
   expect((call?.[1] as RequestInit)?.method).toBe('POST')
@@ -271,7 +295,7 @@ test('Host 离线时修复按钮禁用 —— 请求根本送不到,不给假希
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('爪爪服务离线'))
-  expect(screen.getByTestId('health-repair')).toBeDisabled()
+  expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
 })
 
 test('演示模式不给修复按钮 —— 没有真 Host 可修', () => {

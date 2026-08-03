@@ -81,10 +81,11 @@ export function aggregate({ demo, host, bridge, bridgeState, vk }: {
   if (host === 'offline') return { tone: 'down', label: '爪爪服务离线', canRepair: false }
   if (bridgeState === 'checking') return { tone: 'checking', label: '桥接检测中…', canRepair: false }
   if (bridgeState === 'failed' || (bridge && bridge.reasonCode !== 'ok')) {
-    return { tone: 'warn', label: bridgeLabel(bridgeState, bridge), canRepair: true }
+    return { tone: 'warn', label: bridgeLabel(bridgeState, bridge), canRepair: !!bridge }
   }
   if (vk === 'failed') return { tone: 'warn', label: '视频解析异常', canRepair: false }
-  return { tone: 'ok', label: '全部正常', canRepair: true }
+  if (vk === undefined) return { tone: 'warn', label: '视频解析状态未知', canRepair: false }
+  return { tone: 'ok', label: '基础连接正常', canRepair: false }
 }
 
 const TONE_COLOR: Record<Tone, string> = {
@@ -210,6 +211,8 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   }, [mode, base, checkVk])
 
   const verdict = aggregate({ demo, host, bridge, bridgeState, vk })
+  const showRepair = !demo && verdict.canRepair
+  const showRecheck = !demo && verdict.tone === 'ok'
 
   return (
     <span
@@ -227,16 +230,16 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
           {nextStep}
         </span>
       )}
-      {!demo && (
+      {(showRepair || showRecheck) && (
         <button
           data-testid="health-repair"
-          onClick={repair}
-          disabled={repairing || host === 'offline'}
-          title={host === 'offline' ? '爪爪服务不可达时无法修复浏览器桥' : undefined}
+          onClick={showRepair ? repair : () => { checkBridge(); checkVk() }}
+          disabled={repairing}
+          title={showRepair ? '修复浏览器连接' : '重新检查本地服务、浏览器桥接和视频解析状态'}
           className="rounded px-2 py-0.5 text-xs disabled:opacity-50"
           style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
         >
-          检测并修复
+          {showRepair ? '修复浏览器连接' : '重新检查状态'}
         </button>
       )}
     </span>
