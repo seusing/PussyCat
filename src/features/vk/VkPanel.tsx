@@ -30,6 +30,7 @@ import type {
   VkRuntimeStatus,
   VkRuntimeCandidate,
 } from '../../host/vkClient'
+import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
 import { estimateForPreset, formatEstimate } from './vkEstimates'
 import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
 
@@ -157,6 +158,27 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     if (state === 'installed' && previousRuntimeState.current !== 'installed') void checkHealth()
     previousRuntimeState.current = state
   }, [runtime?.state, checkHealth])
+  // —— 自动体检:进入面板就把环境查清楚并挑最强的,不让用户去点「检测」再去「选」 ——
+  // 用户的原话是"能自动获取就自动获取"。检测本身零副作用;挑出来的若不是当前环境
+  // 才 adopt(runtimeToAdopt 已经把"已经最强了"过滤掉了,避免无谓地重启 sidecar)。
+  // autoPickedRef 保证每次会话只自动切一次:之后用户在开发者信息里手动指定的环境,
+  // 不该被下一次自动体检推翻。
+  const autoPickedRef = useRef(false)
+  useEffect(() => {
+    if (runtime?.state !== 'installed' || autoPickedRef.current) return
+    autoPickedRef.current = true
+    void (async () => {
+      try {
+        const result = await postVkRuntimeDetect(base)
+        setRuntimeCandidates(result.candidates)
+        const target = runtimeToAdopt(result.candidates)
+        if (target) await adoptRuntime(target)
+      } catch {
+        // 自动体检失败不打扰用户:界面照常按当前状态渲染,开发者信息里有手动入口。
+      }
+    })()
+  }, [runtime?.state, base])   // eslint-disable-line react-hooks/exhaustive-deps
+
   const startInstall = async ({ rebuild = false }: { rebuild?: boolean } = {}) => {
     setInstallError(null)
     try {
@@ -354,29 +376,90 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
 
   const previewEstimate = preview ? formatEstimate(estimateForPreset(preview.preset)) : null
 
+  /**
+   * 整块面板的**唯一结论** —— 一行字,外加只在真出问题时才出现的一个按钮。
+   *
+   * 每一档都回答同两个问题:现在能不能用、不能用的话我该点什么。没有可点的
+   * (比如捆绑件缺失、正在安装中)就不放按钮 —— 一个点了没用的按钮比没有按钮更糟,
+   * 「重建」那个死按钮就是前车之鉴。
+   */
+  const activeCandidate = runtimeCandidates?.find((c) => c.active) ?? null
+  const verdict: { text: string; color: string; note?: string; action?: { label: string; run: () => void } } =
+    runtime?.state === 'not-available'
+      ? { text: '解析引擎不可用', color: 'var(--color-danger)', note: runtime.summary ?? '缺少随应用分发的安装件,请重新安装爪爪。' }
+      : runtime?.state === 'installing'
+        ? { text: '正在准备解析环境…', color: 'var(--color-fg-dim)', note: '首次准备需要几分钟,可以先去做别的。' }
+        : runtime?.state === 'failed'
+          ? {
+            text: '解析环境没装成功', color: 'var(--color-danger)',
+            note: runtime.summary ?? undefined,
+            action: { label: '重试', run: () => { void startInstall({ rebuild: false }) } },
+          }
+          : runtime?.state === 'not-installed'
+            ? {
+              text: '解析引擎还没准备好', color: 'var(--color-warning)',
+              note: '需要在本机准备一次运行环境,之后就不用再管了。',
+              action: { label: '一键准备', run: () => { void startInstall({ rebuild: false }) } },
+            }
+            : !health || health.status === 'failed'
+              ? {
+                text: '解析引擎没有响应', color: 'var(--color-warning)',
+                note: health?.summary ?? '暂时联系不上解析引擎。',
+                action: { label: '重新检测', run: () => { void checkHealth() } },
+              }
+              : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(activeCandidate) ?? undefined }
+
   return (
     <div className="mx-auto max-w-3xl p-3 sm:p-6" data-testid="vk-panel">
       {/* 健康条 */}
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-        <span className="text-sm font-medium">视频解析引擎</span>
-        <span data-testid="vk-health-summary" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          {healthChecking ? '检测中…' : health ? `${health.summary}${health.apiVersion ? `(api ${health.apiVersion})` : ''}` : 'Host 不可达'}
+        {/* 一句结论。正常时**只有这一行**,没有按钮 —— 路径、版本、能力清单、
+            环境列表全部收进下面默认折叠的开发者信息。用户关心的只有能不能用、
+            不能用怎么办;其余是给开发者的,不该占据版面。 */}
+        <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
+          {verdict.text}
         </span>
-        <button type="button" data-testid="vk-health-recheck" onClick={() => { void checkHealth() }} className={outlineButton} style={outlineStyle}>
-          重新检测
-        </button>
-        <button type="button" data-testid="vk-diagnostic-button" onClick={() => { void showDiagnostic() }} className={outlineButton} style={outlineStyle}>
-          会话诊断
-        </button>
+        {verdict.action && (
+          <button
+            type="button"
+            data-testid="vk-verdict-action"
+            onClick={verdict.action.run}
+            className="rounded-lg px-3 py-1 text-sm font-medium"
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+          >
+            {verdict.action.label}
+          </button>
+        )}
       </div>
-      {diagnostic && (
-        <pre data-testid="vk-diagnostic" className="mb-4 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{diagnostic}</pre>
+      {verdict.note && (
+        <div data-testid="vk-verdict-note" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          {verdict.note}
+        </div>
       )}
 
-      {/* 解析环境卡:专用 runtime、已有环境检测与能力管理 */}
-      {runtime && (
-        <div data-testid="vk-runtime-card" className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-          <div className="mb-1 text-sm font-medium">解析环境</div>
+      {/* 开发者信息:默认折叠。路径、api/schema、逐项能力、环境列表与手动切换、
+          重建、会话诊断、安装日志 —— 排障时全在这儿,平时一个字都不占版面。 */}
+      {/* 不用 runtime 门住整块:runtime 拿不到时恰恰最需要排障入口(健康摘要与会话诊断)。 */}
+      <details data-testid="vk-developer-details" className="mb-4">
+          <summary className="cursor-pointer text-xs" style={{ color: 'var(--color-fg-dim)' }}>开发者信息</summary>
+        <div data-testid="vk-runtime-card" className="mt-2 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          <div className="mb-1 flex flex-wrap items-center gap-2 text-sm font-medium">
+            解析环境
+            <button type="button" data-testid="vk-health-recheck" onClick={() => { void checkHealth() }} className={outlineButton} style={outlineStyle}>
+              {healthChecking ? '检测中…' : '重新检测'}
+            </button>
+            <button type="button" data-testid="vk-diagnostic-button" onClick={() => { void showDiagnostic() }} className={outlineButton} style={outlineStyle}>
+              会话诊断
+            </button>
+          </div>
+          <div data-testid="vk-health-summary" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            {healthChecking ? '检测中…' : health ? `${health.summary}${health.apiVersion ? `(api ${health.apiVersion})` : ''}` : 'Host 不可达'}
+          </div>
+          {diagnostic && (
+            <pre data-testid="vk-diagnostic" className="mb-2 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{diagnostic}</pre>
+          )}
+          {/* 以下都依赖 runtime;拿不到时上面的健康摘要与会话诊断仍在,排障不断线。 */}
+          {runtime && (<>
           <div data-testid="vk-runtime-summary" className="mb-2 text-xs" style={{ color: runtime.state === 'failed' ? 'var(--color-danger)' : 'var(--color-fg-dim)' }}>
             {runtime.summary}
             {runtime.reasonCode ? `(${runtime.reasonCode})` : ''}
@@ -437,8 +520,9 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             </button>}
             {!runtimeCandidates.length && <div>未发现可用的本机环境</div>}
           </div>}
+          </>)}
         </div>
-      )}
+      </details>
 
       {/* 提交表单 */}
       <div className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>

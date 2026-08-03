@@ -66,6 +66,108 @@ function stubRoutes(routes: Record<string, Route>) {
 }
 
 describe('VkPanel', () => {
+  // —— 一句结论:正常时整块只有一行,出问题才出现按钮 ——
+  const RUNTIME_INSTALLED = {
+    state: 'installed', version: 'v1', reasonCode: null, summary: '解析引擎已就绪(0.1.0)',
+    pythonPath: 'C:\dev\python.exe', source: 'external', log: [],
+  }
+  const candidate = (over: Record<string, unknown> = {}) => ({
+    pythonPath: 'C:\dev\python.exe', source: 'developer-venv', version: '0.1.0',
+    apiVersion: '1.4.0', schemaVersion: '1.1.0', compatible: true, reason: null,
+    capabilities: [{ capability: 'query_ready', runtime: 'ready', detail: null }],
+    ...over,
+  })
+
+  it('一切正常时只有一句结论,不给按钮 —— 没问题就没有要用户点的东西', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    expect(screen.queryByTestId('vk-verdict-action')).not.toBeInTheDocument()
+    // 路径、版本、能力这些开发者信息默认折叠 —— 在 DOM 里但不展开。
+    expect(screen.getByTestId('vk-developer-details')).not.toHaveAttribute('open')
+  })
+
+  it('引擎没装时给一句人话 + 一个按钮,而不是一段说明书', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'stopped' } },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { state: 'not-installed', version: null, reasonCode: null, summary: '尚未安装', pythonPath: null, source: null, log: [] } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎还没准备好'))
+    expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('一键准备')
+  })
+
+  it('装失败时按钮是「重试」,并如实带上失败原因', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'failed' } },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { state: 'failed', version: null, reasonCode: 'install-failed', summary: '磁盘空间不足', pythonPath: null, source: null, log: [] } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析环境没装成功'))
+    expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('重试')
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('磁盘空间不足')
+  })
+
+  it('捆绑件缺失时不给按钮 —— 点了没用的按钮比没有按钮更糟', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured' } },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { state: 'not-available', version: null, reasonCode: 'bundle-missing', summary: '安装件缺失', pythonPath: null, source: null, log: [] } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎不可用'))
+    expect(screen.queryByTestId('vk-verdict-action')).not.toBeInTheDocument()
+  })
+
+  it('进面板自动检测并切到能力最全的环境 —— 不让用户去点检测再去挑', async () => {
+    const weak = candidate({
+      pythonPath: 'C:\app\python.exe', source: 'app-owned', active: true,
+      capabilities: [{ capability: 'query_ready', runtime: 'ready', detail: null }, { capability: 'visual_evidence', runtime: 'missing_dependency', detail: null }],
+    })
+    const strong = candidate({
+      pythonPath: 'C:\dev\python.exe', source: 'developer-venv',
+      capabilities: [{ capability: 'query_ready', runtime: 'ready', detail: null }, { capability: 'visual_evidence', runtime: 'ready', detail: null }],
+    })
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [weak, strong], checkedAt: 'x' } },
+      'POST /vk/v1/runtime/adopt': { body: RUNTIME_INSTALLED },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/runtime/adopt')).toBe(true))
+    const adopt = calls.find((c) => c.key === 'POST /vk/v1/runtime/adopt')!
+    expect(String(adopt.init?.body)).toContain('dev')   // 切到强的那个,不是当前那个弱的
+  })
+
+  it('已经在最强环境上时一次 adopt 都不发 —— 每次切换都要重启 sidecar', async () => {
+    const only = candidate({ active: true })
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [only], checkedAt: 'x' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/runtime/detect')).toBe(true))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls.some((c) => c.key === 'POST /vk/v1/runtime/adopt')).toBe(false)
+  })
+
   it('renders every submission control plus the health summary', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
