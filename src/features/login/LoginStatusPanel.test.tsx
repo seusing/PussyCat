@@ -154,6 +154,39 @@ test('排队中与检查中分开显示 —— 等待中的不谎称正在跑', 
   expect(screen.getByTestId('login-state-bilibili')).not.toHaveTextContent('检查中')
 })
 
+test('登录站点按需要处理、已登录、未配置或其他分组,默认仅展开需要处理', () => {
+  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+  setup({
+    preferences: useAppStore.getState().preferences,
+    loginChecks: {
+      xiaohongshu: { site: 'xiaohongshu', state: 'logged-in', checkedAt: 1 },
+      bilibili: { site: 'bilibili', state: 'logged-out', checkedAt: 1 },
+    },
+  })
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-group-action')).toHaveAttribute('open')
+  expect(screen.getByTestId('login-group-logged-in')).not.toHaveAttribute('open')
+  expect(screen.getByTestId('login-group-other')).not.toHaveAttribute('open')
+  expect(screen.getByTestId('login-row-bilibili')).toBeVisible()
+  expect(screen.getByTestId('login-row-xiaohongshu')).not.toBeVisible()
+  expect(screen.getByTestId('login-row-chatgpt')).not.toBeVisible()
+})
+
+test('检查队列显示当前站点与剩余数量', () => {
+  setup({
+    loginQueue: ['bilibili', 'chatgpt'],
+    loginInFlight: { site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' },
+    loginChecks: {
+      xiaohongshu: { site: 'xiaohongshu', state: 'checking' },
+      bilibili: { site: 'bilibili', state: 'queued' },
+      chatgpt: { site: 'chatgpt', state: 'queued' },
+    },
+  })
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-queue-status')).toHaveTextContent('小红书')
+  expect(screen.getByTestId('login-queue-status')).toHaveTextContent('剩余 2')
+})
+
 test('「检查全部登录状态」在有任务排队时仍可点 —— 它只是把剩下的加进队列', () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   setup({ loginQueue: ['xiaohongshu'], preferences: useAppStore.getState().preferences })

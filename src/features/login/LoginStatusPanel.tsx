@@ -84,7 +84,13 @@ export function LoginStatusPanel() {
   const checkable = rows.filter((r) => CHECKABLE.includes(r.state) || r.state === 'checking' || r.state === 'queued')
   const notApproved = rows.filter((r) => r.state === 'not-approved')
   const needsAck = rows.filter((r) => r.state === 'needs-ack')
+  const actionRows = rows.filter((r) => r.state !== 'logged-in' && r.state !== 'not-approved')
+  const loggedInRows = rows.filter((r) => r.state === 'logged-in')
+  const otherRows = rows.filter((r) => r.state === 'not-approved')
   const pending = loginQueue.length + (loginInFlight ? 1 : 0)
+  const queueStatus = loginInFlight
+    ? `正在检查 ${siteLabel(loginInFlight.site)}，剩余 ${loginQueue.length}`
+    : loginQueue.length > 0 ? `队列中 ${loginQueue.length}` : '无待处理检查'
   // **逐行判忙,不再用全局锁。** 之前 busy 一旦为真就把所有刷新按钮一起禁用,
   // 于是点一个站点会让其余全部变灰——那是把"串行执行"错误地表达成了"全局互斥"。
   // 执行确实只能串行(Host maxConcurrentRuns=1,且并发会同时开多个浏览器标签抢同一 profile),
@@ -110,6 +116,42 @@ export function LoginStatusPanel() {
     const id = setInterval(tick, auto.minutes * 60_000)
     return () => clearInterval(id)
   }, [auto.enabled, auto.minutes])
+
+  const renderRows = (group: typeof rows) => group.map((r) => {
+    const rowBusy = isRowBusy(r.site)
+    const canCheck = CHECKABLE.includes(r.state) && !rowBusy
+    return (
+      <div key={r.commandKey} data-testid={`login-row-${r.site}`}
+        className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0"
+        style={{ borderColor: 'var(--color-line)', opacity: r.state === 'not-approved' ? 0.55 : 1 }}>
+        <span className="w-32 shrink-0 truncate text-sm">{siteLabel(r.site)}</span>
+        <span data-testid={`login-state-${r.site}`} className="w-24 shrink-0 text-xs"
+          style={{ color: STATE_COLOR[r.state] }}>{STATE_TEXT[r.state]}</span>
+        <span className="min-w-0 flex-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          {r.state === 'not-approved' ? '该站的 whoami 尚未通过安全审定，Host 不会执行' : (r.entry?.detail ?? '')}
+        </span>
+        <span className="w-20 shrink-0 text-right text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          {relativeTime(r.entry?.checkedAt, now)}
+        </span>
+        {r.state === 'needs-ack' ? (
+          <button data-testid={`login-ack-${r.site}`}
+            onClick={() => { selectCommand(r.command); if (r.decision) requestAcknowledgement(r.command, r.decision) }}
+            className="shrink-0 rounded px-2 py-1 text-xs"
+            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}>
+            确认后可检查
+          </button>
+        ) : (
+          <button data-testid={`login-refresh-${r.site}`} disabled={!canCheck}
+            onClick={() => enqueueLoginChecks([r.site])}
+            title={rowBusy ? '该站点已在队列中' : canCheck ? '检查该站点；可能唤起或切换浏览器标签页' : '该站点当前不可检查'}
+            className="shrink-0 rounded px-2 py-1 text-xs disabled:opacity-40"
+            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}>
+            检查
+          </button>
+        )}
+      </div>
+    )
+  })
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -160,6 +202,9 @@ export function LoginStatusPanel() {
         <span data-testid="login-summary" className="ml-auto text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           {checkable.length} 个可检查 · {needsAck.length} 个待确认 · {notApproved.length} 个未审定
         </span>
+        <span data-testid="login-queue-status" className="w-full text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          {queueStatus}
+        </span>
       </div>
 
       {auto.enabled && (
@@ -171,54 +216,18 @@ export function LoginStatusPanel() {
       )}
 
       <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
-        {rows.map((r) => {
-          const rowBusy = isRowBusy(r.site)
-          const canCheck = CHECKABLE.includes(r.state) && !rowBusy
-          return (
-            <div key={r.commandKey} data-testid={`login-row-${r.site}`}
-              className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0"
-              style={{ borderColor: 'var(--color-line)', opacity: r.state === 'not-approved' ? 0.55 : 1 }}>
-              <span className="w-32 shrink-0 truncate text-sm">{siteLabel(r.site)}</span>
-
-              <span data-testid={`login-state-${r.site}`} className="w-24 shrink-0 text-xs"
-                style={{ color: STATE_COLOR[r.state] }}>
-                {STATE_TEXT[r.state]}
-              </span>
-
-              <span className="min-w-0 flex-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                {r.state === 'not-approved'
-                  ? '该站的 whoami 尚未通过安全审定，Host 不会执行'
-                  : (r.entry?.detail ?? '')}
-              </span>
-
-              <span className="w-20 shrink-0 text-right text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                {relativeTime(r.entry?.checkedAt, now)}
-              </span>
-
-              {r.state === 'needs-ack' ? (
-                <button
-                  data-testid={`login-ack-${r.site}`}
-                  onClick={() => { selectCommand(r.command); if (r.decision) requestAcknowledgement(r.command, r.decision) }}
-                  className="shrink-0 rounded px-2 py-1 text-xs"
-                  style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-                >
-                  确认后可检查
-                </button>
-              ) : (
-                <button
-                  data-testid={`login-refresh-${r.site}`}
-                  disabled={!canCheck}
-                  onClick={() => enqueueLoginChecks([r.site])}
-                  title={rowBusy ? '该站点已在队列中' : canCheck ? '检查该站点；可能唤起或切换浏览器标签页' : '该站点当前不可检查'}
-                  className="shrink-0 rounded px-2 py-1 text-xs disabled:opacity-40"
-                  style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-                >
-                  检查
-                </button>
-              )}
-            </div>
-          )
-        })}
+        <details data-testid="login-group-action" open>
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">需要处理 ({actionRows.length})</summary>
+          {renderRows(actionRows)}
+        </details>
+        <details data-testid="login-group-logged-in">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">已登录 ({loggedInRows.length})</summary>
+          {renderRows(loggedInRows)}
+        </details>
+        <details data-testid="login-group-other">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">未配置或其他 ({otherRows.length})</summary>
+          {renderRows(otherRows)}
+        </details>
         {rows.length === 0 && (
           <div className="px-3 py-4 text-sm" style={{ color: 'var(--color-fg-dim)' }}>目录里没有 whoami 命令</div>
         )}
