@@ -52,15 +52,15 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
   const stale = useAppStore((s) => s.stale)
   const [q, setQ] = useState('')
   const [siteFilter, setSiteFilter] = useState<string | null>(null)
-  // 手动展开的站点。**默认全收起** —— 全目录 175 站点 / 1278 命令,平铺展开时导航是一条
-  // 一千多行的长带,滚轮翻不到底,站点名之间也失去了层次。收起后先看见的是 175 个站点,
-  // 想看哪个点开哪个。只存在内存里:这是浏览姿势,不是用户偏好,重开应用回到干净状态更合理。
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  // 三个固定分组默认**展开**:它们是短列表(recent 上限 20、收藏由用户自己攒),
-  // 折叠的价值在于治理长列表,对短列表折叠只会多一次点击。给开关是为了让用户能把不关心的
-  // 那组收掉腾出屏幕,不是为了默认藏起来。
-  const [sectionOpen, setSectionOpen] = useState({ recent: true, favSites: true, favCommands: true, allSites: true })
-  const toggleSection = (k: keyof typeof sectionOpen) => setSectionOpen((s) => ({ ...s, [k]: !s[k] }))
+  // 手动展开的站点 / 三个固定分组的开合 —— 都**存在 store 里,不在本组件的 useState**。
+  // 原因是顶栏切模块时本组件整个被卸载(AppShell 的 fullPage 分支顶掉三栏),局部 state
+  // 会随之归零,用户收起的分组切回来又全开着。语义未变:站点默认全收起(175 站点平铺是
+  // 一条翻不到底的长带),三个固定分组默认展开(短列表,折叠只会多一次点击);仍然只活在
+  // 内存里,重开应用回到干净状态。
+  const expanded = useAppStore((s) => s.navExpandedSites)
+  const toggleSite = useAppStore((s) => s.toggleNavSite)
+  const sectionOpen = useAppStore((s) => s.navSectionOpen)
+  const toggleSection = useAppStore((s) => s.toggleNavSection)
 
   const searching = q.trim() !== ''
   const visible = useMemo(
@@ -73,13 +73,6 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
   const favCommands = useMemo(() => [...preferences.favoriteCommands].sort((a, b) => a.createdAt - b.createdAt), [preferences.favoriteCommands])
   const recent = preferences.recent
   const showGroups = !searching && !siteFilter && (recent.length + favSites.length + favCommands.length) > 0
-
-  const toggleSite = (site: string) => setExpanded((prev) => {
-    const next = new Set(prev)
-    if (next.has(site)) next.delete(site)
-    else next.add(site)
-    return next
-  })
 
   // 三种情况下不需要用户再点一次展开:
   //   · 搜索中 —— 结果本就是筛过的少量,收起等于把搜出来的东西又藏起来;

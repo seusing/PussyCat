@@ -9,7 +9,13 @@ const c = (site: string, name: string): CommandManifest => ({
 })
 
 beforeEach(() => {
-  useAppStore.setState({ commands: [c('12306', 'login'), c('12306', 'orders'), c('xiaohongshu', 'download')], selected: undefined, values: {} })
+  useAppStore.setState({
+    commands: [c('12306', 'login'), c('12306', 'orders'), c('xiaohongshu', 'download')], selected: undefined, values: {},
+    // 折叠状态搬进 store 后就不再随卸载归零 —— 好处正是本文件末尾那条用例要的,
+    // 代价是用例之间会串味。显式复位,免得断言依赖执行顺序。
+    navExpandedSites: new Set<string>(),
+    navSectionOpen: { recent: true, favSites: true, favCommands: true, allSites: true },
+  })
 })
 
 test('站点默认收起:先看见站点行与条数,命令不平铺', () => {
@@ -182,4 +188,35 @@ describe('收藏与最近分组', () => {
     await userEvent.type(screen.getByTestId('nav-search'), 'download')
     expect(screen.queryByTestId('group-recent')).not.toBeInTheDocument()
   })
+})
+
+// —— 顶栏切模块会把整个三栏卸载(AppShell 的 fullPage 分支),导航折叠状态必须活过这一下 ——
+test('分组折叠跨卸载重挂不丢 —— 切到别的模块再切回来,收起的仍是收起的', async () => {
+  // 「全部站点」开关只在有收藏/最近时才渲染(否则能把整个导航清空),先备好分组。
+  useAppStore.setState({
+    preferences: { schemaVersion: 1, favoriteSites: [], favoriteCommands: [], acknowledgements: [], recent: [{ command: 'xiaohongshu/download', at: 3 }] },
+  })
+  const first = render(<SiteCommandNav />)
+  await userEvent.click(screen.getByTestId('group-all-sites-toggle'))
+  expect(screen.queryByTestId('site-row-12306')).not.toBeInTheDocument()
+
+  // 模拟切到「登录状态/视频解析」:导航整体卸载。
+  first.unmount()
+  render(<SiteCommandNav />)
+
+  // 切回来时不该"自动展开"。
+  expect(screen.getByTestId('group-all-sites-toggle')).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByTestId('site-row-12306')).not.toBeInTheDocument()
+})
+
+test('展开过的站点同样活过卸载重挂', async () => {
+  const first = render(<SiteCommandNav />)
+  await userEvent.click(screen.getByTestId('site-row-12306'))
+  expect(screen.getByText('orders')).toBeInTheDocument()
+
+  first.unmount()
+  render(<SiteCommandNav />)
+
+  expect(screen.getByTestId('site-row-12306')).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByText('orders')).toBeInTheDocument()
 })

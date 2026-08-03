@@ -13,6 +13,9 @@ import {
 
 const SENSITIVE = /password|passcode|secret|token|cookie/i
 
+/** 导航里的三个固定分组 + 「全部站点」。 */
+export type NavSectionKey = 'recent' | 'favSites' | 'favCommands' | 'allSites'
+
 // cmd 暂未参与判定（脱敏仅按字段名正则），但按 brief 接口签名保留形参供未来按 arg 类型细化
 export function redactValues(_cmd: CommandManifest, values: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -87,6 +90,15 @@ type AppState = {
   // 模块切换。**不持久化**:这是浏览姿势(此刻在看哪个模块),不是用户偏好,重开回默认更合理。
   activeModule: 'commands' | 'login' | 'vk'
   setActiveModule: (m: 'commands' | 'login' | 'vk') => void
+  // 导航折叠状态。**必须放在 store 里,不能留在 SiteCommandNav 的 useState**:顶栏切到
+  // 「登录状态/视频解析」时 AppShell 改渲染整页模块,三栏连同导航一起从树上摘掉
+  // (AppShell.tsx 的 fullPage 分支),组件局部 state 随卸载归零——用户刚收起的分组
+  // 切回来又全开着。与 activeModule 同理**不落 localStorage**:这是浏览姿势不是偏好,
+  // 重开应用回到干净状态;要的只是"同一次会话内跨模块切换不丢"。
+  navExpandedSites: Set<string>
+  toggleNavSite: (site: string) => void
+  navSectionOpen: Record<NavSectionKey, boolean>
+  toggleNavSection: (key: NavSectionKey) => void
   // —— vk 切片(视频解析)——跨模块交接:「送去视频解析」只传规范化 URL 与脱敏
   // provenance(commandKey/collectedAt),严禁携带行数据或第二种 manifest 格式。
   vkHandoff?: { url: string; commandKey: string; collectedAt: number }
@@ -183,6 +195,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMode: (mode) => set({ mode }),
   activeModule: 'commands',
   setActiveModule: (m) => set({ activeModule: m }),
+  // 站点默认全收起(175 站点平铺是一条翻不到底的长带);三个固定分组默认展开(短列表,
+  // 折叠只会多一次点击)。这两个默认值原本在组件里,连同状态一起搬过来,语义不变。
+  navExpandedSites: new Set<string>(),
+  toggleNavSite: (site) => set((s) => {
+    const next = new Set(s.navExpandedSites)
+    if (next.has(site)) next.delete(site)
+    else next.add(site)
+    return { navExpandedSites: next }
+  }),
+  navSectionOpen: { recent: true, favSites: true, favCommands: true, allSites: true },
+  toggleNavSection: (key) => set((s) => ({
+    navSectionOpen: { ...s.navSectionOpen, [key]: !s.navSectionOpen[key] },
+  })),
   // —— vk 切片 ——
   vkHandoff: undefined,
   setVkHandoff: (handoff) => set({ vkHandoff: handoff, activeModule: 'vk' }),
