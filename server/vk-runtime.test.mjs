@@ -108,4 +108,31 @@ describe('VkRuntimeManager', () => {
     release()
     await installing
   })
+
+  it('检测标出当前环境，切回 app-owned 时保留其来源而非伪装成 external', async () => {
+    const home = tempDir('vk-home-')
+    const bundle = bundleDir()
+    const ownedPython = join(home, 'runtime', 'versions', 'v1', 'Scripts', 'python.exe')
+    mkdirSync(join(home, 'runtime', 'versions', 'v1', 'Scripts'), { recursive: true })
+    writeFileSync(ownedPython, 'stub')
+    const owned = writeRuntimeReceipt(home, {
+      schema: 'vk-runtime-receipt@1', source: 'app-owned', version: 'v1', pythonPath: ownedPython,
+      wheelSha256: 'a'.repeat(64), apiVersion: '1.4.0', schemaVersion: '1.1.0',
+      capabilities: [], extras: [], installedAt: '2026-08-02T00:00:00Z',
+    })
+    writeActiveRuntime(home, owned)
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundle,
+      discoverImpl: () => [{ pythonPath: ownedPython, source: 'app-owned' }],
+      probeImpl: async ({ source }) => ({
+        pythonPath: ownedPython, source, version: 'v1', apiVersion: '1.4.0',
+        schemaVersion: '1.1.0', capabilities: [], compatible: true, reason: null,
+      }),
+    })
+    const detected = await manager.detect()
+    expect(detected.candidates[0]).toMatchObject({ active: true, source: 'app-owned' })
+    await manager.adopt(ownedPython)
+    expect(manager.status()).toMatchObject({ source: 'app-owned', pythonPath: ownedPython })
+  })
 })

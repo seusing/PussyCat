@@ -247,6 +247,7 @@ export interface VkRuntimeCandidate {
   capabilities: VkRuntimeCapability[]
   compatible: boolean
   reason: string | null
+  active?: boolean
 }
 
 export interface VkRuntimeDetectResponse {

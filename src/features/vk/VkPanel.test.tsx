@@ -299,6 +299,9 @@ describe('VkPanel', () => {
     await user.click(screen.getByTestId('vk-runtime-detect'))
     await waitFor(() => expect(screen.getByTestId('vk-runtime-candidates')).toBeInTheDocument())
     expect(screen.getByTestId('vk-runtime-candidates').textContent).toContain('本机 PATH')
+    expect(screen.getByTestId('vk-runtime-candidates').textContent).not.toContain('Python 版本不兼容')
+    expect(screen.getByTestId('vk-runtime-incompatible-toggle')).toHaveTextContent('查看 1 个不兼容环境')
+    await user.click(screen.getByTestId('vk-runtime-incompatible-toggle'))
     expect(screen.getByTestId('vk-runtime-candidates').textContent).toContain('Python 版本不兼容')
     expect(screen.getAllByTestId('vk-runtime-capabilities')[0].textContent).toContain('word_timestamps')
     expect(screen.getByTestId('vk-runtime-adopt-0')).toBeEnabled()
@@ -308,6 +311,9 @@ describe('VkPanel', () => {
     const adopt = calls.find((item) => item.key === 'POST /vk/v1/runtime/adopt')
     expect(JSON.parse(String(adopt!.init!.body))).toEqual({ pythonPath: 'C:/Python312/python.exe' })
     expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('外部环境')
+    expect(screen.getByTestId('vk-runtime-adopt-notice')).toHaveTextContent('已切换至 C:/Python312/python.exe')
+    expect(screen.getByTestId('vk-runtime-adopt-0')).toHaveTextContent('当前使用')
+    expect(screen.getByTestId('vk-runtime-adopt-0')).toBeDisabled()
   })
 
   it('surfaces detect and adopt failures without hiding the dedicated install retry', async () => {

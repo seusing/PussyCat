@@ -87,8 +87,8 @@ export function BrowserBridgeStatus({ baseUrl }: { baseUrl?: string } = {}) {
       ? '桥接状态未知'
       : ok ? '浏览器已就绪'
         : health?.extension === 'disconnected' ? '浏览器扩展未连接'
-          : health && health.daemon !== 'running' ? `daemon ${DAEMON_TEXT[health.daemon]}`
-            : health && health.profile !== 'ready' ? `profile ${PROFILE_TEXT[health.profile]}`
+          : health && health.daemon !== 'running' ? `浏览器服务${DAEMON_TEXT[health.daemon]}`
+            : health && health.profile !== 'ready' ? `浏览器配置${PROFILE_TEXT[health.profile]}`
               : health?.extension === 'unknown' ? '浏览器扩展状态未知'
                 : (health?.summary ?? '浏览器桥接未就绪')
   const detail = state === 'failed' ? '未能取得诊断结果' : ''

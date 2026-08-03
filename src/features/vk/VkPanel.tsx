@@ -107,6 +107,9 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   const [runtimeDetecting, setRuntimeDetecting] = useState(false)
   const [runtimeDetectError, setRuntimeDetectError] = useState<string | null>(null)
   const [runtimeAdoptError, setRuntimeAdoptError] = useState<string | null>(null)
+  const [runtimeAdoptingPath, setRuntimeAdoptingPath] = useState<string | null>(null)
+  const [runtimeAdoptNotice, setRuntimeAdoptNotice] = useState<string | null>(null)
+  const [showIncompatibleRuntimes, setShowIncompatibleRuntimes] = useState(false)
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(false)
   const previousRuntimeState = useRef<string | null>(null)
   const refreshRuntime = useCallback(async () => {
@@ -153,12 +156,22 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   }
   const adoptRuntime = async (candidate: VkRuntimeCandidate) => {
     setRuntimeAdoptError(null)
+    setRuntimeAdoptNotice(null)
+    setRuntimeAdoptingPath(candidate.pythonPath)
     try {
-      setRuntime(await postVkRuntimeAdopt(candidate.pythonPath, base))
-      setRuntimeSource('external')
+      const adopted = await postVkRuntimeAdopt(candidate.pythonPath, base)
+      setRuntime(adopted)
+      setRuntimeSource(adopted.source === 'app-owned' ? 'dedicated' : 'external')
+      setRuntimeAdoptNotice(`已切换至 ${candidate.pythonPath}`)
+      setRuntimeCandidates((items) => items?.map((item) => ({
+        ...item,
+        active: item.pythonPath === candidate.pythonPath,
+      })) ?? null)
       await checkHealth()
     } catch (error) {
       setRuntimeAdoptError(errorText(error, '已有环境接入失败'))
+    } finally {
+      setRuntimeAdoptingPath(null)
     }
   }
 
@@ -355,6 +368,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
           {installError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{installError}</div>}
           {runtimeDetectError && <div data-testid="vk-runtime-detect-error" className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{runtimeDetectError}</div>}
           {runtimeAdoptError && <div data-testid="vk-runtime-adopt-error" className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{runtimeAdoptError}</div>}
+          {runtimeAdoptNotice && <div data-testid="vk-runtime-adopt-notice" role="status" className="mb-2 text-xs" style={{ color: 'var(--color-success)' }}>{runtimeAdoptNotice}</div>}
           <div className="mb-2 flex flex-wrap gap-2">
             {runtime.state !== 'installing' && runtime.state !== 'not-available' && (
             <button
@@ -379,14 +393,22 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             </button>}
           </div>
           {runtimeDetailsOpen && runtimeCandidates && <div data-testid="vk-runtime-candidates" className="mt-2 space-y-2 text-xs">
-            {runtimeCandidates.map((candidate, index) => <div key={candidate.pythonPath} className="rounded-lg p-2" style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
+            {runtimeCandidates.filter((candidate) => candidate.compatible || showIncompatibleRuntimes).map((candidate) => {
+              const index = runtimeCandidates.indexOf(candidate)
+              const adopting = runtimeAdoptingPath === candidate.pythonPath
+              return <div key={candidate.pythonPath} className="rounded-lg p-2" style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
               <div className="font-medium">{candidate.source} · Python {candidate.version ?? '未知'}</div>
               <div>{candidate.pythonPath}</div>
               <div>{candidate.apiVersion ? `api ${candidate.apiVersion}` : 'API 未知'} · {candidate.schemaVersion ? `schema ${candidate.schemaVersion}` : 'schema 未知'}</div>
               <div data-testid="vk-runtime-capabilities">能力：{candidate.capabilities.length ? candidate.capabilities.map((cap) => `${cap.capability}=${cap.runtime}${cap.detail ? `(${cap.detail})` : ''}`).join('、') : '未返回能力'}</div>
               {!candidate.compatible && <div style={{ color: 'var(--color-danger)' }}>不兼容：{candidate.reason ?? '版本或契约不匹配'}</div>}
-              <button type="button" data-testid={`vk-runtime-adopt-${index}`} disabled={!candidate.compatible} onClick={() => { void adoptRuntime(candidate) }} className={outlineButton} style={outlineStyle}>使用此环境</button>
-            </div>)}
+              <button type="button" data-testid={`vk-runtime-adopt-${index}`} disabled={!candidate.compatible || candidate.active || runtimeAdoptingPath !== null} onClick={() => { void adoptRuntime(candidate) }} className={outlineButton} style={outlineStyle}>
+                {candidate.active ? '当前使用' : adopting ? '切换中…' : '使用此环境'}
+              </button>
+            </div>})}
+            {runtimeCandidates.some((candidate) => !candidate.compatible) && <button type="button" data-testid="vk-runtime-incompatible-toggle" onClick={() => setShowIncompatibleRuntimes((show) => !show)} className={outlineButton} style={outlineStyle}>
+              {showIncompatibleRuntimes ? '隐藏不兼容环境' : `查看 ${runtimeCandidates.filter((candidate) => !candidate.compatible).length} 个不兼容环境`}
+            </button>}
             {!runtimeCandidates.length && <div>未发现可用的本机环境</div>}
           </div>}
         </div>

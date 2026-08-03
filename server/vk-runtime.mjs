@@ -4,7 +4,9 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { installVkRuntime } from './vk-runtime-install.mjs'
-import { resolveActiveRuntime, writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
+import {
+  listOwnedRuntimeReceipts, resolveActiveRuntime, writeActiveRuntime, writeRuntimeReceipt,
+} from './vk-runtime-resolver.mjs'
 import { discoverVkRuntimePaths, probeVkRuntime } from './vk-runtime-probe.mjs'
 
 const LOG_TAIL_LINES = 60
@@ -108,11 +110,12 @@ export class VkRuntimeManager {
 
   async detect() {
     const paths = this.discoverImpl({ home: this.home, bundleDir: this.bundleDir, env: this.env })
+    const activePath = this.activeRuntime()?.pythonPath?.toLowerCase() ?? null
     const candidates = []
     this.detected.clear()
     for (const path of paths) {
       const candidate = await this.probeImpl(path)
-      candidates.push(candidate)
+      candidates.push({ ...candidate, active: candidate.pythonPath.toLowerCase() === activePath })
       this.detected.set(String(candidate.pythonPath).toLowerCase(), path.source)
     }
     return { candidates, checkedAt: this.now() }
@@ -136,7 +139,11 @@ export class VkRuntimeManager {
         throw new VkRuntimeError(409, candidate.reason ?? 'protocol-mismatch', '候选解析环境未通过兼容探针')
       }
       await beforeActivate()
-      const receipt = writeRuntimeReceipt(this.home, {
+      const ownedReceipt = known === 'app-owned'
+        ? listOwnedRuntimeReceipts({ home: this.home, bundleDir: this.bundleDir })
+          .find((item) => item.pythonPath.toLowerCase() === candidate.pythonPath.toLowerCase())
+        : null
+      const receipt = ownedReceipt ?? writeRuntimeReceipt(this.home, {
         schema: 'vk-runtime-receipt@1',
         source: 'external',
         version: candidate.version,

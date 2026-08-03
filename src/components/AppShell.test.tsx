@@ -15,7 +15,7 @@ test('三栏 + 顶部健康 pill 显示演示模式', () => {
   expect(screen.getByTestId('health-pill')).toHaveTextContent('演示模式')
 })
 
-test('真实 Host 注入时显示已连接', async () => {
+test('真实 Host 注入时明确显示本地服务正常', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))   // 压掉 vitest.setup 永不落定的默认桩
   const host: HostBridge = {
     startCommand: async ({ runId }) => ({ runId }),
@@ -25,7 +25,7 @@ test('真实 Host 注入时显示已连接', async () => {
   }
   render(<App host={host} mode="connected" />)
   expect(screen.getByTestId('health-pill')).toHaveTextContent('检查中…')   // 新语义初态,顺带回归护栏
-  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('已连接'))
+  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('本地服务正常'))
 })
 
 // —— 左右栏显示/隐藏开关:直接渲染 AppShell(不经过 App/store),避免耦合目录加载与 Host 状态 ——

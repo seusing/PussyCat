@@ -58,7 +58,7 @@ test('daemon 未运行 → 如实展示,不谎报就绪', async () => {
     summary: 'daemon 未运行(首次执行浏览器命令时 opencli 会自行拉起)',
   }))
   render(<BrowserBridgeStatus baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('daemon 未运行'))
+  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('浏览器服务未运行'))
   expect(screen.getByTestId('bridge-detail').textContent).toBe('')
 })
 
