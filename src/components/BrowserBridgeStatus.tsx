@@ -19,6 +19,10 @@ export type BridgeHealth = {
 }
 
 const CHECK_TIMEOUT_MS = 4000
+// 焦点重探的最小间隔。窗口切换时 focus 与 visibilitychange 常常连着各来一发,
+// 而这个探测要打 daemon —— 去重比"两个事件挑一个"可靠:两者在不同平台/不同
+// 切换方式下的触发组合并不一致,挑哪个都会在某种路径上漏掉。
+const REFRESH_DEBOUNCE_MS = 3000
 
 const DAEMON_TEXT: Record<BridgeHealth['daemon'], string> = {
   running: '运行中',
@@ -44,10 +48,12 @@ export function BrowserBridgeStatus({ baseUrl }: { baseUrl?: string } = {}) {
   const [health, setHealth] = useState<BridgeHealth | undefined>()
   const [state, setState] = useState<'idle' | 'checking' | 'failed'>('idle')
   const genRef = useRef(0)
+  const lastCheckRef = useRef(0)
 
   const check = useCallback(() => {
     if (mode !== 'connected') return
     const gen = ++genRef.current
+    lastCheckRef.current = Date.now()
     setState('checking')
     const base = baseUrl ?? DEFAULT_BASE_URL
     const controller = new AbortController()
@@ -73,6 +79,26 @@ export function BrowserBridgeStatus({ baseUrl }: { baseUrl?: string } = {}) {
     check()
     return () => { genRef.current += 1 }
   }, [check])
+
+  // 窗口重获焦点时重探。**不轮询**的理由仍然成立(这一发要打 daemon,比 /health 重),
+  // 但"只在挂载时探一次"留下的是一个会骗人的绿灯:本组件挂在顶栏,切模块也不卸载,
+  // 于是整个应用生命周期里只探了开机那一次 —— 开机时浏览器没开就一直红,开机时是绿的
+  // 你后来关掉浏览器它就一直绿。焦点恰好是真实使用节奏的分界:你切出去开浏览器,
+  // 切回来这一刻的状态才是你要看的。
+  useEffect(() => {
+    if (mode !== 'connected') return
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return
+      if (Date.now() - lastCheckRef.current < REFRESH_DEBOUNCE_MS) return
+      check()
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [check, mode])
 
   if (mode !== 'connected') return null
 

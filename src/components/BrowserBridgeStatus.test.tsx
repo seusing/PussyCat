@@ -101,3 +101,30 @@ test('只渲染白名单字段 —— 即便响应里混进敏感值也不上屏
   // title 属性同样不得夹带
   expect(rendered.getAttribute('title')).not.toContain('ctx-abc123')
 })
+
+// —— 过期绿灯:本组件挂在顶栏、切模块不卸载,只在挂载时探一次会让状态一直停在开机那一刻 ——
+test('窗口重获焦点时自动重探 —— 你去开了浏览器,切回来就该是新鲜的', async () => {
+  const spy = stubFetch(health({ extension: 'disconnected', reasonCode: 'extension-disconnected', summary: 'daemon 在运行,但 Chrome 扩展未连上' }))
+  render(<BrowserBridgeStatus baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('浏览器扩展未连接'))
+  expect(spy).toHaveBeenCalledTimes(1)
+
+  // 用户切出去把浏览器打开了,回到应用 —— 焦点回来这一刻必须再探一次。
+  stubFetch(health())
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000)   // 越过去重窗口(必须晚于挂载那一刻)
+  window.dispatchEvent(new Event('focus'))
+
+  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('浏览器已就绪'))
+})
+
+test('去重窗口内的连发只探一次 —— focus 与 visibilitychange 常常连着各来一发', async () => {
+  const spy = stubFetch(health())
+  render(<BrowserBridgeStatus baseUrl={BASE} />)
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
+
+  window.dispatchEvent(new Event('focus'))
+  document.dispatchEvent(new Event('visibilitychange'))
+  await new Promise((r) => setTimeout(r, 10))
+
+  expect(spy).toHaveBeenCalledTimes(1)
+})
