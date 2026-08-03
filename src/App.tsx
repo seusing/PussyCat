@@ -21,6 +21,11 @@ import { HostRequestError } from './host/errors'
 import { isRunnable } from './data/policy'
 import { isAcknowledged } from './data/preferences'
 
+// 后台登录体检同时在飞的上限。必须 ≤ Host 的 maxConcurrentRuns(server/run-manager.mjs),
+// 否则多出来的那些只会拿到 429。取 3 是因为这些命令等的是浏览器往返而不是本机算力;
+// 真机上若观察到标签页抢焦点或 daemon 吃不消,把这个数字调小即可,不必改结构。
+const LOGIN_CHECK_CONCURRENCY = 3
+
 export function normalizeHostError(e: unknown, context: 'start' | 'cancel'): { summary: string; detail?: string } {
   const fallback = context === 'cancel' ? '取消请求失败' : '任务启动失败'
   if (e instanceof HostRequestError) return { summary: e.summary || fallback, detail: e.detail }   // 结构化透传(复审 F2)
@@ -99,46 +104,62 @@ export default function App({
 
   useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
 
-  // 登录检查的**串行驱动**。Host 侧 maxConcurrentRuns=1,并发发起只会让后来的拿 429;
-  // 且用户手动发起的运行优先——有 run 在飞时本轮不发,等它结束再继续。
+  // 登录检查的**并发驱动**。
+  //
+  // 曾经是严格串行,理由是 Host 侧 maxConcurrentRuns=1。但目录里有 65 个 whoami、
+  // 全是浏览器命令,串行跑完要好几分钟;实测单次进程启动只有 45ms,时间几乎全在
+  // 浏览器往返上 —— 那是等待,不是算力,同时跑几个正合适。Host 的上限已提到
+  // HOST_MAX_CONCURRENT_RUNS,这里始终**少用一个**,把最后那个位子留给用户手动
+  // 发起的命令:用户的操作永远不该排在一堆后台体检后面。
   const loginQueue = useAppStore((s) => s.loginQueue)
-  const loginInFlight = useAppStore((s) => s.loginInFlight)
+  const loginInFlights = useAppStore((s) => s.loginInFlights)
   const currentRun = useAppStore((s) => s.currentRun)
   useEffect(() => {
-    if (loginInFlight || loginQueue.length === 0) return
-    if (currentRun && !isTerminal(currentRun.state)) return   // 不跟用户抢那唯一的并发位
-    const s = useAppStore.getState()
-    const site = loginQueue[0]
-    const cmd = s.commands.find((c) => c.site === site && c.name === 'whoami')
-    const decision = cmd ? s.decisionFor(cmd.command) : undefined
-    if (!cmd || !decision) {
-      s.setLoginEntry(site, { state: 'not-approved' })
-      s.beginLoginCheck(site, `dropped:${site}`)
-      s.finishLoginCheck(`dropped:${site}`, 'not-approved', undefined, Date.now())
-      return
+    if (loginQueue.length === 0) return
+    const manualBusy = !!currentRun && !isTerminal(currentRun.state)
+    // 用户的运行占着一个位子时,后台体检就再退让一个,免得把 Host 塞满。
+    const budget = LOGIN_CHECK_CONCURRENCY - (manualBusy ? 1 : 0) - loginInFlights.length
+    if (budget <= 0) return
+
+    let launched = 0
+    while (launched < budget) {
+      const s = useAppStore.getState()
+      const site = s.loginQueue[0]
+      if (!site) break
+      const cmd = s.commands.find((c) => c.site === site && c.name === 'whoami')
+      const decision = cmd ? s.decisionFor(cmd.command) : undefined
+      // 下面三条早退路径都是**本地判定、不发请求**,所以 continue 时不加 launched:
+      // 它们不占并发预算,begin+finish 同步走完,循环直接取下一个站点。
+      if (!cmd || !decision) {
+        s.setLoginEntry(site, { state: 'not-approved' })
+        s.beginLoginCheck(site, `dropped:${site}`)
+        s.finishLoginCheck(`dropped:${site}`, 'not-approved', undefined, Date.now())
+        continue
+      }
+      if (!isRunnable(decision)) {
+        // 判决在排队之后收紧了(或本就不可执行):**不发请求**,如实落成不可执行状态。
+        s.beginLoginCheck(site, `dropped:${site}`)
+        s.finishLoginCheck(`dropped:${site}`, 'not-approved', '该命令当前不被 Host 允许执行', Date.now())
+        continue
+      }
+      const fp = decision.fingerprint
+      const needsAck = decision.state === 'acknowledgement-required'
+      if (needsAck && (!fp || !isAcknowledged(s.preferences, cmd.command, fp))) {
+        s.beginLoginCheck(site, `dropped:${site}`)
+        s.finishLoginCheck(`dropped:${site}`, 'needs-ack', undefined, Date.now())
+        continue
+      }
+      const runId = loginCheckRunId(site, crypto.randomUUID())
+      s.beginLoginCheck(site, runId)
+      launched += 1
+      void host.startCommand({
+        runId, commandKey: cmd.command, argv: buildArgv(cmd, {}),
+        ...(needsAck && fp ? { acknowledgement: { fingerprint: fp } } : {}),
+      }).catch((err) => {
+        useAppStore.getState().finishLoginCheck(runId, 'error', normalizeHostError(err, 'start').summary, Date.now())
+      })
     }
-    if (!isRunnable(decision)) {
-      // 判决在排队之后收紧了(或本就不可执行):**不发请求**,如实落成不可执行状态。
-      s.beginLoginCheck(site, `dropped:${site}`)
-      s.finishLoginCheck(`dropped:${site}`, 'not-approved', '该命令当前不被 Host 允许执行', Date.now())
-      return
-    }
-    const fp = decision.fingerprint
-    const needsAck = decision.state === 'acknowledgement-required'
-    if (needsAck && (!fp || !isAcknowledged(s.preferences, cmd.command, fp))) {
-      s.beginLoginCheck(site, `dropped:${site}`)
-      s.finishLoginCheck(`dropped:${site}`, 'needs-ack', undefined, Date.now())
-      return
-    }
-    const runId = loginCheckRunId(site, crypto.randomUUID())
-    s.beginLoginCheck(site, runId)
-    void host.startCommand({
-      runId, commandKey: cmd.command, argv: buildArgv(cmd, {}),
-      ...(needsAck && fp ? { acknowledgement: { fingerprint: fp } } : {}),
-    }).catch((err) => {
-      useAppStore.getState().finishLoginCheck(runId, 'error', normalizeHostError(err, 'start').summary, Date.now())
-    })
-  }, [host, loginQueue, loginInFlight, currentRun])
+  }, [host, loginQueue, loginInFlights, currentRun])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

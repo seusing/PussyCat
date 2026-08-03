@@ -32,7 +32,7 @@ function setup(over: Partial<Parameters<typeof useAppStore.setState>[0]> = {}) {
       ['chatgpt/whoami', unknownDecision('chatgpt')],
     ]),
     preferences: emptyPreferences(),
-    loginChecks: {}, loginQueue: [], loginInFlight: undefined,
+    loginChecks: {}, loginQueue: [], loginInFlights: [],
     ...over,
   })
 }
@@ -142,7 +142,7 @@ test('排队中与检查中分开显示 —— 等待中的不谎称正在跑', 
   setup({
     preferences: prefs,
     loginQueue: ['bilibili'],
-    loginInFlight: { site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' },
+    loginInFlights: [{ site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' }],
     loginChecks: {
       xiaohongshu: { site: 'xiaohongshu', state: 'checking' },
       bilibili: { site: 'bilibili', state: 'queued' },
@@ -186,7 +186,7 @@ test('用户收起需要处理后，队列状态更新不把分组强制展开',
 test('检查队列显示当前站点与剩余数量', () => {
   setup({
     loginQueue: ['bilibili', 'chatgpt'],
-    loginInFlight: { site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' },
+    loginInFlights: [{ site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' }],
     loginChecks: {
       xiaohongshu: { site: 'xiaohongshu', state: 'checking' },
       bilibili: { site: 'bilibili', state: 'queued' },

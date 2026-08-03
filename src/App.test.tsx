@@ -684,20 +684,57 @@ describe('登录状态检查的接线', () => {
     expect(useAppStore.getState().currentRun?.result).toBeUndefined()
   })
 
-  it('队列**串行**:两个站点排队时只发一个,前一个回来才发下一个', async () => {
-    const { starts, done } = renderApp(['xiaohongshu', 'bilibili'])
+  it('队列**并发**:两个站点同时发出,不再一个等一个', async () => {
+    // 语义变更:65 个站点全是浏览器命令,串行跑完要好几分钟,而时间几乎全花在
+    // 等浏览器往返上。这条用例从"只发一个"翻成"两个一起发",是有意的契约改变。
+    const { starts } = renderApp(['xiaohongshu', 'bilibili'])
     await waitFor(() => expect(useAppStore.getState().commands.length).toBe(2))
     act(() => {
       useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
       useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
       useAppStore.getState().enqueueLoginChecks(['xiaohongshu', 'bilibili'])
     })
-    await waitFor(() => expect(starts.length).toBe(1))
-    expect(starts.length).toBe(1)   // 关键:**不是 2**。Host 只允许一个并发。
 
-    const first = useAppStore.getState().loginInFlight!.runId
-    done({ runId: first, at: 3, outcome: 'success', result: [{ logged_in: true, username: '甲' }] })
     await waitFor(() => expect(starts.length).toBe(2))
+    expect(useAppStore.getState().loginInFlights).toHaveLength(2)
+    // 两个 runId 必须各不相同 —— 并发之后按 runId 归属结果,串味就会张冠李戴。
+    expect(new Set(starts.map((s) => s.runId)).size).toBe(2)
+  })
+
+  it('并发有上限:排 5 个站点时最多同时飞 3 个,其余留在队列', async () => {
+    const sites = ['xiaohongshu', 'bilibili', 'github', 'zhihu', 'douban']
+    const { starts } = renderApp(sites)
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(sites.length))
+    act(() => {
+      for (const site of sites) useAppStore.getState().acknowledgeCommand(`${site}/whoami`, `fp-${site}`, 1)
+      useAppStore.getState().enqueueLoginChecks(sites)
+    })
+
+    await waitFor(() => expect(starts.length).toBe(3))
+    // 关键是**不会**一口气把 5 个全发出去 —— 那会撞上 Host 的并发上限吃 429。
+    await new Promise((r) => setTimeout(r, 20))
+    expect(starts.length).toBe(3)
+    expect(useAppStore.getState().loginQueue).toHaveLength(2)
+  })
+
+  it('用户手动发起的命令占着位子时,后台体检再退让一个', async () => {
+    const sites = ['xiaohongshu', 'bilibili', 'github', 'zhihu']
+    const { starts } = renderApp(sites)
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(sites.length))
+    act(() => {
+      // beginRun 需要先有 selected(store 里就是这么写的),否则它直接空转、
+      // currentRun 仍是 undefined —— 那样这条用例就测不到"退让"了。
+      useAppStore.getState().selectCommand(useAppStore.getState().commands[0])
+      useAppStore.getState().beginRun('manual-run-1')   // 用户自己的运行在飞
+      for (const site of sites) useAppStore.getState().acknowledgeCommand(`${site}/whoami`, `fp-${site}`, 1)
+      useAppStore.getState().enqueueLoginChecks(sites)
+    })
+    expect(useAppStore.getState().currentRun).toBeTruthy()   // 前置条件成立才谈退让
+
+    // 后台体检只用 2 个位子,把最后一个留给用户 —— 用户的操作永远不排在体检后面。
+    await waitFor(() => expect(starts.length).toBe(2))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(starts.length).toBe(2)
   })
 
   it('acknowledgement 随请求提交 —— 否则 Host 返 428', async () => {

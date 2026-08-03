@@ -64,7 +64,11 @@ export class RunManager {
     spawnImpl = spawn,
     cancelGraceMs = 2000,
     commandTimeoutMs = 90_000,
-    maxConcurrentRuns = 1,
+    // 1 → 4:登录体检有 65 个站点、全是浏览器命令,串行跑完要好几分钟,而单次进程
+    // 启动只占 45ms —— 时间几乎全花在等浏览器往返上,不是本机算力,所以并发是有效的。
+    // 前端只用其中 3 个跑后台体检(见 App.tsx 的 LOGIN_CHECK_CONCURRENCY),
+    // 剩下那个位子留给用户手动发起的命令,保证它永远不用排队。
+    maxConcurrentRuns = 4,
     maxCapturedBytes = 8 * 1024 * 1024,
     maxSeenRunIds = 1000,
   }) {

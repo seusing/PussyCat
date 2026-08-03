@@ -49,7 +49,7 @@ export function LoginStatusPanel() {
   const preferences = useAppStore((s) => s.preferences)
   const loginChecks = useAppStore((s) => s.loginChecks)
   const loginQueue = useAppStore((s) => s.loginQueue)
-  const loginInFlight = useAppStore((s) => s.loginInFlight)
+  const loginInFlights = useAppStore((s) => s.loginInFlights)
   const enqueueLoginChecks = useAppStore((s) => s.enqueueLoginChecks)
   const requestAcknowledgement = useAppStore((s) => s.requestAcknowledgement)
   const selectCommand = useAppStore((s) => s.selectCommand)
@@ -88,15 +88,17 @@ export function LoginStatusPanel() {
   const actionRows = rows.filter((r) => r.state !== 'logged-in' && r.state !== 'not-approved')
   const loggedInRows = rows.filter((r) => r.state === 'logged-in')
   const otherRows = rows.filter((r) => r.state === 'not-approved')
-  const pending = loginQueue.length + (loginInFlight ? 1 : 0)
-  const queueStatus = loginInFlight
-    ? `正在检查 ${siteLabel(loginInFlight.site)}，剩余 ${loginQueue.length}`
+  const pending = loginQueue.length + loginInFlights.length
+  const queueStatus = loginInFlights.length > 0
+    // 并发之后"正在检查"可能有好几个:只报数与剩余,别把一个站点的名字冒充成全部。
+    ? loginInFlights.length === 1
+      ? `正在检查 ${siteLabel(loginInFlights[0].site)}，剩余 ${loginQueue.length}`
+      : `正在检查 ${loginInFlights.length} 个站点，剩余 ${loginQueue.length}`
     : loginQueue.length > 0 ? `队列中 ${loginQueue.length}` : '无待处理检查'
   // **逐行判忙,不再用全局锁。** 之前 busy 一旦为真就把所有刷新按钮一起禁用,
-  // 于是点一个站点会让其余全部变灰——那是把"串行执行"错误地表达成了"全局互斥"。
-  // 执行确实只能串行(Host maxConcurrentRuns=1,且并发会同时开多个浏览器标签抢同一 profile),
-  // 但那是**排队**,不是禁止你继续点:各行各自排队、各自显示自己的状态。
-  const isRowBusy = (site: string) => loginInFlight?.site === site || loginQueue.includes(site)
+  // 于是点一个站点会让其余全部变灰——那是把"排队执行"错误地表达成了"全局互斥"。
+  // 现在最多几个同时在飞,其余仍是排队;各行各自排队、各自显示自己的状态。
+  const isRowBusy = (site: string) => loginInFlights.some((x) => x.site === site) || loginQueue.includes(site)
 
   // 自动刷新:**只在应用运行期生效**,组件卸载即清。绝不写操作系统级定时任务。
   // 只排已确认且判决允许的站点 —— 遇到 needs-ack **跳过而不是弹框**,

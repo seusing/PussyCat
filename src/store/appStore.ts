@@ -108,7 +108,10 @@ type AppState = {
   // 驱动逻辑不在 store 里(store 不碰 host),由 App 的 effect 取队首去发起。
   loginChecks: Record<string, LoginCheckEntry>
   loginQueue: string[]
-  loginInFlight?: { site: string; runId: string }
+  // 复数:65 个站点全是浏览器命令,串行跑完要几分钟,而单次进程启动只占 45ms ——
+  // 时间全在浏览器往返上,唯一的提速手段就是同时跑几个。改成数组而不是留个
+  // 单数字段加计数,是为了让每个消费点都被迫显式处理"多个在飞"这件事。
+  loginInFlights: { site: string; runId: string }[]
   setLoginEntry: (site: string, patch: Partial<LoginCheckEntry>) => void
   enqueueLoginChecks: (sites: string[]) => void
   beginLoginCheck: (site: string, runId: string) => void
@@ -214,13 +217,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearVkHandoff: () => set({ vkHandoff: undefined }),
   loginChecks: {},
   loginQueue: [],
-  loginInFlight: undefined,
+  loginInFlights: [],
   setLoginEntry: (site, patch) => set((s) => ({
     loginChecks: { ...s.loginChecks, [site]: { ...s.loginChecks[site], site, ...patch } as LoginCheckEntry },
   })),
   enqueueLoginChecks: (sites) => set((s) => {
     // 去重:已排队或正在跑的站点不重复入列,否则连点「全部刷新」会把队列堆成几十条。
-    const busy = new Set([...s.loginQueue, ...(s.loginInFlight ? [s.loginInFlight.site] : [])])
+    const busy = new Set([...s.loginQueue, ...s.loginInFlights.map((x) => x.site)])
     const add = sites.filter((x) => !busy.has(x))
     if (add.length === 0) return s
     const checks = { ...s.loginChecks }
@@ -229,16 +232,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
   beginLoginCheck: (site, runId) => set((s) => ({
     loginQueue: s.loginQueue.filter((x) => x !== site),
-    loginInFlight: { site, runId },
+    loginInFlights: [...s.loginInFlights, { site, runId }],
     loginChecks: { ...s.loginChecks, [site]: { ...s.loginChecks[site], site, state: 'checking' } },
   })),
   finishLoginCheck: (runId, state, detail, at) => set((s) => {
-    // 只认当前在飞的那次:迟到的 done(上一轮超时后才回来的)不得覆盖新结果。
-    if (s.loginInFlight?.runId !== runId) return s
-    const site = s.loginInFlight.site
+    // 只认还在飞的那次:迟到的 done(上一轮超时后才回来的)不得覆盖新结果。
+    // 并发之后这条更要紧 —— 多个 runId 同时在飞,按 runId 定位才不会张冠李戴。
+    const hit = s.loginInFlights.find((x) => x.runId === runId)
+    if (!hit) return s
     return {
-      loginInFlight: undefined,
-      loginChecks: { ...s.loginChecks, [site]: { ...s.loginChecks[site], site, state, detail, checkedAt: at } },
+      loginInFlights: s.loginInFlights.filter((x) => x.runId !== runId),
+      loginChecks: { ...s.loginChecks, [hit.site]: { ...s.loginChecks[hit.site], site: hit.site, state, detail, checkedAt: at } },
     }
   }),
   // —— preferences 切片 ——

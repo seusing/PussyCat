@@ -157,10 +157,18 @@ describe('RunManager', () => {
   })
 
   it('rejects duplicate ids and excess concurrency', () => {
-    const { manager } = setup()
+    // 显式压到 1:并发上限默认已提到 4(登录体检要并行),但这条用例考的是
+    // "超出上限必须 429",与上限取值无关,所以把它钉在一个确定的边界上。
+    const { manager } = setup({ maxConcurrentRuns: 1 })
     manager.start(request)
     expect(() => manager.start(request)).toThrow(RunManagerError)
     expect(() => manager.start({ ...request, runId: 'run-2' })).toThrow(/Maximum concurrent/)
+  })
+
+  it('默认上限为 4 —— 前端用 3 个跑后台体检,留一个给用户手动发起的命令', () => {
+    const { manager } = setup()
+    for (let i = 1; i <= 4; i += 1) manager.start({ ...request, runId: `run-${i}` })
+    expect(() => manager.start({ ...request, runId: 'run-5' })).toThrow(/Maximum concurrent/)
   })
 
   it('seen 有界:cap 内驱逐最旧,被驱逐 id 可重用(重放保护有界,UUID 下碰撞理论级)', () => {
