@@ -15,8 +15,19 @@ test('三栏 + 顶部健康 pill 显示演示模式', () => {
   expect(screen.getByTestId('health-pill')).toHaveTextContent('演示模式')
 })
 
-test('真实 Host 注入时明确显示本地服务正常', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))   // 压掉 vitest.setup 永不落定的默认桩
+test('真实 Host 注入时顶栏给出三路合一的总结论', async () => {
+  // 顶栏那颗灯不再只代表 Node Host —— 它挂了、浏览器桥没就绪、视频解析异常,任一都得
+  // 反映出来,所以桩要按端点分派:统一 { ok:true } 会让桥接那一路取不到 json 而误判。
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (String(url).includes('/browser-bridge/health')) {
+      return { ok: true, json: async () => ({
+        checkedAt: 1, daemon: 'running', extension: 'connected', profile: 'ready',
+        profileCount: 1, retryable: false, reasonCode: 'ok', summary: '就绪',
+      }) }
+    }
+    if (String(url).includes('/vk/v1/health')) return { ok: true, json: async () => ({ status: 'stopped' }) }
+    return { ok: true }
+  }))
   const host: HostBridge = {
     startCommand: async ({ runId }) => ({ runId }),
     cancelCommand: async () => {},
@@ -25,7 +36,7 @@ test('真实 Host 注入时明确显示本地服务正常', async () => {
   }
   render(<App host={host} mode="connected" />)
   expect(screen.getByTestId('health-pill')).toHaveTextContent('检查中…')   // 新语义初态,顺带回归护栏
-  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('本地服务正常'))
+  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('全部正常'))
 })
 
 // —— 左右栏显示/隐藏开关:直接渲染 AppShell(不经过 App/store),避免耦合目录加载与 Host 状态 ——

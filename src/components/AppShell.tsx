@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { HealthPill } from './HealthPill'
-import { BrowserBridgeStatus } from './BrowserBridgeStatus'
+import { SystemHealthPill } from './SystemHealthPill'
 import ResizableSplit from './ResizableSplit'
 import { useAppStore } from '../store/appStore'
 import {
@@ -141,8 +140,7 @@ export default function AppShell({ nav, config, runs, fullPage, catalogStatus, c
         </div>
         <div className="flex items-center gap-3">
           {headerActions}
-          <BrowserBridgeStatus baseUrl={baseUrl} />
-          <HealthPill baseUrl={baseUrl} />
+          <SystemHealthPill baseUrl={baseUrl} />
           {!fullPage && <button
             type="button"
             data-testid="toggle-runs"
