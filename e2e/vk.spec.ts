@@ -23,15 +23,24 @@ async function uploadFixture(request: import('@playwright/test').APIRequestConte
   return `upload:${body.upload_id}`
 }
 
+async function openAdvanced(page: import('@playwright/test').Page): Promise<void> {
+  const details = page.getByTestId('vk-advanced-settings')
+  if (!(await details.getAttribute('open'))) await details.locator('summary').click()
+}
+
 test.describe('视频解析标签页', () => {
   test('宽屏:第三标签可达,表单齐备', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto('/')
     await page.getByTestId('module-tab-vk').click()
     await expect(page.getByTestId('vk-panel')).toBeVisible()
-    for (const id of ['vk-source', 'vk-preset', 'vk-media-policy', 'vk-max-cost', 'vk-preview-button', 'vk-submit-button', 'vk-query-input']) {
+    for (const id of ['vk-source', 'vk-preset', 'vk-preview-button', 'vk-submit-button', 'vk-query-input']) {
       await expect(page.getByTestId(id)).toBeVisible()
     }
+    await expect(page.getByTestId('vk-media-policy')).not.toBeVisible()
+    await openAdvanced(page)
+    await expect(page.getByTestId('vk-media-policy')).toBeVisible()
+    await expect(page.getByTestId('vk-max-cost')).toBeVisible()
     await expect(page.getByTestId('vk-health-summary')).toContainText(/就绪|启动中|检测中/)
   })
 
@@ -40,6 +49,10 @@ test.describe('视频解析标签页', () => {
     await page.goto('/')
     await page.getByTestId('module-tab-vk').click()
     await expect(page.getByTestId('vk-panel')).toBeVisible()
+    await expect(page.getByTestId('module-tab-commands')).toBeVisible()
+    await expect(page.getByTestId('module-tab-login')).toBeVisible()
+    await expect(page.getByTestId('health-details-toggle')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.getByTestId('vk-source').fill('https://example.com/x')
     await expect(page.getByTestId('vk-preview-button')).toBeEnabled()
     await page.getByTestId('vk-query-input').scrollIntoViewIfNeeded()
@@ -84,6 +97,7 @@ test.describe('视频解析标签页', () => {
     await page.goto('/')
     await page.getByTestId('module-tab-vk').click()
     await page.getByTestId('vk-source').fill(source)
+    await openAdvanced(page)
     await page.getByTestId('vk-max-cost').fill('5')
     await page.getByTestId('vk-cap-query_ready').check() // 建索引,查询才有引用
     await page.getByTestId('vk-preview-button').click()
@@ -178,6 +192,7 @@ test.describe('跨模块:采集结果 → 视频解析', () => {
     expect(await page.getByTestId('vk-source').inputValue()).toContain('bilibili.com')
 
     // 预检:公开回显面零哨兵(source 输入框本身是执行通道,允许持有原始 URL)
+    await openAdvanced(page)
     await page.getByTestId('vk-max-cost').fill('5')
     await page.getByTestId('vk-preview-button').click()
     await expect(page.getByTestId('vk-preview')).toBeVisible()

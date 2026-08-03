@@ -84,7 +84,9 @@ export function aggregate({ demo, host, bridge, bridgeState, vk }: {
     return { tone: 'warn', label: bridgeLabel(bridgeState, bridge), canRepair: !!bridge }
   }
   if (vk === 'failed') return { tone: 'warn', label: '视频解析异常', canRepair: false }
-  if (vk === undefined) return { tone: 'warn', label: '视频解析状态未知', canRepair: false }
+  if (vk === undefined || !['ok', 'ready', 'running', 'not-configured', 'stopped', 'starting'].includes(vk)) {
+    return { tone: 'warn', label: '视频解析状态未知', canRepair: false }
+  }
   return { tone: 'ok', label: '基础连接正常', canRepair: false }
 }
 
@@ -95,11 +97,27 @@ const TONE_COLOR: Record<Tone, string> = {
   down: 'var(--color-danger)',
 }
 
+const HOST_TEXT: Record<HostState, string> = {
+  checking: '检查中', online: '正常', offline: '离线',
+}
+
+function vkLabel(status: string | undefined): string {
+  if (status === undefined) return '状态未知'
+  if (status === 'failed') return '异常'
+  if (status === 'starting') return '启动中'
+  if (status === 'stopped') return '按需启动'
+  if (status === 'not-configured') return '未配置'
+  if (status === 'ok' || status === 'ready' || status === 'running') return '正常'
+  return '状态未知'
+}
+
 /** 系统总健康 —— 一颗灯 + 一个能真动手的按钮,取代原先并排的两颗胶囊。 */
 export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   const mode = useAppStore((s) => s.mode)
   const demo = mode === 'demo'
   const base = baseUrl ?? DEFAULT_BASE_URL
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | undefined>()
 
   // —— 第一路:Host 自己。三态,首 ping 落定前显「检查中…」,消灭乐观默认的假「已连接」 ——
   const [host, setHost] = useState<HostState>('checking')
@@ -115,8 +133,16 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       inflight = ctrl
       const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT_MS)
       fetch(`${base}/health`, { signal: ctrl.signal })
-        .then((res) => { if (gen === hostGenRef.current) setHost(res.ok ? 'online' : 'offline') })
-        .catch(() => { if (gen === hostGenRef.current) setHost('offline') })   // 超时 abort 也判离线
+        .then((res) => {
+          if (gen !== hostGenRef.current) return
+          setHost(res.ok ? 'online' : 'offline')
+          setLastCheckedAt(Date.now())
+        })
+        .catch(() => {
+          if (gen !== hostGenRef.current) return
+          setHost('offline')
+          setLastCheckedAt(Date.now())
+        })   // 超时 abort 也判离线
         .finally(() => clearTimeout(timer))
     }
     ping()
@@ -142,6 +168,7 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         if (gen !== bridgeGenRef.current) return
         setBridge(body)
         setBridgeState('idle')
+        setLastCheckedAt(body.checkedAt || Date.now())
       })
       .catch(() => {
         // 探测本身失败(Host 不可达/超时)与「Host 说桥接没就绪」是两回事:
@@ -149,6 +176,7 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         if (gen !== bridgeGenRef.current) return
         setBridge(undefined)
         setBridgeState('failed')
+        setLastCheckedAt(Date.now())
       })
       .finally(() => clearTimeout(timer))
   }, [mode, base])
@@ -161,6 +189,7 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((body: { status?: string }) => setVk(body?.status))
       .catch(() => setVk(undefined))
+      .finally(() => setLastCheckedAt(Date.now()))
   }, [mode, base])
 
   useEffect(() => {
@@ -215,33 +244,65 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   const showRecheck = !demo && verdict.tone === 'ok'
 
   return (
-    <span
+    <div
       data-testid="health-pill"
       role="status"
       aria-live="polite"
-      className="inline-flex items-center gap-2 rounded-lg px-3 py-1 text-sm"
+      className="relative inline-flex items-center gap-2 rounded-lg px-3 py-1 text-sm"
       style={{ background: 'var(--color-panel)', color: TONE_COLOR[verdict.tone] }}
       title={nextStep ?? verdict.label}
     >
-      <span style={{ width: 8, height: 8, borderRadius: 8, background: 'currentColor' }} />
-      <span data-testid="health-label">{repairing ? '修复中…' : verdict.label}</span>
-      {nextStep && (
-        <span data-testid="health-next-step" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          {nextStep}
-        </span>
-      )}
-      {(showRepair || showRecheck) && (
-        <button
-          data-testid="health-repair"
-          onClick={showRepair ? repair : () => { checkBridge(); checkVk() }}
-          disabled={repairing}
-          title={showRepair ? '修复浏览器连接' : '重新检查本地服务、浏览器桥接和视频解析状态'}
-          className="rounded px-2 py-0.5 text-xs disabled:opacity-50"
-          style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+      <button
+        type="button"
+        data-testid="health-details-toggle"
+        aria-expanded={detailsOpen}
+        aria-label="查看连接状态详情"
+        onClick={() => setDetailsOpen((open) => !open)}
+        className="inline-flex items-center gap-2 text-left"
+        style={{ color: 'inherit' }}
+      >
+        <span style={{ width: 8, height: 8, borderRadius: 8, background: 'currentColor' }} />
+        <span data-testid="health-label">{repairing ? '修复中…' : verdict.label}</span>
+      </button>
+      {detailsOpen && (
+        <div
+          data-testid="health-details"
+          className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg p-3 text-xs shadow-xl"
+          style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
         >
-          {showRepair ? '修复浏览器连接' : '重新检查状态'}
-        </button>
+          <div className="mb-2 font-medium">连接状态</div>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
+            <dt style={{ color: 'var(--color-fg-dim)' }}>爪爪服务</dt>
+            <dd>{HOST_TEXT[host]}</dd>
+            <dt style={{ color: 'var(--color-fg-dim)' }}>浏览器连接</dt>
+            <dd>
+              {bridgeLabel(bridgeState, bridge)}
+              {bridge?.opencliVersion ? ` · OpenCLI ${bridge.opencliVersion}` : ''}
+            </dd>
+            <dt style={{ color: 'var(--color-fg-dim)' }}>视频解析</dt>
+            <dd>{vkLabel(vk)}</dd>
+            <dt style={{ color: 'var(--color-fg-dim)' }}>最后检查</dt>
+            <dd>{lastCheckedAt ? new Date(lastCheckedAt).toLocaleTimeString() : '尚未完成'}</dd>
+          </dl>
+          {nextStep && (
+            <div data-testid="health-next-step" className="mt-3" style={{ color: 'var(--color-fg-dim)' }}>
+              {nextStep}
+            </div>
+          )}
+          {(showRepair || showRecheck) && (
+            <button
+              data-testid="health-repair"
+              onClick={showRepair ? repair : () => { checkBridge(); checkVk() }}
+              disabled={repairing}
+              title={showRepair ? '修复浏览器连接' : '重新检查本地服务、浏览器桥接和视频解析状态'}
+              className="mt-3 rounded px-2 py-1 text-xs disabled:opacity-50"
+              style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+            >
+              {showRepair ? '修复浏览器连接' : '重新检查状态'}
+            </button>
+          )}
+        </div>
       )}
-    </span>
+    </div>
   )
 }

@@ -83,6 +83,9 @@ describe('VkPanel', () => {
       expect(screen.getByTestId(id)).toBeInTheDocument()
     }
     expect(screen.getByTestId('vk-health-summary').textContent).toContain('api 1.2.0')
+    expect(screen.getByTestId('vk-advanced-settings')).not.toHaveAttribute('open')
+    expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('处理目的')
+    expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
   })
 
   it('previews via the proxy, shows the resolved projection with estimates, then confirms and submits', async () => {
@@ -103,7 +106,7 @@ describe('VkPanel', () => {
     expect(previewCall).toBeDefined()
     const projection = JSON.parse(String(previewCall!.init!.body))
     expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5 })
-    expect(screen.getByTestId('vk-preview').textContent).toContain('markdown_note、quick_summary')
+    expect(screen.getByTestId('vk-preview').textContent).toContain('知识笔记、快速摘要')
     expect(screen.getByTestId('vk-preview-estimates').textContent).toContain('¥0.25 – ¥1.06')
     expect(screen.getByTestId('vk-preview-estimates').textContent).toContain('8.3 – 27.4 分钟')
 

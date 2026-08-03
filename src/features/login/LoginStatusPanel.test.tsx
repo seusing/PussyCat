@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LoginStatusPanel } from './LoginStatusPanel'
 import { useAppStore } from '../../store/appStore'
@@ -154,7 +154,7 @@ test('排队中与检查中分开显示 —— 等待中的不谎称正在跑', 
   expect(screen.getByTestId('login-state-bilibili')).not.toHaveTextContent('检查中')
 })
 
-test('登录站点按需要处理、已登录、未配置或其他分组,默认仅展开需要处理', () => {
+test('登录站点按需要处理、已登录、尚未审定分组,默认仅展开需要处理', () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   setup({
     preferences: useAppStore.getState().preferences,
@@ -170,6 +170,17 @@ test('登录站点按需要处理、已登录、未配置或其他分组,默认�
   expect(screen.getByTestId('login-row-bilibili')).toBeVisible()
   expect(screen.getByTestId('login-row-xiaohongshu')).not.toBeVisible()
   expect(screen.getByTestId('login-row-chatgpt')).not.toBeVisible()
+  expect(screen.getByTestId('login-group-other')).toHaveTextContent('尚未审定')
+})
+
+test('用户收起需要处理后，队列状态更新不把分组强制展开', async () => {
+  render(<LoginStatusPanel />)
+  const group = screen.getByTestId('login-group-action')
+  await userEvent.click(group.querySelector('summary')!)
+  await waitFor(() => expect(group).not.toHaveAttribute('open'))
+
+  act(() => { useAppStore.setState({ loginQueue: ['xiaohongshu'] }) })
+  expect(group).not.toHaveAttribute('open')
 })
 
 test('检查队列显示当前站点与剩余数量', () => {

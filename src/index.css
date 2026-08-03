@@ -42,3 +42,10 @@ body { margin: 0; background: var(--color-canvas); color: var(--color-fg); font-
 .resize-handle[data-dragging='true'] .resize-handle-line {
   background: var(--color-accent);
 }
+
+/* 窄窗口允许顶栏分行，优先保留模块切换和当前健康结论；模块专属操作落到第二行。 */
+@media (max-width: 760px) {
+  .app-header-primary { width: 100%; justify-content: space-between; }
+  .app-header-actions { width: 100%; justify-content: flex-end; }
+  .app-module-tabs { min-width: 0; white-space: nowrap; }
+}

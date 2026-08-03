@@ -40,6 +40,31 @@ const QUALITY_PROFILES = ['fast', 'balanced', 'thorough']
 const BUDGET_PROFILES = ['economy', 'standard', 'quality']
 const CAPABILITIES = ['word_timestamps', 'speaker_diarization', 'visual_evidence', 'query_ready']
 
+const PRESET_LABELS: Record<string, string> = {
+  'quick-summary': '快速总结',
+  'course-learning': '课程学习笔记',
+  'interview-analysis': '访谈观点分析',
+  'science-explainer': '科普知识梳理',
+}
+const CONTENT_TYPE_LABELS: Record<string, string> = {
+  auto: '自动判断', course_lecture: '课程/讲座', interview_podcast: '访谈/播客',
+  science_explainer: '科普讲解', tutorial: '教程', other_knowledge: '其他知识内容', generic_knowledge: '通用知识内容',
+}
+const MEDIA_POLICY_LABELS: Record<string, string> = {
+  subtitle_only: '仅使用平台字幕', audio_transcript: '字幕缺失时转写音频',
+  low_res_visual: '加入低清视觉证据', video_required: '下载完整视频并分析画面',
+}
+const QUALITY_LABELS: Record<string, string> = { fast: '快速', balanced: '均衡', thorough: '深入' }
+const BUDGET_LABELS: Record<string, string> = { economy: '经济', standard: '标准', quality: '质量优先' }
+const CAPABILITY_LABELS: Record<string, string> = {
+  word_timestamps: '词级时间定位', speaker_diarization: '区分说话人',
+  visual_evidence: '提取视觉证据', query_ready: '加入知识库检索',
+}
+const OUTPUT_LABELS: Record<string, string> = {
+  markdown_note: '知识笔记', quick_summary: '快速摘要', concept_cards: '概念卡片',
+  qa_cards: '问答卡片', interview_analysis: '访谈观点', science_explainer: '科普梳理',
+}
+
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested'])
 
 function errorText(error: unknown, fallback: string): string {
@@ -329,7 +354,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   const previewEstimate = preview ? formatEstimate(estimateForPreset(preview.preset)) : null
 
   return (
-    <div className="mx-auto max-w-3xl p-6" data-testid="vk-panel">
+    <div className="mx-auto max-w-3xl p-3 sm:p-6" data-testid="vk-panel">
       {/* 健康条 */}
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
         <span className="text-sm font-medium">视频解析引擎</span>
@@ -433,68 +458,71 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             style={fieldStyle}
           />
         </label>
-        <div className="mb-2 grid grid-cols-2 gap-2">
-          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            preset
-            <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-              {PRESETS.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            内容类型(默认随 preset)
-            <select data-testid="vk-content-type" value={contentType} onChange={(e) => setContentType(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-              <option value="">preset 默认</option>
-              {CONTENT_TYPES.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            媒体策略
-            <select data-testid="vk-media-policy" value={mediaPolicy} onChange={(e) => setMediaPolicy(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-              <option value="">preset 默认</option>
-              {MEDIA_POLICIES.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            质量档
-            <select data-testid="vk-quality" value={quality} onChange={(e) => setQuality(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-              <option value="">preset 默认</option>
-              {QUALITY_PROFILES.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            预算档位(路由)
-            <select data-testid="vk-budget-profile" value={budgetProfile} onChange={(e) => setBudgetProfile(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-              <option value="">preset 默认</option>
-              {BUDGET_PROFILES.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          <label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            费用硬上限(¥,后端强制)
-            <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder="不设 = 无上限" className={`${fieldClass} mt-1`} style={fieldStyle} />
-          </label>
-        </div>
-        <fieldset className="mb-2 rounded-lg p-2 text-xs" style={{ border: '1px solid var(--color-line)' }}>
-          <legend style={{ color: 'var(--color-fg-dim)' }}>capabilities</legend>
-          <div className="flex flex-wrap gap-3">
-            {CAPABILITIES.map((value) => (
-              <label key={value} className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  data-testid={`vk-cap-${value}`}
-                  checked={caps.includes(value)}
-                  onChange={(e) => setCaps((current) => (
-                    e.target.checked ? [...current, value] : current.filter((item) => item !== value)
-                  ))}
-                />
-                {value}
-              </label>
-            ))}
-            <label className="flex items-center gap-1">
-              <input type="checkbox" data-testid="vk-audit" checked={audit} onChange={(e) => setAudit(e.target.checked)} />
-              生成 Audit
+        <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          处理目的
+          <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+            {PRESETS.map((value) => <option key={value} value={value}>{PRESET_LABELS[value]}</option>)}
+          </select>
+        </label>
+        <details data-testid="vk-advanced-settings" className="mb-3 rounded-lg p-2 text-xs" style={{ border: '1px solid var(--color-line)' }}>
+          <summary className="cursor-pointer select-none" style={{ color: 'var(--color-fg-dim)' }}>高级设置</summary>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+              内容类型
+              <select data-testid="vk-content-type" value={contentType} onChange={(e) => setContentType(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                <option value="">跟随处理目的</option>
+                {CONTENT_TYPES.map((value) => <option key={value} value={value}>{CONTENT_TYPE_LABELS[value]}</option>)}
+              </select>
+            </label>
+            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+              媒体处理方式
+              <select data-testid="vk-media-policy" value={mediaPolicy} onChange={(e) => setMediaPolicy(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                <option value="">跟随处理目的</option>
+                {MEDIA_POLICIES.map((value) => <option key={value} value={value}>{MEDIA_POLICY_LABELS[value]}</option>)}
+              </select>
+            </label>
+            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+              处理深度
+              <select data-testid="vk-quality" value={quality} onChange={(e) => setQuality(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                <option value="">跟随处理目的</option>
+                {QUALITY_PROFILES.map((value) => <option key={value} value={value}>{QUALITY_LABELS[value]}</option>)}
+              </select>
+            </label>
+            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+              成本偏好
+              <select data-testid="vk-budget-profile" value={budgetProfile} onChange={(e) => setBudgetProfile(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                <option value="">跟随处理目的</option>
+                {BUDGET_PROFILES.map((value) => <option key={value} value={value}>{BUDGET_LABELS[value]}</option>)}
+              </select>
+            </label>
+            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+              最高费用（¥）
+              <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder="不设置上限" className={`${fieldClass} mt-1`} style={fieldStyle} />
             </label>
           </div>
-        </fieldset>
+          <fieldset className="mt-3 rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
+            <legend style={{ color: 'var(--color-fg-dim)' }}>附加能力</legend>
+            <div className="flex flex-wrap gap-3">
+              {CAPABILITIES.map((value) => (
+                <label key={value} className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    data-testid={`vk-cap-${value}`}
+                    checked={caps.includes(value)}
+                    onChange={(e) => setCaps((current) => (
+                      e.target.checked ? [...current, value] : current.filter((item) => item !== value)
+                    ))}
+                  />
+                  {CAPABILITY_LABELS[value]}
+                </label>
+              ))}
+              <label className="flex items-center gap-1">
+                <input type="checkbox" data-testid="vk-audit" checked={audit} onChange={(e) => setAudit(e.target.checked)} />
+                生成证据审计报告
+              </label>
+            </div>
+          </fieldset>
+        </details>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -504,7 +532,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
           >
-            预检
+            查看处理方案
           </button>
           <button
             type="button"
@@ -514,22 +542,26 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
           >
-            提交解析
+            开始解析
           </button>
         </div>
         {previewError && <div data-testid="vk-preview-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{previewError}</div>}
         {submitError && <div data-testid="vk-submit-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{submitError}</div>}
         {preview && previewEstimate && (
           <div data-testid="vk-preview" className="mt-3 rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)' }}>
-            <div className="mb-1 font-medium" style={{ color: 'var(--color-fg)' }}>请求投影(默认值已由引擎解析)</div>
+            <div className="mb-1 font-medium" style={{ color: 'var(--color-fg)' }}>处理方案（已应用默认设置）</div>
             <div style={{ color: 'var(--color-fg-dim)' }}>
-              preset={preview.preset} · 内容类型={preview.content_type} · 媒体策略={preview.media_policy} · 质量={preview.quality_profile} · 预算档={preview.budget_profile}
+              目的：{PRESET_LABELS[preview.preset] ?? preview.preset} · 内容：{CONTENT_TYPE_LABELS[preview.content_type] ?? preview.content_type}
+              {' · '}媒体：{MEDIA_POLICY_LABELS[preview.media_policy] ?? preview.media_policy}
+              {' · '}深度：{QUALITY_LABELS[preview.quality_profile] ?? preview.quality_profile}
+              {' · '}成本：{BUDGET_LABELS[preview.budget_profile] ?? preview.budget_profile}
             </div>
             <div style={{ color: 'var(--color-fg-dim)' }}>
-              输出目标(由 preset 决定):{preview.output_targets.join('、')}
+              输出：{preview.output_targets.map((target) => OUTPUT_LABELS[target] ?? target).join('、')}
             </div>
             <div style={{ color: 'var(--color-fg-dim)' }}>
-              capabilities:{preview.requested_capabilities.length ? preview.requested_capabilities.join('、') : '无'} · audit:{preview.audit_requested ? '是' : '否'}
+              增强能力：{preview.requested_capabilities.length ? preview.requested_capabilities.map((cap) => CAPABILITY_LABELS[cap] ?? cap).join('、') : '无'}
+              {' · '}证据审计报告：{preview.audit_requested ? '生成' : '不生成'}
             </div>
             <div data-testid="vk-preview-estimates" style={{ color: 'var(--color-fg-dim)' }}>
               预估费用 {previewEstimate.cost} · 预估耗时 {previewEstimate.duration}

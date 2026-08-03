@@ -13,6 +13,8 @@ test('三栏 + 顶部健康 pill 显示演示模式', () => {
   expect(screen.getByTestId('col-config')).toBeInTheDocument()
   expect(screen.getByTestId('col-runs')).toBeInTheDocument()
   expect(screen.getByTestId('health-pill')).toHaveTextContent('演示模式')
+  expect(screen.getByTestId('app-header')).toHaveClass('flex-wrap')
+  expect(screen.getByTestId('app-header-actions')).toHaveClass('app-header-actions')
 })
 
 test('真实 Host 注入时顶栏给出三路合一的总结论', async () => {

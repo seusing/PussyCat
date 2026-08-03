@@ -55,6 +55,7 @@ export function LoginStatusPanel() {
   const selectCommand = useAppStore((s) => s.selectCommand)
 
   const [auto, setAuto] = useAutoRefresh()
+  const [actionGroupOpen, setActionGroupOpen] = useState(true)
   const now = Date.now()
 
   // 站点清单来自目录里所有 whoami 命令 —— **不维护写死的站点列表**。
@@ -122,12 +123,12 @@ export function LoginStatusPanel() {
     const canCheck = CHECKABLE.includes(r.state) && !rowBusy
     return (
       <div key={r.commandKey} data-testid={`login-row-${r.site}`}
-        className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0"
+        className="flex flex-wrap items-center gap-3 border-b px-3 py-2 last:border-b-0"
         style={{ borderColor: 'var(--color-line)', opacity: r.state === 'not-approved' ? 0.55 : 1 }}>
         <span className="w-32 shrink-0 truncate text-sm">{siteLabel(r.site)}</span>
         <span data-testid={`login-state-${r.site}`} className="w-24 shrink-0 text-xs"
           style={{ color: STATE_COLOR[r.state] }}>{STATE_TEXT[r.state]}</span>
-        <span className="min-w-0 flex-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+        <span className="order-last min-w-0 basis-full truncate text-xs sm:order-none sm:basis-auto sm:flex-1" style={{ color: 'var(--color-fg-dim)' }}>
           {r.state === 'not-approved' ? '该站的 whoami 尚未通过安全审定，Host 不会执行' : (r.entry?.detail ?? '')}
         </span>
         <span className="w-20 shrink-0 text-right text-xs" style={{ color: 'var(--color-fg-dim)' }}>
@@ -154,7 +155,7 @@ export function LoginStatusPanel() {
   })
 
   return (
-    <div className="mx-auto max-w-3xl p-6">
+    <div className="mx-auto max-w-3xl p-3 sm:p-6">
       <h2 className="mb-1 text-lg font-semibold">登录状态</h2>
       <p className="mb-4 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
         用各站点的 whoami 命令检查登录态。
@@ -216,7 +217,11 @@ export function LoginStatusPanel() {
       )}
 
       <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
-        <details data-testid="login-group-action" open>
+        <details
+          data-testid="login-group-action"
+          open={actionGroupOpen}
+          onToggle={(event) => setActionGroupOpen(event.currentTarget.open)}
+        >
           <summary className="cursor-pointer px-3 py-2 text-sm font-medium">需要处理 ({actionRows.length})</summary>
           {renderRows(actionRows)}
         </details>
@@ -225,7 +230,7 @@ export function LoginStatusPanel() {
           {renderRows(loggedInRows)}
         </details>
         <details data-testid="login-group-other">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">未配置或其他 ({otherRows.length})</summary>
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">尚未审定 ({otherRows.length})</summary>
           {renderRows(otherRows)}
         </details>
         {rows.length === 0 && (

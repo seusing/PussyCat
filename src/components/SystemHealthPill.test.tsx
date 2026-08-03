@@ -71,6 +71,7 @@ describe('三路合一的总结论', () => {
 
   test('视频解析状态未知不冒充正常且不提供浏览器修复', () => {
     expect(aggregate({ ...ok, vk: undefined })).toMatchObject({ tone: 'warn', label: '视频解析状态未知', canRepair: false })
+    expect(aggregate({ ...ok, vk: 'future-status' })).toMatchObject({ tone: 'warn', label: '视频解析状态未知', canRepair: false })
   })
 
   test('演示模式如实标演示,不冒充健康', () => {
@@ -185,6 +186,32 @@ test('就绪时只给结论,不内联 daemon/扩展/profile 及版本明细', as
   expect(text).not.toContain('daemon')
 })
 
+test('点击状态结论才展开三路明细与最后检查时间', async () => {
+  routeFetch()
+  connected()
+  render(<SystemHealthPill baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+
+  expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('health-details-toggle'))
+
+  const details = screen.getByTestId('health-details')
+  expect(details).toHaveTextContent('爪爪服务')
+  expect(details).toHaveTextContent('浏览器连接')
+  expect(details).toHaveTextContent('视频解析')
+  expect(details).toHaveTextContent('最后检查')
+  expect(details).toHaveTextContent('1.8.6')
+})
+
+test('视频解析未配置在详情中如实显示，不写成按需启动', async () => {
+  routeFetch({ vk: { status: 'not-configured' } })
+  connected()
+  render(<SystemHealthPill baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+  await userEvent.click(screen.getByTestId('health-details-toggle'))
+  expect(screen.getByTestId('health-details')).toHaveTextContent('视频解析未配置')
+})
+
 test('扩展未连接时展示 Host 给的失败原因,不是前端自己编一句', async () => {
   routeFetch({ bridgeHealth: bridge({ extension: 'disconnected', reasonCode: 'extension-disconnected', summary: 'daemon 在运行,但 Chrome 扩展未连上' }) })
   connected()
@@ -211,7 +238,7 @@ test('窗口重获焦点时自动重探 —— 你去开了浏览器,切回来�
 
   routeFetch()                                                    // 用户把浏览器打开了
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000)      // 越过去重窗口
-  window.dispatchEvent(new Event('focus'))
+  act(() => { window.dispatchEvent(new Event('focus')) })
 
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
 })
@@ -236,6 +263,8 @@ test('全部正常时按钮为重新检查状态,仅 GET 健康检查且不发 r
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+  expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('health-details-toggle'))
   const button = screen.getByTestId('health-repair')
   expect(button).toHaveTextContent('重新检查状态')
   await userEvent.click(button)
@@ -260,6 +289,7 @@ test('点「检测并修复」打 POST,并采信 Host 复检后的 health', asyn
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器服务未运行'))
+  await userEvent.click(screen.getByTestId('health-details-toggle'))
   expect(screen.getByTestId('health-repair')).toHaveTextContent('修复浏览器连接')
 
   await userEvent.click(screen.getByTestId('health-repair'))
@@ -283,6 +313,7 @@ test('修不好时把 Host 给的下一步照原样显示 —— 不把"修不�
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接'))
+  await userEvent.click(screen.getByTestId('health-details-toggle'))
 
   await userEvent.click(screen.getByTestId('health-repair'))
 

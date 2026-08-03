@@ -31,7 +31,7 @@ function ModuleTabs() {
     { key: 'vk' as const, label: '视频解析' },
   ]
   return (
-    <div className="flex items-center gap-1" data-testid="module-tabs">
+    <div className="app-module-tabs flex items-center gap-1 overflow-x-auto" data-testid="module-tabs">
       {tabs.map((t) => (
         <button
           key={t.key}
@@ -122,8 +122,8 @@ export default function AppShell({ nav, config, runs, fullPage, catalogStatus, c
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: 'var(--color-line)' }}>
-        <div className="flex items-center gap-3">
+      <header data-testid="app-header" className="app-header flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2" style={{ borderColor: 'var(--color-line)' }}>
+        <div className="app-header-primary flex min-w-0 flex-wrap items-center gap-3">
           {!fullPage && <button
             type="button"
             data-testid="toggle-nav"
@@ -138,7 +138,7 @@ export default function AppShell({ nav, config, runs, fullPage, catalogStatus, c
           <div className="font-semibold">爪爪</div>
           <ModuleTabs />
         </div>
-        <div className="flex items-center gap-3">
+        <div data-testid="app-header-actions" className="app-header-actions ml-auto flex flex-wrap items-center justify-end gap-3">
           {headerActions}
           <SystemHealthPill baseUrl={baseUrl} />
           {!fullPage && <button
