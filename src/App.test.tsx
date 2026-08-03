@@ -95,7 +95,7 @@ test('登录和视频模块不显示命令列表操作', async () => {
   useAppStore.setState({ activeModule: 'login' })
   render(<App />)
   expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
-  useAppStore.setState({ activeModule: 'vk' })
+  act(() => useAppStore.setState({ activeModule: 'vk' }))
   expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
 })
 
