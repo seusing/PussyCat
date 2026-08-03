@@ -769,6 +769,62 @@ describe('/start 试点 argv 白名单(HTTP 层)', () => {
 })
 
 // ——— BrowserBridge 健康诊断(HTTP 层)————————————————————————————————
+describe('/browser-bridge/repair', () => {
+  const stopped = {
+    checkedAt: 1, daemon: 'stopped', extension: 'unknown', profile: 'unknown',
+    profileCount: 0, retryable: true, reasonCode: 'daemon-stopped', summary: 'daemon 未运行',
+  }
+  const ok = {
+    checkedAt: 2, daemon: 'running', extension: 'connected', profile: 'ready',
+    profileCount: 1, retryable: false, reasonCode: 'ok', summary: '就绪',
+  }
+
+  it('POST 走修复阶梯:重启 daemon 后复检通过', async () => {
+    const seen = []
+    let call = 0
+    const { baseUrl } = await setup({
+      browserBridgeHealth: async () => (++call === 1 ? stopped : ok),
+      runOpenCli: async (argv) => { seen.push(argv); return { code: 0, failed: false } },
+      launchBrowser: async () => ({ launched: true }),
+    })
+    const res = await fetch(`${baseUrl}/browser-bridge/repair`, { method: 'POST', headers: { Origin: origin } })
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(seen).toEqual([['daemon', 'restart']])
+    expect(body.repaired).toBe(true)
+    expect(body.health.reasonCode).toBe('ok')
+  })
+
+  it('修不成也返回 200 + 真实 health 与可照做的下一步,不是 5xx', async () => {
+    const noExt = { ...ok, extension: 'disconnected', reasonCode: 'extension-disconnected', summary: '扩展未连上' }
+    const { baseUrl } = await setup({
+      browserBridgeHealth: async () => noExt,
+      runOpenCli: async () => ({ code: 0, failed: false }),
+      launchBrowser: async () => ({ launched: true }),
+    })
+    const res = await fetch(`${baseUrl}/browser-bridge/repair`, { method: 'POST', headers: { Origin: origin } })
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.repaired).toBe(false)          // 动作做了,问题没解决 —— 不许报成功
+    expect(body.health.reasonCode).toBe('extension-disconnected')
+    expect(body.nextStep).toContain('OpenCLI 扩展')
+  })
+
+  it('GET 不是修复入口 —— 有副作用的动作不挂在 GET 上', async () => {
+    const { baseUrl } = await setup({ browserBridgeHealth: async () => ok })
+    const res = await fetch(`${baseUrl}/browser-bridge/repair`, { headers: { Origin: origin } })
+    expect(res.status).toBe(404)
+  })
+
+  it('跨源 POST 被拒 —— 与其它端点同一道 Origin 闸', async () => {
+    const { baseUrl } = await setup({ browserBridgeHealth: async () => ok })
+    const res = await fetch(`${baseUrl}/browser-bridge/repair`, { method: 'POST', headers: { Origin: 'http://evil.example' } })
+    expect(res.status).toBe(403)
+  })
+})
+
 describe('/browser-bridge/health', () => {
   it('转发结构化诊断,且带上 Host 自己知道的 opencliVersion', async () => {
     const { baseUrl } = await setup({

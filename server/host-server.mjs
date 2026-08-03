@@ -7,6 +7,11 @@ import {
 } from './policy.mjs'
 import { POLICY_SCHEMA_VERSION } from './policy-fingerprint.mjs'
 import { checkBrowserBridgeHealth } from './browser-bridge-health.mjs'
+import {
+  repairBrowserBridge,
+  runOpenCli as runOpenCliDefault,
+  launchBrowser as launchBrowserDefault,
+} from './browser-bridge-repair.mjs'
 import { VkSidecarError } from './vk-sidecar.mjs'
 import { VkRuntimeError } from './vk-runtime.mjs'
 
@@ -169,6 +174,10 @@ export function createHostServer({
   runManagerOptions = {},
   sseOptions = {},
   browserBridgeHealth = checkBrowserBridgeHealth,
+  // 修复动作三件套都可注入:测试里绝不允许真去重启 daemon 或弹出一个浏览器窗口。
+  browserBridgeRepair = repairBrowserBridge,
+  runOpenCli = runOpenCliDefault,
+  launchBrowser = launchBrowserDefault,
   vkSidecar = null,
   vkJobShadow = null,
   vkRuntime = null,
@@ -289,6 +298,18 @@ export function createHostServer({
       if (url.pathname === '/browser-bridge/health' && request.method === 'GET') {
         writeJson(response, 200, await browserBridgeHealth({
           opencliVersion: activePolicy().opencliVersion,
+        }))
+        return
+      }
+
+      // 「检测并修复」。POST 而非 GET:它有副作用(可能重启 daemon、拉起浏览器)。
+      // 与 /health 同样**永不 5xx** —— 修不成也是一种结构化结果,而且这个端点的返回里
+      // 永远带着复检后的真实 health:动作做没做成,和桥接好没好,是两件事。
+      if (url.pathname === '/browser-bridge/repair' && request.method === 'POST') {
+        writeJson(response, 200, await browserBridgeRepair({
+          probe: () => browserBridgeHealth({ opencliVersion: activePolicy().opencliVersion }),
+          restartDaemon: () => runOpenCli(['daemon', 'restart'], { opencliEntry }),
+          openBrowser: () => launchBrowser(),
         }))
         return
       }
