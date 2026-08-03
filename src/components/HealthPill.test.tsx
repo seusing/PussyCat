@@ -17,11 +17,11 @@ test('connected 初态「检查中…」,首 ping 落定前不得显示已连接
   expect(screen.getByTestId('health-pill')).toHaveTextContent('检查中…')
 })
 
-test('ping ok → 已连接;ping fail → Host 离线', async () => {
+test('ping ok → 本地服务正常;ping fail → Host 离线', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
   useAppStore.setState({ mode: 'connected' })
   const { unmount } = render(<HealthPill />)
-  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('已连接'))
+  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('本地服务正常'))
   unmount()
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('down')))
   render(<HealthPill />)
@@ -41,10 +41,10 @@ test('慢旧响应不倒灌(世代 latest-wins)', async () => {
     render(<HealthPill />)
     await act(async () => { vi.advanceTimersByTime(5000) })       // 第 2 发发出并落定 online
     await act(async () => {})                                     // flush 微任务
-    expect(screen.getByTestId('health-pill')).toHaveTextContent('已连接')
+    expect(screen.getByTestId('health-pill')).toHaveTextContent('本地服务正常')
     resolveSlow({ ok: false })                                    // 旧响应姗姗来迟
     await act(async () => {})
-    expect(screen.getByTestId('health-pill')).toHaveTextContent('已连接')   // 未被倒灌
+    expect(screen.getByTestId('health-pill')).toHaveTextContent('本地服务正常')   // 未被倒灌
   } finally { vi.useRealTimers() }
 })
 

@@ -31,15 +31,13 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-test('就绪时展示 daemon/扩展/profile 三项与版本', async () => {
+test('就绪时只展示最关键结论,不内联 daemon/扩展/profile 及版本明细', async () => {
   stubFetch(health())
   render(<BrowserBridgeStatus baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('浏览器桥接就绪'))
+  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('浏览器已就绪'))
   const detail = screen.getByTestId('bridge-detail')
-  expect(detail).toHaveTextContent('daemon 运行中')
-  expect(detail).toHaveTextContent('扩展 已连接')
-  expect(detail).toHaveTextContent('profile 就绪')
-  expect(detail).toHaveTextContent('opencli 1.8.6')
+  expect(detail.textContent).toBe('')
+  expect(screen.getByTestId('browser-bridge-status').getAttribute('title')).toBe('浏览器已就绪')
 })
 
 test('扩展未连接时展示 Host 给的失败原因,而不是前端自己编一句', async () => {
@@ -49,9 +47,8 @@ test('扩展未连接时展示 Host 给的失败原因,而不是前端自己编�
     summary: 'daemon 在运行,但 Chrome 扩展未连上',
   }))
   render(<BrowserBridgeStatus baseUrl={BASE} />)
-  // 文案直接来自 Host 的 summary —— 前端不重写判定,也不重写措辞。
-  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('daemon 在运行,但 Chrome 扩展未连上'))
-  expect(screen.getByTestId('bridge-detail')).toHaveTextContent('扩展 未连接')
+  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('浏览器扩展未连接'))
+  expect(screen.getByTestId('bridge-detail').textContent).toBe('')
 })
 
 test('daemon 未运行 → 如实展示,不谎报就绪', async () => {
@@ -61,8 +58,8 @@ test('daemon 未运行 → 如实展示,不谎报就绪', async () => {
     summary: 'daemon 未运行(首次执行浏览器命令时 opencli 会自行拉起)',
   }))
   render(<BrowserBridgeStatus baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('bridge-detail')).toHaveTextContent('daemon 未运行'))
-  expect(screen.getByTestId('bridge-label')).not.toHaveTextContent('就绪')
+  await waitFor(() => expect(screen.getByTestId('bridge-label')).toHaveTextContent('daemon 未运行'))
+  expect(screen.getByTestId('bridge-detail').textContent).toBe('')
 })
 
 test('探测本身失败(Host 不可达)与「Host 说没就绪」区分开', async () => {

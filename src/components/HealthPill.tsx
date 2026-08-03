@@ -44,7 +44,7 @@ export function HealthPill({ baseUrl }: { baseUrl?: string } = {}) {
     }
   }, [mode, baseUrl])
 
-  const label = demo ? '演示模式' : state === 'checking' ? '检查中…' : state === 'online' ? '已连接' : 'Host 离线'
+  const label = demo ? '演示模式' : state === 'checking' ? '检查中…' : state === 'online' ? '本地服务正常' : 'Host 离线'
   const color = demo ? 'var(--color-warning)' : state === 'checking' ? 'var(--color-fg-dim)' : state === 'online' ? 'var(--color-success)' : 'var(--color-danger)'
 
   return (
