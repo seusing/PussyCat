@@ -36,7 +36,7 @@ test('真实 Host 注入时顶栏给出三路合一的总结论', async () => {
   }
   render(<App host={host} mode="connected" />)
   expect(screen.getByTestId('health-pill')).toHaveTextContent('检查中…')   // 新语义初态,顺带回归护栏
-  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('全部正常'))
+  await waitFor(() => expect(screen.getByTestId('health-pill')).toHaveTextContent('基础连接正常'))
 })
 
 // —— 左右栏显示/隐藏开关:直接渲染 AppShell(不经过 App/store),避免耦合目录加载与 Host 状态 ——
