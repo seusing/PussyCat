@@ -7,6 +7,7 @@ import { createCatalogService } from './catalog-service.mjs'
 import { VkSidecarManager } from './vk-sidecar.mjs'
 import { createVkJobShadow } from './vk-job-shadow.mjs'
 import { VkRuntimeManager } from './vk-runtime.mjs'
+import { resolveRunManagerOptions } from './run-manager-options.mjs'
 
 // Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
 // 注:20 已 EOL,是"最低可运行"而非推荐;推荐当前 LTS(22/24)。
@@ -112,11 +113,7 @@ try {
     vkSidecar,
     vkJobShadow,
     vkRuntime,
-    runManagerOptions: {
-      cancelGraceMs: Number.parseInt(process.env.OPENCLI_HOST_CANCEL_GRACE_MS ?? '2000', 10),
-      commandTimeoutMs: Number.parseInt(process.env.OPENCLI_HOST_COMMAND_TIMEOUT_MS ?? '90000', 10),
-      maxConcurrentRuns: Number.parseInt(process.env.OPENCLI_HOST_MAX_CONCURRENT_RUNS ?? '1', 10),
-    },
+    runManagerOptions: resolveRunManagerOptions(process.env),
   })
 
   const address = await app.listen({ host, port })

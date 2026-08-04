@@ -159,10 +159,11 @@ export function LoginStatusPanel() {
   return (
     <div className="mx-auto max-w-3xl p-3 sm:p-6">
       <h2 className="mb-1 text-lg font-semibold">登录状态</h2>
+      {/* 一句话。原文三行讲机制(whoami、真发请求、只对审定过的生效),用户不会读,
+          读了也不改变他要做什么 —— 他唯一需要知道的是「别把浏览器登录退掉」。
+          机制说明没有丢:审定与确认的状态就写在每一行的状态列里,那里才是它该在的位置。 */}
       <p className="mb-4 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-        用各站点的 whoami 命令检查登录态。
-        <strong style={{ color: 'var(--color-fg)' }}> 检查会真的用你浏览器里的登录状态发一次请求</strong>
-        ，因此只对已通过安全审定、且你确认过的命令生效。
+        请持续保持你已登录的浏览器会话
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3"

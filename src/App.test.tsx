@@ -637,6 +637,77 @@ describe('登录状态检查的接线', () => {
   })
 
   /** 渲染 App 并暴露 startCommand 间谍与 onDone 触发器。 */
+  it('撞上 Host 并发闸门(429)时退回队列重试,不显示成「检查失败」', async () => {
+    // 用户实测撞到的形状:界面上写着「检查失败 Maximum concurrent runs reached」。
+    // 那是 Host 满了,不是这个站点有毛病 —— 不该把容量问题甩成站点故障。
+    const starts: string[] = []
+    let rejectNext = true
+    const host = {
+      startCommand: vi.fn(async (req: { runId: string; commandKey: string }) => {
+        starts.push(req.commandKey)
+        if (rejectNext) {
+          rejectNext = false
+          throw new HostRequestError('Maximum concurrent runs reached', undefined, 429)
+        }
+        return { runId: req.runId }
+      }),
+      cancelCommand: async () => {},
+      onOutput: () => () => {},
+      onDone: () => () => {},
+    }
+    const commands = [whoami('xiaohongshu')]
+    const catalogSource = {
+      kind: 'live' as const,
+      load: async () => ({
+        snapshot: {
+          schemaVersion: 1, generatedAt: 1, opencliVersion: 't', source: 't',
+          listSha256: 't', manifestSha256: 't', commands,
+        },
+        decisions: [ackDecision('xiaohongshu')],
+      }),
+    }
+    render(<App host={host as never} catalogSource={catalogSource as never} mode="connected" />)
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(1))
+    act(() => {
+      useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+      useAppStore.getState().enqueueLoginChecks(['xiaohongshu'])
+    })
+
+    await waitFor(() => expect(starts.length).toBe(1))
+    // 429 之后**不是** error:退回队列,等有位子了再发一次。
+    await waitFor(() => expect(starts.length).toBe(2), { timeout: 3000 })
+    expect(useAppStore.getState().loginChecks.xiaohongshu?.state).not.toBe('error')
+  })
+
+  it('非 429 的启动失败仍然如实记成检查失败 —— 不把真故障也吞成重试', async () => {
+    const host = {
+      startCommand: vi.fn(async () => { throw new HostRequestError('命令已被策略拒绝', undefined, 403) }),
+      cancelCommand: async () => {},
+      onOutput: () => () => {},
+      onDone: () => () => {},
+    }
+    const commands = [whoami('xiaohongshu')]
+    const catalogSource = {
+      kind: 'live' as const,
+      load: async () => ({
+        snapshot: {
+          schemaVersion: 1, generatedAt: 1, opencliVersion: 't', source: 't',
+          listSha256: 't', manifestSha256: 't', commands,
+        },
+        decisions: [ackDecision('xiaohongshu')],
+      }),
+    }
+    render(<App host={host as never} catalogSource={catalogSource as never} mode="connected" />)
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(1))
+    act(() => {
+      useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+      useAppStore.getState().enqueueLoginChecks(['xiaohongshu'])
+    })
+
+    await waitFor(() => expect(useAppStore.getState().loginChecks.xiaohongshu?.state).toBe('error'))
+    expect(useAppStore.getState().loginChecks.xiaohongshu?.detail).toContain('策略')
+  })
+
   function renderApp(sites: string[]) {
     const starts: { runId: string; commandKey: string }[] = []
     let emitDone: ((e: { runId: string; at: number; outcome: 'success' | 'error'; result?: Record<string, unknown>[] }) => void) | undefined

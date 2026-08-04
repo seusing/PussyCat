@@ -25,6 +25,10 @@ import { isAcknowledged } from './data/preferences'
 // 否则多出来的那些只会拿到 429。取 3 是因为这些命令等的是浏览器往返而不是本机算力;
 // 真机上若观察到标签页抢焦点或 daemon 吃不消,把这个数字调小即可,不必改结构。
 const LOGIN_CHECK_CONCURRENCY = 3
+// 撞上 Host 并发闸门(429)后的退回重试。上限防止并发数再次配错时打成热循环;
+// 延迟保证退回去的站点不会被同一轮立刻捞起来重发。
+const LOGIN_CHECK_MAX_REQUEUE = 3
+const LOGIN_CHECK_REQUEUE_DELAY_MS = 400
 
 export function normalizeHostError(e: unknown, context: 'start' | 'cancel'): { summary: string; detail?: string } {
   const fallback = context === 'cancel' ? '取消请求失败' : '任务启动失败'
@@ -114,6 +118,7 @@ export default function App({
   const loginQueue = useAppStore((s) => s.loginQueue)
   const loginInFlights = useAppStore((s) => s.loginInFlights)
   const currentRun = useAppStore((s) => s.currentRun)
+  const loginRetryRef = useRef(new Map<string, number>())
   useEffect(() => {
     if (loginQueue.length === 0) return
     const manualBusy = !!currentRun && !isTerminal(currentRun.state)
@@ -156,7 +161,21 @@ export default function App({
         runId, commandKey: cmd.command, argv: buildArgv(cmd, {}),
         ...(needsAck && fp ? { acknowledgement: { fingerprint: fp } } : {}),
       }).catch((err) => {
-        useAppStore.getState().finishLoginCheck(runId, 'error', normalizeHostError(err, 'start').summary, Date.now())
+        const store = useAppStore.getState()
+        // 429 = **Host 满了**,不是这个站点有毛病。把它显示成「检查失败」是在
+        // 甩锅给用户看不懂的地方 —— 退回队列稍后再试才对。带次数上限与延迟:
+        // 没有上限,并发数万一再次配错就会变成热循环;没有延迟,退回去会被同一轮
+        // 立刻捞起来重发,还是打满。
+        const status = err instanceof HostRequestError ? err.status : undefined
+        const attempts = (loginRetryRef.current.get(site) ?? 0) + 1
+        if (status === 429 && attempts <= LOGIN_CHECK_MAX_REQUEUE) {
+          loginRetryRef.current.set(site, attempts)
+          store.finishLoginCheck(runId, 'unchecked', undefined, Date.now())
+          setTimeout(() => { useAppStore.getState().enqueueLoginChecks([site]) }, LOGIN_CHECK_REQUEUE_DELAY_MS)
+          return
+        }
+        loginRetryRef.current.delete(site)
+        store.finishLoginCheck(runId, 'error', normalizeHostError(err, 'start').summary, Date.now())
       })
     }
   }, [host, loginQueue, loginInFlights, currentRun])
