@@ -7,6 +7,10 @@
   --color-line: #262c38;
   --color-fg: #e6e9ef;
   --color-fg-dim: #9aa4b2;
+  /* 占位符专用,比 fg-dim 再暗一档。浏览器默认把 placeholder 渲染成正文色的半透明,
+     在这套深色主题上落点接近 #e6e9ef 的 54%,亮到会被当成"已填好的值"——提示与内容
+     必须一眼分得开,所以单独给一个色阶而不是复用 fg-dim。 */
+  --color-placeholder: #6b7686;
   --color-accent: #4f8cff;
   --color-success: #3fb950;
   --color-warning: #d29922;
@@ -34,6 +38,14 @@
 :root { color-scheme: dark; }
 html, body, #root { height: 100%; }
 body { margin: 0; background: var(--color-canvas); color: var(--color-fg); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: var(--text-body); }
+
+/* 占位符统一走专用色阶。伪元素同样无法用内联 style 表达,与下面分隔条同一个理由。
+   opacity:1 不能省 —— Firefox 会给 placeholder 叠一层默认透明度,只设 color 会在那边偏亮。 */
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-placeholder);
+  opacity: 1;
+}
 
 /* 可拖拽分隔条(见 components/ResizableSplit.tsx)的 hover/拖拽变色——内联 style 无法表达 :hover,
    这是本仓唯一一处不用内联 style 走主题色的地方,原因仅此而已,不是风格漂移。 */

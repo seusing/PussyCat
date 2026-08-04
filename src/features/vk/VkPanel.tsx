@@ -424,9 +424,9 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
               }
               : providerConfigured === false
                 ? {
-                  // 今天真机上那次失败的教训:通道不通要在**第 1 秒**说,不是第 7.5 分钟。
+                  // 通道不通要在**第 1 秒**说,不是第 7.5 分钟。按钮已经说清了下一步,
+                  // 再补一段解释后果的话只是噪声 —— 结论 + 动作,到此为止。
                   text: '还没配置模型通道', color: 'var(--color-warning)',
-                  note: '不配的话,下载与转写会正常跑完,却在最后一步失败。填一次就好。',
                   action: { label: '去配置', run: () => setProviderFormOpen(true) },
                 }
                 : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(activeCandidate) ?? undefined }
@@ -464,12 +464,19 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
       {/* 模型配置不算「开发者信息」:key 会过期,这是用户需要回来改的正经设置。
           平时收着,没配好时由上面那个「去配置」按钮直接展开。 */}
       <div className="mb-4">
+        {/* 按钮要看得出是按钮:细边框 + xs 字号在这一屏里读起来像一行说明文字。
+            给它面板底色、实边框与正文字号,和上面那个主操作按钮同一档尺寸。 */}
         <button
           type="button"
           data-testid="vk-provider-toggle"
+          aria-expanded={providerFormOpen}
           onClick={() => setProviderFormOpen((open) => !open)}
-          className={outlineButton}
-          style={outlineStyle}
+          className="rounded-lg px-3 py-1.5 text-sm font-medium"
+          style={{
+            background: 'var(--color-hover)',
+            border: '1px solid var(--color-line)',
+            color: 'var(--color-fg)',
+          }}
         >
           {providerFormOpen ? '收起模型配置' : '模型配置'}
         </button>

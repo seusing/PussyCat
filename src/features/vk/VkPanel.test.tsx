@@ -92,7 +92,8 @@ describe('VkPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('还没配置模型通道'))
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('去配置')
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('最后一步失败')
+    // 结论 + 动作,到此为止:按钮已经说清下一步,再补一段解释后果的话只是噪声。
+    expect(screen.queryByTestId('vk-verdict-note')).not.toBeInTheDocument()
   })
 
   it('配好之后回到一句就绪,配置入口仍在但收着', async () => {
