@@ -32,6 +32,12 @@ const VK_ROUTES = [
   { method: 'POST', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/(cancel|retry|refresh)$/, target: (m) => `/api/jobs/${m[1]}/${m[2]}`, kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/query$/, target: () => '/api/query', kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/uploads$/, target: (_m, url) => `/api/uploads${url.search}`, kind: 'raw' },
+  // 模型通道配置(sidecar api 1.5.0)。**刻意不挂 tap**:tap 会把请求体投影进
+  // job shadow,而保存/测试这两条路径的请求体里带着 API key —— 那正是 I-P7
+  // 「影子只留五个字段」要挡住的东西。这里连投影都不做,body 只过一次转发。
+  { method: 'GET', pattern: /^\/vk\/v1\/providers$/, target: () => '/api/providers' },
+  { method: 'POST', pattern: /^\/vk\/v1\/providers$/, target: () => '/api/providers', kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/providers\/test$/, target: () => '/api/providers/test', kind: 'json' },
 ]
 
 function matchVkRoute(method, pathname) {

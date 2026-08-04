@@ -293,3 +293,72 @@ export async function downloadVkOutput(outputId: string, baseUrl = DEFAULT_BASE_
   window.open(url, '_blank', 'noopener')
   setTimeout(() => URL.revokeObjectURL(url), 30_000)
 }
+
+// —— 模型通道配置(sidecar api 1.5.0)——
+// **前端永不持有 key**:读回来的只有「存过没有」;填写时 key 只在提交/测试的那一次
+// 请求体里出现,不入 store、不入日志、不落 localStorage。
+
+export interface VkProviderTier {
+  model_id: string
+  key_env: string
+  /** 有可用 key(存过 或 环境变量里有);永远不是 key 本身。 */
+  key_stored: boolean
+  key_from_environment: boolean
+  in_cny: number | null
+  out_cny: number | null
+}
+
+export interface VkProviderSettings {
+  relay_base_url: string
+  tiers: Record<string, VkProviderTier>
+  stage_tiers: Record<string, string>
+  price_snapshot_id: string
+  configured: boolean
+}
+
+export interface VkProviderTestResult {
+  ok: boolean
+  reason_code: string
+  message: string
+  fix_hint?: string | null
+  retryable?: boolean
+  detail?: string | null
+  models?: string[]
+  base_url?: string
+  normalization_notes?: string[]
+  key_stored?: boolean
+}
+
+export interface VkProviderSaveResult {
+  saved: boolean
+  relay_base_url: string
+  normalization_notes: string[]
+  keys_written: string[]
+  keys_injected: string[]
+}
+
+/** 表单提交用:每档可带 api_key(不传该字段 = 不改动已存的那把)。 */
+export interface VkProviderSavePayload {
+  relay_base_url: string
+  tiers: Record<string, { model_id: string; key_env: string; api_key?: string }>
+}
+
+export async function fetchVkProviderSettings(baseUrl = DEFAULT_BASE_URL): Promise<VkProviderSettings> {
+  const response = await fetch(`${baseUrl}/vk/v1/providers`)
+  return parseVkResponse<VkProviderSettings>(response, '模型配置读取失败')
+}
+
+export async function saveVkProviderSettings(
+  payload: VkProviderSavePayload, baseUrl = DEFAULT_BASE_URL,
+): Promise<VkProviderSaveResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/providers`, jsonInit(payload))
+  return parseVkResponse<VkProviderSaveResult>(response, '模型配置保存失败')
+}
+
+export async function testVkProvider(
+  payload: { relay_base_url: string; key_env: string; api_key?: string },
+  baseUrl = DEFAULT_BASE_URL,
+): Promise<VkProviderTestResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/providers/test`, jsonInit(payload))
+  return parseVkResponse<VkProviderTestResult>(response, '连接测试失败')
+}

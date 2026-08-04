@@ -19,6 +19,7 @@ import {
   postVkPreview,
   postVkQuery,
   postVkRuntimeInstall,
+  fetchVkProviderSettings,
 } from '../../host/vkClient'
 import type {
   VkHealth,
@@ -31,6 +32,7 @@ import type {
   VkRuntimeCandidate,
 } from '../../host/vkClient'
 import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
+import { VkProviderForm } from './VkProviderForm'
 import { estimateForPreset, formatEstimate } from './vkEstimates'
 import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
 
@@ -163,6 +165,19 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   // 才 adopt(runtimeToAdopt 已经把"已经最强了"过滤掉了,避免无谓地重启 sidecar)。
   // autoPickedRef 保证每次会话只自动切一次:之后用户在开发者信息里手动指定的环境,
   // 不该被下一次自动体检推翻。
+  // —— 模型通道:装机版没有 providers.local.toml,不配就一定会在最后一步 401 ——
+  // 所以这件事必须在**提交之前**说出来,而不是等用户跑满 7 分半下载转写。
+  const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null)
+  const [providerFormOpen, setProviderFormOpen] = useState(false)
+  const refreshProviders = useCallback(async () => {
+    try {
+      setProviderConfigured((await fetchVkProviderSettings(base)).configured)
+    } catch {
+      setProviderConfigured(null)   // 问不到就别下结论,不冒充已配置
+    }
+  }, [base])
+  useEffect(() => { void refreshProviders() }, [refreshProviders])
+
   const autoPickedRef = useRef(false)
   useEffect(() => {
     if (runtime?.state !== 'installed' || autoPickedRef.current) return
@@ -407,7 +422,14 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
                 note: health?.summary ?? '暂时联系不上解析引擎。',
                 action: { label: '重新检测', run: () => { void checkHealth() } },
               }
-              : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(activeCandidate) ?? undefined }
+              : providerConfigured === false
+                ? {
+                  // 今天真机上那次失败的教训:通道不通要在**第 1 秒**说,不是第 7.5 分钟。
+                  text: '还没配置模型通道', color: 'var(--color-warning)',
+                  note: '不配的话,下载与转写会正常跑完,却在最后一步失败。填一次就好。',
+                  action: { label: '去配置', run: () => setProviderFormOpen(true) },
+                }
+                : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(activeCandidate) ?? undefined }
 
   return (
     <div className="mx-auto max-w-3xl p-3 sm:p-6" data-testid="vk-panel">
@@ -439,6 +461,25 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
 
       {/* 开发者信息:默认折叠。路径、api/schema、逐项能力、环境列表与手动切换、
           重建、会话诊断、安装日志 —— 排障时全在这儿,平时一个字都不占版面。 */}
+      {/* 模型配置不算「开发者信息」:key 会过期,这是用户需要回来改的正经设置。
+          平时收着,没配好时由上面那个「去配置」按钮直接展开。 */}
+      <div className="mb-4">
+        <button
+          type="button"
+          data-testid="vk-provider-toggle"
+          onClick={() => setProviderFormOpen((open) => !open)}
+          className={outlineButton}
+          style={outlineStyle}
+        >
+          {providerFormOpen ? '收起模型配置' : '模型配置'}
+        </button>
+        {providerFormOpen && (
+          <div className="mt-2">
+            <VkProviderForm baseUrl={base} onSaved={() => { void refreshProviders(); void checkHealth() }} />
+          </div>
+        )}
+      </div>
+
       {/* 不用 runtime 门住整块:runtime 拿不到时恰恰最需要排障入口(健康摘要与会话诊断)。 */}
       <details data-testid="vk-developer-details" className="mb-4">
           <summary className="cursor-pointer text-xs" style={{ color: 'var(--color-fg-dim)' }}>开发者信息</summary>

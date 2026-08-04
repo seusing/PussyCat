@@ -78,6 +78,39 @@ describe('VkPanel', () => {
     ...over,
   })
 
+  it('模型通道没配时,在提交之前就说出来 —— 不让用户跑满 7 分半才发现', async () => {
+    // 真机上的原始症状:下载 + 转写成功耗时 7m33s,最后一步 401。通道不通必须在
+    // 第 1 秒可见,而不是第 7.5 分钟。
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { relay_base_url: '', tiers: {}, stage_tiers: {}, price_snapshot_id: 'v14', configured: false } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('还没配置模型通道'))
+    expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('去配置')
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('最后一步失败')
+  })
+
+  it('配好之后回到一句就绪,配置入口仍在但收着', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { relay_base_url: 'https://x/v1', tiers: {}, stage_tiers: {}, price_snapshot_id: 'v14', configured: true } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    // key 会过期,配置入口必须一直够得着 —— 但平时不占版面。
+    expect(screen.getByTestId('vk-provider-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument()
+  })
+
   it('一切正常时只有一句结论,不给按钮 —— 没问题就没有要用户点的东西', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
