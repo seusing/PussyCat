@@ -1,36 +1,60 @@
-// codexradar 公开评分的类型化客户端。**渲染进程不直连 codexradar.com** —— Node 侧
-// 代取并缓存(server/radar.mjs),这里只跟本机 Host 说话,应用的 CSP 因此一字未动。
+// codexradar 三张表的类型化客户端。**渲染进程不直连 codexradar.com** —— Node 侧
+// 代取、算好、缓存(server/radar.mjs + radar-derive.mjs),这里只跟本机 Host 说话,
+// 应用的 CSP 因此一字未动。
 import { HostRequestError } from './errors'
 import { DEFAULT_BASE_URL } from './nodeBridgeHost'
 
+export interface RadarPickItem {
+  id: string
+  /** 如 "Sol xhigh" */
+  label: string
+  color: string
+  iq: number | null
+  costUsd: number | null
+  minutes: number | null
+}
+
+export interface RadarPick {
+  key: string
+  title: string
+  /** 站方给的挑选规则原文,鼠标悬停时显示 —— 不解释清楚,推荐就成了黑箱。 */
+  rule: string
+  items: RadarPickItem[]
+}
+
 export interface RadarModel {
   id: string
+  model: string
+  effort: string
+  /** 家族显示名:Sol / Terra / Luna / 5.5 / DeepSeek V4 Flash */
+  family: string
+  color: string
   label: string
-  /** 模型家族,如 "GPT-5.6 Sol" —— 界面按它分组。 */
-  group: string
-  /** 0–10 的平均分;上游没给就是 null。 */
-  average: number | null
-  /** 样本量。9 票的 4.7 和 215 票的 8.8 不是一回事,必须一起看。 */
-  count: number
+  /** 通过任务数 / 总任务数 × 150。 */
+  iq: number
+  passed: number
+  samples: number
+  costUsd: number | null
+  minutes: number | null
+  /** 24 小时内的运行次数,是这格数字的分量所在。 */
+  runs24: number
+  /** 相对综合成本(最贵的记 100),图表 x 轴用它。 */
+  cci: number | null
 }
 
 export interface RadarRatings {
-  day: string
-  timezone: string
-  /** 上游这批数据的生成时刻(ISO)。 */
-  updatedAt: string
-  window: string
-  windowHours: number | null
-  source: string
+  picks: RadarPick[]
   models: RadarModel[]
-  /** Node 侧这次是不是走了缓存。 */
+  /** 推荐这批数据的生成时刻(ISO)。 */
+  updatedAt: string
+  metricsUpdatedAt: string
+  runs24hTotal: number
+  taskCount: number
   cached: boolean
   /** 上游取不到、拿旧数据顶上 —— 界面必须说清楚。 */
   stale: boolean
-  /** stale 时的原因。 */
   error?: string
   ttlSeconds: number
-  /** Node 侧真正取到这批数据的时刻(epoch ms)。 */
   fetchedAt: number
 }
 

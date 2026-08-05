@@ -1,64 +1,39 @@
-// codexradar.com 的公开评分。**由 Node 侧取,不让渲染进程直连第三方**:
-// 应用的 CSP 现在只放行 'self' 与 127.0.0.1,为了一张表把 codexradar.com 加进
-// connect-src,等于给渲染进程开了一条通往站外的口子 —— 这张表不值那个代价。
+// codexradar.com 的三张表。**由 Node 侧取,不让渲染进程直连第三方**:应用的 CSP
+// 现在只放行 'self' 与 127.0.0.1,为了这几张表把 codexradar.com 加进 connect-src,
+// 等于给渲染进程开了一条通往站外的口子 —— 不值。
 //
-// 同样不用 iframe:那会把第三方的 JS 拉进应用窗口。这里只取 JSON,自己渲染,
-// 并且**只投影出要显示的那几个字段** —— 上游哪天多塞点什么进来,也进不了界面。
+// 同样不用 iframe:那会把第三方的 JS 拉进这个带 Tauri IPC 的窗口。这里只取 JSON、
+// 只投影要显示的字段,自己渲染。
+//
+// 三个上游:
+//   /api/radar-insights                     30KB  推荐卡(站方已算好)
+//   /api/intelligence-efficiency-metrics      6KB  24 小时运行次数
+//   /api/intelligence-efficiency            271KB(gzip) 原始矩阵,IQ/费用/耗时靠它现算
+// 最后那个大,所以缓存按站方自己的节奏(页面是 10 分钟刷一次)。
+import { deriveModels, derivePicks } from './radar-derive.mjs'
 
-export const RADAR_URL = 'https://codexradar.com/api/model-ratings'
-export const DEFAULT_TTL_SECONDS = 300
-/** 上游给的 refresh_seconds 再小,也不至于把人家打爆。 */
-export const MIN_TTL_SECONDS = 30
+const ORIGIN = 'https://codexradar.com'
+export const INSIGHTS_URL = `${ORIGIN}/api/radar-insights`
+export const METRICS_URL = `${ORIGIN}/api/intelligence-efficiency-metrics`
+export const MATRIX_URL = `${ORIGIN}/api/intelligence-efficiency`
+/** 站方页面自己的刷新间隔(内联脚本里的 refreshMs = 10 * 60 * 1000)。 */
+export const DEFAULT_TTL_SECONDS = 600
 
-/** 只留要渲染的字段,顺带把 my_scores 这类跟"某个登录用户"绑定的东西挡在外面。 */
-export function projectRatings(raw) {
-  const models = Array.isArray(raw?.models) ? raw.models : []
-  return {
-    day: str(raw?.day),
-    timezone: str(raw?.timezone),
-    updatedAt: str(raw?.updated_at),
-    window: str(raw?.window),
-    windowHours: Number.isFinite(raw?.window_hours) ? raw.window_hours : null,
-    source: str(raw?.source),
-    models: models
-      .filter((m) => m && typeof m.id === 'string')
-      .map((m) => ({
-        id: m.id,
-        label: str(m.label) || m.id,
-        group: str(m.group) || '其他',
-        average: Number.isFinite(m.average) ? m.average : null,
-        count: Number.isFinite(m.count) ? m.count : 0,
-      })),
-  }
-}
-
-function str(value) {
-  return typeof value === 'string' ? value : ''
-}
-
-export function ttlFrom(raw) {
-  const seconds = Number(raw?.refresh_seconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_TTL_SECONDS
-  return Math.max(MIN_TTL_SECONDS, Math.floor(seconds))
-}
-
-/**
- * 取一次评分,带缓存。
- *
- * · 自动路径(打开标签页)走缓存,TTL 用上游自己报的 refresh_seconds —— 它每 5 分钟
- *   才更新一批,更勤地问只会拿到同样的字节。
- * · 手动路径(用户点刷新)直取上游。人点几下不算滥用,而且不这么做按钮就是个摆设。
- * · 上游挂了但手里有旧数据 —— 给旧的并标 stale,比甩一张白纸强。
- */
 export function createRadarService({
   fetchImpl = (...args) => fetch(...args),
   now = () => Date.now(),
-  url = RADAR_URL,
-  timeoutMs = 8000,
+  urls = {},
+  ttlSeconds = DEFAULT_TTL_SECONDS,
+  timeoutMs = 20000,
 } = {}) {
-  let cache = null   // { data, ttlSeconds, fetchedAt, expiresAt }
+  const endpoints = {
+    insights: urls.insights ?? INSIGHTS_URL,
+    metrics: urls.metrics ?? METRICS_URL,
+    matrix: urls.matrix ?? MATRIX_URL,
+  }
+  let cache = null   // { data, fetchedAt, expiresAt }
 
-  async function fetchUpstream() {
+  async function getJson(url) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -67,34 +42,44 @@ export function createRadarService({
         headers: { Accept: 'application/json' },
       })
       if (!response.ok) throw new Error(`codexradar 返回 ${response.status}`)
-      const raw = await response.json()
-      const data = projectRatings(raw)
-      if (data.models.length === 0) throw new Error('codexradar 没有返回任何模型')
-      const ttlSeconds = ttlFrom(raw)
-      const fetchedAt = now()
-      cache = { data, ttlSeconds, fetchedAt, expiresAt: fetchedAt + ttlSeconds * 1000 }
-      return { ...data, ttlSeconds, fetchedAt, cached: false, stale: false }
+      return await response.json()
     } finally {
       clearTimeout(timer)
     }
   }
 
+  async function fetchUpstream() {
+    const [insights, metrics, matrix] = await Promise.all([
+      getJson(endpoints.insights), getJson(endpoints.metrics), getJson(endpoints.matrix),
+    ])
+    const models = deriveModels(matrix, metrics)
+    if (models.length === 0) throw new Error('codexradar 没有返回任何模型')
+    const data = {
+      picks: derivePicks(insights),
+      models,
+      updatedAt: String(insights?.source_updated_at ?? ''),
+      metricsUpdatedAt: String(metrics?.source_updated_at ?? ''),
+      runs24hTotal: Number(metrics?.runs_24h_total) || 0,
+      taskCount: Array.isArray(matrix?.tasks) ? matrix.tasks.length : 0,
+    }
+    const fetchedAt = now()
+    cache = { data, fetchedAt, expiresAt: fetchedAt + ttlSeconds * 1000 }
+    return { ...data, ttlSeconds, fetchedAt, cached: false, stale: false }
+  }
+
   return {
     async get({ force = false } = {}) {
       if (!force && cache && now() < cache.expiresAt) {
-        return { ...cache.data, ttlSeconds: cache.ttlSeconds, fetchedAt: cache.fetchedAt, cached: true, stale: false }
+        return { ...cache.data, ttlSeconds, fetchedAt: cache.fetchedAt, cached: true, stale: false }
       }
       try {
         return await fetchUpstream()
       } catch (error) {
+        // 上游挂了但手里有旧数据 —— 给旧的并标 stale,比甩一张白纸强。
         if (!cache) throw error
         return {
-          ...cache.data,
-          ttlSeconds: cache.ttlSeconds,
-          fetchedAt: cache.fetchedAt,
-          cached: true,
-          stale: true,
-          error: reasonOf(error),
+          ...cache.data, ttlSeconds, fetchedAt: cache.fetchedAt,
+          cached: true, stale: true, error: reasonOf(error),
         }
       }
     },

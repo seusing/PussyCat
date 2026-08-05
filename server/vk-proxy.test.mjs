@@ -4,7 +4,7 @@ import { fetch as realFetch } from 'undici'
 import { loadExecutionPolicy } from './policy.mjs'
 import { createHostServer } from './host-server.mjs'
 import { createVkJobShadow } from './vk-job-shadow.mjs'
-import { createRadarService } from './radar.mjs'
+import { createRadarService, INSIGHTS_URL, MATRIX_URL, METRICS_URL } from './radar.mjs'
 
 const ORIGIN = 'http://127.0.0.1:5173'
 const openApps = new Set()
@@ -281,18 +281,32 @@ describe('/vk/v1 proxy', () => {
     }
   })
 
-  it('codexradar 走 Node 侧代取 —— 渲染进程不直连第三方,CSP 不必为一张表开口子', async () => {
-    const RAW = {
-      refresh_seconds: 300, updated_at: '2026-08-05T06:45:12.174Z',
-      window: 'rolling_24h', window_hours: 24, source: 'public_cache',
-      models: [{ id: 'gpt-5.6-luna-max', label: 'Luna max', group: 'GPT-5.6 Luna', average: 8.8, count: 215 }],
-      my_scores: { secret: 1 },
+  it('codexradar 走 Node 侧代取 —— 渲染进程不直连第三方,CSP 不必为这几张表开口子', async () => {
+    const BODIES = {
+      [INSIGHTS_URL]: {
+        source_updated_at: '2026-08-05T07:05:35+00:00',
+        recommendations: [{ key: 'daily_development', title: '日常开发', rule: 'r', items: [
+          { model: 'gpt-5.6-sol', effort: 'xhigh', iq: 107.14, average_cost_usd: 6.46, average_duration_minutes: 25.58 },
+        ] }],
+      },
+      [METRICS_URL]: {
+        source_updated_at: '2026-08-05T07:19:31+00:00', runs_24h_total: 501,
+        points: [{ model: 'gpt-5.6-sol', effort: 'xhigh', runs_24h: 13 }],
+      },
+      [MATRIX_URL]: {
+        combos: [{ model: 'gpt-5.6-sol', effort: 'xhigh' }],
+        tasks: [{ id: 't0' }],
+        cells: { 't0|gpt-5.6-sol|xhigh': { ran_by: [
+          { passed: true, graded_at: '2026-08-01T00:00:00Z', actual_cost_usd: 6.46, duration_sec: 1535 },
+        ] } },
+        online_volunteers: 11,
+      },
     }
     const upstream = []
     const radarService = createRadarService({
       fetchImpl: async (url, init) => {
         upstream.push({ url, init })
-        return { ok: true, status: 200, json: async () => RAW }
+        return { ok: true, status: 200, json: async () => BODIES[url] }
       },
     })
     const { baseUrl } = await setup({ radarService })
@@ -304,16 +318,17 @@ describe('/vk/v1 proxy', () => {
     expect(allowed.status).toBe(200)
     const body = await allowed.json()
     expect(body.models).toHaveLength(1)
+    expect(body.picks[0].title).toBe('日常开发')
     expect(body.cached).toBe(false)
-    // 只投影要渲染的字段,my_scores 那类进不了界面。
-    expect(JSON.stringify(body)).not.toContain('my_scores')
-    expect(upstream).toHaveLength(1)
+    // 只投影要渲染的字段,上游那 2.9MB 里的杂项进不了界面。
+    expect(JSON.stringify(body)).not.toContain('online_volunteers')
+    expect(upstream).toHaveLength(3)
 
     // 第二次走缓存,force=1 才直取上游。
     await fetch(`${baseUrl}/radar/v1/model-ratings`, { headers: { Origin: ORIGIN } })
-    expect(upstream).toHaveLength(1)
+    expect(upstream).toHaveLength(3)
     await fetch(`${baseUrl}/radar/v1/model-ratings?force=1`, { headers: { Origin: ORIGIN } })
-    expect(upstream).toHaveLength(2)
+    expect(upstream).toHaveLength(6)
   })
 
   it('codexradar 挂了且没有旧数据时给 502 与人话原因', async () => {
