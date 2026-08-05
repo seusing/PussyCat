@@ -14,6 +14,7 @@ import {
 } from './browser-bridge-repair.mjs'
 import { VkSidecarError } from './vk-sidecar.mjs'
 import { VkRuntimeError } from './vk-runtime.mjs'
+import { createRadarService, reasonOf } from './radar.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
 
@@ -189,6 +190,7 @@ export function createHostServer({
   vkSidecar = null,
   vkJobShadow = null,
   vkRuntime = null,
+  radarService = createRadarService(),
 } = {}) {
   if (!policy) throw new Error('policy is required')
   const activePolicy = () => catalogService?.current()?.policy ?? policy
@@ -392,6 +394,20 @@ export function createHostServer({
         if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
         const status = await vkRuntime.adopt(body?.pythonPath, async () => { await vkSidecar?.stop() })
         writeJson(response, 200, status)
+        return
+      }
+
+      // codexradar 的公开评分。由 Node 侧代取,渲染进程不直连第三方 —— 见 radar.mjs。
+      if (url.pathname === '/radar/v1/model-ratings' && request.method === 'GET') {
+        if (!radarService) {
+          writeJson(response, 503, { error: 'codexradar 未接线', reasonCode: 'not-configured' })
+          return
+        }
+        try {
+          writeJson(response, 200, await radarService.get({ force: url.searchParams.get('force') === '1' }))
+        } catch (error) {
+          writeJson(response, 502, { error: reasonOf(error), reasonCode: 'radar-unavailable' })
+        }
         return
       }
 

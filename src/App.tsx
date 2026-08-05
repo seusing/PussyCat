@@ -12,6 +12,7 @@ import { snapshotCatalogSource, type CatalogSource } from './host'
 import { validate } from './features/config/validation'
 import { LoginStatusPanel } from './features/login/LoginStatusPanel'
 import { VkPanel } from './features/vk/VkPanel'
+import { RadarPanel } from './features/radar/RadarPanel'
 import {
   isLoginCheckRunId, loginCheckRunId, parseWhoamiResult,
 } from './data/loginStatus'
@@ -304,7 +305,9 @@ export default function App({
             ? <LoginStatusPanel />
             : activeModule === 'vk'
               ? <VkPanel baseUrl={baseUrl} />
-              : undefined
+              : activeModule === 'radar'
+                ? <RadarPanel baseUrl={baseUrl} />
+                : undefined
         }
         nav={<SiteCommandNav searchRef={searchInputRef} />}
         config={<CommandConfig onRun={executeSelected} registerSubmit={registerSubmit} />}

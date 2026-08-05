@@ -29,6 +29,7 @@ function ModuleTabs() {
     { key: 'commands' as const, label: '命令' },
     { key: 'login' as const, label: '登录状态' },
     { key: 'vk' as const, label: '视频解析' },
+    { key: 'radar' as const, label: 'Codex Bar' },
   ]
   return (
     <div className="app-module-tabs flex items-center gap-1 overflow-x-auto" data-testid="module-tabs">
