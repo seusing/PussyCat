@@ -236,4 +236,46 @@ describe('/vk/v1 proxy', () => {
     openApps.delete(app)
     expect(vkSidecar.stopped).toBe(true)
   })
+
+  it('转发模型通道四条路由，且请求体不进 job shadow —— 里面带着 API key', async () => {
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    const KEY = 'sk-relay-DO-NOT-LEAK-0123456789'
+    vkSidecar.respond('POST /api/providers/cc-switch', {
+      channel: { id: 'hhcoding-sol', api_style: 'openai_responses' },
+      api_key: KEY,
+      notes: [],
+    })
+
+    const response = await fetch(`${baseUrl}/vk/v1/providers/cc-switch`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ ref: 'codex:242d3850', taken_ids: [] }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ api_key: KEY })
+    expect(vkSidecar.requests.at(-1).path).toBe('/api/providers/cc-switch')
+    // I-P7：影子只留五个字段。这条路径的请求体与回包都带 key，连投影都不做。
+    expect(JSON.stringify(vkJobShadow.list())).not.toContain(KEY)
+    expect(vkJobShadow.list()).toHaveLength(0)
+  })
+
+  it('其余三条通道路由也在白名单里', async () => {
+    const { baseUrl, vkSidecar } = await setup()
+    const cases = [
+      ['GET', '/vk/v1/providers', '/api/providers'],
+      ['POST', '/vk/v1/providers/test', '/api/providers/test'],
+      ['POST', '/vk/v1/providers/reveal', '/api/providers/reveal'],
+    ]
+    for (const [method, from, to] of cases) {
+      const response = await fetch(`${baseUrl}${from}`, {
+        method,
+        headers: jsonHeaders(),
+        ...(method === 'POST' ? { body: '{}' } : {}),
+      })
+      expect(response.status, `${method} ${from}`).toBe(200)
+      expect(vkSidecar.requests.at(-1).path).toBe(to)
+    }
+  })
 })

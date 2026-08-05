@@ -30,8 +30,19 @@ function settings(over: Record<string, unknown> = {}) {
     ],
     presets: [{ id: 'zhipu', name: '智谱 GLM（官方）', base_url: 'https://open.bigmodel.cn/api/paas/v4', note: '国内直连' }],
     importable: [],
+    cc_switch: { available: false, path: '', reason: '本机没装 cc-switch', skipped: [], candidates: [] },
     unpriced: [],
     configured: true,
+    ...over,
+  }
+}
+
+function ccCandidate(over: Record<string, unknown> = {}) {
+  return {
+    ref: 'codex:242d3850', name: 'hhcoding sol', app_type: 'codex',
+    base_url: 'https://hhcoding.fun', model_id: 'gpt-5.6-sol',
+    api_style: 'openai_responses', is_current: true,
+    masked_key: 'sk-1dbc65…862c', website_url: 'https://hhcoding.fun/dashboard',
     ...over,
   }
 }
@@ -292,4 +303,100 @@ test('接口风格可选并随保存/测试一起提交 —— 漏掉它,respons
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { api_style: string }[] }
   expect(saved.channels[0].api_style).toBe('openai_responses')
+})
+
+// ── 从 cc-switch 一键读取 ────────────────────────────────────────────────
+
+const CC_IMPORT = {
+  channel: {
+    id: 'hhcoding-sol', name: 'hhcoding sol', base_url: 'https://hhcoding.fun',
+    model_id: 'gpt-5.6-sol', key_env: 'VK_CHANNEL_HHCODING_SOL_KEY',
+    api_style: 'openai_responses',
+    extra_headers: { 'x-openai-actor-authorization': 'local-image-extension' },
+  },
+  api_key: SECRET,
+  notes: ['单价没导:cc-switch 存的是官方美元标价'],
+}
+
+test('没装 cc-switch 时说清楚原因,而不是给一个点不动的空按钮', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await waitFor(() => expect(screen.getByTestId('vk-ccswitch-reason')).toHaveTextContent('没装 cc-switch'))
+})
+
+test('列出的候选只带打码 key —— 浏览这一步不该摊开所有中转站的明文', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': {
+      body: settings({ cc_switch: { available: true, path: 'C:/x/cc-switch.db', reason: '', skipped: [], candidates: [ccCandidate()] } }),
+    },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const button = await screen.findByTestId('vk-ccswitch-codex:242d3850')
+  expect(button).toHaveTextContent('hhcoding sol')
+  expect(button).toHaveTextContent('在用')
+  expect(button.getAttribute('title')).toContain('sk-1dbc65…862c')
+  expect(document.body.textContent).not.toContain(SECRET)
+})
+
+test('点某一条才拉明文,并把地址/模型/接口风格/请求头一起填进表单', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': {
+      body: settings({ channels: [], cc_switch: { available: true, path: 'C:/x', reason: '', skipped: [], candidates: [ccCandidate()] } }),
+    },
+    'POST /vk/v1/providers/cc-switch': { body: CC_IMPORT },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await userEvent.click(await screen.findByTestId('vk-ccswitch-codex:242d3850'))
+  await waitFor(() => expect(screen.getByTestId('vk-channel-hhcoding-sol')).toBeInTheDocument())
+  expect(screen.getByTestId('vk-channel-url-hhcoding-sol')).toHaveValue('https://hhcoding.fun')
+  expect(screen.getByTestId('vk-channel-style-hhcoding-sol')).toHaveValue('openai_responses')
+  // 空着的单价栏要有交代,否则看着像漏了。
+  await waitFor(() => expect(screen.getByTestId('vk-provider-form')).toHaveTextContent('单价没导'))
+
+  await userEvent.click(screen.getByTestId('vk-provider-save'))
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as {
+    channels: { api_key: string; api_style: string; extra_headers: Record<string, string> }[]
+  }
+  expect(saved.channels[0].api_key).toBe(SECRET)
+  expect(saved.channels[0].api_style).toBe('openai_responses')
+  // 中转站要求的请求头丢了,有些站会直接拒 —— 必须原样带过保存。
+  expect(saved.channels[0].extra_headers).toEqual({ 'x-openai-actor-authorization': 'local-image-extension' })
+})
+
+test('已存在的通道保存时不丢 extra_headers', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': {
+      body: settings({ channels: [channel({ extra_headers: { 'x-relay-tag': 'vk' } })] }),
+    },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument())
+
+  await userEvent.click(screen.getByTestId('vk-provider-save'))
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as {
+    channels: { extra_headers: Record<string, string> }[]
+  }
+  expect(saved.channels[0].extra_headers).toEqual({ 'x-relay-tag': 'vk' })
+})
+
+test('导不了的那些附原因列出来 —— 比让它凭空消失强', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': {
+      body: settings({ cc_switch: {
+        available: true, path: 'C:/x', reason: '', candidates: [],
+        skipped: ['Claude:用的是 ANTHROPIC_AUTH_TOKEN(Bearer 认证),暂不支持,请手填'],
+      } }),
+    },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await waitFor(() => expect(screen.getByTestId('vk-ccswitch')).toHaveTextContent('AUTH_TOKEN'))
+  expect(screen.getByTestId('vk-ccswitch')).toHaveTextContent('没有能导的中转站配置')
 })

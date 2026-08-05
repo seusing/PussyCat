@@ -337,6 +337,46 @@ export interface VkImportableChannel {
   key_stored: boolean
 }
 
+/** cc-switch 里的一条中转站配置。**只有打码 key** —— 明文得单独按 ref 取一次。 */
+export interface VkCcSwitchCandidate {
+  ref: string
+  name: string
+  /** codex / claude —— 决定了它的接口风格,界面上顺带说明来源。 */
+  app_type: string
+  base_url: string
+  model_id: string
+  api_style: string
+  /** cc-switch 里当前正在用的那条。 */
+  is_current: boolean
+  masked_key: string
+  website_url: string
+}
+
+export interface VkCcSwitchScan {
+  available: boolean
+  path: string
+  /** 读不到时的人话原因(没装 / 正被锁住)。 */
+  reason: string
+  /** 认得出但导不了的,附原因 —— 比让它凭空消失强。 */
+  skipped: string[]
+  candidates: VkCcSwitchCandidate[]
+}
+
+export interface VkCcSwitchImportResult {
+  channel: {
+    id: string
+    name: string
+    base_url: string
+    model_id: string
+    key_env: string
+    api_style: string
+    extra_headers: Record<string, string>
+  }
+  api_key: string
+  /** 哪些字段**没**导、为什么 —— 空着的单价栏据此有交代。 */
+  notes: string[]
+}
+
 export interface VkProviderSettings {
   channels: VkChannel[]
   /** 角色 → 实际生效的通道 id(未显式指派时是默认通道)。 */
@@ -348,6 +388,7 @@ export interface VkProviderSettings {
   presets: VkChannelPreset[]
   api_styles: { id: string; label: string }[]
   importable: VkImportableChannel[]
+  cc_switch: VkCcSwitchScan
   /** 缺单价的通道 id:这些通道上预算上限不可用。 */
   unpriced: string[]
   configured: boolean
@@ -424,4 +465,14 @@ export async function revealVkProviderKey(
 ): Promise<VkRevealResult> {
   const response = await fetch(`${baseUrl}/vk/v1/providers/reveal`, jsonInit({ key_env: keyEnv }))
   return parseVkResponse<VkRevealResult>(response, '读取 key 失败')
+}
+
+/** 按 ref 取一条 cc-switch 配置(含明文 key)填进表单。仍需用户按「保存」才落盘。 */
+export async function importVkCcSwitchChannel(
+  ref: string, takenIds: string[] = [], baseUrl = DEFAULT_BASE_URL,
+): Promise<VkCcSwitchImportResult> {
+  const response = await fetch(
+    `${baseUrl}/vk/v1/providers/cc-switch`, jsonInit({ ref, taken_ids: takenIds }),
+  )
+  return parseVkResponse<VkCcSwitchImportResult>(response, '从 cc-switch 导入失败')
 }

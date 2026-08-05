@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   fetchVkProviderSettings,
+  importVkCcSwitchChannel,
   revealVkProviderKey,
   saveVkProviderSettings,
   testVkProvider,
@@ -27,6 +28,9 @@ type Draft = {
   in_cny: string
   out_cny: string
   is_default: boolean
+  /** 中转站要求的额外请求头(如 codex 的 x-openai-actor-authorization)。
+   *  表单不给编辑,但**必须原样带过保存** —— 丢了它有些中转站会直接拒。 */
+  extra_headers: Record<string, string>
   /** 用户这次输入的 key(未保存);空 = 不改动 */
   api_key: string
   /** 点了「显示」之后取回的明文,只活在组件里 */
@@ -41,7 +45,7 @@ function toDraft(channel: VkProviderSettings['channels'][number]): Draft {
     key_env: channel.key_env, api_style: channel.api_style,
     in_cny: channel.in_cny == null ? '' : String(channel.in_cny),
     out_cny: channel.out_cny == null ? '' : String(channel.out_cny),
-    is_default: channel.is_default, api_key: '',
+    is_default: channel.is_default, extra_headers: { ...channel.extra_headers }, api_key: '',
   }
 }
 
@@ -87,7 +91,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setDrafts((list) => [...list, {
       id, name: base?.name ?? '新配置', base_url: base?.base_url ?? '', model_id: '',
       key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
-      in_cny: '', out_cny: '',
+      in_cny: '', out_cny: '', extra_headers: {},
       // 第一条自动成为默认 —— 「默认」必须始终存在,否则角色解析无处可退。
       is_default: drafts.length === 0, api_key: '',
     }])
@@ -99,8 +103,32 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       key_env: item.key_env, api_style: 'openai_completions',
       in_cny: item.in_cny == null ? '' : String(item.in_cny),
       out_cny: item.out_cny == null ? '' : String(item.out_cny),
-      is_default: list.length === 0, api_key: '',
+      is_default: list.length === 0, extra_headers: {}, api_key: '',
     }])
+  }
+
+  /** 从 cc-switch 导一条:地址、模型、接口风格、请求头、key 一次到位,只剩单价要填。 */
+  const importFromCcSwitch = async (candidate: VkProviderSettings['cc_switch']['candidates'][number]) => {
+    setBusy(`ccswitch:${candidate.ref}`)
+    setError(null)
+    try {
+      const result = await importVkCcSwitchChannel(
+        candidate.ref, drafts.map((d) => d.id), baseUrl,
+      )
+      const channel = result.channel
+      setDrafts((list) => [...list, {
+        id: channel.id, name: channel.name, base_url: channel.base_url,
+        model_id: channel.model_id, key_env: channel.key_env, api_style: channel.api_style,
+        in_cny: '', out_cny: '', extra_headers: channel.extra_headers,
+        is_default: list.length === 0, api_key: result.api_key,
+      }])
+      // 单价栏是空的,得说清楚是「按设计没导」而不是漏了。
+      setNotice([`已从 cc-switch 导入「${channel.name}」，按「保存」后生效`, ...result.notes].join('；'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '从 cc-switch 导入失败')
+    } finally {
+      setBusy(null)
+    }
   }
 
   const removeChannel = (id: string) => {
@@ -157,7 +185,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     try {
       const payload: VkChannelPayload[] = drafts.map((d) => ({
         id: d.id, name: d.name, base_url: d.base_url, model_id: d.model_id,
-        key_env: d.key_env, api_style: d.api_style,
+        key_env: d.key_env, api_style: d.api_style, extra_headers: d.extra_headers,
         in_cny: d.in_cny, out_cny: d.out_cny, is_default: d.is_default,
         // 没填就不传 api_key —— 留空表示「不动已存的那把」,而不是清空。
         ...(d.api_key ? { api_key: d.api_key } : {}),
@@ -329,6 +357,41 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-accent)' }}>
             ↓ 导入 {item.name}
           </button>
+        ))}
+      </div>
+
+      {/* —— 从 cc-switch 一键读取 —— */}
+      <div data-testid="vk-ccswitch" className="mt-3 rounded-lg p-2"
+        style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
+        <div className="mb-1 flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          <span style={{ color: 'var(--color-fg)' }}>从 cc-switch 读取</span>
+          {settings.cc_switch.available
+            ? <span>地址、模型、接口风格、key 一次到位，只剩单价要填</span>
+            : <span data-testid="vk-ccswitch-reason">{settings.cc_switch.reason}</span>}
+        </div>
+        {settings.cc_switch.available && (
+          <div className="flex flex-wrap items-center gap-2">
+            {settings.cc_switch.candidates.map((candidate) => (
+              <button key={candidate.ref} type="button"
+                data-testid={`vk-ccswitch-${candidate.ref}`}
+                disabled={busy !== null}
+                title={`${candidate.base_url} · ${candidate.model_id || '未指定模型'} · ${candidate.masked_key}`}
+                onClick={() => void importFromCcSwitch(candidate)}
+                className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-accent)' }}>
+                ↓ {candidate.name}
+                {candidate.is_current && <span style={{ color: 'var(--color-fg-dim)' }}> · 在用</span>}
+              </button>
+            ))}
+            {settings.cc_switch.candidates.length === 0 && (
+              <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                cc-switch 里没有能导的中转站配置
+              </span>
+            )}
+          </div>
+        )}
+        {/* 认得出但导不了的,说清楚为什么 —— 比让它凭空消失强。 */}
+        {settings.cc_switch.skipped.map((note) => (
+          <div key={note} className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>· {note}</div>
         ))}
       </div>
 

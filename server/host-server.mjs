@@ -39,6 +39,7 @@ const VK_ROUTES = [
   { method: 'POST', pattern: /^\/vk\/v1\/providers$/, target: () => '/api/providers', kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/providers\/test$/, target: () => '/api/providers/test', kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/providers\/reveal$/, target: () => '/api/providers/reveal', kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/providers\/cc-switch$/, target: () => '/api/providers/cc-switch', kind: 'json' },
 ]
 
 function matchVkRoute(method, pathname) {
