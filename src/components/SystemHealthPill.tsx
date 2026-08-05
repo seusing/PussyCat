@@ -118,6 +118,25 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   const base = baseUrl ?? DEFAULT_BASE_URL
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [lastCheckedAt, setLastCheckedAt] = useState<number | undefined>()
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // 点别处就收起。浮层压在页面上方,不收起就会挡住它下面的东西 —— 而"再点一次那颗灯"
+  // 并不是人的第一反应。用 pointerdown 而不是 click:点下去就收,不必等抬手。
+  useEffect(() => {
+    if (!detailsOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setDetailsOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailsOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [detailsOpen])
 
   // —— 第一路:Host 自己。三态,首 ping 落定前显「检查中…」,消灭乐观默认的假「已连接」 ——
   const [host, setHost] = useState<HostState>('checking')
@@ -234,6 +253,9 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         setBridgeState('idle')
         lastCheckRef.current = Date.now()
         setNextStep(body.nextStep)
+        // 修好了就自动收起:事办完了,浮层没有理由继续占着屏幕。没修好则留着 ——
+        // nextStep 就写在里面,那正是用户接下来要读的东西。
+        if (body.health?.reasonCode === 'ok') setDetailsOpen(false)
       })
       .catch(() => { setNextStep('修复请求没能送达 Host;确认爪爪服务在运行后再试一次。') })
       .finally(() => { clearTimeout(timer); setRepairing(false); checkVk() })
@@ -245,6 +267,7 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
 
   return (
     <div
+      ref={rootRef}
       data-testid="health-pill"
       role="status"
       aria-live="polite"

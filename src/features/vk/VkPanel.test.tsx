@@ -78,6 +78,44 @@ describe('VkPanel', () => {
     ...over,
   })
 
+  it('想再查一次状态只有一个键 —— 原先「重新检测」和会话诊断/重建/检测已有环境挤在一起', async () => {
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+
+    const before = calls.filter((c) => c.key === 'GET /vk/v1/health').length
+    await userEvent.click(screen.getByTestId('vk-refresh'))
+
+    // 一下点三路:健康、runtime、模型通道 —— 用户要的是"再查一次",不是查哪一路。
+    await waitFor(() => {
+      expect(calls.filter((c) => c.key === 'GET /vk/v1/health').length).toBeGreaterThan(before)
+    })
+    await waitFor(() => expect(calls.some((c) => c.key === 'GET /vk/v1/runtime/status')).toBe(true))
+    await waitFor(() => expect(calls.some((c) => c.key === 'GET /vk/v1/providers')).toBe(true))
+  })
+
+  it('正常时版面上没有第二个同义的检测按钮', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+
+    expect(screen.queryByTestId('vk-health-recheck')).not.toBeInTheDocument()
+    // 开发者信息里也不再套第二层「环境与能力管理」。
+    expect(screen.queryByTestId('vk-runtime-details-toggle')).not.toBeInTheDocument()
+  })
+
   it('模型通道没配时,在提交之前就说出来 —— 不让用户跑满 7 分半才发现', async () => {
     // 真机上的原始症状:下载 + 转写成功耗时 7m33s,最后一步 401。通道不通必须在
     // 第 1 秒可见,而不是第 7.5 分钟。

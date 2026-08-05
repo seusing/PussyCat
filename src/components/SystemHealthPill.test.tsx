@@ -334,3 +334,79 @@ test('演示模式不给修复按钮 —— 没有真 Host 可修', () => {
   render(<SystemHealthPill baseUrl={BASE} />)
   expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
 })
+
+// ─────────────────────────── 浮层的收起时机 ───────────────────────────
+
+describe('浮层收起', () => {
+  test('点别处就收起 —— 浮层压在页面上方，不收起会挡住下面的东西', async () => {
+    connected()
+    routeFetch()
+    render(<div><SystemHealthPill baseUrl={BASE} /><button type="button">别处</button></div>)
+
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    expect(screen.getByTestId('health-details')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByText('别处'))
+    expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
+  })
+
+  test('点浮层自己不收起 —— 里面有按钮要点', async () => {
+    connected()
+    routeFetch({ bridgeHealth: bridge({ daemon: 'stopped', reasonCode: 'daemon-stopped', summary: '浏览器服务未运行' }) })
+    render(<SystemHealthPill baseUrl={BASE} />)
+
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    await waitFor(() => expect(screen.getByTestId('health-details')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('连接状态'))
+    expect(screen.getByTestId('health-details')).toBeInTheDocument()
+  })
+
+  test('按 Esc 收起', async () => {
+    connected()
+    routeFetch()
+    render(<SystemHealthPill baseUrl={BASE} />)
+
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    expect(screen.getByTestId('health-details')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
+  })
+
+  test('修好了自动收起 —— 事办完了，浮层没理由继续占屏幕', async () => {
+    connected()
+    routeFetch({
+      bridgeHealth: bridge({ daemon: 'stopped', reasonCode: 'daemon-stopped', summary: '浏览器服务未运行' }),
+      repair: { steps: [], repaired: true, health: bridge() },
+    })
+    render(<SystemHealthPill baseUrl={BASE} />)
+
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    await waitFor(() => expect(screen.getByTestId('health-repair')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByTestId('health-repair'))
+
+    await waitFor(() => expect(screen.queryByTestId('health-details')).not.toBeInTheDocument())
+    // 灯本身转绿 —— 这就是反馈,不必靠浮层停留来告诉用户。
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+  })
+
+  test('没修好就留着 —— nextStep 正是用户接下来要读的东西', async () => {
+    connected()
+    const stopped = bridge({ daemon: 'stopped', reasonCode: 'daemon-stopped', summary: '浏览器服务未运行' })
+    routeFetch({
+      bridgeHealth: stopped,
+      repair: { steps: [], repaired: false, health: stopped, nextStep: '在 Chrome 里打开装有 OpenCLI 扩展的窗口。' },
+    })
+    render(<SystemHealthPill baseUrl={BASE} />)
+
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    await waitFor(() => expect(screen.getByTestId('health-repair')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByTestId('health-repair'))
+
+    await waitFor(() => expect(screen.getByTestId('health-next-step')).toHaveTextContent('OpenCLI 扩展'))
+    expect(screen.getByTestId('health-details')).toBeInTheDocument()
+  })
+})

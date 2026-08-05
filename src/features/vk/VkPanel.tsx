@@ -138,7 +138,6 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   const [runtimeAdoptingPath, setRuntimeAdoptingPath] = useState<string | null>(null)
   const [runtimeAdoptNotice, setRuntimeAdoptNotice] = useState<string | null>(null)
   const [showIncompatibleRuntimes, setShowIncompatibleRuntimes] = useState(false)
-  const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(false)
   const previousRuntimeState = useRef<string | null>(null)
   const refreshRuntime = useCallback(async () => {
     try {
@@ -210,7 +209,6 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     try {
       const result = await postVkRuntimeDetect(base)
       setRuntimeCandidates(result.candidates)
-      setRuntimeDetailsOpen(true)
     } catch (error) {
       setRuntimeDetectError(errorText(error, '已有环境检测失败'))
     } finally {
@@ -452,6 +450,20 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             {verdict.action.label}
           </button>
         )}
+        {/* 想重新看一眼状态时只有这一个键。原先「重新检测」藏在开发者信息里、和
+            会话诊断/重建/检测已有环境挤成一排 —— 用户要的其实只是"再查一次"。 */}
+        <button
+          type="button"
+          data-testid="vk-refresh"
+          onClick={() => { void checkHealth(); void refreshRuntime(); void refreshProviders() }}
+          disabled={healthChecking}
+          aria-label="重新检测"
+          title="重新检测解析引擎状态"
+          className="ml-auto rounded px-1.5 py-0.5 text-xs disabled:opacity-40"
+          style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}
+        >
+          ↻
+        </button>
       </div>
       {verdict.note && (
         <div data-testid="vk-verdict-note" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
@@ -491,11 +503,9 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
       <details data-testid="vk-developer-details" className="mb-4">
           <summary className="cursor-pointer text-xs" style={{ color: 'var(--color-fg-dim)' }}>开发者信息</summary>
         <div data-testid="vk-runtime-card" className="mt-2 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          {/* 「重新检测」已经移到上面那条健康条上的 ↻ —— 这里不再摆第二个同义按钮。 */}
           <div className="mb-1 flex flex-wrap items-center gap-2 text-sm font-medium">
             解析环境
-            <button type="button" data-testid="vk-health-recheck" onClick={() => { void checkHealth() }} className={outlineButton} style={outlineStyle}>
-              {healthChecking ? '检测中…' : '重新检测'}
-            </button>
             <button type="button" data-testid="vk-diagnostic-button" onClick={() => { void showDiagnostic() }} className={outlineButton} style={outlineStyle}>
               会话诊断
             </button>
@@ -545,11 +555,10 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             {runtime.state !== 'not-available' && <button type="button" data-testid="vk-runtime-detect" onClick={() => { void detectRuntime() }} disabled={runtimeDetecting} className={outlineButton} style={outlineStyle}>
               {runtimeDetecting ? '检测中…' : '检测已有环境'}
             </button>}
-            {runtime.state === 'installed' && <button type="button" data-testid="vk-runtime-details-toggle" onClick={() => setRuntimeDetailsOpen((open) => !open)} className={outlineButton} style={outlineStyle}>
-              {runtimeDetailsOpen ? '收起环境与能力' : '环境与能力管理'}
-            </button>}
           </div>
-          {runtimeDetailsOpen && runtimeCandidates && <div data-testid="vk-runtime-candidates" className="mt-2 space-y-2 text-xs">
+          {/* 环境列表直接摊开。原先还要再点一次「环境与能力管理」 —— 都已经在
+              默认折叠的开发者信息里了,再套一层展开只是多一道门。 */}
+          {runtimeCandidates && <div data-testid="vk-runtime-candidates" className="mt-2 space-y-2 text-xs">
             {runtimeCandidates.filter((candidate) => candidate.compatible || showIncompatibleRuntimes).map((candidate) => {
               const index = runtimeCandidates.indexOf(candidate)
               const adopting = runtimeAdoptingPath === candidate.pythonPath
