@@ -304,6 +304,8 @@ export interface VkChannel {
   base_url: string
   model_id: string
   key_env: string
+  /** 接口风格 —— 决定打 /chat/completions 还是 /responses,以及用哪种认证头。 */
+  api_style: string
   /** 有可用 key(应用内存过 或 环境变量里有);永远不是 key 本身。 */
   key_stored: boolean
   /** 来自系统环境变量 —— 它优先级更高,用户要改得去环境变量而不是这张表单。 */
@@ -344,6 +346,7 @@ export interface VkProviderSettings {
   role_labels: Record<string, string>
   role_hints: Record<string, string>
   presets: VkChannelPreset[]
+  api_styles: { id: string; label: string }[]
   importable: VkImportableChannel[]
   /** 缺单价的通道 id:这些通道上预算上限不可用。 */
   unpriced: string[]
@@ -378,6 +381,7 @@ export interface VkChannelPayload {
   base_url: string
   model_id: string
   key_env: string
+  api_style?: string
   in_cny?: number | string | null
   out_cny?: number | string | null
   reasoning_effort?: string | null
@@ -407,7 +411,7 @@ export async function saveVkProviderSettings(
 }
 
 export async function testVkProvider(
-  payload: { base_url: string; key_env?: string; api_key?: string },
+  payload: { base_url: string; key_env?: string; api_key?: string; api_style?: string },
   baseUrl = DEFAULT_BASE_URL,
 ): Promise<VkProviderTestResult> {
   const response = await fetch(`${baseUrl}/vk/v1/providers/test`, jsonInit(payload))

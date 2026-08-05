@@ -9,7 +9,7 @@ function channel(over: Record<string, unknown> = {}) {
   return {
     id: 'cheap', name: 'GPT 5.6 Luna', base_url: 'https://api.example.com/v1',
     model_id: 'gpt-5.6-luna', key_env: 'VK_CHANNEL_CHEAP_KEY',
-    key_stored: true, key_from_environment: false,
+    api_style: 'openai_completions', key_stored: true, key_from_environment: false,
     in_cny: 1, out_cny: 6, reasoning_effort: 'low', reasoning_effort_explicit: false,
     extra_headers: {}, is_default: true, priced: true,
     ...over,
@@ -23,6 +23,11 @@ function settings(over: Record<string, unknown> = {}) {
     role_assignments: {},
     role_labels: { deep_analysis: '深度分析', basic: '基础处理' },
     role_hints: { deep_analysis: '提炼观点', basic: '章节划分、质检等其余步骤' },
+    api_styles: [
+      { id: 'openai_completions', label: 'OpenAI 兼容（chat/completions）' },
+      { id: 'openai_responses', label: 'OpenAI Responses' },
+      { id: 'anthropic_messages', label: 'Anthropic Messages' },
+    ],
     presets: [{ id: 'zhipu', name: '智谱 GLM（官方）', base_url: 'https://open.bigmodel.cn/api/paas/v4', note: '国内直连' }],
     importable: [],
     unpriced: [],
@@ -266,4 +271,25 @@ test('读不到配置时如实说,而不是渲染一张空表单让人以为配�
 
   await waitFor(() => expect(screen.getByTestId('vk-provider-form')).toHaveTextContent('sidecar 未接线'))
   expect(screen.queryByTestId('vk-provider-save')).not.toBeInTheDocument()
+})
+
+test('接口风格可选并随保存/测试一起提交 —— 漏掉它,responses 风格的中转会被打成 chat/completions', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+    'POST /vk/v1/providers/test': { body: { ok: true, reason_code: 'ok', message: 'ok', models: [], normalization_notes: [] } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('vk-channel-style-cheap')).toBeInTheDocument())
+
+  await userEvent.selectOptions(screen.getByTestId('vk-channel-style-cheap'), 'openai_responses')
+  await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
+  await waitFor(() => expect(calls.some((c) => c.key.includes('providers/test'))).toBe(true))
+  const test = calls.find((c) => c.key.includes('providers/test'))!.body as { api_style: string }
+  expect(test.api_style).toBe('openai_responses')
+
+  await userEvent.click(screen.getByTestId('vk-provider-save'))
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { api_style: string }[] }
+  expect(saved.channels[0].api_style).toBe('openai_responses')
 })

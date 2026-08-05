@@ -23,6 +23,7 @@ type Draft = {
   base_url: string
   model_id: string
   key_env: string
+  api_style: string
   in_cny: string
   out_cny: string
   is_default: boolean
@@ -37,7 +38,7 @@ const newId = () => `ch_${Math.random().toString(36).slice(2, 8)}`
 function toDraft(channel: VkProviderSettings['channels'][number]): Draft {
   return {
     id: channel.id, name: channel.name, base_url: channel.base_url, model_id: channel.model_id,
-    key_env: channel.key_env,
+    key_env: channel.key_env, api_style: channel.api_style,
     in_cny: channel.in_cny == null ? '' : String(channel.in_cny),
     out_cny: channel.out_cny == null ? '' : String(channel.out_cny),
     is_default: channel.is_default, api_key: '',
@@ -85,7 +86,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     const id = newId()
     setDrafts((list) => [...list, {
       id, name: base?.name ?? '新配置', base_url: base?.base_url ?? '', model_id: '',
-      key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, in_cny: '', out_cny: '',
+      key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
+      in_cny: '', out_cny: '',
       // 第一条自动成为默认 —— 「默认」必须始终存在,否则角色解析无处可退。
       is_default: drafts.length === 0, api_key: '',
     }])
@@ -94,7 +96,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const importChannel = (item: VkProviderSettings['importable'][number]) => {
     setDrafts((list) => list.some((d) => d.id === item.id) ? list : [...list, {
       id: item.id, name: item.name, base_url: item.base_url, model_id: item.model_id,
-      key_env: item.key_env,
+      key_env: item.key_env, api_style: 'openai_completions',
       in_cny: item.in_cny == null ? '' : String(item.in_cny),
       out_cny: item.out_cny == null ? '' : String(item.out_cny),
       is_default: list.length === 0, api_key: '',
@@ -134,6 +136,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       const result = await testVkProvider({
         base_url: draft.base_url,
         key_env: draft.key_env,
+        api_style: draft.api_style,
         ...(draft.api_key ? { api_key: draft.api_key } : {}),
       }, baseUrl)
       setResults((prev) => ({ ...prev, [draft.id]: result }))
@@ -153,7 +156,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setNotice(null)
     try {
       const payload: VkChannelPayload[] = drafts.map((d) => ({
-        id: d.id, name: d.name, base_url: d.base_url, model_id: d.model_id, key_env: d.key_env,
+        id: d.id, name: d.name, base_url: d.base_url, model_id: d.model_id,
+        key_env: d.key_env, api_style: d.api_style,
         in_cny: d.in_cny, out_cny: d.out_cny, is_default: d.is_default,
         // 没填就不传 api_key —— 留空表示「不动已存的那把」,而不是清空。
         ...(d.api_key ? { api_key: d.api_key } : {}),
@@ -260,6 +264,17 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               </div>
 
               <div className="mb-1 flex flex-wrap items-center gap-2">
+                <select
+                  data-testid={`vk-channel-style-${draft.id}`}
+                  className="rounded px-2 py-1 text-xs outline-none"
+                  style={{ ...fieldStyle }}
+                  value={draft.api_style}
+                  onChange={(e) => patch(draft.id, { api_style: e.target.value })}
+                >
+                  {settings.api_styles.map((style) => (
+                    <option key={style.id} value={style.id}>{style.label}</option>
+                  ))}
+                </select>
                 <input data-testid={`vk-channel-in-${draft.id}`} className="rounded px-2 py-1 text-xs outline-none"
                   style={{ ...fieldStyle, width: '9rem' }} placeholder="输入单价 ￥/百万"
                   value={draft.in_cny} onChange={(e) => patch(draft.id, { in_cny: e.target.value })} />
