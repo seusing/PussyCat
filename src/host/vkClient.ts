@@ -295,24 +295,58 @@ export async function downloadVkOutput(outputId: string, baseUrl = DEFAULT_BASE_
 }
 
 // —— 模型通道配置(sidecar api 1.5.0)——
-// **前端永不持有 key**:读回来的只有「存过没有」;填写时 key 只在提交/测试的那一次
-// 请求体里出现,不入 store、不入日志、不落 localStorage。
+// 前端**不持有** key:读回来的只有「有没有、从哪来」。明文只在用户点「显示」时
+// 单独取一次(revealVkProviderKey),不入 store、不落 localStorage。
 
-export interface VkProviderTier {
+export interface VkChannel {
+  id: string
+  name: string
+  base_url: string
   model_id: string
   key_env: string
-  /** 有可用 key(存过 或 环境变量里有);永远不是 key 本身。 */
+  /** 有可用 key(应用内存过 或 环境变量里有);永远不是 key 本身。 */
   key_stored: boolean
+  /** 来自系统环境变量 —— 它优先级更高,用户要改得去环境变量而不是这张表单。 */
   key_from_environment: boolean
   in_cny: number | null
   out_cny: number | null
+  reasoning_effort: string
+  reasoning_effort_explicit: boolean
+  extra_headers: Record<string, string>
+  is_default: boolean
+  priced: boolean
+}
+
+export interface VkChannelPreset {
+  id: string
+  name: string
+  base_url: string
+  note: string
+}
+
+export interface VkImportableChannel {
+  id: string
+  name: string
+  base_url: string
+  model_id: string
+  key_env: string
+  in_cny: number | null
+  out_cny: number | null
+  key_stored: boolean
 }
 
 export interface VkProviderSettings {
-  relay_base_url: string
-  tiers: Record<string, VkProviderTier>
-  stage_tiers: Record<string, string>
-  price_snapshot_id: string
+  channels: VkChannel[]
+  /** 角色 → 实际生效的通道 id(未显式指派时是默认通道)。 */
+  roles: Record<string, string | null>
+  /** 只含**显式**指派 —— 界面据此区分「指定了」与「跟随默认」。 */
+  role_assignments: Record<string, string>
+  role_labels: Record<string, string>
+  role_hints: Record<string, string>
+  presets: VkChannelPreset[]
+  importable: VkImportableChannel[]
+  /** 缺单价的通道 id:这些通道上预算上限不可用。 */
+  unpriced: string[]
   configured: boolean
 }
 
@@ -331,16 +365,32 @@ export interface VkProviderTestResult {
 
 export interface VkProviderSaveResult {
   saved: boolean
-  relay_base_url: string
   normalization_notes: string[]
   keys_written: string[]
   keys_injected: string[]
+  configured: boolean
 }
 
-/** 表单提交用:每档可带 api_key(不传该字段 = 不改动已存的那把)。 */
-export interface VkProviderSavePayload {
-  relay_base_url: string
-  tiers: Record<string, { model_id: string; key_env: string; api_key?: string }>
+/** 每条通道可带 api_key:**不传该字段 = 不改动已存的那把**;传空串 = 清除。 */
+export interface VkChannelPayload {
+  id: string
+  name: string
+  base_url: string
+  model_id: string
+  key_env: string
+  in_cny?: number | string | null
+  out_cny?: number | string | null
+  reasoning_effort?: string | null
+  extra_headers?: Record<string, string>
+  is_default?: boolean
+  api_key?: string
+}
+
+export interface VkRevealResult {
+  key_env: string
+  found: boolean
+  api_key?: string
+  source: 'stored' | 'environment' | null
 }
 
 export async function fetchVkProviderSettings(baseUrl = DEFAULT_BASE_URL): Promise<VkProviderSettings> {
@@ -349,16 +399,25 @@ export async function fetchVkProviderSettings(baseUrl = DEFAULT_BASE_URL): Promi
 }
 
 export async function saveVkProviderSettings(
-  payload: VkProviderSavePayload, baseUrl = DEFAULT_BASE_URL,
+  payload: { channels: VkChannelPayload[]; roles?: Record<string, string> },
+  baseUrl = DEFAULT_BASE_URL,
 ): Promise<VkProviderSaveResult> {
   const response = await fetch(`${baseUrl}/vk/v1/providers`, jsonInit(payload))
   return parseVkResponse<VkProviderSaveResult>(response, '模型配置保存失败')
 }
 
 export async function testVkProvider(
-  payload: { relay_base_url: string; key_env: string; api_key?: string },
+  payload: { base_url: string; key_env?: string; api_key?: string },
   baseUrl = DEFAULT_BASE_URL,
 ): Promise<VkProviderTestResult> {
   const response = await fetch(`${baseUrl}/vk/v1/providers/test`, jsonInit(payload))
   return parseVkResponse<VkProviderTestResult>(response, '连接测试失败')
+}
+
+/** 明文 key 的**唯一**取处 —— 只在用户点「显示」时调用。 */
+export async function revealVkProviderKey(
+  keyEnv: string, baseUrl = DEFAULT_BASE_URL,
+): Promise<VkRevealResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/providers/reveal`, jsonInit({ key_env: keyEnv }))
+  return parseVkResponse<VkRevealResult>(response, '读取 key 失败')
 }
