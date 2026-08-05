@@ -308,22 +308,13 @@ export interface VkChannel {
   api_style: string
   /** 有可用 key(应用内存过 或 环境变量里有);永远不是 key 本身。 */
   key_stored: boolean
+  /** 存过的 key 的打码值(sk-xxx••••••xxxx)。空输入框会被当成"没设过",所以要看得见。 */
+  key_masked: string
   /** 来自系统环境变量 —— 它优先级更高,用户要改得去环境变量而不是这张表单。 */
   key_from_environment: boolean
-  in_cny: number | null
-  out_cny: number | null
   reasoning_effort: string
   reasoning_effort_explicit: boolean
   extra_headers: Record<string, string>
-  is_default: boolean
-  priced: boolean
-}
-
-export interface VkChannelPreset {
-  id: string
-  name: string
-  base_url: string
-  note: string
 }
 
 export interface VkImportableChannel {
@@ -332,8 +323,6 @@ export interface VkImportableChannel {
   base_url: string
   model_id: string
   key_env: string
-  in_cny: number | null
-  out_cny: number | null
   key_stored: boolean
 }
 
@@ -373,8 +362,6 @@ export interface VkCcSwitchImportResult {
     extra_headers: Record<string, string>
   }
   api_key: string
-  /** 哪些字段**没**导、为什么 —— 空着的单价栏据此有交代。 */
-  notes: string[]
 }
 
 export interface VkProviderSettings {
@@ -385,12 +372,11 @@ export interface VkProviderSettings {
   role_assignments: Record<string, string>
   role_labels: Record<string, string>
   role_hints: Record<string, string>
-  presets: VkChannelPreset[]
+  /** 还没指到通道的角色 —— 界面据此点名,而不是笼统说"没配好"。 */
+  unassigned_roles: string[]
   api_styles: { id: string; label: string }[]
   importable: VkImportableChannel[]
   cc_switch: VkCcSwitchScan
-  /** 缺单价的通道 id:这些通道上预算上限不可用。 */
-  unpriced: string[]
   configured: boolean
 }
 
@@ -423,11 +409,8 @@ export interface VkChannelPayload {
   model_id: string
   key_env: string
   api_style?: string
-  in_cny?: number | string | null
-  out_cny?: number | string | null
   reasoning_effort?: string | null
   extra_headers?: Record<string, string>
-  is_default?: boolean
   api_key?: string
 }
 

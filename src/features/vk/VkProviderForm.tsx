@@ -17,7 +17,23 @@ const fieldStyle = {
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
 
-/** 表单里的一条通道。key 单独存:**加载时永远是空**,留空表示不改动已存的那把。 */
+/**
+ * 按模型名猜接口风格。**只用来填默认值**,用户改了就以用户的为准。
+ *
+ * 让用户在三个技术名词之间选是道送分不送分的题:他多半不知道自己的中转站是哪一种,
+ * 而选错的表现是 404,极难自查。规则与后端 infer_api_style_from_model 同一张表
+ * (后端那份是 API 直接调用时的兜底,这份负责让表单里的选择框先填对)。
+ */
+export function inferApiStyle(modelId: string): string {
+  const name = (modelId ?? '').trim().toLowerCase()
+  if (!name) return 'openai_completions'
+  if (name.startsWith('claude') || name.includes('anthropic')) return 'anthropic_messages'
+  // codex 系中转基本都走 responses —— 恰好是被打成 chat/completions 时通不了的那一类。
+  if (/^(gpt-5|o[1-4](\b|-)|codex)/.test(name)) return 'openai_responses'
+  return 'openai_completions'
+}
+
+/** 表单里的一条通道。 */
 type Draft = {
   id: string
   name: string
@@ -25,14 +41,16 @@ type Draft = {
   model_id: string
   key_env: string
   api_style: string
-  in_cny: string
-  out_cny: string
-  is_default: boolean
+  /** 用户手动选过风格 —— 之后改模型名不再覆盖他的选择。 */
+  api_style_touched: boolean
+  /** 已存 key 的打码值。**空输入框会被当成"没设过"**,所以存过就得看得见。 */
+  key_masked: string
   /** 中转站要求的额外请求头(如 codex 的 x-openai-actor-authorization)。
-   *  表单不给编辑,但**必须原样带过保存** —— 丢了它有些中转站会直接拒。 */
+   *  表单不给编辑,但必须原样带过保存 —— 丢了有些中转站会直接拒。 */
   extra_headers: Record<string, string>
-  /** 用户这次输入的 key(未保存);空 = 不改动 */
+  /** 用户这次输入的 key(未保存);未 touched 时不提交,表示"不改动已存的那把"。 */
   api_key: string
+  key_touched: boolean
   /** 点了「显示」之后取回的明文,只活在组件里 */
   revealed?: string
 }
@@ -42,22 +60,22 @@ const newId = () => `ch_${Math.random().toString(36).slice(2, 8)}`
 function toDraft(channel: VkProviderSettings['channels'][number]): Draft {
   return {
     id: channel.id, name: channel.name, base_url: channel.base_url, model_id: channel.model_id,
-    key_env: channel.key_env, api_style: channel.api_style,
-    in_cny: channel.in_cny == null ? '' : String(channel.in_cny),
-    out_cny: channel.out_cny == null ? '' : String(channel.out_cny),
-    is_default: channel.is_default, extra_headers: { ...channel.extra_headers }, api_key: '',
+    key_env: channel.key_env, api_style: channel.api_style, api_style_touched: true,
+    key_masked: channel.key_masked, extra_headers: { ...channel.extra_headers },
+    api_key: '', key_touched: false,
   }
 }
 
 /**
  * 模型配置:一份通道清单 + 两个角色。
  *
- * 取代原先写死的三档。档位名 cheap/mid/high 是我们替用户起的,和他脑子里的东西对不上;
- * 他想的是"哪一步用好模型、哪一步用便宜的",所以只有**深度分析**与**基础处理**两个角色。
+ * 通道就是「地址 + 模型 + key」,官方站和中转站没有区别 —— 所以既没有内置预设,
+ * 也没有「默认通道」:通道本来就是按用途建的,两个角色各指一条,"默认"没有语义。
  *
- * 两条贯穿全组件的纪律:
- *  · key 输入框**永远从空开始**,留空 = 不改动已存的那把。明文只在点「显示」时单独取,
- *    取回来也只活在组件状态里,收起面板即散。
+ * 三条贯穿全组件的纪律:
+ *  · key 存过就**看得见存在**(打码值),但改它要先点「更换」—— 不碰就不提交。
+ *    明文只在点「显示」时单独取,取回来也只活在组件状态里。
+ *  · 接口风格按模型名先填上,用户改过就不再覆盖。
  *  · 失败给根因 + 下一步;能自动修的当场修**并把改了什么写出来**。
  */
 export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved?: () => void }) {
@@ -86,44 +104,46 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const patch = (id: string, next: Partial<Draft>) =>
     setDrafts((list) => list.map((d) => (d.id === id ? { ...d, ...next } : d)))
 
-  const addChannel = (base?: { base_url?: string; name?: string }) => {
+  /** 改模型名时顺手把风格填对 —— 除非用户自己选过。 */
+  const patchModel = (draft: Draft, model_id: string) =>
+    patch(draft.id, {
+      model_id,
+      ...(draft.api_style_touched ? {} : { api_style: inferApiStyle(model_id) }),
+    })
+
+  const addChannel = () => {
     const id = newId()
     setDrafts((list) => [...list, {
-      id, name: base?.name ?? '新配置', base_url: base?.base_url ?? '', model_id: '',
+      id, name: '新配置', base_url: '', model_id: '',
       key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
-      in_cny: '', out_cny: '', extra_headers: {},
-      // 第一条自动成为默认 —— 「默认」必须始终存在,否则角色解析无处可退。
-      is_default: drafts.length === 0, api_key: '',
+      api_style_touched: false, key_masked: '', extra_headers: {},
+      api_key: '', key_touched: false,
     }])
   }
 
   const importChannel = (item: VkProviderSettings['importable'][number]) => {
     setDrafts((list) => list.some((d) => d.id === item.id) ? list : [...list, {
       id: item.id, name: item.name, base_url: item.base_url, model_id: item.model_id,
-      key_env: item.key_env, api_style: 'openai_completions',
-      in_cny: item.in_cny == null ? '' : String(item.in_cny),
-      out_cny: item.out_cny == null ? '' : String(item.out_cny),
-      is_default: list.length === 0, extra_headers: {}, api_key: '',
+      key_env: item.key_env, api_style: inferApiStyle(item.model_id), api_style_touched: false,
+      key_masked: '', extra_headers: {}, api_key: '', key_touched: false,
     }])
   }
 
-  /** 从 cc-switch 导一条:地址、模型、接口风格、请求头、key 一次到位,只剩单价要填。 */
+  /** 从 cc-switch 导一条:地址、模型、接口风格、请求头、key 一次到位。 */
   const importFromCcSwitch = async (candidate: VkProviderSettings['cc_switch']['candidates'][number]) => {
     setBusy(`ccswitch:${candidate.ref}`)
     setError(null)
     try {
-      const result = await importVkCcSwitchChannel(
+      const { channel, api_key } = await importVkCcSwitchChannel(
         candidate.ref, drafts.map((d) => d.id), baseUrl,
       )
-      const channel = result.channel
       setDrafts((list) => [...list, {
         id: channel.id, name: channel.name, base_url: channel.base_url,
         model_id: channel.model_id, key_env: channel.key_env, api_style: channel.api_style,
-        in_cny: '', out_cny: '', extra_headers: channel.extra_headers,
-        is_default: list.length === 0, api_key: result.api_key,
+        api_style_touched: true, key_masked: '', extra_headers: channel.extra_headers,
+        api_key, key_touched: true,
       }])
-      // 单价栏是空的,得说清楚是「按设计没导」而不是漏了。
-      setNotice([`已从 cc-switch 导入「${channel.name}」，按「保存」后生效`, ...result.notes].join('；'))
+      setNotice(`已从 cc-switch 导入「${channel.name}」，按「保存」后生效`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '从 cc-switch 导入失败')
     } finally {
@@ -132,17 +152,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }
 
   const removeChannel = (id: string) => {
-    setDrafts((list) => {
-      const next = list.filter((d) => d.id !== id)
-      // 删掉的正好是默认那条时,必须立刻指定新的默认,不能留下"没有默认"的中间态。
-      if (next.length > 0 && !next.some((d) => d.is_default)) next[0] = { ...next[0], is_default: true }
-      return next
-    })
+    setDrafts((list) => list.filter((d) => d.id !== id))
     setRoles((current) => Object.fromEntries(Object.entries(current).filter(([, v]) => v !== id)))
   }
-
-  const setDefault = (id: string) =>
-    setDrafts((list) => list.map((d) => ({ ...d, is_default: d.id === id })))
 
   const reveal = async (draft: Draft) => {
     setBusy(`reveal:${draft.id}`)
@@ -165,7 +177,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         base_url: draft.base_url,
         key_env: draft.key_env,
         api_style: draft.api_style,
-        ...(draft.api_key ? { api_key: draft.api_key } : {}),
+        ...(draft.key_touched && draft.api_key ? { api_key: draft.api_key } : {}),
       }, baseUrl)
       setResults((prev) => ({ ...prev, [draft.id]: result }))
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
@@ -186,9 +198,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       const payload: VkChannelPayload[] = drafts.map((d) => ({
         id: d.id, name: d.name, base_url: d.base_url, model_id: d.model_id,
         key_env: d.key_env, api_style: d.api_style, extra_headers: d.extra_headers,
-        in_cny: d.in_cny, out_cny: d.out_cny, is_default: d.is_default,
-        // 没填就不传 api_key —— 留空表示「不动已存的那把」,而不是清空。
-        ...(d.api_key ? { api_key: d.api_key } : {}),
+        // 没碰过就不传 api_key —— 表示「不动已存的那把」,而不是清空。
+        ...(d.key_touched ? { api_key: d.api_key } : {}),
       }))
       const result = await saveVkProviderSettings({ channels: payload, roles }, baseUrl)
       setNotice([
@@ -212,13 +223,13 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }
 
   const roleKeys = Object.keys(settings.role_labels)
-  const defaultId = drafts.find((d) => d.is_default)?.id
 
   return (
-    <div data-testid="vk-provider-form" className="rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-      <div className="mb-1 text-sm font-medium">模型配置</div>
-      <p className="mb-3 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-        API key 以加密形式存在本机，不会写进任何配置文件。
+    <div data-testid="vk-provider-form" className="rounded-xl p-4"
+      style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+      <div className="text-sm font-medium">模型配置</div>
+      <p className="mb-4 mt-0.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+        一条通道 = 接口地址 + 模型 + API key。下面把两种活儿各指一条。
       </p>
 
       {/* —— 通道清单 —— */}
@@ -226,103 +237,100 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         {drafts.map((draft) => {
           const result = results[draft.id]
           const saved = settings.channels.find((c) => c.id === draft.id)
+          const showMasked = !draft.key_touched && !draft.revealed && draft.key_masked !== ''
           return (
-            <div key={draft.id} data-testid={`vk-channel-${draft.id}`} className="rounded-lg p-2"
+            <div key={draft.id} data-testid={`vk-channel-${draft.id}`} className="rounded-lg p-3"
               style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
-              <div className="mb-1 flex flex-wrap items-center gap-2">
+              <div className="mb-2 flex items-center gap-2">
                 <input
                   data-testid={`vk-channel-name-${draft.id}`}
-                  className="rounded px-2 py-1 text-sm font-medium outline-none"
-                  style={{ ...fieldStyle, width: '12rem' }}
+                  className="flex-1 rounded px-2 py-1 text-sm font-medium outline-none"
+                  style={{ ...fieldStyle, background: 'transparent', border: '1px solid transparent' }}
                   value={draft.name}
                   placeholder="给它起个名字"
                   onChange={(e) => patch(draft.id, { name: e.target.value })}
                 />
-                {draft.is_default
-                  ? <span className="text-xs" style={{ color: 'var(--color-success)' }}>默认</span>
-                  : <button type="button" data-testid={`vk-channel-default-${draft.id}`}
-                      onClick={() => setDefault(draft.id)} className={outlineButton} style={outlineStyle}>设为默认</button>}
                 <button type="button" data-testid={`vk-channel-remove-${draft.id}`}
                   onClick={() => removeChannel(draft.id)} className={outlineButton}
-                  style={{ ...outlineStyle, color: 'var(--color-danger)' }}>删除</button>
-                {saved && !saved.priced && (
-                  <span data-testid={`vk-channel-unpriced-${draft.id}`} className="text-xs" style={{ color: 'var(--color-warning)' }}>
-                    单价未知 · 该通道上预算上限不可用
-                  </span>
-                )}
+                  style={{ ...outlineStyle, color: 'var(--color-fg-dim)' }}>删除</button>
               </div>
 
-              <input
-                data-testid={`vk-channel-url-${draft.id}`}
-                className={`${fieldClass} mb-1`} style={fieldStyle}
-                placeholder="接口地址，通常以 /v1 结尾"
-                value={draft.base_url}
-                onChange={(e) => patch(draft.id, { base_url: e.target.value })}
-              />
-              <input
-                data-testid={`vk-channel-model-${draft.id}`}
-                className={`${fieldClass} mb-1`} style={fieldStyle}
-                list={`vk-models-${draft.id}`}
-                placeholder="模型名称（测试连接后可从下拉里选）"
-                value={draft.model_id}
-                onChange={(e) => patch(draft.id, { model_id: e.target.value })}
-              />
-              <datalist id={`vk-models-${draft.id}`}>
-                {(models[draft.id] ?? []).map((m) => <option key={m} value={m} />)}
-              </datalist>
-
-              <div className="mb-1 flex flex-wrap items-center gap-2">
+              <div className="space-y-2">
                 <input
-                  data-testid={`vk-channel-key-${draft.id}`}
-                  type={draft.revealed ? 'text' : 'password'}
-                  autoComplete="off"
-                  className={fieldClass} style={{ ...fieldStyle, flex: 1, minWidth: '12rem' }}
-                  placeholder={saved?.key_stored ? '已保存，留空则不改动' : '粘贴 API key'}
-                  value={draft.revealed ?? draft.api_key}
-                  onChange={(e) => patch(draft.id, { api_key: e.target.value, revealed: undefined })}
+                  data-testid={`vk-channel-url-${draft.id}`}
+                  className={fieldClass} style={fieldStyle}
+                  placeholder="接口地址，通常以 /v1 结尾"
+                  value={draft.base_url}
+                  onChange={(e) => patch(draft.id, { base_url: e.target.value })}
                 />
-                <button type="button" data-testid={`vk-channel-reveal-${draft.id}`}
-                  onClick={() => {
-                    if (draft.revealed) patch(draft.id, { revealed: undefined })
-                    else void reveal(draft)
-                  }}
-                  disabled={busy !== null} className={outlineButton} style={outlineStyle}>
-                  {draft.revealed ? '隐藏' : '显示'}
-                </button>
-              </div>
+                <input
+                  data-testid={`vk-channel-model-${draft.id}`}
+                  className={fieldClass} style={fieldStyle}
+                  list={`vk-models-${draft.id}`}
+                  placeholder="模型名称（测试连接后可从下拉里选）"
+                  value={draft.model_id}
+                  onChange={(e) => patchModel(draft, e.target.value)}
+                />
+                <datalist id={`vk-models-${draft.id}`}>
+                  {(models[draft.id] ?? []).map((m) => <option key={m} value={m} />)}
+                </datalist>
 
-              <div className="mb-1 flex flex-wrap items-center gap-2">
-                <select
-                  data-testid={`vk-channel-style-${draft.id}`}
-                  className="rounded px-2 py-1 text-xs outline-none"
-                  style={{ ...fieldStyle }}
-                  value={draft.api_style}
-                  onChange={(e) => patch(draft.id, { api_style: e.target.value })}
-                >
-                  {settings.api_styles.map((style) => (
-                    <option key={style.id} value={style.id}>{style.label}</option>
-                  ))}
-                </select>
-                <input data-testid={`vk-channel-in-${draft.id}`} className="rounded px-2 py-1 text-xs outline-none"
-                  style={{ ...fieldStyle, width: '9rem' }} placeholder="输入单价 ￥/百万"
-                  value={draft.in_cny} onChange={(e) => patch(draft.id, { in_cny: e.target.value })} />
-                <input data-testid={`vk-channel-out-${draft.id}`} className="rounded px-2 py-1 text-xs outline-none"
-                  style={{ ...fieldStyle, width: '9rem' }} placeholder="输出单价 ￥/百万"
-                  value={draft.out_cny} onChange={(e) => patch(draft.id, { out_cny: e.target.value })} />
-                <button type="button" data-testid={`vk-channel-test-${draft.id}`}
-                  onClick={() => { void runTest(draft) }} disabled={busy !== null}
-                  className={outlineButton} style={outlineStyle}>
-                  {busy === `test:${draft.id}` ? '测试中…' : '测试连接'}
-                </button>
-                {saved?.key_from_environment && (
-                  <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                    key 来自系统环境变量 · 它优先于这里填的
-                  </span>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    data-testid={`vk-channel-key-${draft.id}`}
+                    type={draft.revealed || showMasked ? 'text' : 'password'}
+                    readOnly={showMasked}
+                    autoComplete="off"
+                    className={fieldClass}
+                    style={{ ...fieldStyle, flex: 1, minWidth: '12rem',
+                             color: showMasked ? 'var(--color-fg-dim)' : 'var(--color-fg)' }}
+                    placeholder="粘贴 API key"
+                    value={draft.revealed ?? (showMasked ? draft.key_masked : draft.api_key)}
+                    onChange={(e) => patch(draft.id, { api_key: e.target.value, key_touched: true, revealed: undefined })}
+                  />
+                  <button type="button" data-testid={`vk-channel-reveal-${draft.id}`}
+                    onClick={() => {
+                      if (draft.revealed) patch(draft.id, { revealed: undefined })
+                      else void reveal(draft)
+                    }}
+                    disabled={busy !== null || (!saved?.key_stored && !draft.key_masked)}
+                    className={outlineButton} style={outlineStyle}>
+                    {draft.revealed ? '隐藏' : '显示'}
+                  </button>
+                  {showMasked && (
+                    <button type="button" data-testid={`vk-channel-replace-${draft.id}`}
+                      onClick={() => patch(draft.id, { key_touched: true, api_key: '', revealed: undefined })}
+                      className={outlineButton} style={outlineStyle}>更换</button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    data-testid={`vk-channel-style-${draft.id}`}
+                    className="rounded-lg px-2 py-1.5 text-xs outline-none"
+                    style={fieldStyle}
+                    value={draft.api_style}
+                    onChange={(e) => patch(draft.id, { api_style: e.target.value, api_style_touched: true })}
+                  >
+                    {settings.api_styles.map((style) => (
+                      <option key={style.id} value={style.id}>{style.label}</option>
+                    ))}
+                  </select>
+                  <button type="button" data-testid={`vk-channel-test-${draft.id}`}
+                    onClick={() => { void runTest(draft) }} disabled={busy !== null}
+                    className={outlineButton} style={outlineStyle}>
+                    {busy === `test:${draft.id}` ? '测试中…' : '测试连接'}
+                  </button>
+                  {saved?.key_from_environment && (
+                    <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                      key 来自系统环境变量 · 它优先于这里填的
+                    </span>
+                  )}
+                </div>
               </div>
 
               {result && (
-                <div data-testid={`vk-channel-result-${draft.id}`} className="text-xs"
+                <div data-testid={`vk-channel-result-${draft.id}`} className="mt-2 text-xs"
                   style={{ color: result.ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
                   {result.ok ? '✓ ' : '✗ '}{result.message}
                 </div>
@@ -340,70 +348,15 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         })}
       </div>
 
-      {/* —— 新增:预设 / 从本机导入 —— */}
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {settings.presets.map((preset) => (
-          <button key={preset.id} type="button" data-testid={`vk-preset-${preset.id}`}
-            title={preset.note}
-            onClick={() => addChannel({ base_url: preset.base_url, name: preset.name })}
-            className={outlineButton} style={outlineStyle}>
-            + {preset.name}
-          </button>
-        ))}
-        {settings.importable.map((item) => (
-          <button key={item.id} type="button" data-testid={`vk-import-${item.id}`}
-            title={`从本机既有配置导入：${item.model_id}`}
-            onClick={() => importChannel(item)}
-            className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-accent)' }}>
-            ↓ 导入 {item.name}
-          </button>
-        ))}
-      </div>
-
-      {/* —— 从 cc-switch 一键读取 —— */}
-      <div data-testid="vk-ccswitch" className="mt-3 rounded-lg p-2"
-        style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
-        <div className="mb-1 flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          <span style={{ color: 'var(--color-fg)' }}>从 cc-switch 读取</span>
-          {settings.cc_switch.available
-            ? <span>地址、模型、接口风格、key 一次到位，只剩单价要填</span>
-            : <span data-testid="vk-ccswitch-reason">{settings.cc_switch.reason}</span>}
-        </div>
-        {settings.cc_switch.available && (
-          <div className="flex flex-wrap items-center gap-2">
-            {settings.cc_switch.candidates.map((candidate) => (
-              <button key={candidate.ref} type="button"
-                data-testid={`vk-ccswitch-${candidate.ref}`}
-                disabled={busy !== null}
-                title={`${candidate.base_url} · ${candidate.model_id || '未指定模型'} · ${candidate.masked_key}`}
-                onClick={() => void importFromCcSwitch(candidate)}
-                className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-accent)' }}>
-                ↓ {candidate.name}
-                {candidate.is_current && <span style={{ color: 'var(--color-fg-dim)' }}> · 在用</span>}
-              </button>
-            ))}
-            {settings.cc_switch.candidates.length === 0 && (
-              <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                cc-switch 里没有能导的中转站配置
-              </span>
-            )}
-          </div>
-        )}
-        {/* 认得出但导不了的,说清楚为什么 —— 比让它凭空消失强。 */}
-        {settings.cc_switch.skipped.map((note) => (
-          <div key={note} className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>· {note}</div>
-        ))}
-      </div>
-
       {/* —— 角色指派 —— */}
       {drafts.length > 0 && (
         <div className="mt-4 space-y-2">
           {roleKeys.map((role) => (
             <div key={role} className="flex flex-wrap items-center gap-2">
-              <span className="w-20 shrink-0 text-sm">{settings.role_labels[role]}</span>
+              <span className="w-16 shrink-0 text-sm">{settings.role_labels[role]}</span>
               <select
                 data-testid={`vk-role-${role}`}
-                className="rounded-lg px-2 py-1 text-sm outline-none"
+                className="rounded-lg px-2 py-1.5 text-sm outline-none"
                 style={{ ...fieldStyle, minWidth: '12rem' }}
                 value={roles[role] ?? ''}
                 onChange={(e) => setRoles((r) => {
@@ -413,7 +366,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   return next
                 })}
               >
-                <option value="">跟随默认{defaultId ? `（${drafts.find((d) => d.id === defaultId)?.name}）` : ''}</option>
+                {/* 没有"跟随默认"了 —— 没指就是没指,跑到那一步会失败,得说出来。 */}
+                <option value="">— 还没指定 —</option>
                 {drafts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
               <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{settings.role_hints[role]}</span>
@@ -422,19 +376,53 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         </div>
       )}
 
+      {/* —— 新增 / 导入 —— */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <button type="button" data-testid="vk-channel-add" onClick={() => addChannel()}
+        <button type="button" data-testid="vk-channel-add" onClick={addChannel}
           className={outlineButton} style={outlineStyle}>+ 新增配置</button>
+        {settings.importable.map((item) => (
+          <button key={item.id} type="button" data-testid={`vk-import-${item.id}`}
+            title={`从本机既有配置导入：${item.model_id}`}
+            onClick={() => importChannel(item)}
+            className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-accent)' }}>
+            ↓ 导入 {item.name}
+          </button>
+        ))}
+        {settings.cc_switch.available && settings.cc_switch.candidates.map((candidate) => (
+          <button key={candidate.ref} type="button"
+            data-testid={`vk-ccswitch-${candidate.ref}`}
+            disabled={busy !== null}
+            title={`从 cc-switch 导入：${candidate.base_url} · ${candidate.model_id || '未指定模型'} · ${candidate.masked_key}`}
+            onClick={() => void importFromCcSwitch(candidate)}
+            className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-accent)' }}>
+            ↓ {candidate.name}
+          </button>
+        ))}
+      </div>
+      {/* 认得出但导不了的,说清楚为什么 —— 比让它凭空消失强。 */}
+      <div data-testid="vk-ccswitch">
+        {settings.cc_switch.skipped.map((note) => (
+          <div key={note} className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>· {note}</div>
+        ))}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
           data-testid="vk-provider-save"
           onClick={() => { void save() }}
           disabled={saving}
-          className="rounded-lg px-3 py-1 text-sm font-medium disabled:opacity-50"
+          className="rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-50"
           style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
         >
           {saving ? '保存中…' : '保存'}
         </button>
+        {/* 没指到通道的角色点名说 —— 跑到那一步才失败更糟。 */}
+        {settings.unassigned_roles.length > 0 && (
+          <span data-testid="vk-unassigned" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            还没指定：{settings.unassigned_roles.map((r) => settings.role_labels[r]).join('、')}
+          </span>
+        )}
       </div>
       {notice && <div data-testid="vk-provider-notice" role="status" className="mt-2 text-xs" style={{ color: 'var(--color-success)' }}>{notice}</div>}
       {error && <div data-testid="vk-provider-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{error}</div>}

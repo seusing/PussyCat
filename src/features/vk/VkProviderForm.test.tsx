@@ -10,8 +10,8 @@ function channel(over: Record<string, unknown> = {}) {
     id: 'cheap', name: 'GPT 5.6 Luna', base_url: 'https://api.example.com/v1',
     model_id: 'gpt-5.6-luna', key_env: 'VK_CHANNEL_CHEAP_KEY',
     api_style: 'openai_completions', key_stored: true, key_from_environment: false,
-    in_cny: 1, out_cny: 6, reasoning_effort: 'low', reasoning_effort_explicit: false,
-    extra_headers: {}, is_default: true, priced: true,
+    key_masked: 'sk-rela••••••••••6789',
+    reasoning_effort: 'low', reasoning_effort_explicit: false, extra_headers: {},
     ...over,
   }
 }
@@ -23,15 +23,14 @@ function settings(over: Record<string, unknown> = {}) {
     role_assignments: {},
     role_labels: { deep_analysis: '深度分析', basic: '基础处理' },
     role_hints: { deep_analysis: '提炼观点', basic: '章节划分、质检等其余步骤' },
+    unassigned_roles: [],
     api_styles: [
       { id: 'openai_completions', label: 'OpenAI 兼容（chat/completions）' },
       { id: 'openai_responses', label: 'OpenAI Responses' },
       { id: 'anthropic_messages', label: 'Anthropic Messages' },
     ],
-    presets: [{ id: 'zhipu', name: '智谱 GLM（官方）', base_url: 'https://open.bigmodel.cn/api/paas/v4', note: '国内直连' }],
     importable: [],
     cc_switch: { available: false, path: '', reason: '本机没装 cc-switch', skipped: [], candidates: [] },
-    unpriced: [],
     configured: true,
     ...over,
   }
@@ -67,17 +66,38 @@ afterEach(() => { vi.unstubAllGlobals() })
 
 // ── key 的进出 ──────────────────────────────────────────────────────────
 
-test('已保存的 key 不随页面回显 —— 输入框从空开始', async () => {
+test('已保存的 key 以打码值示人 —— 空输入框会被当成"没设过"', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
 
   await waitFor(() => expect(screen.getByTestId('vk-channel-key-cheap')).toBeInTheDocument())
   const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
-  expect(input.value).toBe('')
-  expect(input.type).toBe('password')
-  expect(input.placeholder).toContain('留空')
+  expect(input.value).toBe('sk-rela••••••••••6789')
+  expect(input.readOnly).toBe(true)          // 要改得先点「更换」
   expect(document.body.textContent).not.toContain(SECRET)
 })
+
+test('点「更换」才清空成可输入的密码框', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('vk-channel-replace-cheap')).toBeInTheDocument())
+
+  await userEvent.click(screen.getByTestId('vk-channel-replace-cheap'))
+  const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
+  expect(input.value).toBe('')
+  expect(input.readOnly).toBe(false)
+  expect(input.type).toBe('password')
+
+  await userEvent.type(input, 'sk-brand-new')
+  await userEvent.click(screen.getByTestId('vk-provider-save'))
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { api_key: string }[] }
+  expect(body.channels[0].api_key).toBe('sk-brand-new')
+})
+
 
 test('点「显示」才取明文 —— 这是唯一会把 key 送回前端的一次', async () => {
   const { calls } = stubRoutes({
@@ -96,7 +116,7 @@ test('点「显示」才取明文 —— 这是唯一会把 key 送回前端的�
   expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).type).toBe('text')
 })
 
-test('再点一次隐藏,明文从输入框消失', async () => {
+test('再点一次隐藏,退回打码值', async () => {
   stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
     'POST /vk/v1/providers/reveal': { body: { key_env: 'VK_CHANNEL_CHEAP_KEY', found: true, api_key: SECRET, source: 'stored' } },
@@ -108,12 +128,11 @@ test('再点一次隐藏,明文从输入框消失', async () => {
   await waitFor(() => expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).value).toBe(SECRET))
   await userEvent.click(screen.getByTestId('vk-channel-reveal-cheap'))
 
-  const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
-  expect(input.value).toBe('')
-  expect(input.type).toBe('password')
+  expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).value).toBe('sk-rela••••••••••6789')
 })
 
-test('留空的 key 不提交 —— 留空表示"别动已存的那把"', async () => {
+
+test('没碰过的 key 不提交 —— 表示"别动已存的那把"', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
     'POST /vk/v1/providers': { body: SAVE_OK },
@@ -129,6 +148,7 @@ test('留空的 key 不提交 —— 留空表示"别动已存的那把"', async
   expect(body.channels[0].model_id).toBe('gpt-5.6-luna')
 })
 
+
 test('key 来自系统环境变量时说明它优先 —— 用户要改得去别处', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [channel({ key_from_environment: true })] }) } })
   render(<VkProviderForm baseUrl={BASE} />)
@@ -139,44 +159,82 @@ test('key 来自系统环境变量时说明它优先 —— 用户要改得去�
 
 // ── 通道增删与默认 ──────────────────────────────────────────────────────
 
-test('新增配置,并且第一条自动成为默认', async () => {
+test('新增配置 —— 没有"默认"这回事了', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [], configured: false }) } })
   render(<VkProviderForm baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('vk-channel-add')).toBeInTheDocument())
 
   await userEvent.click(screen.getByTestId('vk-channel-add'))
 
-  // 「默认」必须始终存在,否则角色解析无处可退
-  await waitFor(() => expect(screen.getByText('默认')).toBeInTheDocument())
+  expect(screen.getAllByPlaceholderText(/接口地址/)).toHaveLength(1)
+  // 通道是按用途建的,两个角色各指一条 —— "默认"没有语义。
+  expect(screen.queryByText('默认')).not.toBeInTheDocument()
+  expect(screen.queryByText('设为默认')).not.toBeInTheDocument()
 })
 
-test('删掉默认那条时立刻指定新的默认_不留没有默认的中间态', async () => {
-  stubRoutes({
+test('没指到通道的角色被点名 —— 跑到那一步才失败更糟', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+    configured: false, unassigned_roles: ['basic'],
+  }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await waitFor(() => expect(screen.getByTestId('vk-unassigned')).toHaveTextContent('基础处理'))
+})
+
+
+test('删掉一条通道,指到它的角色一并解绑', async () => {
+  const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings({
-      channels: [channel(), channel({ id: 'smart', name: 'Sol', is_default: false })],
+      channels: [channel(), channel({ id: 'smart', name: 'Sol' })],
+      role_assignments: { deep_analysis: 'cheap', basic: 'smart' },
     }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
   })
   render(<VkProviderForm baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('vk-channel-remove-cheap')).toBeInTheDocument())
 
   await userEvent.click(screen.getByTestId('vk-channel-remove-cheap'))
-
   expect(screen.queryByTestId('vk-channel-cheap')).not.toBeInTheDocument()
-  expect(screen.getByTestId('vk-channel-smart').textContent).toContain('默认')
+
+  await userEvent.click(screen.getByTestId('vk-provider-save'))
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string> }
+  expect(body.roles).toEqual({ basic: 'smart' })
 })
 
-test('预设一键建通道并带上公开地址', async () => {
+
+test('没有内置预设 —— 走 API key 的话官方站和中转站配置形状本来一样', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [], configured: false }) } })
   render(<VkProviderForm baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('vk-preset-zhipu')).toBeInTheDocument())
 
-  await userEvent.click(screen.getByTestId('vk-preset-zhipu'))
-
-  const urls = screen.getAllByPlaceholderText(/接口地址/) as HTMLInputElement[]
-  expect(urls[0].value).toBe('https://open.bigmodel.cn/api/paas/v4')
-  // 预设不预填模型名 —— 编一个会让用户以为它一定存在
-  expect((screen.getAllByPlaceholderText(/模型名称/)[0] as HTMLInputElement).value).toBe('')
+  await waitFor(() => expect(screen.getByTestId('vk-channel-add')).toBeInTheDocument())
+  expect(screen.queryByText(/智谱/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/OpenAI（官方）/)).not.toBeInTheDocument()
 })
+
+test('接口风格随模型名自动填上 —— 别让用户在三个技术名词里选', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [], configured: false }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('vk-channel-add')).toBeInTheDocument())
+  await userEvent.click(screen.getByTestId('vk-channel-add'))
+
+  const model = screen.getByPlaceholderText(/模型名称/)
+  const style = () => screen.getByDisplayValue(/OpenAI|Anthropic/) as HTMLSelectElement
+
+  await userEvent.type(model, 'gpt-5.6-luna')
+  expect(style().value).toBe('openai_responses')
+
+  await userEvent.clear(model)
+  await userEvent.type(model, 'claude-opus-4-6')
+  expect(style().value).toBe('anthropic_messages')
+
+  // 用户自己选过之后,再改模型名不再覆盖他的选择。
+  await userEvent.selectOptions(style(), 'openai_completions')
+  await userEvent.clear(model)
+  await userEvent.type(model, 'gpt-5.6-sol')
+  expect(style().value).toBe('openai_completions')
+})
+
 
 test('从本机既有配置一键导入_地址与模型名现成', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({
@@ -267,14 +325,16 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
 
 // ── 其余 ────────────────────────────────────────────────────────────────
 
-test('缺单价的通道明说预算上限不可用', async () => {
-  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
-    channels: [channel({ in_cny: null, out_cny: null, priced: false })], unpriced: ['cheap'],
-  }) } })
+test('表单不再收单价', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  await waitFor(() => expect(screen.getByTestId('vk-channel-unpriced-cheap')).toHaveTextContent('预算上限不可用'))
+  await waitFor(() => expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument())
+  expect(screen.queryByPlaceholderText(/输入单价/)).not.toBeInTheDocument()
+  expect(screen.queryByPlaceholderText(/输出单价/)).not.toBeInTheDocument()
+  expect(screen.getByTestId('vk-provider-form')).not.toHaveTextContent('单价未知')
 })
+
 
 test('读不到配置时如实说,而不是渲染一张空表单让人以为配好了', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { status: 503, body: { error: 'sidecar 未接线' } } })
@@ -315,36 +375,34 @@ const CC_IMPORT = {
     extra_headers: { 'x-openai-actor-authorization': 'local-image-extension' },
   },
   api_key: SECRET,
-  notes: ['单价没导:cc-switch 存的是官方美元标价'],
 }
 
-test('没装 cc-switch 时说清楚原因,而不是给一个点不动的空按钮', async () => {
+const CC_AVAILABLE = {
+  available: true, path: 'C:/x/cc-switch.db', reason: '', skipped: [], candidates: [ccCandidate()],
+}
+
+test('没装 cc-switch 时不摆一个点不动的空按钮 —— 干脆不出现', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  await waitFor(() => expect(screen.getByTestId('vk-ccswitch-reason')).toHaveTextContent('没装 cc-switch'))
+  await waitFor(() => expect(screen.getByTestId('vk-channel-add')).toBeInTheDocument())
+  expect(screen.queryByTestId('vk-ccswitch-codex:242d3850')).not.toBeInTheDocument()
+  expect(screen.getByTestId('vk-provider-form')).not.toHaveTextContent('cc-switch')
 })
 
 test('列出的候选只带打码 key —— 浏览这一步不该摊开所有中转站的明文', async () => {
-  stubRoutes({
-    'GET /vk/v1/providers': {
-      body: settings({ cc_switch: { available: true, path: 'C:/x/cc-switch.db', reason: '', skipped: [], candidates: [ccCandidate()] } }),
-    },
-  })
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({ cc_switch: CC_AVAILABLE }) } })
   render(<VkProviderForm baseUrl={BASE} />)
 
   const button = await screen.findByTestId('vk-ccswitch-codex:242d3850')
   expect(button).toHaveTextContent('hhcoding sol')
-  expect(button).toHaveTextContent('在用')
   expect(button.getAttribute('title')).toContain('sk-1dbc65…862c')
   expect(document.body.textContent).not.toContain(SECRET)
 })
 
 test('点某一条才拉明文,并把地址/模型/接口风格/请求头一起填进表单', async () => {
   const { calls } = stubRoutes({
-    'GET /vk/v1/providers': {
-      body: settings({ channels: [], cc_switch: { available: true, path: 'C:/x', reason: '', skipped: [], candidates: [ccCandidate()] } }),
-    },
+    'GET /vk/v1/providers': { body: settings({ channels: [], cc_switch: CC_AVAILABLE }) },
     'POST /vk/v1/providers/cc-switch': { body: CC_IMPORT },
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
@@ -354,8 +412,6 @@ test('点某一条才拉明文,并把地址/模型/接口风格/请求头一起�
   await waitFor(() => expect(screen.getByTestId('vk-channel-hhcoding-sol')).toBeInTheDocument())
   expect(screen.getByTestId('vk-channel-url-hhcoding-sol')).toHaveValue('https://hhcoding.fun')
   expect(screen.getByTestId('vk-channel-style-hhcoding-sol')).toHaveValue('openai_responses')
-  // 空着的单价栏要有交代,否则看着像漏了。
-  await waitFor(() => expect(screen.getByTestId('vk-provider-form')).toHaveTextContent('单价没导'))
 
   await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
@@ -390,7 +446,7 @@ test('导不了的那些附原因列出来 —— 比让它凭空消失强', asy
   stubRoutes({
     'GET /vk/v1/providers': {
       body: settings({ cc_switch: {
-        available: true, path: 'C:/x', reason: '', candidates: [],
+        ...CC_AVAILABLE, candidates: [],
         skipped: ['Claude:用的是 ANTHROPIC_AUTH_TOKEN(Bearer 认证),暂不支持,请手填'],
       } }),
     },
@@ -398,5 +454,4 @@ test('导不了的那些附原因列出来 —— 比让它凭空消失强', asy
   render(<VkProviderForm baseUrl={BASE} />)
 
   await waitFor(() => expect(screen.getByTestId('vk-ccswitch')).toHaveTextContent('AUTH_TOKEN'))
-  expect(screen.getByTestId('vk-ccswitch')).toHaveTextContent('没有能导的中转站配置')
 })
