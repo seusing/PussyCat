@@ -17,3 +17,8 @@ playwright-report/
 
 # VK runtime bundle (built artifacts: wheel + uv.exe + manifest)
 src-tauri/resources/vk/
+
+# 个人的 Claude Code 配置(自动打包 Stop hook 等)。**必须忽略**:该 hook 的守卫是
+# 「工作区干净才打包」,而一个未跟踪的 settings.local.json 会让 git status 永远非空,
+# 守卫就永远不放行 —— 不忽略它,这个 hook 会自己把自己废掉。
+.claude/settings.local.json
