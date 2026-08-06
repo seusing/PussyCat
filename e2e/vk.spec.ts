@@ -113,7 +113,9 @@ test.describe('视频解析标签页', () => {
     // 任务出现并在真 DAG 上完成(stub LLM,秒级)
     await expect(page.getByTestId('vk-job-row').first()).toBeVisible({ timeout: 30_000 })
     await expect(page.getByTestId('vk-job-row').first()).toContainText('已完成', { timeout: 120_000 })
-    await expect(page.getByTestId('vk-job-row').first()).toContainText('实际费用')
+    // 列表行不再重复「实际费用」这个标签(¥ 已经说明它是钱)。这里改成匹配真实金额:
+    // 原断言只保证标签在,金额是不是渲染出来了它并不知道 —— 换成 /¥\d/ 反而守得更严。
+    await expect(page.getByTestId('vk-job-row').first()).toContainText(/¥\d/)
 
     // 详情:证据覆盖 + 产物按钮
     await page.getByTestId('vk-job-row').first().getByRole('button', { name: '详情' }).click()

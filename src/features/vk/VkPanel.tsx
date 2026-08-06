@@ -766,13 +766,14 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
                   要查的时候悬停有,不再逐行占位。
                 · 「已耗时」这个标签在每一行重复,但 `4m0s` 这种写法本身就只可能是时长,
                   列表里靠位置就分得清,标签删掉不丢信息。
-                · 「实际费用」保留 —— e2e/vk.spec.ts:116 断言了这四个字,本地跑不了
-                  Playwright,不拿验收门冒险。 */}
+                · 「实际费用」同理删掉:¥ 符号本身就说明这是钱,列表里不会跟时长混。
+                  e2e 那条断言随之改成匹配 /¥\d/ —— 校验真渲染出了金额,比校验四个
+                  标签字更贴近它本来想守的东西。 */}
             {jobs.map((row) => (
               <div key={row.job_id} data-testid="vk-job-row" title={row.kind} className="flex items-center gap-3 border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: 'var(--color-line)' }}>
                 <span className="min-w-20 font-medium">{STATUS_LABELS[row.status] ?? row.status}</span>
                 <span style={{ color: 'var(--color-fg-dim)' }}>{elapsedLabel(row)}</span>
-                {row.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 {costLabel(row.cost_cny)}</span>}
+                {row.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>{costLabel(row.cost_cny)}</span>}
                 <span className="ml-auto" />
                 <button type="button" data-testid={`vk-job-open-${row.job_id}`} onClick={() => { void openJob(row.job_id) }} className={outlineButton} style={outlineStyle}>详情</button>
                 {ACTIVE_STATUSES.has(row.status) && (

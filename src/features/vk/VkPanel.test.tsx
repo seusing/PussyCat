@@ -344,7 +344,7 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-job-row')).toBeInTheDocument())
-    expect(screen.getByTestId('vk-job-row').textContent).toContain(`实际费用 ${expected}`)
+    expect(screen.getByTestId('vk-job-row').textContent).toContain(expected)
   })
 
   it('lists jobs with real status/elapsed/cost and surfaces budget_stop plus outputs in the detail', async () => {
@@ -378,7 +378,7 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-job-row')).toBeInTheDocument())
     expect(screen.getByTestId('vk-job-row').textContent).toContain('失败')
-    expect(screen.getByTestId('vk-job-row').textContent).toContain('实际费用 ¥0.05')
+    expect(screen.getByTestId('vk-job-row').textContent).toContain('¥0.05')
     expect(screen.getByTestId('vk-job-row').textContent).toContain('10m0s')
 
     await user.click(screen.getByTestId('vk-job-open-run:run-1'))
