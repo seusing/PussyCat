@@ -352,10 +352,18 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         </button>
       )}
 
+      {/* 外面这层是「桥」,不可见,只负责把胶囊与卡片之间那 8px 缝盖住。
+          缝原先是卡片自己的 mt-2 撑的,于是那条带上命中的元素是 header —— 鼠标从胶囊
+          往下走的一瞬就算离开了根节点,mouseleave 触发、卡片收起,用户永远够不到里面的
+          「修复浏览器连接」。DOM 上卡片一直是根节点的后代,问题不在层级,在**命中测试**:
+          mouseleave 看的是指针底下压着谁,不是 DOM 谁包着谁。
+          改成外层用 pt-2 撑同样的间距:它的盒子从胶囊底边就开始,缝被自己盖住,
+          而卡片看上去仍然隔着 8px,视觉一模一样。 */}
       {detailsOpen && (
+        <div className="absolute right-0 top-full z-50 pt-2">
         <div
           data-testid="health-details"
-          className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg p-3 text-xs shadow-xl"
+          className="w-64 rounded-lg p-3 text-xs shadow-xl"
           style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
         >
           {/* 三路明细(爪爪服务/浏览器连接/视频解析)撤掉:结论已经写在上面那颗灯的标签里,
@@ -387,6 +395,7 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
               修复浏览器连接
             </button>
           )}
+        </div>
         </div>
       )}
     </div>
