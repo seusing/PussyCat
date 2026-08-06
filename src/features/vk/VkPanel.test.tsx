@@ -324,6 +324,29 @@ describe('VkPanel', () => {
     expect(useAppStore.getState().vkHandoff).toBeUndefined()
   })
 
+  // 金额精度按量级走。真正要防的是「把花掉的钱显示成 0」—— 单条任务低到 ¥0.003 是常态,
+  // 一律两位小数会写成 ¥0.00。这条不变量比"好看"重要得多,单独钉住。
+  it.each([
+    [0.42, '¥0.42'],       // 够得着分:去掉 toFixed(4) 的两个尾零
+    [0.003, '¥0.0030'],    // 分以下:必须保留四位,绝不能压成 ¥0.00
+    [0, '¥0'],             // 真零:不写 ¥0.0000
+  ])('cost_cny=%s 显示成 %s', async (cost, expected) => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'GET /vk/v1/jobs': {
+        body: [{
+          job_id: 'run:run-1', kind: 'run', status: 'done',
+          submitted_at: '2026-08-01T00:00:00+00:00', finished_at: '2026-08-01T00:10:00+00:00',
+          parent_job_id: null, cache_bypass: false, run_id: 'run-1', cost_cny: cost,
+        }],
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-job-row')).toBeInTheDocument())
+    expect(screen.getByTestId('vk-job-row').textContent).toContain(`实际费用 ${expected}`)
+  })
+
   it('lists jobs with real status/elapsed/cost and surfaces budget_stop plus outputs in the detail', async () => {
     const user = userEvent.setup()
     stubRoutes({
@@ -355,8 +378,8 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-job-row')).toBeInTheDocument())
     expect(screen.getByTestId('vk-job-row').textContent).toContain('失败')
-    expect(screen.getByTestId('vk-job-row').textContent).toContain('实际费用 ¥0.0500')
-    expect(screen.getByTestId('vk-job-row').textContent).toContain('已耗时 10m0s')
+    expect(screen.getByTestId('vk-job-row').textContent).toContain('实际费用 ¥0.05')
+    expect(screen.getByTestId('vk-job-row').textContent).toContain('10m0s')
 
     await user.click(screen.getByTestId('vk-job-open-run:run-1'))
     await waitFor(() => expect(screen.getByTestId('vk-job-detail')).toBeInTheDocument())

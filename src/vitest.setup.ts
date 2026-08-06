@@ -32,10 +32,29 @@ function makeMemoryStorage(): Storage {
 // `readiness.test.mjs` 此前各自 stubGlobal/unstubAllGlobals 绕过,属仓库级隐藏耦合,在此按环境收窄根治。
 const isJsdomEnv = typeof window !== 'undefined'
 
+// jsdom 至今不实现 window.matchMedia(长期已知缺口,非本仓 bug)。border-beam 用它探测
+// prefers-color-scheme —— 探测发生在 hook 里,即使我们显式传了 theme="dark" 也照样会调,
+// 因为 hook 不能条件执行。桩固定报 matches:false(浅色),对本应用无影响:我们所有落点都
+// 显式钉死 theme,不依赖这个探测结果。装在 setup 而不是单个用例里,后续任何用 matchMedia
+// 的组件都不必再各自补一遍。
+function stubMatchMedia() {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as typeof window.matchMedia
+}
+
 beforeEach(() => {
   if (!isJsdomEnv) return
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
   vi.stubGlobal('localStorage', makeMemoryStorage())
+  stubMatchMedia()
 })
 
 afterEach(() => {

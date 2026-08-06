@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { useAppStore } from '../../store/appStore'
 import { StreamLog } from './StreamLog'
 import { ResultsTable } from './ResultsTable'
@@ -30,7 +31,10 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
   return (
     <div className="flex h-full flex-col p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span data-testid="run-state" className="text-sm font-medium">{stateLabel(run.state)}</span>
+        <span data-testid="run-state" className="flex items-center gap-2 text-sm font-medium">
+          {active && <ThinkingOrb state={orbState(run.state)} size={20} theme="dark" />}
+          {stateLabel(run.state)}
+        </span>
         <div className="flex items-center gap-2">
           {active && (
             <button data-testid="cancel-button" onClick={onCancel} disabled={run.state === 'cancelling'}
@@ -104,4 +108,11 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
 
 function stateLabel(s: string): string {
   return ({ starting: '正在启动…', running: '运行中…', cancelling: '正在取消…', succeeded: '已完成', failed: '失败', cancelled: '已取消' } as Record<string, string>)[s] ?? s
+}
+
+// 只在进行中的三态出球:终态(已完成/失败/已取消)的信息由文字与颜色承担,再放个动图是噪音。
+// theme 必须显式钉 'dark' —— 本应用是 :root{color-scheme:dark} 的纯深色,没有 data-theme
+// 也没有 dark class,组件默认的 'auto' 会退回去读系统主题,用户开浅色时会画成深色墨迹而隐形。
+function orbState(s: string): OrbState {
+  return ({ starting: 'connecting', running: 'working', cancelling: 'breathing' } as Record<string, OrbState>)[s] ?? 'working'
 }

@@ -3,6 +3,8 @@
 // 边界:React 只访问 Node 的 /vk/v1/* 代理,永不直连 Python、永不接触 sidecar
 // token。进度只显示真实状态/已耗时/实际费用,不造百分比(拍板 4)。
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { BorderBeam } from 'border-beam'
 import { useAppStore } from '../../store/appStore'
 import { HostRequestError } from '../../host/errors'
 import {
@@ -78,6 +80,17 @@ function errorText(error: unknown, fallback: string): string {
   return fallback
 }
 
+/**
+ * 金额显示精度按量级走。原先一律 `toFixed(4)`,于是 ¥0.42 被写成「¥0.4200」——
+ * 两个尾零逐行重复,在任务列表里是纯噪声。但**不能直接改成两位**:单条任务低到
+ * ¥0.003 是常态,两位会把它压成「¥0.00」,把真花掉的钱显示成零是最不能接受的一类错。
+ * 所以:够得着分的用两位,不够的保留四位,正零直接写 ¥0。
+ */
+function costLabel(cny: number): string {
+  if (cny === 0) return '¥0'
+  return cny >= 0.01 ? `¥${cny.toFixed(2)}` : `¥${cny.toFixed(4)}`
+}
+
 function elapsedLabel(row: { submitted_at: string; finished_at: string | null }): string {
   const start = Date.parse(row.submitted_at)
   if (Number.isNaN(start)) return '—'
@@ -99,6 +112,20 @@ const STATUS_LABELS: Record<string, string> = {
   quarantined: '已隔离',
   interrupted: '已中断(重启回收)',
   submitted: '已提交',
+}
+
+/**
+ * 安装期给健康条套一圈流光。**只在 installing 时套**——那一段要跑好几分钟,而且我们的
+ * 文案明说了「可以先去做别的」,用户不会盯着屏幕,需要的是一个余光扫得到的信号,不是
+ * 一行要凑近读的字。其余状态一律原样返回:常驻的动效就是背景噪音,反而抬不起真正
+ * 需要注意的那一刻。
+ *
+ * 配色选 ocean(蓝紫)而不是默认的 colorful(全彩虹):本应用是克制的深色盘,
+ * 彩虹会把这条本该次要的状态条抢成全屏视觉焦点。
+ */
+function InstallingBeam({ on, children }: { on: boolean; children: ReactNode }) {
+  if (!on) return <>{children}</>
+  return <BorderBeam size="pulse-inner" colorVariant="ocean" theme="dark">{children}</BorderBeam>
 }
 
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
@@ -432,6 +459,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   return (
     <div className="mx-auto max-w-3xl p-3 sm:p-6" data-testid="vk-panel">
       {/* 健康条 */}
+      <InstallingBeam on={runtime?.state === 'installing'}>
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
         {/* 一句结论。正常时**只有这一行**,没有按钮 —— 路径、版本、能力清单、
             环境列表全部收进下面默认折叠的开发者信息。用户关心的只有能不能用、
@@ -465,6 +493,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
           ↻
         </button>
       </div>
+      </InstallingBeam>
       {verdict.note && (
         <div data-testid="vk-verdict-note" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           {verdict.note}
@@ -732,12 +761,18 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
         )}
         {jobs.length > 0 && (
           <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
+            {/* 列表行按「一行 = 一个任务」压到最少:
+                · kind 是内部判别字段(run/request),对用户没有语义,而且是英文——挪去 title,
+                  要查的时候悬停有,不再逐行占位。
+                · 「已耗时」这个标签在每一行重复,但 `4m0s` 这种写法本身就只可能是时长,
+                  列表里靠位置就分得清,标签删掉不丢信息。
+                · 「实际费用」保留 —— e2e/vk.spec.ts:116 断言了这四个字,本地跑不了
+                  Playwright,不拿验收门冒险。 */}
             {jobs.map((row) => (
-              <div key={row.job_id} data-testid="vk-job-row" className="flex items-center gap-3 border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: 'var(--color-line)' }}>
+              <div key={row.job_id} data-testid="vk-job-row" title={row.kind} className="flex items-center gap-3 border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: 'var(--color-line)' }}>
                 <span className="min-w-20 font-medium">{STATUS_LABELS[row.status] ?? row.status}</span>
-                <span style={{ color: 'var(--color-fg-dim)' }}>{row.kind}</span>
-                <span style={{ color: 'var(--color-fg-dim)' }}>已耗时 {elapsedLabel(row)}</span>
-                {row.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 ¥{row.cost_cny.toFixed(4)}</span>}
+                <span style={{ color: 'var(--color-fg-dim)' }}>{elapsedLabel(row)}</span>
+                {row.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 {costLabel(row.cost_cny)}</span>}
                 <span className="ml-auto" />
                 <button type="button" data-testid={`vk-job-open-${row.job_id}`} onClick={() => { void openJob(row.job_id) }} className={outlineButton} style={outlineStyle}>详情</button>
                 {ACTIVE_STATUSES.has(row.status) && (
@@ -755,7 +790,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
           <div className="mb-2 flex items-center gap-2">
             <span className="text-sm font-medium">{STATUS_LABELS[selectedJob.status] ?? selectedJob.status}</span>
             <span style={{ color: 'var(--color-fg-dim)' }}>已耗时 {elapsedLabel(selectedJob)}</span>
-            {selectedJob.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 ¥{selectedJob.cost_cny.toFixed(4)}</span>}
+            {selectedJob.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 {costLabel(selectedJob.cost_cny)}</span>}
             <span className="ml-auto" />
             <button type="button" data-testid="vk-job-retry" onClick={() => { void jobAction(selectedJob.job_id, 'retry') }} className={outlineButton} style={outlineStyle}>重试</button>
             <button type="button" data-testid="vk-job-refresh" title="绕过来源版本缓存重新解析" onClick={() => { void jobAction(selectedJob.job_id, 'refresh') }} className={outlineButton} style={outlineStyle}>强制重跑</button>
