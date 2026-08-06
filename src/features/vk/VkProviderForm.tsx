@@ -228,8 +228,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     <div data-testid="vk-provider-form" className="rounded-xl p-4"
       style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="text-sm font-medium">模型配置</div>
+      {/* 第二句「下面把两种活儿各指一条」删掉:角色指派那一段本身就是两个带标签的下拉框,
+          外加 role_hints 逐条解释,看见即懂 —— 用一句话预告接下来会看见什么,是纯重复。 */}
       <p className="mb-4 mt-0.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-        一条通道 = 接口地址 + 模型 + API key。下面把两种活儿各指一条。
+        一条通道 = 地址 + 模型 + key
       </p>
 
       {/* —— 通道清单 —— */}
@@ -322,8 +324,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                     {busy === `test:${draft.id}` ? '测试中…' : '测试连接'}
                   </button>
                   {saved?.key_from_environment && (
-                    <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                      key 来自系统环境变量 · 它优先于这里填的
+                    <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}
+                      title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">
+                      key 来自系统环境变量，优先生效
                     </span>
                   )}
                 </div>

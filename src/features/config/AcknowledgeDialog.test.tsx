@@ -30,8 +30,8 @@ test('pending 为空时不渲染', () => {
 test('展示命令名、exposure 与 authorities 的中文说明', () => {
   render(<AcknowledgeDialog pending={pending()} onConfirmed={() => {}} onCancel={() => {}} />)
   expect(screen.getByText('确认执行「recent-paths」')).toBeInTheDocument()
-  expect(screen.getByTestId('ack-exposure')).toHaveTextContent('与你相关的个人信息')
-  expect(screen.getByTestId('ack-authorities')).toHaveTextContent('扫描本机相关应用留下的本地文件')
+  expect(screen.getByTestId('ack-exposure')).toHaveTextContent('涉及个人信息')
+  expect(screen.getByTestId('ack-authorities')).toHaveTextContent('读本机应用文件')
 })
 
 test('authorities 为空集时显示"不需要额外权限"', () => {

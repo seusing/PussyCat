@@ -211,12 +211,21 @@ export function LoginStatusPanel() {
         </span>
       </div>
 
+      {/* 摘要行只留用户开关它时真正需要知道的两件事:多久跑一次、会不会抢走浏览器。
+          机制(whoami、只对已确认命令生效、关掉应用即停)折进去——它解释的是"为什么",
+          不是"我该不该开",不该占着一整屏。原文的「**」是当 markdown 写的,但这里不过
+          markdown 渲染器,星号会原样显示,一并去掉。 */}
       {auto.enabled && (
-        <p data-testid="auto-refresh-note" className="mb-4 rounded-lg p-3 text-xs"
+        <details data-testid="auto-refresh-note" className="mb-4 rounded-lg p-3 text-xs"
           style={{ background: 'var(--color-panel)', color: 'var(--color-fg-dim)', border: '1px solid var(--color-warning)' }}>
-          定时检查会**在后台反复**用你的登录态执行 whoami，可能唤起或切换浏览器标签页。
-          只对已确认的命令生效；需要确认的会被跳过，不会弹窗打断你。关闭应用后不再执行。
-        </p>
+          <summary className="cursor-pointer" style={{ color: 'var(--color-warning)' }}>
+            每 {auto.minutes} 分钟一次，可能唤起或切换浏览器标签页
+          </summary>
+          <p className="mt-2">
+            定时检查会在后台反复用你的登录态执行 whoami。
+            只对已确认的命令生效；需要确认的会被跳过，不会弹窗打断你。关闭应用后不再执行。
+          </p>
+        </details>
       )}
 
       <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>

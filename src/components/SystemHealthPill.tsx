@@ -257,7 +257,7 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         // nextStep 就写在里面,那正是用户接下来要读的东西。
         if (body.health?.reasonCode === 'ok') setDetailsOpen(false)
       })
-      .catch(() => { setNextStep('修复请求没能送达 Host;确认爪爪服务在运行后再试一次。') })
+      .catch(() => { setNextStep('修复请求没送到。确认爪爪服务在运行后重试') })
       .finally(() => { clearTimeout(timer); setRepairing(false); checkVk() })
   }, [mode, base, checkVk])
 

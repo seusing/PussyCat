@@ -174,7 +174,7 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <h2 className="text-sm font-medium">◎ 电台精选</h2>
           <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            从最新的分布式测试结果里挑出来的实用组合
+            实测结果里挑出的实用组合
           </span>
         </div>
         <div className="mt-1 flex items-center gap-2">
