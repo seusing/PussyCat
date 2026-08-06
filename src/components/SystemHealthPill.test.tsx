@@ -186,30 +186,35 @@ test('就绪时只给结论,不内联 daemon/扩展/profile 及版本明细', as
   expect(text).not.toContain('daemon')
 })
 
-test('点击状态结论才展开三路明细与最后检查时间', async () => {
+test('悬浮即展开、移开即收起 —— 瞄一眼状态不该花掉两次点击', async () => {
   routeFetch()
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
 
   expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
-  await userEvent.click(screen.getByTestId('health-details-toggle'))
+  await userEvent.hover(screen.getByTestId('health-pill'))
+  expect(screen.getByTestId('health-details')).toBeInTheDocument()
 
-  const details = screen.getByTestId('health-details')
-  expect(details).toHaveTextContent('爪爪服务')
-  expect(details).toHaveTextContent('浏览器连接')
-  expect(details).toHaveTextContent('视频解析')
-  expect(details).toHaveTextContent('最后检查')
-  expect(details).toHaveTextContent('1.8.6')
+  await userEvent.unhover(screen.getByTestId('health-pill'))
+  expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
 })
 
-test('视频解析未配置在详情中如实显示，不写成按需启动', async () => {
-  routeFetch({ vk: { status: 'not-configured' } })
+test('浮层只给版本号与最后检查 —— 逐路结论已经写在灯上,不复述第二遍', async () => {
+  routeFetch()
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
-  await userEvent.click(screen.getByTestId('health-details-toggle'))
-  expect(screen.getByTestId('health-details')).toHaveTextContent('视频解析未配置')
+  await userEvent.hover(screen.getByTestId('health-pill'))
+
+  const details = screen.getByTestId('health-details')
+  expect(screen.getByTestId('health-version')).toHaveTextContent('1.8.6')
+  expect(details).toHaveTextContent('最后检查')
+  // 三路明细撤掉:结论在灯的标签里,浮层再列一遍是同一件事说两遍;
+  // 哪一路坏、坏在哪个 reasonCode 是开发者排障信息,不占用户的浮层。
+  expect(details).not.toHaveTextContent('爪爪服务')
+  expect(details).not.toHaveTextContent('浏览器连接')
+  expect(details).not.toHaveTextContent('视频解析')
 })
 
 test('扩展未连接时展示 Host 给的失败原因,不是前端自己编一句', async () => {
@@ -258,16 +263,18 @@ test('去重窗口内的连发只探一次 —— focus 与 visibilitychange 常
   expect(after).toBe(before)
 })
 
-test('全部正常时按钮为重新检查状态,仅 GET 健康检查且不发 repair POST', async () => {
+test('刷新键就在结论旁边:一次点击即重查,不必先把浮层叫出来,且不发 repair POST', async () => {
   const spy = routeFetch()
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+  // 正常时没有「修复」——没有真东西可修就不摆按钮。
   expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
-  await userEvent.click(screen.getByTestId('health-details-toggle'))
-  const button = screen.getByTestId('health-repair')
-  expect(button).toHaveTextContent('重新检查状态')
-  await userEvent.click(button)
+
+  // 浮层还关着就能点到刷新:它是常驻的,不藏在详情里。
+  expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('health-refresh'))
+
   await waitFor(() => expect(spy.mock.calls.filter((c) => String(c[0]).includes('/browser-bridge/health')).length).toBeGreaterThanOrEqual(2))
   expect(spy.mock.calls.some((c) => String(c[0]).includes('/browser-bridge/repair'))).toBe(false)
 })
@@ -334,6 +341,41 @@ test('演示模式不给修复按钮 —— 没有真 Host 可修', () => {
   render(<SystemHealthPill baseUrl={BASE} />)
   expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
 })
+
+test('修复拉起浏览器后自己盯着复检 —— 不再要求用户手点第二次', async () => {
+  // Host 在「拉起浏览器」这一级之后**明确不做立刻复检**(Chrome 冷启动 + 扩展握手远超
+  // 一次探测窗口,立刻复检会把可能成功的修复报成失败)。原本靠窗口 focus 补这一探,但
+  // 浏览器在别的显示器/后台起来时 focus 永远不来,用户只能再手点一次。这里断言前端自己盯。
+  const stopped = bridge({ extension: 'disconnected', reasonCode: 'extension-disconnected', summary: '浏览器扩展未连接' })
+  let current: BridgeHealth = stopped
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('/browser-bridge/repair')) {
+      return { ok: true, json: async () => ({
+        steps: [{ action: 'launch-browser', outcome: 'done' }],
+        health: stopped, repaired: false, nextStep: '在 Chrome 里打开装有 OpenCLI 扩展的窗口。',
+      }) }
+    }
+    if (url.includes('/browser-bridge/health')) return { ok: true, json: async () => current }
+    if (url.includes('/vk/v1/health')) return { ok: true, json: async () => ({ status: 'ok' }) }
+    return { ok: true }
+  }))
+  connected()
+  render(<SystemHealthPill baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接'))
+
+  await userEvent.hover(screen.getByTestId('health-pill'))
+  await waitFor(() => expect(screen.getByTestId('health-repair')).toBeInTheDocument())
+  await userEvent.click(screen.getByTestId('health-repair'))
+  // 修复刚返回时仍是没连上,nextStep 亮出来 —— 这一步的行为不变。
+  await waitFor(() => expect(screen.getByTestId('health-next-step')).toBeInTheDocument())
+
+  // 浏览器此刻握手完成。**用户什么都没做**,灯必须自己转绿。
+  current = bridge()
+  await waitFor(
+    () => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'),
+    { timeout: 6000 },
+  )
+}, 15_000)
 
 // ─────────────────────────── 浮层的收起时机 ───────────────────────────
 

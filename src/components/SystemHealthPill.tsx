@@ -35,6 +35,14 @@ const REPAIR_TIMEOUT_MS = 30_000
 // 而这一发要打 daemon —— 去重比"两个事件挑一个"可靠:两者在不同平台/不同切换
 // 方式下的触发组合并不一致,挑哪个都会在某条路径上漏掉。
 const REFRESH_DEBOUNCE_MS = 3000
+// 修复之后自己盯着看的窗口。修复阶梯的最后一级是「拉起浏览器」,而 Host 明确**不在那之后
+// 立刻复检** —— Chrome 冷启动加扩展握手远超一次探测的等待窗口,立刻复检只会稳定地把一次
+// 可能成功的修复报成失败(理由写在 server/browser-bridge-repair.mjs)。原设计把这一探交给
+// 「用户切回窗口」的 focus 事件,但那条路有两个洞:① 浏览器在别的显示器或后台起来,用户
+// 根本没离开爪爪,focus 事件永远不来;② 就算切回来,也可能正好落在上面那个 3s 去抖窗口里
+// 被吃掉。两种情况下用户都得再手点一次才看见真实状态 —— 而机器此刻完全有能力自己看。
+const REPAIR_POLL_INTERVAL_MS = 1500
+const REPAIR_POLL_WINDOW_MS = 20_000
 
 type HostState = 'checking' | 'online' | 'offline'
 type BridgeState = 'idle' | 'checking' | 'failed'
@@ -97,19 +105,8 @@ const TONE_COLOR: Record<Tone, string> = {
   down: 'var(--color-danger)',
 }
 
-const HOST_TEXT: Record<HostState, string> = {
-  checking: '检查中', online: '正常', offline: '离线',
-}
-
-function vkLabel(status: string | undefined): string {
-  if (status === undefined) return '状态未知'
-  if (status === 'failed') return '异常'
-  if (status === 'starting') return '启动中'
-  if (status === 'stopped') return '按需启动'
-  if (status === 'not-configured') return '未配置'
-  if (status === 'ok' || status === 'ready' || status === 'running') return '正常'
-  return '状态未知'
-}
+// HOST_TEXT / vkLabel 随浮层里那三行明细一并删除:结论已经由 aggregate() 聚合进灯的标签,
+// 逐路复述属于开发者排障信息,不再渲染。判定逻辑本身没动,仍在 aggregate() 里。
 
 /** 系统总健康 —— 一颗灯 + 一个能真动手的按钮,取代原先并排的两颗胶囊。 */
 export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
@@ -239,8 +236,39 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   // —— 检测并修复 ——
   const [repairing, setRepairing] = useState(false)
   const [nextStep, setNextStep] = useState<string | undefined>()
+
+  // 修复后的自盯轮询(理由见 REPAIR_POLL_* 常量处)。一就绪立刻停,超窗也停。
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+  const stopPolling = useCallback(() => {
+    if (pollRef.current !== undefined) { clearInterval(pollRef.current); pollRef.current = undefined }
+  }, [])
+  useEffect(() => stopPolling, [stopPolling])
+
+  const pollUntilReady = useCallback(() => {
+    stopPolling()
+    const deadline = Date.now() + REPAIR_POLL_WINDOW_MS
+    pollRef.current = setInterval(() => {
+      if (Date.now() > deadline) { stopPolling(); return }
+      fetch(`${base}/browser-bridge/health`)
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+        .then((body: BridgeHealth) => {
+          setBridge(body)
+          setBridgeState('idle')
+          setLastCheckedAt(body.checkedAt || Date.now())
+          lastCheckRef.current = Date.now()
+          if (body.reasonCode === 'ok') {
+            stopPolling()
+            setNextStep(undefined)
+            setDetailsOpen(false)   // 和「修好了自动收起」同一条规则:事办完了就别占屏幕
+          }
+        })
+        .catch(() => {})   // 轮询期间的单次失败不改判:窗口内还会再探
+    }, REPAIR_POLL_INTERVAL_MS)
+  }, [base, stopPolling])
+
   const repair = useCallback(() => {
     if (mode !== 'connected') return
+    stopPolling()
     setRepairing(true)
     setNextStep(undefined)
     const controller = new AbortController()
@@ -256,14 +284,17 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         // 修好了就自动收起:事办完了,浮层没有理由继续占着屏幕。没修好则留着 ——
         // nextStep 就写在里面,那正是用户接下来要读的东西。
         if (body.health?.reasonCode === 'ok') setDetailsOpen(false)
+        // 还没就绪 ≠ 没修好:拉起浏览器那一级本来就要等 Chrome 冷启动 + 扩展握手。
+        // 接着自己盯,不再要求用户手点第二次。
+        else pollUntilReady()
       })
       .catch(() => { setNextStep('修复请求没送到。确认爪爪服务在运行后重试') })
       .finally(() => { clearTimeout(timer); setRepairing(false); checkVk() })
-  }, [mode, base, checkVk])
+  }, [mode, base, checkVk, pollUntilReady, stopPolling])
 
   const verdict = aggregate({ demo, host, bridge, bridgeState, vk })
   const showRepair = !demo && verdict.canRepair
-  const showRecheck = !demo && verdict.tone === 'ok'
+  const recheck = useCallback(() => { checkBridge(); checkVk() }, [checkBridge, checkVk])
 
   return (
     <div
@@ -271,57 +302,89 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       data-testid="health-pill"
       role="status"
       aria-live="polite"
-      className="relative inline-flex items-center gap-2 rounded-lg px-3 py-1 text-sm"
+      className="relative inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm"
       style={{ background: 'var(--color-panel)', color: TONE_COLOR[verdict.tone] }}
       title={nextStep ?? verdict.label}
+      // 悬浮即展开、移开即收起。原先要点一下才开、再点一下才关 —— 想瞄一眼状态要花掉两次
+      // 点击。事件挂在**根节点**上(它同时包住结论与浮层),所以鼠标从结论滑进浮层里的
+      // 「修复」按钮不会算作移开。
+      onMouseEnter={() => setDetailsOpen(true)}
+      onMouseLeave={() => setDetailsOpen(false)}
+      // 键盘同权:只认 hover 会把键盘用户挡在外面。focus 进来就开,焦点离开整块才关。
+      onFocus={() => setDetailsOpen(true)}
+      onBlur={(event) => {
+        // 只在焦点**确实落到了这块之外的某个元素**时才收起。relatedTarget 为 null 表示
+        // 焦点没有明确去处(点了浮层标题这类不可聚焦区域,或点到空白),那不算离开 ——
+        // 按 null 收起会让"点一下浮层里的文字"把浮层关掉,而里面还有按钮要点。
+        const next = event.relatedTarget as Node | null
+        if (next && !rootRef.current?.contains(next)) setDetailsOpen(false)
+      }}
     >
       <button
         type="button"
         data-testid="health-details-toggle"
         aria-expanded={detailsOpen}
         aria-label="查看连接状态详情"
-        onClick={() => setDetailsOpen((open) => !open)}
-        className="inline-flex items-center gap-2 text-left"
+        // 保留点击:触屏没有 hover,而且点一下就开比"悬停等一会儿"更确定。
+        // 这里只开不关 —— 收起交给移开/Esc/点别处,免得"悬停已开着,点一下反而关了"。
+        onClick={() => setDetailsOpen(true)}
+        className="inline-flex items-center gap-2 px-1 text-left"
         style={{ color: 'inherit' }}
       >
         <span style={{ width: 8, height: 8, borderRadius: 8, background: 'currentColor' }} />
         <span data-testid="health-label">{repairing ? '修复中…' : verdict.label}</span>
       </button>
+
+      {/* 刷新键提到结论旁边。原先它在浮层里,想手动刷一次要先把浮层叫出来再点 —— 两步。
+          放这儿是一步,而且不必先知道"详情里有个按钮"。 */}
+      {!demo && (
+        <button
+          type="button"
+          data-testid="health-refresh"
+          onClick={recheck}
+          disabled={repairing}
+          aria-label="重新检查状态"
+          title="重新检查状态"
+          className="rounded px-1 text-xs leading-none disabled:opacity-40"
+          style={{ color: 'var(--color-fg-dim)' }}
+        >
+          ↻
+        </button>
+      )}
+
       {detailsOpen && (
         <div
           data-testid="health-details"
-          className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg p-3 text-xs shadow-xl"
+          className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg p-3 text-xs shadow-xl"
           style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
         >
+          {/* 三路明细(爪爪服务/浏览器连接/视频解析)撤掉:结论已经写在上面那颗灯的标签里,
+              浮层再逐路复述一遍,是把同一件事说了两遍。真正只有这里才有、别处看不到的,
+              是版本号与检查时刻 —— 留这两条。哪一路坏了、坏在哪个 reasonCode,是开发者
+              排障的信息,不该占用户的浮层。 */}
           <div className="mb-2 font-medium">连接状态</div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
-            <dt style={{ color: 'var(--color-fg-dim)' }}>爪爪服务</dt>
-            <dd>{HOST_TEXT[host]}</dd>
-            <dt style={{ color: 'var(--color-fg-dim)' }}>浏览器连接</dt>
-            <dd>
-              {bridgeLabel(bridgeState, bridge)}
-              {bridge?.opencliVersion ? ` · OpenCLI ${bridge.opencliVersion}` : ''}
-            </dd>
-            <dt style={{ color: 'var(--color-fg-dim)' }}>视频解析</dt>
-            <dd>{vkLabel(vk)}</dd>
+            <dt style={{ color: 'var(--color-fg-dim)' }}>OpenCLI 版本</dt>
+            <dd data-testid="health-version">{bridge?.opencliVersion ?? '未知'}</dd>
             <dt style={{ color: 'var(--color-fg-dim)' }}>最后检查</dt>
             <dd>{lastCheckedAt ? new Date(lastCheckedAt).toLocaleTimeString() : '尚未完成'}</dd>
           </dl>
+          {/* nextStep 留着:它不是报错,是「你接下来该做什么」,只在修复没成时出现。 */}
           {nextStep && (
             <div data-testid="health-next-step" className="mt-3" style={{ color: 'var(--color-fg-dim)' }}>
               {nextStep}
             </div>
           )}
-          {(showRepair || showRecheck) && (
+          {showRepair && (
             <button
               data-testid="health-repair"
-              onClick={showRepair ? repair : () => { checkBridge(); checkVk() }}
+              onClick={repair}
               disabled={repairing}
-              title={showRepair ? '修复浏览器连接' : '重新检查本地服务、浏览器桥接和视频解析状态'}
+              title="修复浏览器连接"
               className="mt-3 rounded px-2 py-1 text-xs disabled:opacity-50"
               style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
             >
-              {showRepair ? '修复浏览器连接' : '重新检查状态'}
+              修复浏览器连接
             </button>
           )}
         </div>

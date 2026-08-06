@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAppStore } from '../../store/appStore'
+import { commandDescription } from '../../data/zhCopy'
 import type { CommandManifest } from '../../data/types'
 import type { PolicyDecision } from '../../data/policy'
 
@@ -97,8 +98,13 @@ export function AcknowledgeDialog({ pending, onConfirmed, onCancel }: {
       <div data-testid="acknowledge-dialog" className="w-full max-w-md rounded-lg p-4 text-sm shadow-lg"
         style={{ background: 'var(--color-panel)', color: 'var(--color-fg)', border: '1px solid var(--color-line)' }}>
         <h3 className="mb-2 text-base font-semibold">确认执行「{command.name}」</h3>
-        {command.description && (
-          <p className="mb-3" style={{ color: 'var(--color-fg-dim)' }}>{command.description}</p>
+        {/* 走 zhCopy 覆盖表,和命令详情页同一个来源。此前这里直接读 manifest 的
+            description,于是同一条命令在左边配置区是中文、在确认框里是英文 —— 而确认框
+            恰恰是最需要看懂的地方。表里没有的仍如实回落英文原文(不机翻)。 */}
+        {commandDescription(command.command, command.description) && (
+          <p className="mb-3" style={{ color: 'var(--color-fg-dim)' }}>
+            {commandDescription(command.command, command.description)}
+          </p>
         )}
 
         <div data-testid="ack-exposure" className="mb-3 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs"
