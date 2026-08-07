@@ -1,4 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
+import { ChevronDown, LogOut, RefreshCw, SwitchCamera } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { siteLabel } from '../../data/zhCopy'
 import { isAcknowledged } from '../../data/preferences'
@@ -7,11 +17,15 @@ import {
   AUTO_REFRESH_MAX_MINUTES, AUTO_REFRESH_MIN_MINUTES, clampIntervalMinutes,
 } from '../../data/loginStatus'
 import { loadLayout, saveLayout } from '../../data/layout'
+import {
+  SUPPORTED_SITES, siteForCommand, visibleCommands,
+} from '../../data/supportedSites'
+import type { CommandManifest } from '../../data/types'
 
 const STATE_TEXT: Record<LoginCheckState, string> = {
   unchecked: '未检查',
   queued: '排队中',
-  checking: '检查中…',
+  checking: '检查中',
   'logged-in': '已登录',
   'logged-out': '需重新登录',
   error: '检查失败',
@@ -19,18 +33,6 @@ const STATE_TEXT: Record<LoginCheckState, string> = {
   'not-approved': '未审定',
 }
 
-const STATE_COLOR: Record<LoginCheckState, string> = {
-  unchecked: 'var(--color-fg-dim)',
-  queued: 'var(--color-fg-dim)',
-  checking: 'var(--color-fg-dim)',
-  'logged-in': 'var(--color-success)',
-  'logged-out': 'var(--color-danger)',
-  error: 'var(--color-warning)',
-  'needs-ack': 'var(--color-warning)',
-  'not-approved': 'var(--color-fg-dim)',
-}
-
-/** 可检查 = Host 允许执行且用户已确认过。not-approved / needs-ack 都不可直接检查。 */
 const CHECKABLE: LoginCheckState[] = ['unchecked', 'logged-in', 'logged-out', 'error']
 
 function relativeTime(at: number | undefined, now: number): string {
@@ -43,6 +45,196 @@ function relativeTime(at: number | undefined, now: number): string {
   return `${Math.floor(hr / 24)} 天前`
 }
 
+function statusBadge(state: LoginCheckState) {
+  if (state === 'logged-in') return { tone: 'success', label: 'Success' }
+  if (state === 'queued' || state === 'checking') return { tone: 'loading', label: 'Logging' }
+  return { tone: 'failed', label: 'Failed' }
+}
+
+function AccountOperationMenu({
+  site,
+  state,
+  busy,
+  loginCommand,
+  logoutCommand,
+  onRefresh,
+  onOpenCommand,
+}: {
+  site: string
+  state: LoginCheckState
+  busy: boolean
+  loginCommand?: CommandManifest
+  logoutCommand?: CommandManifest
+  onRefresh: () => void
+  onOpenCommand: (command: CommandManifest) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState({ top: 0, left: 0 })
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const triggerRectRef = useRef<DOMRect>()
+  const refreshDisabled = busy || state === 'not-approved'
+
+  const placeMenu = () => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    triggerRectRef.current = rect
+    const width = 208
+    setPosition({
+      top: rect.bottom + 6,
+      left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+    })
+  }
+
+  const closeMenu = (restoreFocus = false) => {
+    setOpen(false)
+    if (restoreFocus) triggerRef.current?.focus()
+  }
+
+  const openMenu = () => {
+    placeMenu()
+    setOpen(true)
+  }
+
+  useLayoutEffect(() => {
+    if (!open || !menuRef.current || !triggerRectRef.current) return
+    const menuHeight = menuRef.current.getBoundingClientRect().height
+    if (position.top + menuHeight > window.innerHeight - 8) {
+      setPosition((current) => ({
+        ...current,
+        top: Math.max(8, triggerRectRef.current!.top - menuHeight - 6),
+      }))
+    }
+  }, [open, position.top])
+
+  useEffect(() => {
+    if (!open) return
+    const focusId = window.requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
+    })
+    const dismiss = (event: globalThis.PointerEvent) => {
+      const target = event.target as Node
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) closeMenu()
+    }
+    const reposition = () => closeMenu()
+    document.addEventListener('pointerdown', dismiss)
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    return () => {
+      window.cancelAnimationFrame(focusId)
+      document.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+    }
+  }, [open])
+
+  const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (!open) openMenu()
+    }
+    if (event.key === 'Escape' && open) closeMenu(true)
+  }
+
+  const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+    const current = items.indexOf(document.activeElement as HTMLButtonElement)
+    let next = current
+    if (event.key === 'ArrowDown') next = Math.min(items.length - 1, current + 1)
+    else if (event.key === 'ArrowUp') next = Math.max(0, current - 1)
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = items.length - 1
+    else if (event.key === 'Escape') {
+      event.preventDefault()
+      closeMenu(true)
+      return
+    } else if (event.key === 'Tab') {
+      closeMenu()
+      return
+    } else return
+    event.preventDefault()
+    items[next]?.focus()
+  }
+
+  const runAction = (action: () => void) => {
+    action()
+    closeMenu(true)
+  }
+
+  const focusOnHover = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === 'mouse' && !event.currentTarget.disabled) event.currentTarget.focus()
+  }
+
+  return (
+    <div className="login-operation">
+      <div className="login-operation-split" role="group" aria-label={`${siteLabel(site)}账号操作`}>
+        <button
+          type="button"
+          data-testid={`login-refresh-${site}`}
+          className="login-operation-refresh"
+          disabled={refreshDisabled}
+          title={busy ? '该站点已在检查队列中' : state === 'not-approved' ? '该站点当前尚未审定' : '重新检查该站点登录状态'}
+          onClick={onRefresh}
+        >
+          <RefreshCw size={14} aria-hidden="true" />
+          <span>刷新状态</span>
+        </button>
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid={`login-operation-${site}`}
+          className="login-operation-trigger"
+          aria-label="更多账号操作"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => open ? closeMenu() : openMenu()}
+          onKeyDown={onTriggerKeyDown}
+        >
+          <ChevronDown size={14} aria-hidden="true" />
+        </button>
+      </div>
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={`${siteLabel(site)}账号操作`}
+          className="login-operation-menu"
+          style={position}
+          onKeyDown={onMenuKeyDown}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className="login-operation-item login-operation-item-danger"
+            disabled={!logoutCommand}
+            title={logoutCommand ? '进入退出账号命令详情' : '当前站点暂未提供退出命令'}
+            onPointerMove={focusOnHover}
+            onClick={() => logoutCommand && runAction(() => onOpenCommand(logoutCommand))}
+          >
+            <LogOut size={15} aria-hidden="true" />
+            <span>退出当前账号</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className="login-operation-item"
+            disabled={!loginCommand}
+            title={loginCommand ? '进入登录命令详情以切换账号' : '当前站点暂未提供登录命令'}
+            onPointerMove={focusOnHover}
+            onClick={() => loginCommand && runAction(() => onOpenCommand(loginCommand))}
+          >
+            <SwitchCamera size={15} aria-hidden="true" />
+            <span>切换账号</span>
+          </button>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 export function LoginStatusPanel() {
   const commands = useAppStore((s) => s.commands)
   const decisionFor = useAppStore((s) => s.decisionFor)
@@ -53,142 +245,113 @@ export function LoginStatusPanel() {
   const enqueueLoginChecks = useAppStore((s) => s.enqueueLoginChecks)
   const requestAcknowledgement = useAppStore((s) => s.requestAcknowledgement)
   const selectCommand = useAppStore((s) => s.selectCommand)
+  const setActiveModule = useAppStore((s) => s.setActiveModule)
 
   const [auto, setAuto] = useAutoRefresh()
-  const [actionGroupOpen, setActionGroupOpen] = useState(true)
   const now = Date.now()
 
-  // 站点清单来自目录里所有 whoami 命令 —— **不维护写死的站点列表**。
-  // 哪些能查由 Host 判决说了算(I-P1),这里只负责把判决翻译成一行状态。
   const rows = useMemo(() => {
-    return commands
-      .filter((c) => c.name === 'whoami')
-      .map((c) => {
-        const decision = decisionFor(c.command)
-        const acked = !!decision?.fingerprint && isAcknowledged(preferences, c.command, decision.fingerprint)
-        const derived = stateFromDecision(decision, acked)
-        const tracked = loginChecks[c.site]
-        // 已经查过的用查过的结果;没查过的用判决推出来的初始态。
-        // 但**判决说不可查时以判决为准** —— 策略可能在上次检查之后收紧了。
+    const catalog = visibleCommands(commands)
+    return catalog
+      .filter((command) => command.name === 'whoami')
+      .map((command) => {
+        const decision = decisionFor(command.command)
+        const acknowledged = !!decision?.fingerprint
+          && isAcknowledged(preferences, command.command, decision.fingerprint)
+        const derived = stateFromDecision(decision, acknowledged)
+        const tracked = loginChecks[command.site]
         const state: LoginCheckState = derived === 'not-approved' || derived === 'needs-ack'
           ? derived
           : (tracked?.state ?? 'unchecked')
-        return { site: c.site, commandKey: c.command, command: c, decision, state, entry: tracked }
+        const siteCommands = catalog.filter((candidate) => candidate.site === command.site)
+        return {
+          site: command.site,
+          commandKey: command.command,
+          command,
+          decision,
+          state,
+          entry: tracked,
+          supportedSite: siteForCommand(command.site),
+          loginCommand: siteCommands.find((candidate) => ['login', 'signin', 'sign-in'].includes(candidate.name)),
+          logoutCommand: siteCommands.find((candidate) => ['logout', 'signout', 'sign-out'].includes(candidate.name)),
+        }
       })
       .sort((a, b) => {
-        // 可检查的排前面 —— 未审定的 61 条不该占据视线
-        const rank = (s: LoginCheckState) => (CHECKABLE.includes(s) || s === 'checking' || s === 'queued' ? 0 : s === 'needs-ack' ? 1 : 2)
-        return rank(a.state) - rank(b.state) || a.site.localeCompare(b.site)
+        const siteRank = (site: string) => {
+          const index = SUPPORTED_SITES.findIndex((item) => item.keys.includes(site))
+          return index < 0 ? Number.MAX_SAFE_INTEGER : index
+        }
+        return siteRank(a.site) - siteRank(b.site) || a.site.localeCompare(b.site)
       })
   }, [commands, decisionFor, preferences, loginChecks])
 
-  const checkable = rows.filter((r) => CHECKABLE.includes(r.state) || r.state === 'checking' || r.state === 'queued')
-  const notApproved = rows.filter((r) => r.state === 'not-approved')
-  const needsAck = rows.filter((r) => r.state === 'needs-ack')
-  const actionRows = rows.filter((r) => r.state !== 'logged-in' && r.state !== 'not-approved')
-  const loggedInRows = rows.filter((r) => r.state === 'logged-in')
-  const otherRows = rows.filter((r) => r.state === 'not-approved')
+  const checkable = rows.filter((row) => CHECKABLE.includes(row.state) || row.state === 'checking' || row.state === 'queued')
   const pending = loginQueue.length + loginInFlights.length
-  const queueStatus = loginInFlights.length > 0
-    // 并发之后"正在检查"可能有好几个:只报数与剩余,别把一个站点的名字冒充成全部。
-    ? loginInFlights.length === 1
-      ? `正在检查 ${siteLabel(loginInFlights[0].site)}，剩余 ${loginQueue.length}`
-      : `正在检查 ${loginInFlights.length} 个站点，剩余 ${loginQueue.length}`
-    : loginQueue.length > 0 ? `队列中 ${loginQueue.length}` : '无待处理检查'
-  // **逐行判忙,不再用全局锁。** 之前 busy 一旦为真就把所有刷新按钮一起禁用,
-  // 于是点一个站点会让其余全部变灰——那是把"排队执行"错误地表达成了"全局互斥"。
-  // 现在最多几个同时在飞,其余仍是排队;各行各自排队、各自显示自己的状态。
-  const isRowBusy = (site: string) => loginInFlights.some((x) => x.site === site) || loginQueue.includes(site)
+  const isRowBusy = (site: string) => loginInFlights.some((item) => item.site === site) || loginQueue.includes(site)
 
-  // 自动刷新:**只在应用运行期生效**,组件卸载即清。绝不写操作系统级定时任务。
-  // 只排已确认且判决允许的站点 —— 遇到 needs-ack **跳过而不是弹框**,
-  // 后台定时任务弹出确认对话框会打断用户手上的事。
   useEffect(() => {
     if (!auto.enabled) return
     const tick = () => {
-      const sites = useAppStore.getState().commands
-        .filter((c) => c.name === 'whoami')
-        .filter((c) => {
-          const d = useAppStore.getState().decisionFor(c.command)
-          const acked = !!d?.fingerprint && isAcknowledged(useAppStore.getState().preferences, c.command, d.fingerprint)
-          return CHECKABLE.includes(stateFromDecision(d, acked))
+      const sites = visibleCommands(useAppStore.getState().commands)
+        .filter((command) => command.name === 'whoami')
+        .filter((command) => {
+          const decision = useAppStore.getState().decisionFor(command.command)
+          const acknowledged = !!decision?.fingerprint
+            && isAcknowledged(useAppStore.getState().preferences, command.command, decision.fingerprint)
+          return CHECKABLE.includes(stateFromDecision(decision, acknowledged))
         })
-        .map((c) => c.site)
+        .map((command) => command.site)
       if (sites.length > 0) useAppStore.getState().enqueueLoginChecks(sites)
     }
     const id = setInterval(tick, auto.minutes * 60_000)
     return () => clearInterval(id)
   }, [auto.enabled, auto.minutes])
 
-  const renderRows = (group: typeof rows) => group.map((r) => {
-    const rowBusy = isRowBusy(r.site)
-    const canCheck = CHECKABLE.includes(r.state) && !rowBusy
-    return (
-      <div key={r.commandKey} data-testid={`login-row-${r.site}`}
-        className="flex flex-wrap items-center gap-3 border-b px-3 py-2 last:border-b-0"
-        style={{ borderColor: 'var(--color-line)', opacity: r.state === 'not-approved' ? 0.55 : 1 }}>
-        <span className="w-32 shrink-0 truncate text-sm">{siteLabel(r.site)}</span>
-        <span data-testid={`login-state-${r.site}`} className="w-24 shrink-0 text-xs"
-          style={{ color: STATE_COLOR[r.state] }}>{STATE_TEXT[r.state]}</span>
-        <span className="order-last min-w-0 basis-full truncate text-xs sm:order-none sm:basis-auto sm:flex-1" style={{ color: 'var(--color-fg-dim)' }}>
-          {r.state === 'not-approved' ? '该站的 whoami 尚未通过安全审定，Host 不会执行' : (r.entry?.detail ?? '')}
-        </span>
-        <span className="w-20 shrink-0 text-right text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          {relativeTime(r.entry?.checkedAt, now)}
-        </span>
-        {r.state === 'needs-ack' ? (
-          <button data-testid={`login-ack-${r.site}`}
-            onClick={() => { selectCommand(r.command); if (r.decision) requestAcknowledgement(r.command, r.decision) }}
-            className="shrink-0 rounded px-2 py-1 text-xs"
-            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}>
-            确认后可检查
-          </button>
-        ) : (
-          <button data-testid={`login-refresh-${r.site}`} disabled={!canCheck}
-            onClick={() => enqueueLoginChecks([r.site])}
-            title={rowBusy ? '该站点已在队列中' : canCheck ? '检查该站点；可能唤起或切换浏览器标签页' : '该站点当前不可检查'}
-            className="shrink-0 rounded px-2 py-1 text-xs disabled:opacity-40"
-            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}>
-            检查
-          </button>
-        )}
-      </div>
-    )
-  })
+  const refreshRow = (row: typeof rows[number]) => {
+    if (row.state === 'needs-ack') {
+      selectCommand(row.command)
+      if (row.decision) requestAcknowledgement(row.command, row.decision)
+      return
+    }
+    if (CHECKABLE.includes(row.state)) enqueueLoginChecks([row.site])
+  }
+
+  const openAccountCommand = (command: CommandManifest) => {
+    selectCommand(command)
+    setActiveModule('commands')
+  }
 
   return (
-    <div className="mx-auto max-w-3xl p-3 sm:p-6">
-      <h2 className="mb-1 text-lg font-semibold">登录状态</h2>
-      {/* 一句话。原文三行讲机制(whoami、真发请求、只对审定过的生效),用户不会读,
-          读了也不改变他要做什么 —— 他唯一需要知道的是「别把浏览器登录退掉」。
-          机制说明没有丢:审定与确认的状态就写在每一行的状态列里,那里才是它该在的位置。 */}
-      <p className="mb-4 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-        请持续保持你已登录的浏览器会话
-      </p>
+    <div className="login-status-page">
+      <h2 className="login-status-title">登录状态</h2>
+      <p className="login-status-subtitle">请持续保持你已登录的浏览器会话</p>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3"
-        style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+      <div className="login-status-toolbar">
         <button
           data-testid="refresh-all-logins"
           disabled={checkable.length === 0}
-          onClick={() => enqueueLoginChecks(checkable.map((r) => r.site))}
-          title="检查全部登录状态；可能唤起或切换浏览器标签页"
-          className="rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+          onClick={() => enqueueLoginChecks(checkable.map((row) => row.site))}
+          title="刷新全部站点登录状态"
+          className="login-refresh-all"
         >
-          {pending > 0 ? `检查全部登录状态（排队 ${pending}）` : '检查全部登录状态'}
+          {pending > 0 ? `全部刷新（排队 ${pending}）` : '全部刷新'}
         </button>
 
-        <label className="flex items-center gap-2 text-sm">
+        <label className="login-auto-toggle">
+          <span>定时检查</span>
           <input
             data-testid="auto-refresh-toggle"
+            className="login-auto-toggle-input"
             type="checkbox"
             checked={auto.enabled}
-            onChange={(e) => setAuto({ ...auto, enabled: e.target.checked })}
+            onChange={(event) => setAuto({ ...auto, enabled: event.target.checked })}
           />
-          定时检查
+          <span className="login-auto-toggle-track" aria-hidden="true">
+            <span className="login-auto-toggle-indicator" />
+            <span className="login-auto-toggle-thumb" />
+          </span>
         </label>
-        <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+        <label className="login-auto-interval">
           每
           <input
             data-testid="auto-refresh-minutes"
@@ -196,72 +359,97 @@ export function LoginStatusPanel() {
             min={AUTO_REFRESH_MIN_MINUTES}
             max={AUTO_REFRESH_MAX_MINUTES}
             value={auto.minutes}
-            onChange={(e) => setAuto({ ...auto, minutes: clampIntervalMinutes(Number(e.target.value)) })}
-            className="w-16 rounded px-2 py-1"
-            style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+            disabled={!auto.enabled}
+            onChange={(event) => setAuto({ ...auto, minutes: clampIntervalMinutes(Number(event.target.value)) })}
           />
           分钟
         </label>
-
-        <span data-testid="login-summary" className="ml-auto text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          {checkable.length} 个可检查 · {needsAck.length} 个待确认 · {notApproved.length} 个未审定
-        </span>
-        <span data-testid="login-queue-status" className="w-full text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          {queueStatus}
-        </span>
       </div>
 
-      {/* 摘要行只留用户开关它时真正需要知道的两件事:多久跑一次、会不会抢走浏览器。
-          机制(whoami、只对已确认命令生效、关掉应用即停)折进去——它解释的是"为什么",
-          不是"我该不该开",不该占着一整屏。原文的「**」是当 markdown 写的,但这里不过
-          markdown 渲染器,星号会原样显示,一并去掉。 */}
-      {auto.enabled && (
-        <details data-testid="auto-refresh-note" className="mb-4 rounded-lg p-3 text-xs"
-          style={{ background: 'var(--color-panel)', color: 'var(--color-fg-dim)', border: '1px solid var(--color-warning)' }}>
-          <summary className="cursor-pointer" style={{ color: 'var(--color-warning)' }}>
-            每 {auto.minutes} 分钟一次，可能唤起或切换浏览器标签页
-          </summary>
-          <p className="mt-2">
-            定时检查会在后台反复用你的登录态执行 whoami。
-            只对已确认的命令生效；需要确认的会被跳过，不会弹窗打断你。关闭应用后不再执行。
-          </p>
-        </details>
-      )}
-
-      <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
-        <details
-          data-testid="login-group-action"
-          open={actionGroupOpen}
-          onToggle={(event) => setActionGroupOpen(event.currentTarget.open)}
-        >
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">需要处理 ({actionRows.length})</summary>
-          {renderRows(actionRows)}
-        </details>
-        <details data-testid="login-group-logged-in">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">已登录 ({loggedInRows.length})</summary>
-          {renderRows(loggedInRows)}
-        </details>
-        <details data-testid="login-group-other">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">尚未审定 ({otherRows.length})</summary>
-          {renderRows(otherRows)}
-        </details>
-        {rows.length === 0 && (
-          <div className="px-3 py-4 text-sm" style={{ color: 'var(--color-fg-dim)' }}>目录里没有 whoami 命令</div>
-        )}
+      <div className="login-table-scroll" tabIndex={0} role="group" aria-label="登录状态表格">
+        <table className="login-table" data-testid="login-status-table">
+          <colgroup>
+            <col className="login-col-site" />
+            <col className="login-col-user" />
+            <col className="login-col-time" />
+            <col className="login-col-status" />
+            <col className="login-col-operation" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col">Site</th>
+              <th scope="col">User</th>
+              <th scope="col">Last Time</th>
+              <th scope="col">Status</th>
+              <th scope="col">Operation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const badge = statusBadge(row.state)
+              const busy = isRowBusy(row.site)
+              return (
+                <tr key={row.commandKey} data-testid={`login-row-${row.site}`}>
+                  <td>
+                    <div className="login-site-cell">
+                      {row.supportedSite ? (
+                        <span className="login-site-logo-wrap" style={{ '--site-tint': row.supportedSite.tint } as React.CSSProperties}>
+                          <img
+                            data-testid={`login-logo-${row.site}`}
+                            className="login-site-logo"
+                            src={row.supportedSite.logo}
+                            alt=""
+                          />
+                        </span>
+                      ) : <span className="login-site-fallback" aria-hidden="true">{siteLabel(row.site).slice(0, 1)}</span>}
+                      <span>{row.supportedSite?.label ?? siteLabel(row.site)}</span>
+                    </div>
+                  </td>
+                  <td className="login-user-cell" title={row.state === 'logged-in' ? row.entry?.detail : undefined}>
+                    {row.state === 'logged-in' && row.entry?.detail ? row.entry.detail : '—'}
+                  </td>
+                  <td className="login-time-cell">{relativeTime(row.entry?.checkedAt, now)}</td>
+                  <td>
+                    <span
+                      data-testid={`login-state-${row.site}`}
+                      className={`login-status-badge login-status-badge-${badge.tone}`}
+                      title={STATE_TEXT[row.state]}
+                      aria-label={`${badge.label}：${STATE_TEXT[row.state]}`}
+                    >
+                      <span className="login-status-dot" aria-hidden="true" />
+                      {badge.label}
+                    </span>
+                  </td>
+                  <td>
+                    <AccountOperationMenu
+                      site={row.site}
+                      state={row.state}
+                      busy={busy}
+                      loginCommand={row.loginCommand}
+                      logoutCommand={row.logoutCommand}
+                      onRefresh={() => refreshRow(row)}
+                      onOpenCommand={openAccountCommand}
+                    />
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        {rows.length === 0 && <div className="login-table-empty">目录里没有 whoami 命令</div>}
       </div>
     </div>
   )
 }
 
-/** 自动刷新配置存在布局那份独立 key 里,**不进 preferences**(那是执行确认的存储,受 I-P7 管辖)。 */
-function useAutoRefresh(): [{ enabled: boolean; minutes: number }, (v: { enabled: boolean; minutes: number }) => void] {
+function useAutoRefresh(): [{ enabled: boolean; minutes: number }, (value: { enabled: boolean; minutes: number }) => void] {
   const [value, setValue] = useState(() => {
-    const l = loadLayout()
-    return { enabled: l.autoLoginRefresh, minutes: l.autoLoginRefreshMinutes }
+    const layout = loadLayout()
+    return { enabled: layout.autoLoginRefresh, minutes: layout.autoLoginRefreshMinutes }
   })
-  const set = (v: { enabled: boolean; minutes: number }) => {
-    setValue(v)
-    saveLayout({ ...loadLayout(), autoLoginRefresh: v.enabled, autoLoginRefreshMinutes: v.minutes })
+  const set = (next: { enabled: boolean; minutes: number }) => {
+    setValue(next)
+    saveLayout({ ...loadLayout(), autoLoginRefresh: next.enabled, autoLoginRefreshMinutes: next.minutes })
   }
   return [value, set]
 }

@@ -54,11 +54,21 @@ function stubRoutes(routes: Record<string, Route>) {
     const key = `${init?.method ?? 'GET'} ${pathname}`
     calls.push({ key, init })
     const route = routes[key]
-    if (!route) return { ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) }
+    if (!route) return {
+      ok: false,
+      status: 404,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ error: `no stub for ${key}` }),
+      text: async () => JSON.stringify({ error: `no stub for ${key}` }),
+    }
     return {
       ok: (route.status ?? 200) < 400,
       status: route.status ?? 200,
+      headers: new Headers({
+        'content-type': typeof route.body === 'string' ? 'text/markdown; charset=utf-8' : 'application/json',
+      }),
       json: async () => route.body,
+      text: async () => typeof route.body === 'string' ? route.body : JSON.stringify(route.body),
     }
   })
   vi.stubGlobal('fetch', impl)
@@ -262,6 +272,30 @@ describe('VkPanel', () => {
     expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
   })
 
+  it('imports a newline-delimited text file, removes duplicates, and identifies each source', async () => {
+    const user = userEvent.setup()
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    const file = new File([
+      'https://youtu.be/video-1\r\n',
+      'https://www.bilibili.com/video/BV1\n',
+      'https://youtu.be/video-1\n',
+    ], 'video-links.txt', { type: 'text/plain' })
+    await user.upload(screen.getByTestId('vk-source-file'), file)
+
+    await waitFor(() => {
+      expect((screen.getByTestId('vk-source') as HTMLTextAreaElement).value).toBe(
+        'https://youtu.be/video-1\nhttps://www.bilibili.com/video/BV1',
+      )
+    })
+    expect(screen.getByTestId('video-source-card-youtube')).toHaveAttribute('data-count', '1')
+    expect(screen.getByTestId('video-source-card-bilibili')).toHaveAttribute('data-count', '1')
+  })
+
   it('previews via the proxy, shows the resolved projection with estimates, then confirms and submits', async () => {
     const user = userEvent.setup()
     const { calls } = stubRoutes({
@@ -305,6 +339,32 @@ describe('VkPanel', () => {
     await waitFor(() => expect(screen.queryByTestId('vk-cost-dialog')).toBeNull())
   })
 
+  it('submits each imported link as its own durable job after one confirmation', async () => {
+    const user = userEvent.setup()
+    const first = 'https://youtu.be/video-1'
+    const second = 'https://www.bilibili.com/video/BV1'
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/preview': { body: resolvedRequest({ source: first }) },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), `${first}\n${second}`)
+    await user.click(screen.getByTestId('vk-preview-button'))
+    await screen.findByTestId('vk-preview')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await user.click(screen.getByTestId('vk-cost-confirm'))
+
+    await waitFor(() => {
+      expect(calls.filter((item) => item.key === 'POST /vk/v1/jobs')).toHaveLength(2)
+    })
+    const sources = calls
+      .filter((item) => item.key === 'POST /vk/v1/jobs')
+      .map((item) => JSON.parse(String(item.init?.body)).source)
+    expect(sources).toEqual([first, second])
+  })
+
   it('consumes the cross-module handoff: prefills the source, shows provenance, clears the store', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
@@ -324,13 +384,12 @@ describe('VkPanel', () => {
     expect(useAppStore.getState().vkHandoff).toBeUndefined()
   })
 
-  // 金额精度按量级走。真正要防的是「把花掉的钱显示成 0」—— 单条任务低到 ¥0.003 是常态,
-  // 一律两位小数会写成 ¥0.00。这条不变量比"好看"重要得多,单独钉住。
+  // 任务列表只呈现耗时与状态，费用字段不再占用耗时列的第二行。
   it.each([
-    [0.42, '¥0.42'],       // 够得着分:去掉 toFixed(4) 的两个尾零
-    [0.003, '¥0.0030'],    // 分以下:必须保留四位,绝不能压成 ¥0.00
-    [0, '¥0'],             // 真零:不写 ¥0.0000
-  ])('cost_cny=%s 显示成 %s', async (cost, expected) => {
+    [0.42],
+    [0.003],
+    [0],
+  ])('cost_cny=%s 不显示费用文案', async (cost) => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
@@ -344,10 +403,36 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-job-row')).toBeInTheDocument())
-    expect(screen.getByTestId('vk-job-row').textContent).toContain(expected)
+    expect(screen.getByTestId('vk-job-row').textContent).not.toContain('¥')
   })
 
-  it('lists jobs with real status/elapsed/cost and surfaces budget_stop plus outputs in the detail', async () => {
+  it('任务删除后保留稳定编号，新任务继续递增', async () => {
+    const job = (id: string, minute: number) => ({
+      job_id: id,
+      kind: 'run',
+      status: 'done',
+      submitted_at: `2026-08-01T00:0${minute}:00+00:00`,
+      finished_at: `2026-08-01T00:1${minute}:00+00:00`,
+      parent_job_id: null,
+      cache_bypass: false,
+    })
+    const jobsRoute: Route = { body: [job('job-1', 1), job('job-2', 2), job('job-3', 3)] }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'GET /vk/v1/jobs': jobsRoute,
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const numbers = () => screen.getAllByTestId('vk-job-row')
+      .map((row) => row.querySelector('.vk-task-number')?.textContent)
+    await waitFor(() => expect(numbers()).toEqual(['1', '2', '3']))
+
+    jobsRoute.body = [job('job-1', 1), job('job-3', 3), job('job-4', 4)]
+    await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+    await waitFor(() => expect(numbers()).toEqual(['1', '3', '4']))
+  })
+
+  it('lists jobs with real status/elapsed and surfaces budget_stop plus outputs in the detail', async () => {
     const user = userEvent.setup()
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
@@ -378,7 +463,6 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-job-row')).toBeInTheDocument())
     expect(screen.getByTestId('vk-job-row').textContent).toContain('失败')
-    expect(screen.getByTestId('vk-job-row').textContent).toContain('¥0.05')
     expect(screen.getByTestId('vk-job-row').textContent).toContain('10m0s')
 
     await user.click(screen.getByTestId('vk-job-open-run:run-1'))
@@ -390,6 +474,73 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-output-product-json-0')).toBeInTheDocument()
     expect(screen.getByTestId('vk-job-retry')).toBeInTheDocument()
     expect(screen.getByTestId('vk-job-refresh')).toBeInTheDocument()
+  })
+
+  it('opens a Markdown output in an in-app dialog and closes it', async () => {
+    const user = userEvent.setup()
+    const markdown = '# 测试笔记\n\n正文 **加粗**'
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': {
+        body: [{
+          job_id: 'run:run-1', kind: 'run', status: 'done',
+          submitted_at: '2026-08-01T00:00:00+00:00', finished_at: '2026-08-01T00:10:00+00:00',
+          parent_job_id: null, cache_bypass: false, run_id: 'run-1', cost_cny: 0.05,
+        }],
+      },
+      'GET /vk/v1/jobs/run:run-1': {
+        body: {
+          job_id: 'run:run-1', kind: 'run', status: 'done',
+          submitted_at: '2026-08-01T00:00:00+00:00', finished_at: '2026-08-01T00:10:00+00:00',
+          parent_job_id: null, cache_bypass: false, run_id: 'run-1', cost_cny: 0.05,
+          outputs: { note_path: 'notes/a.md', product_artifacts: [] },
+        },
+      },
+      'GET /vk/v1/outputs/notes%2Fa.md': { body: markdown },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await user.click(await screen.findByTestId('vk-job-open-run:run-1'))
+    await user.click(await screen.findByTestId('vk-output-note'))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('# 测试笔记')
+    expect(dialog).toHaveTextContent('正文 **加粗**')
+    expect(calls.some((call) => call.key === 'GET /vk/v1/outputs/notes%2Fa.md')).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: /关闭/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('shows model call count and untracked cost in the job detail', async () => {
+    const user = userEvent.setup()
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': {
+        body: [{
+          job_id: 'run:run-1', kind: 'run', status: 'done',
+          submitted_at: '2026-08-01T00:00:00+00:00', finished_at: '2026-08-01T00:10:00+00:00',
+          parent_job_id: null, cache_bypass: false, run_id: 'run-1', cost_cny: 0,
+        }],
+      },
+      'GET /vk/v1/jobs/run:run-1': {
+        body: {
+          job_id: 'run:run-1', kind: 'run', status: 'done',
+          submitted_at: '2026-08-01T00:00:00+00:00', finished_at: '2026-08-01T00:10:00+00:00',
+          parent_job_id: null, cache_bypass: false, run_id: 'run-1', cost_cny: 0,
+          progress: { model_calls: 8 },
+        },
+      },
+      'GET /vk/v1/providers': {
+        body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true, cost_tracking: false },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await user.click(await screen.findByTestId('vk-job-open-run:run-1'))
+    const detail = await screen.findByTestId('vk-job-detail')
+    expect(detail).toHaveTextContent('模型调用 8 次')
+    expect(detail).toHaveTextContent('费用未统计')
   })
 
   it('runs a knowledge-base query and renders citations', async () => {

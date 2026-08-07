@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LoginStatusPanel } from './LoginStatusPanel'
 import { useAppStore } from '../../store/appStore'
@@ -6,8 +6,8 @@ import { emptyPreferences } from '../../data/preferences'
 import type { CommandManifest } from '../../data/types'
 import type { PolicyDecision } from '../../data/policy'
 
-const whoami = (site: string): CommandManifest => ({
-  command: `${site}/whoami`, site, name: 'whoami', description: '', access: 'read', browser: true, args: [],
+const command = (site: string, name: string, access: 'read' | 'write' = 'read'): CommandManifest => ({
+  command: `${site}/${name}`, site, name, description: '', access, browser: true, args: [],
 })
 
 const ackRequired = (site: string): PolicyDecision => ({
@@ -25,7 +25,11 @@ const unknownDecision = (site: string): PolicyDecision => ({
 
 function setup(over: Partial<Parameters<typeof useAppStore.setState>[0]> = {}) {
   useAppStore.setState({
-    commands: [whoami('xiaohongshu'), whoami('bilibili'), whoami('chatgpt')],
+    commands: [
+      command('xiaohongshu', 'whoami'), command('xiaohongshu', 'login', 'write'),
+      command('bilibili', 'whoami'), command('bilibili', 'login', 'write'),
+      command('chatgpt', 'whoami'),
+    ],
     decisions: new Map([
       ['xiaohongshu/whoami', ackRequired('xiaohongshu')],
       ['bilibili/whoami', ackRequired('bilibili')],
@@ -33,114 +37,172 @@ function setup(over: Partial<Parameters<typeof useAppStore.setState>[0]> = {}) {
     ]),
     preferences: emptyPreferences(),
     loginChecks: {}, loginQueue: [], loginInFlights: [],
+    selected: undefined, pendingAcknowledgement: undefined, activeModule: 'login',
     ...over,
   })
 }
 
+async function clickRefresh(site: string) {
+  await userEvent.click(screen.getByTestId(`login-refresh-${site}`))
+}
+
 beforeEach(() => { localStorage.clear(); setup() })
 
-test('未审定的站点如实列出并说明原因 —— 不藏起来,用户要看得见还差什么', () => {
+test('只渲染一张五列表格，不再出现登录状态分组', () => {
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-chatgpt')).toHaveTextContent('未审定')
-  expect(screen.getByTestId('login-row-chatgpt')).toHaveTextContent('尚未通过安全审定')
-  // 它的刷新按钮必须是禁用的:点了也只会拿 403
+  expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
+    'Site', 'User', 'Last Time', 'Status', 'Operation',
+  ])
+  expect(screen.getAllByRole('row')).toHaveLength(4)
+  expect(screen.queryByTestId('login-group-action')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('login-group-logged-in')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('login-group-other')).not.toBeInTheDocument()
+})
+
+test('站点名前使用原版彩色 logo', () => {
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-logo-xiaohongshu')).toHaveAttribute('src', '/site-logos/xiaohongshu.svg')
+  expect(screen.getByTestId('login-logo-bilibili')).toHaveAttribute('src', '/site-logos/bilibili.svg')
+  expect(screen.getByTestId('login-row-xiaohongshu')).toHaveTextContent('小红书')
+  expect(screen.getByTestId('login-row-bilibili')).toHaveTextContent('B站')
+})
+
+test('Badge 映射为 Success、Logging、Failed，并保留具体状态说明', () => {
+  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
+  setup({
+    preferences: useAppStore.getState().preferences,
+    loginChecks: {
+      xiaohongshu: { site: 'xiaohongshu', state: 'logged-in', checkedAt: Date.now() - 2 * 60 * 60_000, detail: 'LauSeusing' },
+      bilibili: { site: 'bilibili', state: 'checking' },
+    },
+  })
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('Success')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveAttribute('title', '已登录')
+  expect(screen.getByTestId('login-row-xiaohongshu')).toHaveTextContent('LauSeusing')
+  expect(screen.getByTestId('login-row-xiaohongshu')).toHaveTextContent('2 小时前')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('Logging')
+  expect(screen.getByTestId('login-state-chatgpt')).toHaveTextContent('Failed')
+})
+
+test('刷新状态直接执行，只有独立箭头打开账号菜单', async () => {
+  render(<LoginStatusPanel />)
+  const refresh = screen.getByTestId('login-refresh-xiaohongshu')
+  const trigger = screen.getByTestId('login-operation-xiaohongshu')
+  expect(refresh).toHaveTextContent('刷新状态')
+  expect(refresh).not.toHaveAttribute('aria-haspopup')
+  expect(trigger).toHaveAccessibleName('更多账号操作')
+  expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+  await userEvent.click(trigger)
+  const menu = screen.getByRole('menu', { name: '小红书账号操作' })
+  expect(within(menu).getAllByRole('menuitem')).toHaveLength(2)
+  expect(within(menu).queryByText('刷新状态')).not.toBeInTheDocument()
+  expect(within(menu).getByText('退出当前账号')).toBeInTheDocument()
+  expect(within(menu).getByText('切换账号')).toBeInTheDocument()
+})
+
+test('未审定站点保留在表格中，刷新状态不可执行', async () => {
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-state-chatgpt')).toHaveAccessibleName('Failed：未审定')
   expect(screen.getByTestId('login-refresh-chatgpt')).toBeDisabled()
 })
 
-test('已放行但未确认 → 需先确认,给的是确认入口而不是刷新按钮', () => {
+test('待确认站点选择刷新状态会打开原有确认流程', async () => {
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('需先确认')
-  expect(screen.getByTestId('login-ack-xiaohongshu')).toBeInTheDocument()
-  expect(screen.queryByTestId('login-refresh-xiaohongshu')).not.toBeInTheDocument()
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveAccessibleName('Failed：需先确认')
+  await clickRefresh('xiaohongshu')
+  expect(useAppStore.getState().pendingAcknowledgement?.command.command).toBe('xiaohongshu/whoami')
+  expect(useAppStore.getState().loginQueue).toEqual([])
 })
 
-test('已确认 → 可检查,单站刷新只把该站入队', async () => {
+test('已确认站点选择刷新状态只把该站入队', async () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('未检查')
-  await userEvent.click(screen.getByTestId('login-refresh-xiaohongshu'))
+  await clickRefresh('xiaohongshu')
   expect(useAppStore.getState().loginQueue).toEqual(['xiaohongshu'])
 })
 
-test('检查全部登录状态只排可检查的站点 —— 未审定与待确认的不入队', async () => {
+test('切换账号进入该站点真实 login 命令详情；无 logout 命令时退出项置灰', async () => {
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('login-operation-xiaohongshu'))
+  const menu = screen.getByRole('menu', { name: '小红书账号操作' })
+  expect(within(menu).getByRole('menuitem', { name: '退出当前账号' })).toBeDisabled()
+  await userEvent.click(within(menu).getByRole('menuitem', { name: '切换账号' }))
+  expect(useAppStore.getState().selected?.command).toBe('xiaohongshu/login')
+  expect(useAppStore.getState().activeModule).toBe('commands')
+})
+
+test('菜单支持方向键与 Escape，并将焦点归还触发器', async () => {
+  render(<LoginStatusPanel />)
+  const trigger = screen.getByTestId('login-operation-xiaohongshu')
+  trigger.focus()
+  await userEvent.keyboard('{ArrowDown}')
+  await waitFor(() => expect(screen.getByRole('menuitem', { name: '切换账号' })).toHaveFocus())
+  await userEvent.keyboard('{Escape}')
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+})
+
+test('检查全部登录状态只排可检查的站点', async () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('refresh-all-logins')).toHaveTextContent('检查全部登录状态')
-  expect(screen.getByTestId('refresh-all-logins')).toHaveAttribute('title', expect.stringContaining('可能唤起或切换浏览器标签'))
-  expect(screen.getByTestId('auto-refresh-toggle').parentElement).toHaveTextContent('定时检查')
+  expect(screen.getByTestId('refresh-all-logins')).toHaveAttribute('title', '刷新全部站点登录状态')
   await userEvent.click(screen.getByTestId('refresh-all-logins'))
-  const q = useAppStore.getState().loginQueue
-  expect(q.sort()).toEqual(['bilibili', 'xiaohongshu'])
-  expect(q).not.toContain('chatgpt')
-})
-
-test('摘要如实分类计数', () => {
-  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
-  render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-summary')).toHaveTextContent('1 个可检查')
-  expect(screen.getByTestId('login-summary')).toHaveTextContent('1 个待确认')
-  expect(screen.getByTestId('login-summary')).toHaveTextContent('1 个未审定')
-})
-
-test('判决在检查之后收紧 → 以判决为准,不沿用旧的「已登录」', () => {
-  // 上次查出来是已登录,但现在判决已变成 unknown(比如策略收紧或 opencli 升级)
-  setup({
-    loginChecks: { chatgpt: { site: 'chatgpt', state: 'logged-in', checkedAt: 1, detail: '某账号' } },
-  })
-  render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-chatgpt')).toHaveTextContent('未审定')
-  expect(screen.getByTestId('login-state-chatgpt')).not.toHaveTextContent('已登录')
-})
-
-test('定时检查默认关,且开启后给出明确说明', async () => {
-  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
-  render(<LoginStatusPanel />)
-  const toggle = screen.getByTestId('auto-refresh-toggle')
-  expect(toggle).not.toBeChecked()
-  expect(screen.queryByTestId('auto-refresh-note')).not.toBeInTheDocument()
-  await userEvent.click(toggle)
-  // 文案必须说清它会**反复**动用登录态,而不是含糊的"定时检查"
-  expect(screen.getByTestId('auto-refresh-note')).toHaveTextContent('反复')
-  expect(screen.getByTestId('auto-refresh-note')).toHaveTextContent('登录态')
-  expect(screen.getByTestId('auto-refresh-note')).toHaveTextContent('可能唤起或切换浏览器标签')
-})
-
-test('自动刷新配置落到布局那份存储,不进 preferences', async () => {
-  render(<LoginStatusPanel />)
-  await userEvent.click(screen.getByTestId('auto-refresh-toggle'))
-  const layout = JSON.parse(localStorage.getItem('opencli-app:layout:v1')!)
-  expect(layout.autoLoginRefresh).toBe(true)
-  // preferences 里不得出现这个字段 —— 那份存储受 I-P7 管辖,只放执行确认与收藏
-  const prefsRaw = localStorage.getItem('opencli-app:prefs:v2')
-  expect(prefsRaw ?? '').not.toContain('autoLoginRefresh')
-})
-
-test('**点一个站点不会让其他站点变灰** —— 串行执行是排队,不是全局互斥', async () => {
-  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
-  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
-  const prefs = useAppStore.getState().preferences
-  setup({ preferences: prefs })
-  render(<LoginStatusPanel />)
-
-  await userEvent.click(screen.getByTestId('login-refresh-xiaohongshu'))
-
-  // 被点的那个进入队列、按钮禁用(避免重复入列)
-  expect(screen.getByTestId('login-refresh-xiaohongshu')).toBeDisabled()
-  // **其他站点必须仍然可点** —— 这是本次修复的命门
-  expect(screen.getByTestId('login-refresh-bilibili')).toBeEnabled()
-
-  // 点第二个:两个都排上,互不阻塞
-  await userEvent.click(screen.getByTestId('login-refresh-bilibili'))
   expect(useAppStore.getState().loginQueue.sort()).toEqual(['bilibili', 'xiaohongshu'])
 })
 
-test('排队中与检查中分开显示 —— 等待中的不谎称正在跑', () => {
+test('工具栏不再显示分类摘要和队列提示文字', () => {
+  render(<LoginStatusPanel />)
+  expect(screen.queryByTestId('login-summary')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('login-queue-status')).not.toBeInTheDocument()
+  expect(screen.queryByText('无待处理检查')).not.toBeInTheDocument()
+})
+
+test('判决在检查后收紧时以判决为准', () => {
+  setup({ loginChecks: { chatgpt: { site: 'chatgpt', state: 'logged-in', checkedAt: 1, detail: '某账号' } } })
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-state-chatgpt')).toHaveAccessibleName('Failed：未审定')
+  expect(screen.getByTestId('login-row-chatgpt')).not.toHaveTextContent('某账号')
+})
+
+test('定时检查默认关闭，开启后不显示额外提示', async () => {
+  render(<LoginStatusPanel />)
+  const toggle = screen.getByTestId('auto-refresh-toggle')
+  const interval = screen.getByTestId('auto-refresh-minutes')
+  expect(toggle).not.toBeChecked()
+  expect(interval).toBeDisabled()
+  await userEvent.click(toggle)
+  expect(toggle).toBeChecked()
+  expect(interval).toBeEnabled()
+  expect(screen.queryByTestId('auto-refresh-note')).not.toBeInTheDocument()
+})
+
+test('自动刷新配置只写入布局存储', async () => {
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('auto-refresh-toggle'))
+  expect(JSON.parse(localStorage.getItem('opencli-app:layout:v1')!).autoLoginRefresh).toBe(true)
+  expect(localStorage.getItem('opencli-app:prefs:v2') ?? '').not.toContain('autoLoginRefresh')
+})
+
+test('单站排队不禁用其他站点的刷新操作', async () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
-  const prefs = useAppStore.getState().preferences
+  setup({ preferences: useAppStore.getState().preferences })
+  render(<LoginStatusPanel />)
+
+  await clickRefresh('xiaohongshu')
+  expect(screen.getByTestId('login-refresh-bilibili')).toBeEnabled()
+  await clickRefresh('bilibili')
+  expect(useAppStore.getState().loginQueue.sort()).toEqual(['bilibili', 'xiaohongshu'])
+})
+
+test('排队中与检查中都显示 Logging，但保留各自具体状态', () => {
+  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
   setup({
-    preferences: prefs,
+    preferences: useAppStore.getState().preferences,
     loginQueue: ['bilibili'],
     loginInFlights: [{ site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' }],
     loginChecks: {
@@ -149,56 +211,13 @@ test('排队中与检查中分开显示 —— 等待中的不谎称正在跑', 
     },
   })
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('检查中')
-  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('排队中')
-  expect(screen.getByTestId('login-state-bilibili')).not.toHaveTextContent('检查中')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('Logging')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveAttribute('title', '检查中')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('Logging')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveAttribute('title', '排队中')
 })
 
-test('登录站点按需要处理、已登录、尚未审定分组,默认仅展开需要处理', () => {
-  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
-  setup({
-    preferences: useAppStore.getState().preferences,
-    loginChecks: {
-      xiaohongshu: { site: 'xiaohongshu', state: 'logged-in', checkedAt: 1 },
-      bilibili: { site: 'bilibili', state: 'logged-out', checkedAt: 1 },
-    },
-  })
-  render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-group-action')).toHaveAttribute('open')
-  expect(screen.getByTestId('login-group-logged-in')).not.toHaveAttribute('open')
-  expect(screen.getByTestId('login-group-other')).not.toHaveAttribute('open')
-  expect(screen.getByTestId('login-row-bilibili')).toBeVisible()
-  expect(screen.getByTestId('login-row-xiaohongshu')).not.toBeVisible()
-  expect(screen.getByTestId('login-row-chatgpt')).not.toBeVisible()
-  expect(screen.getByTestId('login-group-other')).toHaveTextContent('尚未审定')
-})
-
-test('用户收起需要处理后，队列状态更新不把分组强制展开', async () => {
-  render(<LoginStatusPanel />)
-  const group = screen.getByTestId('login-group-action')
-  await userEvent.click(group.querySelector('summary')!)
-  await waitFor(() => expect(group).not.toHaveAttribute('open'))
-
-  act(() => { useAppStore.setState({ loginQueue: ['xiaohongshu'] }) })
-  expect(group).not.toHaveAttribute('open')
-})
-
-test('检查队列显示当前站点与剩余数量', () => {
-  setup({
-    loginQueue: ['bilibili', 'chatgpt'],
-    loginInFlights: [{ site: 'xiaohongshu', runId: 'login-check:xiaohongshu:n1' }],
-    loginChecks: {
-      xiaohongshu: { site: 'xiaohongshu', state: 'checking' },
-      bilibili: { site: 'bilibili', state: 'queued' },
-      chatgpt: { site: 'chatgpt', state: 'queued' },
-    },
-  })
-  render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-queue-status')).toHaveTextContent('小红书')
-  expect(screen.getByTestId('login-queue-status')).toHaveTextContent('剩余 2')
-})
-
-test('「检查全部登录状态」在有任务排队时仍可点 —— 它只是把剩下的加进队列', () => {
+test('检查全部在已有任务排队时仍可继续补入队列', () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   setup({ loginQueue: ['xiaohongshu'], preferences: useAppStore.getState().preferences })
   render(<LoginStatusPanel />)

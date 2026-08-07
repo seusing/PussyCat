@@ -220,6 +220,22 @@ describe('VkSidecarManager', () => {
     expect(serialized).toContain('runner.py')
   })
 
+  it('drains carriage-return progress output without blocking the Host event loop', async () => {
+    const { child, manager } = setup()
+    const startPromise = manager.ensureStarted()
+    emitReady(child)
+    await startPromise
+
+    child.stderr.write('download 10%\rdownload 20%\rdownload complete\n')
+    child.stderr.write('final diagnostic\n')
+    child.emit('close', 3, null)
+
+    const health = manager.health()
+    expect(health.reasonCode).toBe('sidecar-exited')
+    expect(health.detail).toContain('download complete')
+    expect(health.detail).toContain('final diagnostic')
+  })
+
   it('reports not-configured without spawning when pythonPath is missing', async () => {
     const calls = []
     const manager = new VkSidecarManager({

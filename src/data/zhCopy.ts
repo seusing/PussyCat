@@ -50,6 +50,8 @@ const ZH: Record<string, CommandCopy> = {
 // 目录里有 175 个站点,给每个起中文名既没依据(manifest 不带中文名)也没必要——
 // site key 本身("bilibili"、"github")在绝大多数情况下就是最好认的写法。
 const SITE_ZH: Record<string, string> = {
+  'wechat-channels': '微信视频号',
+  weixin: '微信公众号',
   xiaohongshu: '小红书',
   bilibili: 'B站',
   twitter: 'X',

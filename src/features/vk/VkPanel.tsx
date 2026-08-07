@@ -4,15 +4,17 @@
 // token。进度只显示真实状态/已耗时/实际费用,不造百分比(拍板 4)。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { motion } from 'motion/react'
 import { BorderBeam } from 'border-beam'
+import { RefreshCw, Upload, X } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { HostRequestError } from '../../host/errors'
 import {
-  downloadVkOutput,
   fetchVkDiagnostic,
   fetchVkHealth,
   fetchVkJob,
   fetchVkJobs,
+  fetchVkOutputText,
   fetchVkRuntimeStatus,
   postVkRuntimeAdopt,
   postVkRuntimeDetect,
@@ -22,6 +24,7 @@ import {
   postVkQuery,
   postVkRuntimeInstall,
   fetchVkProviderSettings,
+  vkOutputUrl,
 } from '../../host/vkClient'
 import type {
   VkHealth,
@@ -37,6 +40,10 @@ import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
 import { VkProviderForm } from './VkProviderForm'
 import { estimateForPreset, formatEstimate } from './vkEstimates'
 import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
+import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
+import { VkTaskTable } from './VkTaskTable'
+import { copyText } from '../../lib/clipboard'
+import './VkPanel.css'
 
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
 const CONTENT_TYPES = ['auto', 'course_lecture', 'interview_podcast', 'science_explainer', 'tutorial', 'other_knowledge', 'generic_knowledge']
@@ -71,6 +78,67 @@ const OUTPUT_LABELS: Record<string, string> = {
 }
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested'])
+const SUCCESS_STATUSES = new Set(['done', 'partial', 'completed_after_cancel_request'])
+const VK_NOTIFICATIONS_KEY = 'opencli-app:vk-task-notifications:v1'
+const VK_HIDDEN_JOBS_KEY = 'opencli-app:vk-hidden-jobs:v1'
+const VK_TASK_NUMBERS_KEY = 'opencli-app:vk-task-numbers:v1'
+
+function loadBooleanRecord(key: string): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) : null
+    if (!parsed || typeof parsed !== 'object') return {}
+    return Object.entries(parsed).reduce<Record<string, boolean>>((result, [entryKey, value]) => {
+      if (typeof value === 'boolean') result[entryKey] = value
+      return result
+    }, {})
+  } catch {
+    return {}
+  }
+}
+
+function saveBooleanRecord(key: string, value: Record<string, boolean>): void {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* UI preference remains in memory */ }
+}
+
+function loadNumberRecord(key: string): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) : null
+    if (!parsed || typeof parsed !== 'object') return {}
+    return Object.entries(parsed).reduce<Record<string, number>>((result, [entryKey, value]) => {
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0) result[entryKey] = value
+      return result
+    }, {})
+  } catch {
+    return {}
+  }
+}
+
+function saveNumberRecord(key: string, value: Record<string, number>): void {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* UI preference remains in memory */ }
+}
+
+function taskNumberKey(row: VkJobRow): string {
+  return `${row.job_id}|${row.submitted_at}`
+}
+
+function primaryOutput(job: VkJobView): { id: string; title: string } | null {
+  if (job.outputs?.note_path) return { id: job.outputs.note_path, title: '知识笔记' }
+  const product = job.outputs?.product_artifacts?.[0]
+  if (product?.markdown) return { id: product.markdown, title: `${product.preset} MD` }
+  if (job.outputs?.audit_path) return { id: job.outputs.audit_path, title: '证据审计' }
+  return null
+}
+
+function outputFileName(outputId: string): string {
+  const name = outputId.split(/[\\/]/).filter(Boolean).at(-1)
+  return name || '视频解析结果.md'
+}
+
+function sourceLines(value: string): string[] {
+  return [...new Set(value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))]
+}
 
 function errorText(error: unknown, fallback: string): string {
   if (error instanceof HostRequestError) {
@@ -84,11 +152,13 @@ function errorText(error: unknown, fallback: string): string {
  * 金额显示精度按量级走。原先一律 `toFixed(4)`,于是 ¥0.42 被写成「¥0.4200」——
  * 两个尾零逐行重复,在任务列表里是纯噪声。但**不能直接改成两位**:单条任务低到
  * ¥0.003 是常态,两位会把它压成「¥0.00」,把真花掉的钱显示成零是最不能接受的一类错。
- * 所以:够得着分的用两位,不够的保留四位,正零直接写 ¥0。
+ * 所以:够得着分的用两位,不够的保留四位。若后端明确说当前通道未配置单价,
+ * 零值必须写「费用未统计」,不能把未知费用说成免费。
  */
-function costLabel(cny: number): string {
-  if (cny === 0) return '¥0'
-  return cny >= 0.01 ? `¥${cny.toFixed(2)}` : `¥${cny.toFixed(4)}`
+function costLabel(cny: number, tracking = true): string {
+  const amount = cny === 0 ? '¥0' : cny >= 0.01 ? `¥${cny.toFixed(2)}` : `¥${cny.toFixed(4)}`
+  if (tracking) return amount
+  return cny === 0 ? '费用未统计' : `已统计 ${amount}（不完整）`
 }
 
 function elapsedLabel(row: { submitted_at: string; finished_at: string | null }): string {
@@ -133,7 +203,11 @@ const fieldStyle = { background: 'var(--color-canvas)', border: '1px solid var(-
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
 
-export function VkPanel({ baseUrl }: { baseUrl?: string }) {
+export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
+  baseUrl?: string
+  selectedJobId?: string | null
+  onSelectJob?: (jobId: string | null) => void
+}) {
   const base = baseUrl
   // —— 健康(BrowserBridgeStatus 姿势:进入时查一次 + 手动重检;前端只渲染不解释)——
   const [health, setHealth] = useState<VkHealth | null>(null)
@@ -194,12 +268,16 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   // —— 模型通道:装机版没有 providers.local.toml,不配就一定会在最后一步 401 ——
   // 所以这件事必须在**提交之前**说出来,而不是等用户跑满 7 分半下载转写。
   const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null)
+  const [providerCostTracking, setProviderCostTracking] = useState<boolean | null>(null)
   const [providerFormOpen, setProviderFormOpen] = useState(false)
   const refreshProviders = useCallback(async () => {
     try {
-      setProviderConfigured((await fetchVkProviderSettings(base)).configured)
+      const settings = await fetchVkProviderSettings(base)
+      setProviderConfigured(settings.configured)
+      setProviderCostTracking(settings.cost_tracking ?? true)
     } catch {
       setProviderConfigured(null)   // 问不到就别下结论,不冒充已配置
+      setProviderCostTracking(null)
     }
   }, [base])
   useEffect(() => { void refreshProviders() }, [refreshProviders])
@@ -283,6 +361,25 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     useAppStore.getState().clearVkHandoff()
   }, [handoff])
 
+  const importSourceFile = async (file: File | undefined) => {
+    if (!file) return
+    setPreviewError(null)
+    try {
+      const text = typeof file.text === 'function'
+        ? await file.text()
+        : await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result ?? ''))
+          reader.onerror = () => reject(reader.error)
+          reader.readAsText(file)
+        })
+      setSource((current) => sourceLines(`${current}\n${text}`).join('\n'))
+      setPreview(null)
+    } catch (error) {
+      setPreviewError(errorText(error, '链接文件读取失败'))
+    }
+  }
+
   // —— 预检 → 费用确认 → 提交 ——
   const [preview, setPreview] = useState<VkProcessingRequest | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -291,8 +388,8 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
 
   // 投影是唯一携带原始 URL 的通道(1.3.0 凭据边界):preview 用它取公开回显,
   // submit 用它执行——preview 响应是脱敏投影,不能作为提交载荷。
-  const buildProjection = (): VkPreviewProjection => ({
-    source: source.trim(),
+  const buildProjection = (sourceValue = source.trim()): VkPreviewProjection => ({
+    source: sourceValue,
     preset,
     ...(contentType ? { content_type: contentType } : {}),
     ...(mediaPolicy ? { media_policy: mediaPolicy } : {}),
@@ -316,7 +413,9 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     setPreviewError(null)
     setPreview(null)
     try {
-      setPreview(await postVkPreview(buildProjection(), base))
+      const [firstSource] = sourceLines(source)
+      if (!firstSource) return
+      setPreview(await postVkPreview(buildProjection(firstSource), base))
     } catch (error) {
       setPreviewError(errorText(error, '预检失败'))
     }
@@ -331,11 +430,13 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     if (!pendingSubmit) return
     setSubmitError(null)
     try {
-      await postVkJob({
-        ...buildProjection(),
-        idempotency_key: crypto.randomUUID(),
-        client_job_id: crypto.randomUUID(),
-      }, base)
+      for (const sourceValue of sourceLines(source)) {
+        await postVkJob({
+          ...buildProjection(sourceValue),
+          idempotency_key: crypto.randomUUID(),
+          client_job_id: crypto.randomUUID(),
+        }, base)
+      }
       setPendingSubmit(null)
       setPreview(null)
       await refreshJobs()
@@ -347,24 +448,78 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
 
   // —— 任务列表与详情(vk.db 真源;轮询只在有活跃任务时)——
   const [jobs, setJobs] = useState<VkJobRow[]>([])
+  const [taskNumbers, setTaskNumbers] = useState<Record<string, number>>(() => loadNumberRecord(VK_TASK_NUMBERS_KEY))
   const [jobsError, setJobsError] = useState<string | null>(null)
   const [selectedJob, setSelectedJob] = useState<VkJobView | null>(null)
+  const [notifications, setNotifications] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_NOTIFICATIONS_KEY))
+  const [hiddenJobs, setHiddenJobs] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_HIDDEN_JOBS_KEY))
+  const [taskBanners, setTaskBanners] = useState<Array<{ id: string; message: string; tone: 'success' | 'danger' }>>([])
   const [actionError, setActionError] = useState<string | null>(null)
+  const [openingOutput, setOpeningOutput] = useState<string | null>(null)
+  const [outputViewer, setOutputViewer] = useState<{ title: string; content: string } | null>(null)
   const [diagnostic, setDiagnostic] = useState<string | null>(null)
   const jobsGen = useRef(0)
+  const notificationPrefsRef = useRef(notifications)
+  const previousStatusesRef = useRef<Map<string, string> | null>(null)
+  const taskNumbersRef = useRef(taskNumbers)
+  useEffect(() => { notificationPrefsRef.current = notifications }, [notifications])
+  useEffect(() => { taskNumbersRef.current = taskNumbers }, [taskNumbers])
+
+  const attachTaskNumbers = useCallback((rows: VkJobRow[]): VkJobRow[] => {
+    const nextNumbers = { ...taskNumbersRef.current }
+    let next = Math.max(0, ...Object.values(nextNumbers)) + 1
+    let changed = false
+    const numbered = rows.map((row) => {
+      const key = taskNumberKey(row)
+      let taskNumber = nextNumbers[key]
+      if (taskNumber == null) {
+        taskNumber = next++
+        nextNumbers[key] = taskNumber
+        changed = true
+      }
+      return { ...row, taskNumber }
+    })
+    if (changed) {
+      taskNumbersRef.current = nextNumbers
+      setTaskNumbers(nextNumbers)
+      saveNumberRecord(VK_TASK_NUMBERS_KEY, nextNumbers)
+    }
+    return numbered
+  }, [])
 
   const refreshJobs = useCallback(async () => {
     const gen = ++jobsGen.current
     try {
-      const rows = await fetchVkJobs(base)
+      const rows = attachTaskNumbers(await fetchVkJobs(base))
       if (gen === jobsGen.current) {
+        const previous = previousStatusesRef.current
+        if (previous) {
+          const notices = rows.flatMap((row) => {
+            const before = previous.get(row.job_id)
+            if (!before || !ACTIVE_STATUSES.has(before) || ACTIVE_STATUSES.has(row.status)) return []
+            if (notificationPrefsRef.current[row.job_id] === false) return []
+            const success = SUCCESS_STATUSES.has(row.status)
+            return [{
+              id: `${row.job_id}:${row.finished_at ?? row.status}`,
+              message: success ? `任务${row.taskNumber}已完成` : `任务${row.taskNumber}遇到了些问题`,
+              tone: success ? 'success' as const : 'danger' as const,
+            }]
+          })
+          if (notices.length) {
+            setTaskBanners((current) => [
+              ...current,
+              ...notices.filter((notice) => !current.some((item) => item.id === notice.id)),
+            ])
+          }
+        }
+        previousStatusesRef.current = new Map(rows.map((row) => [row.job_id, row.status]))
         setJobs(rows)
         setJobsError(null)
       }
     } catch (error) {
       if (gen === jobsGen.current) setJobsError(errorText(error, '任务列表获取失败'))
     }
-  }, [base])
+  }, [attachTaskNumbers, base])
   useEffect(() => { void refreshJobs() }, [refreshJobs])
   useEffect(() => {
     if (!jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
@@ -376,6 +531,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
     setActionError(null)
     try {
       setSelectedJob(await fetchVkJob(jobId, base))
+      onSelectJob?.(jobId)
     } catch (error) {
       setActionError(errorText(error, '任务详情获取失败'))
     }
@@ -391,6 +547,75 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
       setActionError(errorText(error, '任务操作失败'))
     }
   }
+
+  const openOutput = async (outputId: string, title: string) => {
+    setActionError(null)
+    setOpeningOutput(outputId)
+    try {
+      setOutputViewer({ title, content: await fetchVkOutputText(outputId, base) })
+    } catch (error) {
+      setActionError(errorText(error, '结果读取失败'))
+    } finally {
+      setOpeningOutput(null)
+    }
+  }
+
+  const openTaskResult = async (row: VkJobRow) => {
+    setActionError(null)
+    try {
+      const detail = await fetchVkJob(row.job_id, base)
+      setSelectedJob(detail)
+      onSelectJob?.(row.job_id)
+      const output = primaryOutput(detail)
+      if (output) await openOutput(output.id, output.title)
+    } catch (error) {
+      setActionError(errorText(error, '结果读取失败'))
+    }
+  }
+
+  const copyTaskOutput = async (row: VkJobRow, mode: 'path' | 'name') => {
+    setActionError(null)
+    try {
+      const detail = await fetchVkJob(row.job_id, base)
+      const output = primaryOutput(detail)
+      if (!output) throw new Error('任务尚未生成可用结果')
+      const value = mode === 'path' ? vkOutputUrl(output.id, base) : outputFileName(output.id)
+      if (!await copyText(value)) throw new Error('复制失败')
+    } catch (error) {
+      setActionError(errorText(error, '复制失败'))
+    }
+  }
+
+  const toggleTaskNotification = (jobId: string, enabled: boolean) => {
+    setNotifications((current) => {
+      const next = { ...current, [jobId]: enabled }
+      notificationPrefsRef.current = next
+      saveBooleanRecord(VK_NOTIFICATIONS_KEY, next)
+      return next
+    })
+  }
+
+  const hideTaskRecord = (row: VkJobRow) => {
+    setHiddenJobs((current) => {
+      const next = { ...current, [row.job_id]: true }
+      saveBooleanRecord(VK_HIDDEN_JOBS_KEY, next)
+      return next
+    })
+    if ((selectedJobId ?? selectedJob?.job_id) === row.job_id) {
+      setSelectedJob(null)
+      onSelectJob?.(null)
+    }
+    setTaskBanners((current) => current.filter((item) => !item.id.startsWith(`${row.job_id}:`)))
+  }
+
+  useEffect(() => {
+    if (!outputViewer) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOutputViewer(null)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [outputViewer])
 
   const showDiagnostic = async () => {
     try {
@@ -415,6 +640,10 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
   }
 
   const previewEstimate = preview ? formatEstimate(estimateForPreset(preview.preset)) : null
+  const visibleJobs = jobs.filter((row) => !hiddenJobs[row.job_id])
+  const tableNotifications = Object.fromEntries(
+    visibleJobs.map((row) => [row.job_id, notifications[row.job_id] ?? true]),
+  )
 
   /**
    * 整块面板的**唯一结论** —— 一行字,外加只在真出问题时才出现的一个按钮。
@@ -457,7 +686,24 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
                 : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(activeCandidate) ?? undefined }
 
   return (
-    <div className="mx-auto max-w-3xl p-3 sm:p-6" data-testid="vk-panel">
+    <div className="mx-auto max-w-5xl p-3 sm:p-6" data-testid="vk-panel">
+      {taskBanners.length > 0 && (
+        <div className="vk-task-banners" aria-live="polite">
+          {taskBanners.map((banner) => (
+            <div key={banner.id} data-testid="vk-task-banner" className={`vk-task-banner is-${banner.tone}`} role="status">
+              <span>{banner.message}</span>
+              <button
+                type="button"
+                aria-label="关闭任务提醒"
+                title="关闭"
+                onClick={() => setTaskBanners((current) => current.filter((item) => item.id !== banner.id))}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {/* 健康条 */}
       <InstallingBeam on={runtime?.state === 'installing'}>
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
@@ -618,17 +864,37 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             来自采集结果:{provenance.commandKey}
           </div>
         )}
-        <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          视频链接
-          <input
-            data-testid="vk-source"
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            placeholder="https://…"
-            className={`${fieldClass} mt-1`}
-            style={fieldStyle}
-          />
-        </label>
+        <div className="mb-2">
+          <div className="mb-1 flex items-center justify-between gap-3 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            <label htmlFor="vk-source-input">视频链接</label>
+            <label className="vk-source-file-input" title="从文本文件导入链接">
+              <Upload size={14} aria-hidden="true" />
+              <span>导入链接文件</span>
+              <input
+                data-testid="vk-source-file"
+                type="file"
+                accept=".txt,.csv,.md,text/plain,text/csv"
+                onChange={(event) => {
+                  void importSourceFile(event.target.files?.[0])
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
+          </div>
+          <div className="vk-source-input-shell">
+            <textarea
+              id="vk-source-input"
+              data-testid="vk-source"
+              value={source}
+              onChange={(event) => { setSource(event.target.value); setPreview(null) }}
+              placeholder={'每行一个视频链接\nhttps://…'}
+              rows={3}
+              className={fieldClass}
+              style={fieldStyle}
+            />
+            <VideoSourceCoverFlow source={source} />
+          </div>
+        </div>
         <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           处理目的
           <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
@@ -753,45 +1019,48 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
       <div className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
         <div className="mb-2 flex items-center justify-between">
           <span className="text-sm font-medium">任务</span>
-          <button type="button" data-testid="vk-jobs-refresh" onClick={() => { void refreshJobs() }} className={outlineButton} style={outlineStyle}>刷新</button>
+          <motion.button
+            type="button"
+            data-testid="vk-jobs-refresh"
+            onClick={() => { void refreshJobs() }}
+            className={`${outlineButton} vk-jobs-refresh-button`}
+            style={outlineStyle}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.96 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+          >
+            <RefreshCw size={14} aria-hidden="true" />
+            <span>刷新</span>
+          </motion.button>
         </div>
         {jobsError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{jobsError}</div>}
-        {jobs.length === 0 && !jobsError && (
-          <div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>暂无任务</div>
-        )}
-        {jobs.length > 0 && (
-          <div className="rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
-            {/* 列表行按「一行 = 一个任务」压到最少:
-                · kind 是内部判别字段(run/request),对用户没有语义,而且是英文——挪去 title,
-                  要查的时候悬停有,不再逐行占位。
-                · 「已耗时」这个标签在每一行重复,但 `4m0s` 这种写法本身就只可能是时长,
-                  列表里靠位置就分得清,标签删掉不丢信息。
-                · 「实际费用」同理删掉:¥ 符号本身就说明这是钱,列表里不会跟时长混。
-                  e2e 那条断言随之改成匹配 /¥\d/ —— 校验真渲染出了金额,比校验四个
-                  标签字更贴近它本来想守的东西。 */}
-            {jobs.map((row) => (
-              <div key={row.job_id} data-testid="vk-job-row" title={row.kind} className="flex items-center gap-3 border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: 'var(--color-line)' }}>
-                <span className="min-w-20 font-medium">{STATUS_LABELS[row.status] ?? row.status}</span>
-                <span style={{ color: 'var(--color-fg-dim)' }}>{elapsedLabel(row)}</span>
-                {row.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>{costLabel(row.cost_cny)}</span>}
-                <span className="ml-auto" />
-                <button type="button" data-testid={`vk-job-open-${row.job_id}`} onClick={() => { void openJob(row.job_id) }} className={outlineButton} style={outlineStyle}>详情</button>
-                {ACTIVE_STATUSES.has(row.status) && (
-                  <button type="button" onClick={() => { void jobAction(row.job_id, 'cancel') }} className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-danger)' }}>取消</button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <VkTaskTable
+          jobs={visibleJobs}
+          selectedJobId={selectedJobId ?? selectedJob?.job_id}
+          notifications={tableNotifications}
+          onSelect={(row) => { void openJob(row.job_id) }}
+          onOpen={(row) => { void openTaskResult(row) }}
+          onToggleNotification={toggleTaskNotification}
+          onCopyPath={(row) => { void copyTaskOutput(row, 'path') }}
+          onCopyFileName={(row) => { void copyTaskOutput(row, 'name') }}
+          onDelete={hideTaskRecord}
+        />
       </div>
 
       {/* 任务详情 */}
-      {selectedJob && (
+      {selectedJob && !onSelectJob && (
         <div data-testid="vk-job-detail" className="mb-4 rounded-lg p-3 text-xs" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
           <div className="mb-2 flex items-center gap-2">
             <span className="text-sm font-medium">{STATUS_LABELS[selectedJob.status] ?? selectedJob.status}</span>
             <span style={{ color: 'var(--color-fg-dim)' }}>已耗时 {elapsedLabel(selectedJob)}</span>
-            {selectedJob.cost_cny != null && <span style={{ color: 'var(--color-fg-dim)' }}>实际费用 {costLabel(selectedJob.cost_cny)}</span>}
+            {selectedJob.progress?.model_calls != null && <span style={{ color: 'var(--color-fg-dim)' }}>模型调用 {selectedJob.progress.model_calls} 次</span>}
+            {selectedJob.cost_cny != null && (
+              <span style={{ color: 'var(--color-fg-dim)' }}>
+                {providerCostTracking === false
+                  ? costLabel(selectedJob.cost_cny, false)
+                  : `实际费用 ${costLabel(selectedJob.cost_cny)}`}
+              </span>
+            )}
             <span className="ml-auto" />
             <button type="button" data-testid="vk-job-retry" onClick={() => { void jobAction(selectedJob.job_id, 'retry') }} className={outlineButton} style={outlineStyle}>重试</button>
             <button type="button" data-testid="vk-job-refresh" title="绕过来源版本缓存重新解析" onClick={() => { void jobAction(selectedJob.job_id, 'refresh') }} className={outlineButton} style={outlineStyle}>强制重跑</button>
@@ -814,15 +1083,15 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
           )}
           <div className="flex flex-wrap gap-2">
             {selectedJob.outputs?.note_path && (
-              <button type="button" data-testid="vk-output-note" onClick={() => { void downloadVkOutput(selectedJob.outputs!.note_path!, base) }} className={outlineButton} style={outlineStyle}>笔记</button>
+              <button type="button" data-testid="vk-output-note" disabled={openingOutput !== null} onClick={() => { void openOutput(selectedJob.outputs!.note_path!, '知识笔记') }} className={outlineButton} style={outlineStyle}>笔记</button>
             )}
             {selectedJob.outputs?.audit_path && (
-              <button type="button" data-testid="vk-output-audit" onClick={() => { void downloadVkOutput(selectedJob.outputs!.audit_path!, base) }} className={outlineButton} style={outlineStyle}>Audit</button>
+              <button type="button" data-testid="vk-output-audit" disabled={openingOutput !== null} onClick={() => { void openOutput(selectedJob.outputs!.audit_path!, '证据审计') }} className={outlineButton} style={outlineStyle}>Audit</button>
             )}
             {(selectedJob.outputs?.product_artifacts ?? []).map((artifact, index) => (
               <span key={artifact.sha256} className="flex gap-1">
-                <button type="button" data-testid={`vk-output-product-json-${index}`} onClick={() => { void downloadVkOutput(artifact.json, base) }} className={outlineButton} style={outlineStyle}>{artifact.preset} JSON</button>
-                <button type="button" data-testid={`vk-output-product-md-${index}`} onClick={() => { void downloadVkOutput(artifact.markdown, base) }} className={outlineButton} style={outlineStyle}>{artifact.preset} MD</button>
+                <button type="button" data-testid={`vk-output-product-json-${index}`} disabled={openingOutput !== null} onClick={() => { void openOutput(artifact.json, `${artifact.preset} JSON`) }} className={outlineButton} style={outlineStyle}>{artifact.preset} JSON</button>
+                <button type="button" data-testid={`vk-output-product-md-${index}`} disabled={openingOutput !== null} onClick={() => { void openOutput(artifact.markdown, `${artifact.preset} MD`) }} className={outlineButton} style={outlineStyle}>{artifact.preset} MD</button>
               </span>
             ))}
           </div>
@@ -833,6 +1102,8 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
       {/* 知识库查询 */}
       <div className="rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
         <div className="mb-2 text-sm font-medium">知识库查询</div>
+        {/* 按钮那侧要 shrink-0:输入框带 w-full,在 flex 里会一路挤压兄弟节点,
+            按钮被压到只剩一个字宽,「检索」两字竖排成一列(打包版实测)。 */}
         <div className="flex gap-2">
           <input
             data-testid="vk-query-input"
@@ -847,7 +1118,7 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
             data-testid="vk-query-button"
             disabled={!queryText.trim()}
             onClick={() => { void runQuery() }}
-            className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
+            className="shrink-0 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
           >
             检索
@@ -872,6 +1143,40 @@ export function VkPanel({ baseUrl }: { baseUrl?: string }) {
         onCancel={() => setPendingSubmit(null)}
         onConfirm={() => { void confirmSubmit() }}
       />
+      {outputViewer && (
+        <div
+          data-testid="vk-output-viewer"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6"
+          style={{ background: 'rgba(0, 0, 0, 0.68)' }}
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setOutputViewer(null)
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vk-output-viewer-title"
+            className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg"
+            style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+          >
+            <header className="flex shrink-0 items-center gap-3 px-4 py-3" style={{ borderBottom: '1px solid var(--color-line)' }}>
+              <h2 id="vk-output-viewer-title" className="min-w-0 flex-1 truncate text-sm font-medium">{outputViewer.title}</h2>
+              <button
+                type="button"
+                data-testid="vk-output-viewer-close"
+                onClick={() => setOutputViewer(null)}
+                aria-label="关闭结果"
+                title="关闭"
+                className="rounded px-2 py-1 text-lg leading-none"
+                style={{ color: 'var(--color-fg-dim)' }}
+              >
+                ×
+              </button>
+            </header>
+            <pre data-testid="vk-output-viewer-content" className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 text-xs leading-5">{outputViewer.content}</pre>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

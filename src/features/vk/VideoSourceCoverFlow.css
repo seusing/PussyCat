@@ -1,0 +1,74 @@
+.video-source-coverflow {
+  position: relative;
+  width: 104px;
+  min-width: 104px;
+  height: 44px;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  perspective: 450px;
+}
+
+.video-source-coverflow.is-single {
+  width: 42px;
+  min-width: 42px;
+}
+
+.video-source-coverflow-track {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
+.video-source-coverflow-card {
+  position: absolute;
+  top: 7px;
+  left: calc(50% - 15px);
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 7px;
+  background: #202228;
+  box-shadow: 0 8px 18px rgb(0 0 0 / 32%);
+  transform-style: preserve-3d;
+}
+
+.video-source-coverflow-card.is-primary {
+  border-color: rgb(196 181 253 / 48%);
+  background: #272a31;
+  box-shadow:
+    0 0 0 1px rgb(139 92 246 / 18%),
+    0 8px 18px rgb(0 0 0 / 38%);
+}
+
+.video-source-coverflow-card img {
+  width: 19px;
+  height: 19px;
+  object-fit: contain;
+}
+
+.video-source-coverflow-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 7px;
+  background: #111318;
+  color: #d9dce5;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video-source-coverflow-card {
+    transition: none;
+  }
+}

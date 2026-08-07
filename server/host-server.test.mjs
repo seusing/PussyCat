@@ -768,6 +768,77 @@ describe('/start 试点 argv 白名单(HTTP 层)', () => {
   })
 })
 
+// ——— 浏览器命令启动前的自动修复 ————————————————————————————————————
+describe('/start BrowserBridge preflight', () => {
+  const realPolicy = loadExecutionPolicy(resolve('public/catalog.snapshot.json'))
+  const bridgeOk = {
+    checkedAt: 1, daemon: 'running', extension: 'connected', profile: 'ready',
+    profileCount: 1, retryable: false, reasonCode: 'ok', summary: '就绪',
+  }
+  const pilotRequest = (runId, commandKey) => ({
+    runId,
+    commandKey,
+    argv: [...commandKey.split('/'), '-f', 'json'],
+    acknowledgement: { fingerprint: realPolicy.decisionByKey.get(commandKey).fingerprint },
+  })
+
+  it('扩展断开时先走修复阶梯并拉起浏览器，再受理登录检查', async () => {
+    const noExtension = {
+      ...bridgeOk, extension: 'disconnected', reasonCode: 'extension-disconnected', summary: '扩展未连接',
+    }
+    const launchBrowser = vi.fn(async () => ({ launched: true }))
+    const { baseUrl } = await setup({
+      policy: realPolicy,
+      browserBridgeHealth: async () => noExtension,
+      launchBrowser,
+    })
+
+    const res = await post(baseUrl, '/start', pilotRequest('browser-preflight-1', 'xiaohongshu/whoami'))
+
+    expect(res.status).toBe(202)
+    expect(launchBrowser).toHaveBeenCalledTimes(1)
+  })
+
+  it('并发 BrowserBridge 命令共享同一次预检，不会重复拉起浏览器', async () => {
+    let finishRepair
+    const browserBridgeRepair = vi.fn(() => new Promise((resolveRepair) => { finishRepair = resolveRepair }))
+    const { baseUrl } = await setup({ policy: realPolicy, browserBridgeRepair })
+
+    const requests = [
+      post(baseUrl, '/start', pilotRequest('browser-preflight-2', 'xiaohongshu/whoami')),
+      post(baseUrl, '/start', pilotRequest('browser-preflight-3', 'bilibili/whoami')),
+    ]
+    await vi.waitFor(() => expect(browserBridgeRepair).toHaveBeenCalledTimes(1))
+    finishRepair({ steps: [], health: bridgeOk, repaired: false, alreadyOk: true })
+
+    const responses = await Promise.all(requests)
+    expect(responses.map((response) => response.status)).toEqual([202, 202])
+    expect(browserBridgeRepair).toHaveBeenCalledTimes(1)
+  })
+
+  it('非 BrowserBridge 命令不触发浏览器预检', async () => {
+    const browserBridgeRepair = vi.fn(async () => ({ steps: [], health: bridgeOk, alreadyOk: true }))
+    const { baseUrl } = await setup({ browserBridgeRepair })
+
+    const res = await post(baseUrl, '/start', {
+      runId: 'direct-command-1', commandKey: '36kr/news', argv: ['36kr', 'news', '-f', 'json'],
+    })
+
+    expect(res.status).toBe(202)
+    expect(browserBridgeRepair).not.toHaveBeenCalled()
+  })
+
+  it('预检异常时仍把命令交给 OpenCLI，让执行通道返回真实结果', async () => {
+    const browserBridgeRepair = vi.fn(async () => { throw new Error('preflight failed') })
+    const { baseUrl } = await setup({ policy: realPolicy, browserBridgeRepair })
+
+    const res = await post(baseUrl, '/start', pilotRequest('browser-preflight-4', 'youtube/whoami'))
+
+    expect(res.status).toBe(202)
+    expect(browserBridgeRepair).toHaveBeenCalledTimes(1)
+  })
+})
+
 // ——— BrowserBridge 健康诊断(HTTP 层)————————————————————————————————
 describe('/browser-bridge/repair', () => {
   const stopped = {

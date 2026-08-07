@@ -1,84 +1,78 @@
 import { useCallback, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
+import {
+  Clapperboard,
+  KeyRound,
+  Lightbulb,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  PawPrint,
+  RadioTower,
+} from 'lucide-react'
 import { SystemHealthPill } from './SystemHealthPill'
 import ResizableSplit from './ResizableSplit'
 import { useAppStore } from '../store/appStore'
 import {
   loadLayout, saveLayout, clampColumnWidth,
   NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
+  MODULE_SIDEBAR_MIN, MODULE_SIDEBAR_MAX, MODULE_SIDEBAR_DEFAULT,
+  DETAILS_MIN, DETAILS_MAX, DETAILS_DEFAULT,
 } from '../data/layout'
 import type { LayoutSnapshot } from '../data/layout'
 
-// 简洁的面板图标:外框代表整个工作区,实心块标出被开关控制的那一侧(左/右)。纯内联 SVG,不引入图标库依赖。
-function PanelIcon({ side }: { side: 'left' | 'right' }) {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" />
-      <rect x={side === 'left' ? 2.5 : 9.5} y="3.5" width="4" height="9" fill="currentColor" />
-    </svg>
-  )
-}
+const MODULES = [
+  { key: 'commands' as const, label: '灵感来源', icon: Lightbulb },
+  { key: 'login' as const, label: '登录信息', icon: KeyRound },
+  { key: 'vk' as const, label: '视频解析', icon: Clapperboard },
+  { key: 'radar' as const, label: 'Codex Radar', icon: RadioTower },
+]
 
-
-// 模块切换器。参考界面把模块列表放在左栏,但本应用的左栏本身就是命令导航——
-// 放顶栏能同时服务三栏模式与整页模式,不必为每个模块各造一套壳。
-function ModuleTabs() {
-  const activeModule = useAppStore((s) => s.activeModule)
-  const setActiveModule = useAppStore((s) => s.setActiveModule)
-  const tabs = [
-    { key: 'commands' as const, label: '命令' },
-    { key: 'login' as const, label: '登录状态' },
-    { key: 'vk' as const, label: '视频解析' },
-    { key: 'radar' as const, label: 'Codex Bar' },
-  ]
+function ModuleNavigation() {
+  const activeModule = useAppStore((state) => state.activeModule)
+  const setActiveModule = useAppStore((state) => state.setActiveModule)
   return (
-    <div className="app-module-tabs flex items-center gap-1 overflow-x-auto" data-testid="module-tabs">
-      {tabs.map((t) => (
+    <nav className="app-module-tabs" data-testid="module-tabs" aria-label="功能模块">
+      {MODULES.map(({ key, label, icon: Icon }) => (
         <button
-          key={t.key}
+          key={key}
           type="button"
-          data-testid={`module-tab-${t.key}`}
-          aria-pressed={activeModule === t.key}
-          onClick={() => setActiveModule(t.key)}
-          className="rounded px-2 py-1 text-xs"
-          style={{
-            background: activeModule === t.key ? 'var(--color-hover)' : 'transparent',
-            color: activeModule === t.key ? 'var(--color-fg)' : 'var(--color-fg-dim)',
-          }}
+          data-testid={`module-tab-${key}`}
+          aria-pressed={activeModule === key}
+          onClick={() => setActiveModule(key)}
+          title={label}
         >
-          {t.label}
+          <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+          <span className="sidebar-label">{label}</span>
         </button>
       ))}
-    </div>
+    </nav>
   )
 }
 
-export default function AppShell({ nav, config, runs, fullPage, catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl }: {
+export default function AppShell({
+  nav, config, runs, fullPage, rightPanel, rightPanelOpen = false, onRightPanelOpenChange,
+  catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl,
+}: {
   nav: ReactNode
   config: ReactNode
   runs: ReactNode
-  /** 非空时改渲染整页模块(登录状态等),三栏与其分隔条一并让位。 */
   fullPage?: ReactNode
+  rightPanel?: ReactNode
+  rightPanelOpen?: boolean
+  onRightPanelOpenChange?: (open: boolean) => void
   catalogStatus: 'loading' | 'ready' | 'error'
   catalogError?: string
   onRetryCatalog: () => void
   headerActions?: ReactNode
   baseUrl?: string
 }) {
-  // 左右栏宽度。gridRef 用来在拖拽时按需读取容器实际像素宽,防止把中栏挤到 CONFIG_MIN 以下——
-  // jsdom 测试环境里 getBoundingClientRect 恒返回 0,clampColumnWidth 会据此自动退化为只受
-  // nav/runs 自身 min/max 约束(见该函数注释与其单测)。
+  const activeModule = useAppStore((state) => state.activeModule)
+  const activeLabel = MODULES.find((module) => module.key === activeModule)?.label ?? '爪爪'
+  const shellRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  const [layout, setLayout] = useState<LayoutSnapshot>(() => loadLayout())   // 懒初始化,只读一次 localStorage
-  // layoutRef 是"当前已提交宽度"的唯一事实源,由 propose* 用普通同步赋值维护——不依赖 setState(updater)
-  // 里的 updater 函数何时执行。曾经踩过的坑:以为"updater 函数由 React 同步调用"能当作时序保证,
-  // 但那只是 React 内部一个条件触发的优化(队列为空时才提前算),ResizableSplit 的键盘/双击路径
-  // 在同一个事件里 onResize 后紧跟着同步调用 onCommit,一旦两次交互靠得太近导致队列非空,
-  // updater 就会推迟到之后的渲染阶段才真正执行,commitLayout 那时读到的 layoutRef 还是上一步的
-  // 旧值——真机上用 ArrowRight 紧接着 End 复现过(落盘值停在 ArrowRight 那步,End 的 560 丢了)。
-  // 现在的写法:propose* 里不经过 setState 的 updater 参数,直接读 layoutRef.current 算出 next、
-  // 同步写回 layoutRef,再把算好的值传给 setLayout 触发重渲染——正确性不再依赖 React 何时真正跑
-  // 这次 setState,只依赖"我自己刚刚做的这次同步赋值",可验证、不猜。
+  const [layout, setLayout] = useState<LayoutSnapshot>(() => loadLayout())
   const layoutRef = useRef(layout)
 
   const proposeNav = useCallback((proposed: number) => {
@@ -91,13 +85,7 @@ export default function AppShell({ nav, config, runs, fullPage, catalogStatus, c
     layoutRef.current = next
     setLayout(next)
   }, [])
-  // 拖拽/键盘步进过程中只更新 state(廉价);真正落盘只在一次交互结束时(松手/键后/双击后)调用一次,
-  // 避免每个 pointermove 都写 localStorage。
-  const commitLayout = useCallback(() => { saveLayout(layoutRef.current) }, [])
-
-  // 折叠开关是离散的一次性动作(不是拖拽序列),不需要 propose/commit 两段式——直接翻转对应
-  // 字段并立即落盘。navWidth/runsWidth 原样保留在 next 里(spread 自 layoutRef.current),
-  // 隐藏不改写宽度,因此再次显示时自然恢复隐藏前的宽度。
+  const commitLayout = useCallback(() => saveLayout(layoutRef.current), [])
   const toggleNav = useCallback(() => {
     const next = { ...layoutRef.current, navHidden: !layoutRef.current.navHidden }
     layoutRef.current = next
@@ -110,103 +98,199 @@ export default function AppShell({ nav, config, runs, fullPage, catalogStatus, c
     setLayout(next)
     saveLayout(next)
   }, [])
+  const proposeModuleSidebar = useCallback((proposed: number) => {
+    const otherWidth = rightPanel && rightPanelOpen ? layoutRef.current.detailsWidth : 0
+    const next = {
+      ...layoutRef.current,
+      moduleSidebarWidth: clampColumnWidth(
+        proposed,
+        MODULE_SIDEBAR_MIN,
+        MODULE_SIDEBAR_MAX,
+        otherWidth,
+        shellRef.current?.getBoundingClientRect().width ?? 0,
+      ),
+    }
+    layoutRef.current = next
+    setLayout(next)
+  }, [rightPanel, rightPanelOpen])
+  const proposeDetails = useCallback((proposed: number) => {
+    const otherWidth = layoutRef.current.moduleSidebarHidden ? 0 : layoutRef.current.moduleSidebarWidth
+    const next = {
+      ...layoutRef.current,
+      detailsWidth: clampColumnWidth(
+        proposed,
+        DETAILS_MIN,
+        DETAILS_MAX,
+        otherWidth,
+        shellRef.current?.getBoundingClientRect().width ?? 0,
+      ),
+    }
+    layoutRef.current = next
+    setLayout(next)
+  }, [])
+  const toggleModuleSidebar = useCallback(() => {
+    const next = { ...layoutRef.current, moduleSidebarHidden: !layoutRef.current.moduleSidebarHidden }
+    layoutRef.current = next
+    setLayout(next)
+    saveLayout(next)
+  }, [])
 
-  // 隐藏时连同它那条分隔条一起从列模板里去掉,而不是只把宽度设 0——否则分隔条还在 DOM 里,
-  // 仍可被拖拽/聚焦,状态自相矛盾。中栏的 minmax(...) 始终保留,自然吃掉腾出来的空间。
   const gridTemplateColumns = [
     !layout.navHidden && `${layout.navWidth}px`,
     !layout.navHidden && 'auto',
     `minmax(${CONFIG_MIN}px, 1fr)`,
     !layout.runsHidden && 'auto',
     !layout.runsHidden && `${layout.runsWidth}px`,
-  ].filter((x): x is string => !!x).join(' ')
+  ].filter((value): value is string => !!value).join(' ')
+
+  const shellTemplateColumns = [
+    !layout.moduleSidebarHidden && `${layout.moduleSidebarWidth}px`,
+    !layout.moduleSidebarHidden && 'auto',
+    'minmax(0, 1fr)',
+    rightPanel && rightPanelOpen && 'auto',
+    rightPanel && rightPanelOpen && `${layout.detailsWidth}px`,
+  ].filter((value): value is string => !!value).join(' ')
 
   return (
-    <div className="flex h-screen flex-col">
-      <header data-testid="app-header" className="app-header flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2" style={{ borderColor: 'var(--color-line)' }}>
-        <div className="app-header-primary flex min-w-0 flex-wrap items-center gap-3">
-          {!fullPage && <button
-            type="button"
-            data-testid="toggle-nav"
-            aria-label="显示/隐藏导航栏"
-            aria-pressed={!layout.navHidden}
-            onClick={toggleNav}
-            className="flex items-center justify-center rounded p-1"
-            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)', background: layout.navHidden ? 'transparent' : 'var(--color-panel)' }}
-          >
-            <PanelIcon side="left" />
-          </button>}
-          <div className="font-semibold">爪爪</div>
-          <ModuleTabs />
+    <div
+      ref={shellRef}
+      className="app-shell"
+      data-left-open={!layout.moduleSidebarHidden}
+      data-right-open={!!rightPanel && rightPanelOpen}
+      style={{ gridTemplateColumns: shellTemplateColumns, '--app-details-width': `${layout.detailsWidth}px` } as CSSProperties}
+    >
+      {!layout.moduleSidebarHidden && <aside data-testid="app-sidebar" className="app-sidebar">
+        <div className="app-brand">
+          <span className="app-brand-mark"><PawPrint size={20} aria-hidden="true" /></span>
+          <span className="sidebar-label"><strong>爪爪</strong><small>1.0</small></span>
         </div>
-        <div data-testid="app-header-actions" className="app-header-actions ml-auto flex flex-wrap items-center justify-end gap-3">
-          {headerActions}
-          <SystemHealthPill baseUrl={baseUrl} />
-          {!fullPage && <button
-            type="button"
-            data-testid="toggle-runs"
-            aria-label="显示/隐藏运行面板"
-            aria-pressed={!layout.runsHidden}
-            onClick={toggleRuns}
-            className="flex items-center justify-center rounded p-1"
-            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)', background: layout.runsHidden ? 'transparent' : 'var(--color-panel)' }}
-          >
-            <PanelIcon side="right" />
-          </button>}
-        </div>
-      </header>
+        <ModuleNavigation />
+        <div className="app-sidebar-health"><SystemHealthPill baseUrl={baseUrl} /></div>
+      </aside>}
 
-      {catalogStatus === 'loading' && (
-        <div data-testid="catalog-loading" className="flex flex-1 items-center justify-center text-sm" style={{ color: 'var(--color-fg-dim)' }}>
-          正在加载命令目录…
-        </div>
+      {!layout.moduleSidebarHidden && (
+        <ResizableSplit
+          value={layout.moduleSidebarWidth}
+          side="left"
+          min={MODULE_SIDEBAR_MIN}
+          max={MODULE_SIDEBAR_MAX}
+          defaultValue={MODULE_SIDEBAR_DEFAULT}
+          onResize={proposeModuleSidebar}
+          onCommit={commitLayout}
+          ariaLabel="调整应用导航栏宽度"
+          testId="separator-app-sidebar"
+        />
       )}
 
-      {catalogStatus === 'error' && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm">
-          <div style={{ color: 'var(--color-danger)' }}>{catalogError ?? '加载命令目录失败'}</div>
-          <button
-            data-testid="catalog-retry"
-            onClick={onRetryCatalog}
-            className="rounded-lg px-4 py-2 text-sm font-medium"
-            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-          >
-            重试
-          </button>
-        </div>
-      )}
+      <div className="app-main">
+        <header data-testid="app-header" className="app-header flex-wrap">
+          <div className="app-header-primary">
+            <button
+              type="button"
+              data-testid="toggle-app-sidebar"
+              aria-label="显示/隐藏应用导航栏"
+              aria-pressed={!layout.moduleSidebarHidden}
+              onClick={toggleModuleSidebar}
+              className="app-icon-button"
+              title={layout.moduleSidebarHidden ? '显示导航栏' : '隐藏导航栏'}
+            >
+              {layout.moduleSidebarHidden ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+            </button>
+            {!fullPage && (
+              <button
+                type="button"
+                data-testid="toggle-nav"
+                aria-label="显示/隐藏导航栏"
+                aria-pressed={!layout.navHidden}
+                onClick={toggleNav}
+                className="app-icon-button"
+              >
+                {layout.navHidden ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+              </button>
+            )}
+            <div><span>爪爪</span><strong>{activeLabel}</strong></div>
+          </div>
+          <div data-testid="app-header-actions" className="app-header-actions">
+            {headerActions}
+            {!fullPage && (
+              <button
+                type="button"
+                data-testid="toggle-runs"
+                aria-label="显示/隐藏运行面板"
+                aria-pressed={!layout.runsHidden}
+                onClick={toggleRuns}
+                className="app-icon-button"
+              >
+                {layout.runsHidden ? <PanelRightOpen size={17} /> : <PanelRightClose size={17} />}
+              </button>
+            )}
+            {rightPanel && (
+              <button
+                type="button"
+                data-testid="toggle-details-sidebar"
+                aria-label="显示/隐藏任务详情栏"
+                aria-pressed={rightPanelOpen}
+                onClick={() => onRightPanelOpenChange?.(!rightPanelOpen)}
+                className="app-icon-button"
+                title={rightPanelOpen ? '隐藏任务详情' : '显示任务详情'}
+              >
+                {rightPanelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+              </button>
+            )}
+          </div>
+        </header>
 
-      {catalogStatus === 'ready' && fullPage && (
-        <div data-testid="full-page" className="min-h-0 flex-1 overflow-auto">{fullPage}</div>
-      )}
+        {catalogStatus === 'loading' && (
+          <div data-testid="catalog-loading" className="app-status-screen">正在加载命令目录…</div>
+        )}
 
-      {catalogStatus === 'ready' && !fullPage && (
-        <div
-          ref={gridRef}
-          data-testid="app-grid"
-          className="grid min-h-0 flex-1"
-          style={{ gridTemplateColumns }}
-        >
-          {!layout.navHidden && (
-            <aside data-testid="col-nav" className="min-h-0 overflow-auto" style={{ background: 'var(--color-panel)' }}>{nav}</aside>
-          )}
-          {!layout.navHidden && (
-            <ResizableSplit
-              value={layout.navWidth} side="left" min={NAV_MIN} max={NAV_MAX} defaultValue={NAV_DEFAULT}
-              onResize={proposeNav} onCommit={commitLayout} ariaLabel="调整导航栏宽度" testId="separator-nav"
-            />
-          )}
-          <main data-testid="col-config" className="min-h-0 overflow-auto p-4">{config}</main>
-          {!layout.runsHidden && (
-            <ResizableSplit
-              value={layout.runsWidth} side="right" min={RUNS_MIN} max={RUNS_MAX} defaultValue={RUNS_DEFAULT}
-              onResize={proposeRuns} onCommit={commitLayout} ariaLabel="调整运行面板宽度" testId="separator-runs"
-            />
-          )}
-          {!layout.runsHidden && (
-            <section data-testid="col-runs" className="min-h-0 overflow-auto" style={{ background: 'var(--color-panel)' }}>{runs}</section>
-          )}
-        </div>
+        {catalogStatus === 'error' && (
+          <div className="app-status-screen app-status-error">
+            <div>{catalogError ?? '加载命令目录失败'}</div>
+            <button data-testid="catalog-retry" onClick={onRetryCatalog}>重试</button>
+          </div>
+        )}
+
+        {catalogStatus === 'ready' && fullPage && (
+          <div data-testid="full-page" className="app-content">{fullPage}</div>
+        )}
+
+        {catalogStatus === 'ready' && !fullPage && (
+          <div ref={gridRef} data-testid="app-grid" className="app-grid" style={{ gridTemplateColumns }}>
+            {!layout.navHidden && <aside data-testid="col-nav" className="legacy-nav">{nav}</aside>}
+            {!layout.navHidden && (
+              <ResizableSplit
+                value={layout.navWidth} side="left" min={NAV_MIN} max={NAV_MAX} defaultValue={NAV_DEFAULT}
+                onResize={proposeNav} onCommit={commitLayout} ariaLabel="调整导航栏宽度" testId="separator-nav"
+              />
+            )}
+            <main data-testid="col-config" className="legacy-config">{config}</main>
+            {!layout.runsHidden && (
+              <ResizableSplit
+                value={layout.runsWidth} side="right" min={RUNS_MIN} max={RUNS_MAX} defaultValue={RUNS_DEFAULT}
+                onResize={proposeRuns} onCommit={commitLayout} ariaLabel="调整运行面板宽度" testId="separator-runs"
+              />
+            )}
+            {!layout.runsHidden && <section data-testid="col-runs" className="legacy-runs">{runs}</section>}
+          </div>
+        )}
+      </div>
+
+      {rightPanel && rightPanelOpen && (
+        <>
+          <ResizableSplit
+            value={layout.detailsWidth}
+            side="right"
+            min={DETAILS_MIN}
+            max={DETAILS_MAX}
+            defaultValue={DETAILS_DEFAULT}
+            onResize={proposeDetails}
+            onCommit={commitLayout}
+            ariaLabel="调整任务详情栏宽度"
+            testId="separator-details-sidebar"
+          />
+          <aside data-testid="details-sidebar" className="app-details-sidebar">{rightPanel}</aside>
+        </>
       )}
     </div>
   )

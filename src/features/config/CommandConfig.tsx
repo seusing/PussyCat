@@ -7,6 +7,7 @@ import { DynamicField } from './DynamicField'
 import { CopyButton } from '../../components/CopyButton'
 import { explainDecision, isRunnable } from '../../data/policy'
 import { commandDescription } from '../../data/zhCopy'
+import { MicroButton } from '../../components/MicroButton'
 
 // 「已确认」状态条的措辞:必须说清**撤销的是什么**。
 // 原先只有一个孤零零的「撤销确认」链接——用户看不出撤销掉的是哪一项授予,只知道有个东西能撤。
@@ -79,28 +80,30 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
     <div>
       <div className="mb-1 flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
         <span>{selected.site}</span>
-        <button
+        <MicroButton
+          variant="save"
           data-testid="fav-site"
           onClick={() => toggleSiteFavorite(selected.site)}
+          active={isSiteFavorited(preferences, selected.site)}
           aria-pressed={isSiteFavorited(preferences, selected.site)}
           title={isSiteFavorited(preferences, selected.site) ? '取消收藏站点' : '收藏站点'}
-          style={{ color: isSiteFavorited(preferences, selected.site) ? 'var(--color-warning)' : 'var(--color-fg-dim)', lineHeight: 1 }}
         >
-          {isSiteFavorited(preferences, selected.site) ? '★' : '☆'}
-        </button>
+          {isSiteFavorited(preferences, selected.site) ? '已保存' : '稍后查看'}
+        </MicroButton>
         <span>/ {selected.name}</span>
       </div>
       <div className="mb-1 flex items-center gap-2">
         <h2 className="text-lg font-semibold">{selected.name}</h2>
-        <button
+        <MicroButton
+          variant="favorite"
           data-testid="fav-command"
           onClick={() => toggleCommandFavorite(selected)}
+          active={isCommandFavorited(preferences, selected.command)}
           aria-pressed={isCommandFavorited(preferences, selected.command)}
           title={isCommandFavorited(preferences, selected.command) ? '取消收藏命令' : '收藏命令'}
-          style={{ color: isCommandFavorited(preferences, selected.command) ? 'var(--color-warning)' : 'var(--color-fg-dim)', lineHeight: 1 }}
         >
-          {isCommandFavorited(preferences, selected.command) ? '★' : '☆'}
-        </button>
+          {isCommandFavorited(preferences, selected.command) ? '已收藏' : '收藏'}
+        </MicroButton>
         <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
         {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
       </div>
@@ -120,11 +123,9 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
         <CopyButton label="复制命令" getText={() => commandPreview(selected, values)} testid="copy-command" />
       </div>
 
-      <button data-testid="run-button" disabled={running || !runnable} onClick={handleRun}
-        className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
-        style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
+      <MicroButton variant="submit" data-testid="run-button" disabled={running || !runnable} onClick={handleRun}>
         {running ? '运行中…' : '运行任务'}
-      </button>
+      </MicroButton>
       {!runnable && (
         <p data-testid="decision-reason" className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           {explainDecision(decision)}

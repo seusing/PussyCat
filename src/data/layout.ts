@@ -12,12 +12,23 @@ export const RUNS_MIN = 280
 export const RUNS_MAX = 560
 export const RUNS_DEFAULT = 360
 
+export const MODULE_SIDEBAR_MIN = 176
+export const MODULE_SIDEBAR_MAX = 360
+export const MODULE_SIDEBAR_DEFAULT = 224
+
+export const DETAILS_MIN = 300
+export const DETAILS_MAX = 560
+export const DETAILS_DEFAULT = 380
+
 // 中栏(命令详情)最小宽度——不持久化、不可独立拖拽,只作为左右两栏拖拽时的挤压下限。
 export const CONFIG_MIN = 400
 
 export type LayoutSnapshot = {
   navWidth: number
   runsWidth: number
+  moduleSidebarWidth: number
+  moduleSidebarHidden: boolean
+  detailsWidth: number
   /** 登录状态的自动刷新开关与间隔。放这里而**不放 preferences**——那是执行确认的存储,受 I-P7 管辖。 */
   autoLoginRefresh: boolean
   autoLoginRefreshMinutes: number
@@ -26,7 +37,17 @@ export type LayoutSnapshot = {
 }
 
 export function defaultLayout(): LayoutSnapshot {
-  return { autoLoginRefresh: false, autoLoginRefreshMinutes: AUTO_REFRESH_DEFAULT_MINUTES, navWidth: NAV_DEFAULT, runsWidth: RUNS_DEFAULT, navHidden: false, runsHidden: false }
+  return {
+    autoLoginRefresh: false,
+    autoLoginRefreshMinutes: AUTO_REFRESH_DEFAULT_MINUTES,
+    navWidth: NAV_DEFAULT,
+    runsWidth: RUNS_DEFAULT,
+    moduleSidebarWidth: MODULE_SIDEBAR_DEFAULT,
+    moduleSidebarHidden: false,
+    detailsWidth: DETAILS_DEFAULT,
+    navHidden: false,
+    runsHidden: false,
+  }
 }
 
 function resolveStorage(storage?: Storage): Storage | undefined {
@@ -59,13 +80,30 @@ export function normalizeLayout(raw: unknown): LayoutSnapshot {
   const o = raw as Record<string, unknown>
   const navWidth = isFiniteNum(o.navWidth) ? clamp(o.navWidth, NAV_MIN, NAV_MAX) : fallback.navWidth
   const runsWidth = isFiniteNum(o.runsWidth) ? clamp(o.runsWidth, RUNS_MIN, RUNS_MAX) : fallback.runsWidth
+  const moduleSidebarWidth = isFiniteNum(o.moduleSidebarWidth)
+    ? clamp(o.moduleSidebarWidth, MODULE_SIDEBAR_MIN, MODULE_SIDEBAR_MAX)
+    : fallback.moduleSidebarWidth
+  const detailsWidth = isFiniteNum(o.detailsWidth)
+    ? clamp(o.detailsWidth, DETAILS_MIN, DETAILS_MAX)
+    : fallback.detailsWidth
   // 自动刷新配置同样按不可信边界处理:开关非布尔→回退 false(**默认关**,这是会反复动用
   // 登录态的功能,默认不能是开的);间隔走 clampIntervalMinutes,非法值退默认、越界夹回区间。
   const autoLoginRefresh = isBool(o.autoLoginRefresh) ? o.autoLoginRefresh : fallback.autoLoginRefresh
   const autoLoginRefreshMinutes = clampIntervalMinutes(o.autoLoginRefreshMinutes)
   const navHidden = isBool(o.navHidden) ? o.navHidden : fallback.navHidden
   const runsHidden = isBool(o.runsHidden) ? o.runsHidden : fallback.runsHidden
-  return { navWidth, runsWidth, navHidden, runsHidden, autoLoginRefresh, autoLoginRefreshMinutes }
+  const moduleSidebarHidden = isBool(o.moduleSidebarHidden) ? o.moduleSidebarHidden : fallback.moduleSidebarHidden
+  return {
+    navWidth,
+    runsWidth,
+    moduleSidebarWidth,
+    moduleSidebarHidden,
+    detailsWidth,
+    navHidden,
+    runsHidden,
+    autoLoginRefresh,
+    autoLoginRefreshMinutes,
+  }
 }
 
 export function loadLayout(storage?: Storage): LayoutSnapshot {

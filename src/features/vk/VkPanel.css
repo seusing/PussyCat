@@ -1,0 +1,102 @@
+.vk-source-input-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.vk-source-input-shell textarea {
+  min-height: 82px;
+  resize: vertical;
+  padding-right: 124px;
+  line-height: 1.5;
+}
+
+.vk-source-input-shell > .video-source-coverflow {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+}
+
+.vk-source-file-input {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: #20232a;
+  color: var(--color-fg);
+  padding: 0 10px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.vk-source-file-input:hover {
+  border-color: #464d59;
+  background: #272b33;
+}
+
+.vk-source-file-input input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.vk-source-file-input:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 75%, white);
+  outline-offset: 2px;
+}
+
+.vk-task-banners {
+  position: sticky;
+  z-index: 18;
+  top: 12px;
+  display: grid;
+  gap: 7px;
+  margin: 0 0 12px auto;
+}
+
+.vk-task-banner {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: #1d2026;
+  padding: 8px 10px 8px 13px;
+  color: var(--color-fg);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 30%);
+  font-size: 13px;
+}
+
+.vk-task-banner.is-success { border-color: color-mix(in srgb, var(--color-success) 46%, var(--color-line)); }
+.vk-task-banner.is-danger { border-color: color-mix(in srgb, var(--color-danger) 46%, var(--color-line)); }
+
+.vk-task-banner button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-fg-dim);
+}
+
+.vk-task-banner button:hover { background: rgb(255 255 255 / 7%); color: var(--color-fg); }
+
+@media (max-width: 640px) {
+  .vk-source-input-shell textarea { padding-right: 68px; }
+  .vk-source-input-shell > .video-source-coverflow { right: 5px; transform: translateY(-50%) scale(.82); transform-origin: right center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vk-source-file-input { transition: none; }
+}

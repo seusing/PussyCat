@@ -1,11 +1,12 @@
 import { HostRequestError } from './errors'
-import { fetchVkJobs, postVkJob, vkOutputPath } from './vkClient'
+import { fetchVkJobs, fetchVkOutputText, postVkJob, vkOutputPath } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
   const impl = vi.fn(async (_url: string, _init?: RequestInit) => ({
     ok: status < 400,
     status,
     json: async () => body,
+    text: async () => String(body),
   }))
   vi.stubGlobal('fetch', impl)
   return impl
@@ -38,5 +39,13 @@ describe('vkClient', () => {
   it('escapes output ids in the download path', () => {
     expect(vkOutputPath('out_abc')).toBe('/vk/v1/outputs/out_abc')
     expect(vkOutputPath('a/b')).toBe('/vk/v1/outputs/a%2Fb')
+  })
+
+  it('fetches an escaped output path and returns its text body', async () => {
+    const markdown = '# 测试笔记\n\n正文 **加粗**'
+    const impl = stubFetch(200, markdown)
+
+    await expect(fetchVkOutputText('notes/a.md', 'http://127.0.0.1:9999')).resolves.toBe(markdown)
+    expect(impl).toHaveBeenCalledWith('http://127.0.0.1:9999/vk/v1/outputs/notes%2Fa.md')
   })
 })

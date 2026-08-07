@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { LoaderCircle, RefreshCw, Wrench } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import { DEFAULT_BASE_URL } from '../host/nodeBridgeHost'
 
@@ -41,7 +42,7 @@ const REFRESH_DEBOUNCE_MS = 3000
 // 「用户切回窗口」的 focus 事件,但那条路有两个洞:① 浏览器在别的显示器或后台起来,用户
 // 根本没离开爪爪,focus 事件永远不来;② 就算切回来,也可能正好落在上面那个 3s 去抖窗口里
 // 被吃掉。两种情况下用户都得再手点一次才看见真实状态 —— 而机器此刻完全有能力自己看。
-const REPAIR_POLL_INTERVAL_MS = 1500
+const REPAIR_POLL_INTERVAL_MS = 650
 const REPAIR_POLL_WINDOW_MS = 20_000
 
 type HostState = 'checking' | 'online' | 'offline'
@@ -238,37 +239,60 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   const [nextStep, setNextStep] = useState<string | undefined>()
 
   // 修复后的自盯轮询(理由见 REPAIR_POLL_* 常量处)。一就绪立刻停,超窗也停。
-  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const pollAbortRef = useRef<AbortController | undefined>(undefined)
+  const pollGenerationRef = useRef(0)
   const stopPolling = useCallback(() => {
-    if (pollRef.current !== undefined) { clearInterval(pollRef.current); pollRef.current = undefined }
+    pollGenerationRef.current += 1
+    if (pollRef.current !== undefined) { clearTimeout(pollRef.current); pollRef.current = undefined }
+    pollAbortRef.current?.abort()
+    pollAbortRef.current = undefined
   }, [])
   useEffect(() => stopPolling, [stopPolling])
 
   const pollUntilReady = useCallback(() => {
     stopPolling()
+    const generation = pollGenerationRef.current
     const deadline = Date.now() + REPAIR_POLL_WINDOW_MS
-    pollRef.current = setInterval(() => {
-      if (Date.now() > deadline) { stopPolling(); return }
-      fetch(`${base}/browser-bridge/health`)
+    const probe = () => {
+      if (generation !== pollGenerationRef.current) return
+      if (Date.now() >= deadline) { setRepairing(false); return }
+      const controller = new AbortController()
+      pollAbortRef.current = controller
+      const timeout = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS)
+      let ready = false
+      fetch(`${base}/browser-bridge/health`, { signal: controller.signal })
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
         .then((body: BridgeHealth) => {
+          if (generation !== pollGenerationRef.current) return
           setBridge(body)
           setBridgeState('idle')
           setLastCheckedAt(body.checkedAt || Date.now())
           lastCheckRef.current = Date.now()
           if (body.reasonCode === 'ok') {
+            ready = true
+            setRepairing(false)
             stopPolling()
             setNextStep(undefined)
             setDetailsOpen(false)   // 和「修好了自动收起」同一条规则:事办完了就别占屏幕
           }
         })
         .catch(() => {})   // 轮询期间的单次失败不改判:窗口内还会再探
-    }, REPAIR_POLL_INTERVAL_MS)
+        .finally(() => {
+          clearTimeout(timeout)
+          if (pollAbortRef.current === controller) pollAbortRef.current = undefined
+          if (ready || generation !== pollGenerationRef.current) return
+          if (Date.now() >= deadline) { setRepairing(false); return }
+          pollRef.current = setTimeout(probe, REPAIR_POLL_INTERVAL_MS)
+        })
+    }
+    probe()
   }, [base, stopPolling])
 
   const repair = useCallback(() => {
     if (mode !== 'connected') return
     stopPolling()
+    bridgeGenRef.current += 1
     setRepairing(true)
     setNextStep(undefined)
     const controller = new AbortController()
@@ -283,19 +307,20 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         setNextStep(body.nextStep)
         // 修好了就自动收起:事办完了,浮层没有理由继续占着屏幕。没修好则留着 ——
         // nextStep 就写在里面,那正是用户接下来要读的东西。
-        if (body.health?.reasonCode === 'ok') setDetailsOpen(false)
+        if (body.health?.reasonCode === 'ok') {
+          setRepairing(false)
+          setDetailsOpen(false)
+        }
         // 还没就绪 ≠ 没修好:拉起浏览器那一级本来就要等 Chrome 冷启动 + 扩展握手。
         // 接着自己盯,不再要求用户手点第二次。
         else pollUntilReady()
       })
-      .catch(() => { setNextStep('修复请求没送到。确认爪爪服务在运行后重试') })
-      .finally(() => { clearTimeout(timer); setRepairing(false); checkVk() })
+      .catch(() => { setRepairing(false); setNextStep('修复请求没送到。确认爪爪服务在运行后重试') })
+      .finally(() => { clearTimeout(timer); checkVk() })
   }, [mode, base, checkVk, pollUntilReady, stopPolling])
 
   const verdict = aggregate({ demo, host, bridge, bridgeState, vk })
-  const showRepair = !demo && verdict.canRepair
-  const recheck = useCallback(() => { checkBridge(); checkVk() }, [checkBridge, checkVk])
-
+  const showAction = !demo && host === 'online' && (repairing || verdict.canRepair || verdict.tone === 'ok')
   return (
     <div
       ref={rootRef}
@@ -335,20 +360,27 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
         <span data-testid="health-label">{repairing ? '修复中…' : verdict.label}</span>
       </button>
 
-      {/* 刷新键提到结论旁边。原先它在浮层里,想手动刷一次要先把浮层叫出来再点 —— 两步。
-          放这儿是一步,而且不必先知道"详情里有个按钮"。 */}
-      {!demo && (
+      {/* 自动检查与修复放在结论旁边。扩展断开时会直接走 Host 的修复阶梯并拉起浏览器,
+          不要求新用户先发现详情浮层里的修复按钮。 */}
+      {showAction && (
         <button
           type="button"
           data-testid="health-refresh"
-          onClick={recheck}
+          onClick={repair}
           disabled={repairing}
-          aria-label="重新检查状态"
-          title="重新检查状态"
-          className="rounded px-1 text-xs leading-none disabled:opacity-40"
-          style={{ color: 'var(--color-fg-dim)' }}
+          aria-label={repairing ? '正在修复浏览器连接' : verdict.canRepair ? '修复浏览器连接' : '刷新连接状态'}
+          title={repairing ? '正在修复浏览器连接' : verdict.canRepair ? '修复浏览器连接' : '刷新连接状态'}
+          role={repairing ? 'switch' : undefined}
+          aria-checked={repairing ? false : undefined}
+          aria-busy={repairing || undefined}
+          data-state={repairing ? 'loading' : undefined}
+          className="health-action-button"
         >
-          ↻
+          {repairing
+            ? <LoaderCircle size={16} className="health-action-spinner" aria-hidden="true" />
+            : verdict.canRepair
+              ? <Wrench size={16} aria-hidden="true" />
+              : <RefreshCw size={16} className="health-reload-icon" aria-hidden="true" />}
         </button>
       )}
 
@@ -382,18 +414,6 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
             <div data-testid="health-next-step" className="mt-3" style={{ color: 'var(--color-fg-dim)' }}>
               {nextStep}
             </div>
-          )}
-          {showRepair && (
-            <button
-              data-testid="health-repair"
-              onClick={repair}
-              disabled={repairing}
-              title="修复浏览器连接"
-              className="mt-3 rounded px-2 py-1 text-xs disabled:opacity-50"
-              style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-            >
-              修复浏览器连接
-            </button>
           )}
         </div>
         </div>

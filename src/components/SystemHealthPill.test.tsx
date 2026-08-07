@@ -263,7 +263,7 @@ test('去重窗口内的连发只探一次 —— focus 与 visibilitychange 常
   expect(after).toBe(before)
 })
 
-test('刷新键就在结论旁边:一次点击即重查,不必先把浮层叫出来,且不发 repair POST', async () => {
+test('刷新键就在结论旁边:一次点击即检测并自动修复', async () => {
   const spy = routeFetch()
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
@@ -275,8 +275,12 @@ test('刷新键就在结论旁边:一次点击即重查,不必先把浮层叫出
   expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
   await userEvent.click(screen.getByTestId('health-refresh'))
 
-  await waitFor(() => expect(spy.mock.calls.filter((c) => String(c[0]).includes('/browser-bridge/health')).length).toBeGreaterThanOrEqual(2))
-  expect(spy.mock.calls.some((c) => String(c[0]).includes('/browser-bridge/repair'))).toBe(false)
+  const call = await waitFor(() => {
+    const hit = spy.mock.calls.find((c) => String(c[0]).includes('/browser-bridge/repair'))
+    expect(hit).toBeDefined()
+    return hit
+  })
+  expect((call?.[1] as RequestInit)?.method).toBe('POST')
 })
 
 test('检测中不显示修复动作', () => {
@@ -296,10 +300,8 @@ test('点「检测并修复」打 POST,并采信 Host 复检后的 health', asyn
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器服务未运行'))
-  await userEvent.click(screen.getByTestId('health-details-toggle'))
-  expect(screen.getByTestId('health-repair')).toHaveTextContent('修复浏览器连接')
-
-  await userEvent.click(screen.getByTestId('health-repair'))
+  expect(screen.getByTestId('health-refresh')).toHaveAccessibleName('修复浏览器连接')
+  await userEvent.click(screen.getByTestId('health-refresh'))
 
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
   const call = spy.mock.calls.find((c) => String(c[0]).includes('/browser-bridge/repair'))
@@ -320,12 +322,10 @@ test('修不好时把 Host 给的下一步照原样显示 —— 不把"修不�
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接'))
-  await userEvent.click(screen.getByTestId('health-details-toggle'))
-
-  await userEvent.click(screen.getByTestId('health-repair'))
+  await userEvent.click(screen.getByTestId('health-refresh'))
 
   await waitFor(() => expect(screen.getByTestId('health-next-step')).toHaveTextContent('OpenCLI 扩展'))
-  expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接')   // 没修好就别改结论
+  expect(screen.getByTestId('health-label')).toHaveTextContent('修复中…')
 })
 
 test('Host 离线时修复按钮禁用 —— 请求根本送不到,不给假希望', async () => {
@@ -333,16 +333,16 @@ test('Host 离线时修复按钮禁用 —— 请求根本送不到,不给假希
   connected()
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('爪爪服务离线'))
-  expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('health-refresh')).not.toBeInTheDocument()
 })
 
 test('演示模式不给修复按钮 —— 没有真 Host 可修', () => {
   routeFetch()
   render(<SystemHealthPill baseUrl={BASE} />)
-  expect(screen.queryByTestId('health-repair')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('health-refresh')).not.toBeInTheDocument()
 })
 
-test('修复拉起浏览器后自己盯着复检 —— 不再要求用户手点第二次', async () => {
+test('左下角刷新拉起浏览器后自己盯着复检 —— 不再要求用户手点第二次', async () => {
   // Host 在「拉起浏览器」这一级之后**明确不做立刻复检**(Chrome 冷启动 + 扩展握手远超
   // 一次探测窗口,立刻复检会把可能成功的修复报成失败)。原本靠窗口 focus 补这一探,但
   // 浏览器在别的显示器/后台起来时 focus 永远不来,用户只能再手点一次。这里断言前端自己盯。
@@ -363,9 +363,7 @@ test('修复拉起浏览器后自己盯着复检 —— 不再要求用户手点
   render(<SystemHealthPill baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接'))
 
-  await userEvent.hover(screen.getByTestId('health-pill'))
-  await waitFor(() => expect(screen.getByTestId('health-repair')).toBeInTheDocument())
-  await userEvent.click(screen.getByTestId('health-repair'))
+  await userEvent.click(screen.getByTestId('health-refresh'))
   // 修复刚返回时仍是没连上,nextStep 亮出来 —— 这一步的行为不变。
   await waitFor(() => expect(screen.getByTestId('health-next-step')).toBeInTheDocument())
 
@@ -425,9 +423,9 @@ describe('浮层收起', () => {
     render(<SystemHealthPill baseUrl={BASE} />)
 
     await userEvent.click(screen.getByTestId('health-details-toggle'))
-    await waitFor(() => expect(screen.getByTestId('health-repair')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('health-refresh')).toBeInTheDocument())
 
-    await userEvent.click(screen.getByTestId('health-repair'))
+    await userEvent.click(screen.getByTestId('health-refresh'))
 
     await waitFor(() => expect(screen.queryByTestId('health-details')).not.toBeInTheDocument())
     // 灯本身转绿 —— 这就是反馈,不必靠浮层停留来告诉用户。
@@ -444,9 +442,9 @@ describe('浮层收起', () => {
     render(<SystemHealthPill baseUrl={BASE} />)
 
     await userEvent.click(screen.getByTestId('health-details-toggle'))
-    await waitFor(() => expect(screen.getByTestId('health-repair')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('health-refresh')).toBeInTheDocument())
 
-    await userEvent.click(screen.getByTestId('health-repair'))
+    await userEvent.click(screen.getByTestId('health-refresh'))
 
     await waitFor(() => expect(screen.getByTestId('health-next-step')).toHaveTextContent('OpenCLI 扩展'))
     expect(screen.getByTestId('health-details')).toBeInTheDocument()

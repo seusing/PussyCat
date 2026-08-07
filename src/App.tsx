@@ -12,7 +12,9 @@ import { snapshotCatalogSource, type CatalogSource } from './host'
 import { validate } from './features/config/validation'
 import { LoginStatusPanel } from './features/login/LoginStatusPanel'
 import { VkPanel } from './features/vk/VkPanel'
+import { VkTaskDetailSidebar } from './features/vk/VkTaskDetailSidebar'
 import { RadarPanel } from './features/radar/RadarPanel'
+import { InspirationPanel } from './features/inspiration/InspirationPanel'
 import {
   isLoginCheckRunId, loginCheckRunId, parseWhoamiResult,
 } from './data/loginStatus'
@@ -58,6 +60,8 @@ export default function App({
   const catalogStatus = useAppStore((s) => s.catalogStatus)
   const catalogError = useAppStore((s) => s.catalogError)
   const activeModule = useAppStore((s) => s.activeModule)
+  const [selectedVkJobId, setSelectedVkJobId] = useState<string | null>(null)
+  const [vkRightPanelOpen, setVkRightPanelOpen] = useState(false)
   const [refresh, setRefresh] = useState<{ state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }>({ state: 'idle' })
   const loadGen = useRef(0)   // 请求世代:latest-wins,过期响应(首载或刷新)一律丢弃(三轮复审 F1)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -301,14 +305,36 @@ export default function App({
     <div data-testid="app-root" className="h-full">
       <AppShell
         fullPage={
-          activeModule === 'login'
-            ? <LoginStatusPanel />
-            : activeModule === 'vk'
-              ? <VkPanel baseUrl={baseUrl} />
-              : activeModule === 'radar'
-                ? <RadarPanel baseUrl={baseUrl} />
-                : undefined
+          activeModule === 'commands'
+            ? <InspirationPanel
+                onRun={executeSelected}
+                onCancel={onCancel}
+                onRerun={executeSelected}
+                registerSubmit={registerSubmit}
+                searchRef={searchInputRef}
+              />
+            : activeModule === 'login'
+              ? <LoginStatusPanel />
+              : activeModule === 'vk'
+                ? <VkPanel
+                    baseUrl={baseUrl}
+                    selectedJobId={selectedVkJobId}
+                    onSelectJob={(jobId) => {
+                      setSelectedVkJobId(jobId)
+                      setVkRightPanelOpen(!!jobId)
+                    }}
+                  />
+                : <RadarPanel baseUrl={baseUrl} />
         }
+        rightPanel={activeModule === 'vk'
+          ? <VkTaskDetailSidebar
+              jobId={selectedVkJobId}
+              baseUrl={baseUrl}
+              onClose={() => setVkRightPanelOpen(false)}
+            />
+          : undefined}
+        rightPanelOpen={activeModule === 'vk' && vkRightPanelOpen}
+        onRightPanelOpenChange={setVkRightPanelOpen}
         nav={<SiteCommandNav searchRef={searchInputRef} />}
         config={<CommandConfig onRun={executeSelected} registerSubmit={registerSubmit} />}
         runs={<RunPanel onCancel={onCancel} onRerun={executeSelected} />}

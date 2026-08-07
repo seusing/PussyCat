@@ -47,12 +47,9 @@ function lineSplitter(onLine) {
   let buffered = ''
   return (chunk) => {
     buffered += chunk.toString('utf8')
-    let index = buffered.search(/\r?\n/)
-    while (index >= 0) {
-      onLine(buffered.slice(0, index))
-      buffered = buffered.replace(/^[^\r\n]*\r?\n/, '')
-      index = buffered.search(/\r?\n/)
-    }
+    const lines = buffered.split(/\r\n|[\r\n]/)
+    buffered = lines.pop() ?? ''
+    for (const line of lines) onLine(line)
   }
 }
 

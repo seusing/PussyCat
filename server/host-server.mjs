@@ -201,6 +201,26 @@ export function createHostServer({
     emitEvent: (type, event) => broker.publish(type, event),
     ...runManagerOptions,
   })
+  const runBrowserBridgeRepair = () => browserBridgeRepair({
+    probe: () => browserBridgeHealth({ opencliVersion: activePolicy().opencliVersion }),
+    restartDaemon: () => runOpenCli(['daemon', 'restart'], { opencliEntry }),
+    openBrowser: () => launchBrowser(),
+  })
+  let browserBridgePreflight
+  const ensureBrowserBridge = async () => {
+    if (!browserBridgePreflight) {
+      const pending = Promise.resolve().then(runBrowserBridgeRepair)
+      const tracked = pending.finally(() => {
+        if (browserBridgePreflight === tracked) browserBridgePreflight = undefined
+      })
+      browserBridgePreflight = tracked
+    }
+    try {
+      await browserBridgePreflight
+    } catch {
+      // The command owns the final structured error; preflight only restores auto-launch.
+    }
+  }
 
   const server = createServer(async (request, response) => {
     try {
@@ -316,11 +336,7 @@ export function createHostServer({
       // 与 /health 同样**永不 5xx** —— 修不成也是一种结构化结果,而且这个端点的返回里
       // 永远带着复检后的真实 health:动作做没做成,和桥接好没好,是两件事。
       if (url.pathname === '/browser-bridge/repair' && request.method === 'POST') {
-        writeJson(response, 200, await browserBridgeRepair({
-          probe: () => browserBridgeHealth({ opencliVersion: activePolicy().opencliVersion }),
-          restartDaemon: () => runOpenCli(['daemon', 'restart'], { opencliEntry }),
-          openBrowser: () => launchBrowser(),
-        }))
+        writeJson(response, 200, await runBrowserBridgeRepair())
         return
       }
 
@@ -475,7 +491,12 @@ export function createHostServer({
 
       if (url.pathname === '/start' && request.method === 'POST') {
         const body = await readJson(request, maxBodyBytes)
-        const command = validateStartRequest(body, activePolicy())
+        const currentPolicy = activePolicy()
+        const command = validateStartRequest(body, currentPolicy)
+        const decision = currentPolicy.decisionByKey?.get(command.commandKey)
+        if (decision?.metadata?.executionPath === 'browser-bridge') {
+          await ensureBrowserBridge()
+        }
         const result = runManager.start(command)
         writeJson(response, 202, result)
         return

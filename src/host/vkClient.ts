@@ -63,6 +63,8 @@ export interface VkJobRow {
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number
+  /** Stable UI sequence assigned from the composite job id + start time key. */
+  taskNumber?: number
 }
 
 export interface VkProductArtifact {
@@ -110,6 +112,7 @@ export interface VkJobView {
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number
+  progress?: { model_calls?: number } & Record<string, unknown>
   request_fingerprint?: string | null
   budget_stop?: VkBudgetStop | null
   capabilities?: VkCapabilityResult[]
@@ -283,6 +286,16 @@ export function vkOutputPath(outputId: string): string {
   return `/vk/v1/outputs/${encodeURIComponent(outputId)}`
 }
 
+export function vkOutputUrl(outputId: string, baseUrl = DEFAULT_BASE_URL): string {
+  return `${baseUrl}${vkOutputPath(outputId)}`
+}
+
+export async function fetchVkOutputText(outputId: string, baseUrl = DEFAULT_BASE_URL): Promise<string> {
+  const response = await fetch(`${baseUrl}${vkOutputPath(outputId)}`)
+  if (!response.ok) throw new HostRequestError('产物读取失败', undefined, response.status)
+  return response.text()
+}
+
 // 产物下载:fetch(带 Origin,过 Host 白名单)→ blob → 对象 URL 新开页。
 // window.open 直链不带 fetch 语义,统一走这里。
 export async function downloadVkOutput(outputId: string, baseUrl = DEFAULT_BASE_URL): Promise<void> {
@@ -378,6 +391,7 @@ export interface VkProviderSettings {
   importable: VkImportableChannel[]
   cc_switch: VkCcSwitchScan
   configured: boolean
+  cost_tracking?: boolean
 }
 
 export interface VkProviderTestResult {

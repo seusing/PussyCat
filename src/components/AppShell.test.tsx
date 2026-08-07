@@ -3,15 +3,22 @@ import App from '../App'
 import AppShell from './AppShell'
 import type { HostBridge } from '../host/types'
 import { useAppStore } from '../store/appStore'
-import { LAYOUT_KEY, NAV_DEFAULT, RUNS_DEFAULT, CONFIG_MIN } from '../data/layout'
+import {
+  defaultLayout,
+  LAYOUT_KEY,
+  NAV_DEFAULT,
+  RUNS_DEFAULT,
+  CONFIG_MIN,
+  MODULE_SIDEBAR_DEFAULT,
+  DETAILS_DEFAULT,
+} from '../data/layout'
 
 beforeEach(() => useAppStore.setState({ catalogStatus: 'ready' }))
 
-test('三栏 + 顶部健康 pill 显示演示模式', () => {
+test('侧栏模块导航 + 灵感来源工作区显示演示模式', () => {
   render(<App />)
-  expect(screen.getByTestId('col-nav')).toBeInTheDocument()
-  expect(screen.getByTestId('col-config')).toBeInTheDocument()
-  expect(screen.getByTestId('col-runs')).toBeInTheDocument()
+  expect(screen.getByTestId('module-tabs')).toBeInTheDocument()
+  expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
   expect(screen.getByTestId('health-pill')).toHaveTextContent('演示模式')
   expect(screen.getByTestId('app-header')).toHaveClass('flex-wrap')
   expect(screen.getByTestId('app-header-actions')).toHaveClass('app-header-actions')
@@ -115,10 +122,59 @@ test('隐藏→再显示:恢复隐藏前的宽度(不是重置为默认值),折�
   fireEvent.click(screen.getByTestId('toggle-nav'))   // 隐藏左栏
   expect(screen.queryByTestId('col-nav')).not.toBeInTheDocument()
   expect(gridTemplate()).toBe(`minmax(${CONFIG_MIN}px, 1fr) auto 400px`)
-  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ navWidth: 350, runsWidth: 400, navHidden: true, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
+  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ ...defaultLayout(), navWidth: 350, runsWidth: 400, navHidden: true })
 
   fireEvent.click(screen.getByTestId('toggle-nav'))   // 再显示:宽度应是隐藏前的 350,不是 NAV_DEFAULT
   expect(screen.getByTestId('col-nav')).toBeInTheDocument()
   expect(gridTemplate()).toBe(`350px auto minmax(${CONFIG_MIN}px, 1fr) auto 400px`)
-  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ navWidth: 350, runsWidth: 400, navHidden: false, runsHidden: false, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 })
+  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ ...defaultLayout(), navWidth: 350, runsWidth: 400 })
+})
+
+test('full-page modules keep the global sidebar toggle and persist its hidden state', () => {
+  render(
+    <AppShell
+      nav={<div>NAV</div>}
+      config={<div>CONFIG</div>}
+      runs={<div>RUNS</div>}
+      fullPage={<div>FULL PAGE</div>}
+      catalogStatus="ready"
+      onRetryCatalog={() => {}}
+    />,
+  )
+
+  expect(screen.getByTestId('app-sidebar')).toBeInTheDocument()
+  expect(screen.getByTestId('separator-app-sidebar')).toHaveAttribute('aria-valuenow', String(MODULE_SIDEBAR_DEFAULT))
+  fireEvent.click(screen.getByTestId('toggle-app-sidebar'))
+  expect(screen.queryByTestId('app-sidebar')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('separator-app-sidebar')).not.toBeInTheDocument()
+  expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toMatchObject({ moduleSidebarHidden: true })
+
+  fireEvent.click(screen.getByTestId('toggle-app-sidebar'))
+  expect(screen.getByTestId('app-sidebar')).toBeInTheDocument()
+  expect(screen.getByTestId('separator-app-sidebar')).toHaveAttribute('aria-valuenow', String(MODULE_SIDEBAR_DEFAULT))
+})
+
+test('the task details panel renders in a resizable right sidebar', () => {
+  const onRightPanelOpenChange = vi.fn()
+  render(
+    <AppShell
+      nav={<div>NAV</div>}
+      config={<div>CONFIG</div>}
+      runs={<div>RUNS</div>}
+      fullPage={<div>FULL PAGE</div>}
+      rightPanel={<div>DETAILS</div>}
+      rightPanelOpen
+      onRightPanelOpenChange={onRightPanelOpenChange}
+      catalogStatus="ready"
+      onRetryCatalog={() => {}}
+    />,
+  )
+
+  expect(screen.getByTestId('details-sidebar')).toHaveTextContent('DETAILS')
+  const separator = screen.getByTestId('separator-details-sidebar')
+  expect(separator).toHaveAttribute('aria-valuenow', String(DETAILS_DEFAULT))
+  fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+  expect(separator).toHaveAttribute('aria-valuenow', String(DETAILS_DEFAULT + 16))
+  fireEvent.click(screen.getByTestId('toggle-details-sidebar'))
+  expect(onRightPanelOpenChange).toHaveBeenCalledWith(false)
 })
