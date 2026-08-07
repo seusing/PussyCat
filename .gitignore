@@ -15,6 +15,9 @@ coverage/
 test-results/
 playwright-report/
 
+# Local visual verification screenshots
+artifacts/
+
 # VK runtime bundle (built artifacts: wheel + uv.exe + manifest)
 src-tauri/resources/vk/
 
