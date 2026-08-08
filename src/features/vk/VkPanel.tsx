@@ -140,6 +140,15 @@ function sourceLines(value: string): string[] {
   return [...new Set(value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))]
 }
 
+function isYouTubeSource(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, '')
+    return hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be'
+  } catch {
+    return false
+  }
+}
+
 function errorText(error: unknown, fallback: string): string {
   if (error instanceof HostRequestError) {
     return error.reasonCode ? `${error.summary}(${error.reasonCode})` : error.summary
@@ -430,7 +439,18 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
     if (!pendingSubmit) return
     setSubmitError(null)
     try {
-      for (const sourceValue of sourceLines(source)) {
+      const sources = sourceLines(source)
+      if (sources.some(isYouTubeSource)) {
+        const diagnostic = await fetchVkDiagnostic(base)
+        if (diagnostic.usable !== true) {
+          const reason = typeof diagnostic.reason_code === 'string' ? `(${diagnostic.reason_code})` : ''
+          const action = typeof diagnostic.action === 'string'
+            ? diagnostic.action
+            : '请启动带远程调试端口 9224 的专用 Chrome 并完成登录'
+          throw new HostRequestError(`YouTube 浏览器会话不可用${reason}：${action}`, undefined, 409, 'youtube-session-unavailable')
+        }
+      }
+      for (const sourceValue of sources) {
         await postVkJob({
           ...buildProjection(sourceValue),
           idempotency_key: crypto.randomUUID(),

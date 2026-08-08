@@ -42,6 +42,7 @@ export function scrubSidecarText(text, secrets = []) {
 }
 
 const READY_LINE = /^gui=http:\/\/127\.0\.0\.1:(\d+)$/
+const DEFAULT_CHROME_CDP_URL = 'http://127.0.0.1:9224'
 
 function lineSplitter(onLine) {
   let buffered = ''
@@ -202,7 +203,13 @@ export class VkSidecarManager {
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...this.baseEnv, VK_UI_TOKEN: token },
+      env: {
+        ...this.baseEnv,
+        VK_CHROME_CDP_URL: this.baseEnv.VK_CHROME_CDP_URL
+          ?? this.baseEnv.vk_chrome_cdp_url
+          ?? DEFAULT_CHROME_CDP_URL,
+        VK_UI_TOKEN: token,
+      },
     })
     this.#child = child
 

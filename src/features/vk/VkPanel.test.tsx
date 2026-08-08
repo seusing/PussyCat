@@ -346,6 +346,7 @@ describe('VkPanel', () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/diagnostic': { body: { usable: true, reason_code: 'ok' } },
       'POST /vk/v1/preview': { body: resolvedRequest({ source: first }) },
       'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
     })
@@ -363,6 +364,33 @@ describe('VkPanel', () => {
       .filter((item) => item.key === 'POST /vk/v1/jobs')
       .map((item) => JSON.parse(String(item.init?.body)).source)
     expect(sources).toEqual([first, second])
+  })
+
+  it('blocks a YouTube submission before creating a job when the CDP session is unavailable', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/preview': { body: resolvedRequest({ source: 'https://youtu.be/video-1' }) },
+      'GET /vk/v1/diagnostic': {
+        body: {
+          usable: false,
+          reason_code: 'browser_not_running',
+          action: 'Start the dedicated Chrome profile with remote debugging enabled.',
+        },
+      },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'unexpected', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), 'https://youtu.be/video-1')
+    await user.click(screen.getByTestId('vk-preview-button'))
+    await screen.findByTestId('vk-preview')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await user.click(screen.getByTestId('vk-cost-confirm'))
+
+    await waitFor(() => expect(screen.getByTestId('vk-submit-error')).toHaveTextContent('browser_not_running'))
+    expect(calls.some((item) => item.key === 'GET /vk/v1/diagnostic')).toBe(true)
+    expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(false)
   })
 
   it('consumes the cross-module handoff: prefills the source, shows provenance, clears the store', async () => {

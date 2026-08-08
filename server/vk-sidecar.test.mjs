@@ -53,6 +53,7 @@ function setup(options = {}) {
     randomToken: () => 'fixture-token-0123456789abcdef0123456789',
     readyTimeoutMs: 5000,
     stopGraceMs: 2000,
+    baseEnv: {},
     ...options,
   })
   return { child, calls, fetchCalls, manager }
@@ -89,6 +90,7 @@ describe('VkSidecarManager', () => {
     expect(options.stdio).toEqual(['ignore', 'pipe', 'pipe'])
     expect(options.env.VK_UI_TOKEN).toBe('fixture-token-0123456789abcdef0123456789')
     expect(options.env.VK_UI_TOKEN.length).toBeGreaterThanOrEqual(16)
+    expect(options.env.VK_CHROME_CDP_URL).toBe('http://127.0.0.1:9224')
   })
 
   it('handshakes /api/meta with the injected token and reports a leak-free health projection', async () => {
