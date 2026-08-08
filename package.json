@@ -35,6 +35,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "thinking-orbs": "^0.2.0",
+    "undici": "^6.27.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

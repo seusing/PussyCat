@@ -10,6 +10,7 @@
 //   /api/intelligence-efficiency-metrics      6KB  24 小时运行次数
 //   /api/intelligence-efficiency            271KB(gzip) 原始矩阵,IQ/费用/耗时靠它现算
 // 最后那个大,所以缓存按站方自己的节奏(页面是 10 分钟刷一次)。
+import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { deriveModels, derivePicks } from './radar-derive.mjs'
 
 const ORIGIN = 'https://codexradar.com'
@@ -19,8 +20,27 @@ export const MATRIX_URL = `${ORIGIN}/api/intelligence-efficiency`
 /** 站方页面自己的刷新间隔(内联脚本里的 refreshMs = 10 * 60 * 1000)。 */
 export const DEFAULT_TTL_SECONDS = 600
 
+let radarProxyAgent
+let radarProxyUrl
+
+function defaultRadarFetch(url, init = {}) {
+  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy
+    || process.env.HTTP_PROXY || process.env.http_proxy
+  if (!proxy) return undiciFetch(url, init)
+  if (!radarProxyAgent || radarProxyUrl !== proxy) {
+    try {
+      radarProxyAgent = new ProxyAgent(proxy)
+      radarProxyUrl = proxy
+    } catch {
+      radarProxyAgent = undefined
+      radarProxyUrl = undefined
+    }
+  }
+  return undiciFetch(url, radarProxyAgent ? { ...init, dispatcher: radarProxyAgent } : init)
+}
+
 export function createRadarService({
-  fetchImpl = (...args) => fetch(...args),
+  fetchImpl = defaultRadarFetch,
   now = () => Date.now(),
   urls = {},
   ttlSeconds = DEFAULT_TTL_SECONDS,

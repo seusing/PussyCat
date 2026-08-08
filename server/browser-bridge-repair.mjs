@@ -22,7 +22,7 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, win32 as win32Path } from 'node:path'
 
 const DAEMON_RESTART_TIMEOUT_MS = 20_000
 const PROFILE_USE_TIMEOUT_MS = 10_000
@@ -57,7 +57,7 @@ export function discoverChromeExecutable({
   const candidates = []
   if (platform === 'win32') {
     for (const root of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA]) {
-      if (root) candidates.push(join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'))
+      if (root) candidates.push(win32Path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'))
     }
   } else if (platform === 'darwin') {
     candidates.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
