@@ -62,6 +62,7 @@ export default function App({
   const activeModule = useAppStore((s) => s.activeModule)
   const [selectedVkJobId, setSelectedVkJobId] = useState<string | null>(null)
   const [vkRightPanelOpen, setVkRightPanelOpen] = useState(false)
+  const [vkJobsRevision, setVkJobsRevision] = useState(0)
   const [refresh, setRefresh] = useState<{ state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }>({ state: 'idle' })
   const loadGen = useRef(0)   // 请求世代:latest-wins,过期响应(首载或刷新)一律丢弃(三轮复审 F1)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -316,9 +317,10 @@ export default function App({
             : activeModule === 'login'
               ? <LoginStatusPanel />
               : activeModule === 'vk'
-                ? <VkPanel
+                  ? <VkPanel
                     baseUrl={baseUrl}
                     selectedJobId={selectedVkJobId}
+                    refreshToken={vkJobsRevision}
                     onSelectJob={(jobId) => {
                       setSelectedVkJobId(jobId)
                       setVkRightPanelOpen(!!jobId)
@@ -331,6 +333,11 @@ export default function App({
               jobId={selectedVkJobId}
               baseUrl={baseUrl}
               onClose={() => setVkRightPanelOpen(false)}
+              onJobChange={(jobId) => {
+                setSelectedVkJobId(jobId)
+                setVkRightPanelOpen(true)
+                setVkJobsRevision((revision) => revision + 1)
+              }}
             />
           : undefined}
         rightPanelOpen={activeModule === 'vk' && vkRightPanelOpen}

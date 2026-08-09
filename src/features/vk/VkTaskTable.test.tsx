@@ -67,6 +67,18 @@ describe('VkTaskTable', () => {
     expect(screen.getByText('2m5s')).toBeInTheDocument()
   })
 
+  it('distinguishes rerun and interrupted states from ordinary execution', () => {
+    render(<VkTaskTable {...makeProps({
+      jobs: [
+        { ...JOBS[0], job_id: 'retry-child', parent_job_id: 'job-failed' },
+        { ...JOBS[1], job_id: 'cancelled', status: 'cancelled' },
+      ],
+    })} />)
+
+    expect(screen.getByText('重跑中')).toHaveAttribute('data-status', 'rerunning')
+    expect(screen.getByText('已中断')).toHaveAttribute('data-status', 'interrupted')
+  })
+
   it('selects a row by click and keyboard', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()

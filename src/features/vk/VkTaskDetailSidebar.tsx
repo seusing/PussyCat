@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ExternalLink, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { Check, ExternalLink, RefreshCw, Send, Square, X } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
   downloadVkOutput,
   fetchVkJob,
   fetchVkProviderSettings,
+  postVkJob,
   postVkJobAction,
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
+import { isVkJobRerun, markVkJobAsRerun } from './taskUiState'
 import './VkTaskDetailSidebar.css'
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
-const FAILED_STATUSES = new Set(['failed', 'cancelled', 'quarantined', 'interrupted', 'error'])
+const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
+const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted'])
+const SUCCESS_STATUSES = new Set(['done', 'partial', 'completed_after_cancel_request'])
 
 function detailError(error: unknown): string {
   if (error instanceof HostRequestError) return error.summary
@@ -56,15 +61,17 @@ function configuredModelName(job: VkJobView, settings: VkProviderSettings | null
   return '跟随默认模型配置'
 }
 
-export function VkTaskDetailSidebar({ jobId, baseUrl, onClose }: {
+export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   jobId: string | null
   baseUrl?: string
   onClose: () => void
+  onJobChange?: (jobId: string) => void
 }) {
   const [job, setJob] = useState<VkJobView | null>(null)
   const [providers, setProviders] = useState<VkProviderSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [actionPending, setActionPending] = useState(false)
+  const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | null>(null)
+  const [submitHovered, setSubmitHovered] = useState(false)
 
   const load = useCallback(async () => {
     if (!jobId) {
@@ -95,6 +102,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose }: {
   const sources = useMemo(() => sourceItems(job), [job])
   const active = !!job && ACTIVE_STATUSES.has(job.status)
   const failed = !!job && FAILED_STATUSES.has(job.status)
+  const interrupted = !!job && INTERRUPTED_STATUSES.has(job.status)
+  const completedSuccessfully = !!job && SUCCESS_STATUSES.has(job.status)
+  const stopping = job?.status === 'cancel_requested'
+  const rerunning = active && !!job && (!!job.parent_job_id || isVkJobRerun(job.job_id))
   const total = job
     ? Math.max(1, numericProgress(job.progress?.total_links) ?? (sources.length || 1))
     : 1
@@ -103,17 +114,36 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose }: {
     : 0
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0
 
-  const runAction = async (action: 'retry' | 'refresh') => {
-    if (!jobId) return
-    setActionPending(true)
+  const runAction = async (action: 'cancel' | 'retry' | 'resubmit') => {
+    if (!jobId || !job) return
+    setActionPending(action)
     setError(null)
     try {
-      await postVkJobAction(jobId, action, baseUrl)
-      await load()
+      if (action === 'cancel') {
+        await postVkJobAction(jobId, 'cancel', baseUrl)
+        await load()
+        return
+      }
+      if (action === 'retry') {
+        const result = await postVkJobAction(jobId, 'retry', baseUrl)
+        const nextJobId = typeof result.job_id === 'string' ? result.job_id : null
+        if (nextJobId) onJobChange?.(nextJobId)
+        else await load()
+        return
+      }
+      const request = job.request
+      if (!request?.source) throw new Error('该历史任务没有可再次提交的来源信息')
+      const result = await postVkJob({
+        request,
+        idempotency_key: crypto.randomUUID(),
+        client_job_id: crypto.randomUUID(),
+      }, baseUrl)
+      markVkJobAsRerun(result.job_id)
+      onJobChange?.(result.job_id)
     } catch (actionError) {
       setError(detailError(actionError))
     } finally {
-      setActionPending(false)
+      setActionPending(null)
     }
   }
 
@@ -143,8 +173,8 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose }: {
       {job && (
         <div className="vk-task-detail-body">
           <div className="vk-task-detail-summary">
-            <span className={`vk-task-detail-badge ${failed ? 'is-failed' : active ? 'is-running' : 'is-completed'}`}>
-              {failed ? '失败' : active ? '正在执行' : '已完成'}
+            <span className={`vk-task-detail-badge ${failed ? 'is-failed' : interrupted ? 'is-interrupted' : rerunning ? 'is-rerunning' : active ? 'is-running' : 'is-completed'}`}>
+              {failed ? '失败' : interrupted ? '已中断' : stopping ? '正在停止' : rerunning ? '重跑中' : active ? '正在执行' : '已完成'}
             </span>
             <button type="button" onClick={() => { void load() }} aria-label="刷新任务详情" title="刷新">
               <RefreshCw size={15} aria-hidden="true" />
@@ -153,7 +183,13 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose }: {
 
           {active && (
             <div className="vk-task-progress-visual" aria-label="任务正在执行">
-              <ThinkingOrb state="composing" size={64} speed={1.5} theme="dark" aria-label="任务处理中" />
+              <ThinkingOrb
+                state={rerunning ? 'solving' : 'composing'}
+                size={64}
+                speed={rerunning ? 0.9 : 1.5}
+                theme="dark"
+                aria-label={rerunning ? '任务重跑中' : '任务处理中'}
+              />
               <div className="vk-task-progress-copy">
                 <strong>{completed} / {total}</strong>
                 <span>链接已完成</span>
@@ -201,14 +237,54 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose }: {
           {job.error && <div className="vk-task-detail-error">{job.error}</div>}
 
           <div className="vk-task-detail-actions">
-            <button type="button" disabled={actionPending} onClick={() => { void runAction('retry') }}>
-              <RotateCcw size={15} aria-hidden="true" />
-              <span>重试</span>
-            </button>
-            <button type="button" disabled={actionPending} onClick={() => { void runAction('refresh') }}>
-              <RefreshCw size={15} aria-hidden="true" />
-              <span>强制重跑</span>
-            </button>
+            {active && (
+              <button type="button" className="vk-task-stop-button" disabled={stopping || actionPending !== null} onClick={() => { void runAction('cancel') }}>
+                <Square size={13} fill="currentColor" aria-hidden="true" />
+                <span>{stopping || actionPending === 'cancel' ? '正在停止…' : '停止任务'}</span>
+              </button>
+            )}
+            {failed && (
+              <motion.button
+                type="button"
+                className="vk-task-retry-button"
+                disabled={actionPending !== null}
+                onClick={() => { void runAction('retry') }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.96 }}
+              >
+                <motion.span whileHover={{ rotate: 180 }} transition={{ type: 'spring', stiffness: 400, damping: 25 }}>
+                  <RefreshCw size={15} aria-hidden="true" />
+                </motion.span>
+                <span>{actionPending === 'retry' ? '正在重试…' : '重试'}</span>
+              </motion.button>
+            )}
+            {(completedSuccessfully || interrupted) && (
+              <motion.button
+                type="button"
+                className="vk-task-submit-again-button"
+                disabled={actionPending !== null}
+                onMouseEnter={() => setSubmitHovered(true)}
+                onMouseLeave={() => setSubmitHovered(false)}
+                onClick={() => { void runAction('resubmit') }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.96 }}
+              >
+                <span className="vk-task-action-icon">
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    {!submitHovered ? (
+                      <motion.span key="send" initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.5, opacity: 0 }} transition={{ type: 'spring', stiffness: 600, damping: 25 }}>
+                        <Send size={15} aria-hidden="true" />
+                      </motion.span>
+                    ) : (
+                      <motion.span key="check" initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.5, opacity: 0 }} transition={{ type: 'spring', stiffness: 600, damping: 25 }}>
+                        <Check size={15} aria-hidden="true" />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </span>
+                <span>{actionPending ? '正在提交…' : '再次提交任务'}</span>
+              </motion.button>
+            )}
           </div>
 
           {primaryOutputs(job).length > 0 && (

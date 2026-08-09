@@ -65,6 +65,10 @@ export interface VkJobRow {
   cost_cny?: number
   /** Stable UI sequence assigned from the composite job id + start time key. */
   taskNumber?: number
+  /** Root execution id used to fold retry attempts into one logical task row. */
+  logicalTaskId?: string
+  /** Fresh submission initiated from an existing task. */
+  isRerun?: boolean
 }
 
 export interface VkProductArtifact {

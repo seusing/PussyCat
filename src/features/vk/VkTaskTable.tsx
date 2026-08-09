@@ -19,14 +19,17 @@ export interface VkTaskTableProps {
   onDelete: (row: VkJobRow) => void
 }
 
-type NormalizedStatus = 'failed' | 'running' | 'completed'
+type NormalizedStatus = 'failed' | 'running' | 'rerunning' | 'stopping' | 'interrupted' | 'completed'
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
-const FAILED_STATUSES = new Set(['failed', 'cancelled', 'quarantined', 'interrupted', 'error'])
+const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
+const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted'])
 
-function normalizeStatus(status: string): NormalizedStatus {
-  const value = status.trim().toLowerCase()
-  if (ACTIVE_STATUSES.has(value)) return 'running'
+function normalizeStatus(row: VkJobRow): NormalizedStatus {
+  const value = row.status.trim().toLowerCase()
+  if (value === 'cancel_requested') return 'stopping'
+  if (ACTIVE_STATUSES.has(value)) return row.parent_job_id || row.isRerun ? 'rerunning' : 'running'
+  if (INTERRUPTED_STATUSES.has(value)) return 'interrupted'
   if (FAILED_STATUSES.has(value) || /fail|error|cancel|interrupt|quarantin/.test(value)) return 'failed'
   if (/queue|run|process|pending|submit/.test(value)) return 'running'
   return 'completed'
@@ -35,6 +38,9 @@ function normalizeStatus(status: string): NormalizedStatus {
 const STATUS_LABELS: Record<NormalizedStatus, string> = {
   failed: '失败',
   running: '正在执行',
+  rerunning: '重跑中',
+  stopping: '正在停止',
+  interrupted: '已中断',
   completed: '已完成',
 }
 
@@ -189,7 +195,7 @@ export function VkTaskTable({
           {jobs.map((row, index) => {
             const taskNumber = row.taskNumber ?? index + 1
             const notificationEnabled = notifications[row.job_id] ?? false
-            const status = normalizeStatus(row.status)
+            const status = normalizeStatus(row)
             const selected = row.job_id === selectedJobId
             const menuOpen = row.job_id === menuJobId
             return (

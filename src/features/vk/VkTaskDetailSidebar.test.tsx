@@ -1,14 +1,18 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkTaskDetailSidebar } from './VkTaskDetailSidebar'
 
 const BASE = 'http://127.0.0.1:17373'
 
 vi.mock('thinking-orbs', () => ({
-  ThinkingOrb: (props: { 'aria-label'?: string }) => <div aria-label={props['aria-label']} />,
+  ThinkingOrb: (props: { 'aria-label'?: string; state?: string; speed?: number }) => (
+    <div aria-label={props['aria-label']} data-state={props.state} data-speed={props.speed} />
+  ),
 }))
 
 afterEach(() => {
+  cleanup()
   vi.unstubAllGlobals()
 })
 
@@ -53,5 +57,91 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByText('https://www.youtube.com/watch?v=1')).toBeInTheDocument()
     expect(screen.getByText('https://www.bilibili.com/video/BV1')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('任务正在执行')).toBeInTheDocument())
+  })
+
+  it('stops an active task and exposes no retry or resubmit action', async () => {
+    const user = userEvent.setup()
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push(`${init?.method ?? 'GET'} ${url}`)
+      if (url.endsWith('/vk/v1/jobs/active')) return new Response(JSON.stringify({
+        job_id: 'active', kind: 'run', status: 'running', submitted_at: '2026-08-07T10:00:00Z', finished_at: null,
+        parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+        progress: { completed_links: 0, total_links: 1 },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      if (url.endsWith('/cancel')) return new Response(JSON.stringify({ job_id: 'active', status: 'cancel_requested' }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+    render(<VkTaskDetailSidebar jobId="active" baseUrl={BASE} onClose={() => {}} />)
+    await screen.findByRole('button', { name: '停止任务' })
+    expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '再次提交任务' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '停止任务' }))
+    await waitFor(() => expect(calls.some((call) => call.endsWith('/cancel'))).toBe(true))
+  })
+
+  it('retries a failed task by selecting the returned child execution', async () => {
+    const user = userEvent.setup()
+    const onJobChange = vi.fn()
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push(`${init?.method ?? 'GET'} ${url}`)
+      if (url.endsWith('/vk/v1/jobs/failed')) return new Response(JSON.stringify({
+        job_id: 'failed', kind: 'run', status: 'failed', submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:01:00Z',
+        parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      if (url.endsWith('/retry')) return new Response(JSON.stringify({ job_id: 'retry-child', parent_job_id: 'failed' }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+    render(<VkTaskDetailSidebar jobId="failed" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />)
+    await user.click(await screen.findByRole('button', { name: '重试' }))
+    await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('retry-child'))
+    expect(calls.some((call) => call.endsWith('/retry'))).toBe(true)
+    expect(screen.queryByRole('button', { name: '强制重跑' })).not.toBeInTheDocument()
+  })
+
+  it('resubmits a completed task as a new job and marks the fresh execution as rerunning', async () => {
+    const user = userEvent.setup()
+    const onJobChange = vi.fn()
+    let submitBody = ''
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/completed')) return new Response(JSON.stringify({
+        job_id: 'completed', kind: 'run', status: 'done', submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:01:00Z',
+        parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      if (url.endsWith('/vk/v1/jobs') && init?.method === 'POST') {
+        submitBody = String(init.body)
+        return new Response(JSON.stringify({ job_id: 'fresh-job', kind: 'request' }), { status: 201 })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+    render(<VkTaskDetailSidebar jobId="completed" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />)
+    await user.click(await screen.findByRole('button', { name: '再次提交任务' }))
+    await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('fresh-job'))
+    expect(JSON.parse(submitBody)).toMatchObject({ request: { source: 'https://example.com/v', preset: 'quick-summary' } })
+  })
+
+  it('shows an interrupted child as rerunning with the solving animation', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/retry-child')) return new Response(JSON.stringify({
+        job_id: 'retry-child', kind: 'run', status: 'running', submitted_at: '2026-08-07T10:02:00Z', finished_at: null,
+        parent_job_id: 'interrupted', cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+        progress: { completed_links: 0, total_links: 1 },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+    render(<VkTaskDetailSidebar jobId="retry-child" baseUrl={BASE} onClose={() => {}} />)
+    expect(await screen.findByText('重跑中')).toBeInTheDocument()
+    expect(screen.getByLabelText('任务重跑中')).toHaveAttribute('data-state', 'solving')
+    expect(screen.getByLabelText('任务重跑中')).toHaveAttribute('data-speed', '0.9')
+    expect(screen.getByRole('button', { name: '停止任务' })).toBeInTheDocument()
   })
 })

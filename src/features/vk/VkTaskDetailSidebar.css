@@ -175,6 +175,44 @@
 .vk-task-detail-actions button:disabled { opacity: .45; }
 .vk-task-output-list { margin-top: 0; }
 
+.vk-task-detail-actions button {
+  transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+
+.vk-task-detail-actions .vk-task-retry-button,
+.vk-task-detail-actions .vk-task-submit-again-button {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
+  background: color-mix(in srgb, var(--color-accent) 18%, #20232a);
+}
+
+.vk-task-detail-actions .vk-task-submit-again-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding-inline: 14px;
+}
+
+.vk-task-detail-actions .vk-task-retry-button,
+.vk-task-detail-actions .vk-task-stop-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.vk-task-action-icon {
+  position: relative;
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+}
+
+.vk-task-action-icon > * { position: absolute; inset: 0; display: grid; place-items: center; }
+
+.vk-task-detail-badge.is-rerunning { border-color: rgb(139 92 246 / 46%); background: rgb(139 92 246 / 15%); color: #cdb8ff; }
+.vk-task-detail-badge.is-interrupted { border-color: rgb(180 188 204 / 34%); background: rgb(255 255 255 / 6%); color: var(--color-fg-dim); }
+
 @media (prefers-reduced-motion: reduce) {
   .vk-task-progress-track > span { transition: none; }
 }

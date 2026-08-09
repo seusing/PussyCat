@@ -138,7 +138,7 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
 
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('还没配置模型通道'))
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎缺少模型通道'))
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('去配置')
     // 结论 + 动作,到此为止:按钮已经说清下一步,再补一段解释后果的话只是噪声。
     expect(screen.queryByTestId('vk-verdict-note')).not.toBeInTheDocument()
@@ -171,8 +171,7 @@ describe('VkPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
     expect(screen.queryByTestId('vk-verdict-action')).not.toBeInTheDocument()
-    // 路径、版本、能力这些开发者信息默认折叠 —— 在 DOM 里但不展开。
-    expect(screen.getByTestId('vk-developer-details')).not.toHaveAttribute('open')
+    expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
   })
 
   it('引擎没装时给一句人话 + 一个按钮,而不是一段说明书', async () => {
@@ -250,23 +249,22 @@ describe('VkPanel', () => {
     expect(calls.some((c) => c.key === 'POST /vk/v1/runtime/adopt')).toBe(false)
   })
 
-  it('renders every submission control plus the health summary', async () => {
+  it('renders every submission control without the removed developer and preview sections', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => {
-      expect(screen.getByTestId('vk-health-summary').textContent).toContain('就绪')
-    })
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
     for (const id of ['vk-source', 'vk-preset', 'vk-content-type', 'vk-media-policy',
       'vk-quality', 'vk-budget-profile', 'vk-max-cost', 'vk-audit',
       'vk-cap-word_timestamps', 'vk-cap-speaker_diarization', 'vk-cap-visual_evidence',
-      'vk-cap-query_ready', 'vk-preview-button', 'vk-submit-button',
+      'vk-cap-query_ready', 'vk-submit-button',
       'vk-query-input', 'vk-jobs-refresh']) {
       expect(screen.getByTestId(id)).toBeInTheDocument()
     }
-    expect(screen.getByTestId('vk-health-summary').textContent).toContain('api 1.2.0')
+    expect(screen.queryByTestId('vk-preview-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
     expect(screen.getByTestId('vk-advanced-settings')).not.toHaveAttribute('open')
     expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('处理目的')
     expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
@@ -296,7 +294,7 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('video-source-card-bilibili')).toHaveAttribute('data-count', '1')
   })
 
-  it('previews via the proxy, shows the resolved projection with estimates, then confirms and submits', async () => {
+  it('previews from the submit button, opens cost confirmation, then submits the original projection', async () => {
     const user = userEvent.setup()
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
@@ -307,18 +305,12 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), 'https://example.com/v')
     await user.type(screen.getByTestId('vk-max-cost'), '1.5')
-    await user.click(screen.getByTestId('vk-preview-button'))
-
-    await waitFor(() => expect(screen.getByTestId('vk-preview')).toBeInTheDocument())
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await screen.findByTestId('vk-cost-dialog')
     const previewCall = calls.find((item) => item.key === 'POST /vk/v1/preview')
     expect(previewCall).toBeDefined()
     const projection = JSON.parse(String(previewCall!.init!.body))
     expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5 })
-    expect(screen.getByTestId('vk-preview').textContent).toContain('知识笔记、快速摘要')
-    expect(screen.getByTestId('vk-preview-estimates').textContent).toContain('¥0.25 – ¥1.06')
-    expect(screen.getByTestId('vk-preview-estimates').textContent).toContain('8.3 – 27.4 分钟')
-
-    await user.click(screen.getByTestId('vk-submit-button'))
     expect(screen.getByTestId('vk-cost-dialog').textContent).toContain('估算不是承诺')
     await user.click(screen.getByTestId('vk-cost-confirm'))
 
@@ -346,15 +338,13 @@ describe('VkPanel', () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
-      'GET /vk/v1/diagnostic': { body: { usable: true, reason_code: 'ok' } },
       'POST /vk/v1/preview': { body: resolvedRequest({ source: first }) },
       'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
     })
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), `${first}\n${second}`)
-    await user.click(screen.getByTestId('vk-preview-button'))
-    await screen.findByTestId('vk-preview')
     await user.click(screen.getByTestId('vk-submit-button'))
+    await screen.findByTestId('vk-cost-dialog')
     await user.click(screen.getByTestId('vk-cost-confirm'))
 
     await waitFor(() => {
@@ -366,31 +356,22 @@ describe('VkPanel', () => {
     expect(sources).toEqual([first, second])
   })
 
-  it('blocks a YouTube submission before creating a job when the CDP session is unavailable', async () => {
+  it('uses the old universal job path for YouTube without a diagnostic gate', async () => {
     const user = userEvent.setup()
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
       'POST /vk/v1/preview': { body: resolvedRequest({ source: 'https://youtu.be/video-1' }) },
-      'GET /vk/v1/diagnostic': {
-        body: {
-          usable: false,
-          reason_code: 'browser_not_running',
-          action: 'Start the dedicated Chrome profile with remote debugging enabled.',
-        },
-      },
-      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'unexpected', kind: 'request' } },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-youtube', kind: 'request' } },
     })
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), 'https://youtu.be/video-1')
-    await user.click(screen.getByTestId('vk-preview-button'))
-    await screen.findByTestId('vk-preview')
     await user.click(screen.getByTestId('vk-submit-button'))
+    await screen.findByTestId('vk-cost-dialog')
     await user.click(screen.getByTestId('vk-cost-confirm'))
 
-    await waitFor(() => expect(screen.getByTestId('vk-submit-error')).toHaveTextContent('browser_not_running'))
-    expect(calls.some((item) => item.key === 'GET /vk/v1/diagnostic')).toBe(true)
-    expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(false)
+    await waitFor(() => expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(true))
+    expect(calls.some((item) => item.key === 'GET /vk/v1/diagnostic')).toBe(false)
   })
 
   it('consumes the cross-module handoff: prefills the source, shows provenance, clears the store', async () => {
@@ -453,11 +434,11 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     const numbers = () => screen.getAllByTestId('vk-job-row')
       .map((row) => row.querySelector('.vk-task-number')?.textContent)
-    await waitFor(() => expect(numbers()).toEqual(['1', '2', '3']))
+    await waitFor(() => expect(numbers()).toEqual(['3', '2', '1']))
 
     jobsRoute.body = [job('job-1', 1), job('job-3', 3), job('job-4', 4)]
     await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
-    await waitFor(() => expect(numbers()).toEqual(['1', '3', '4']))
+    await waitFor(() => expect(numbers()).toEqual(['4', '3', '1']))
   })
 
   it('lists jobs with real status/elapsed and surfaces budget_stop plus outputs in the detail', async () => {
@@ -501,7 +482,6 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-output-audit')).toBeInTheDocument()
     expect(screen.getByTestId('vk-output-product-json-0')).toBeInTheDocument()
     expect(screen.getByTestId('vk-job-retry')).toBeInTheDocument()
-    expect(screen.getByTestId('vk-job-refresh')).toBeInTheDocument()
   })
 
   it('opens a Markdown output in an in-app dialog and closes it', async () => {
@@ -568,7 +548,7 @@ describe('VkPanel', () => {
     await user.click(await screen.findByTestId('vk-job-open-run:run-1'))
     const detail = await screen.findByTestId('vk-job-detail')
     expect(detail).toHaveTextContent('模型调用 8 次')
-    expect(detail).toHaveTextContent('费用未统计')
+    expect(detail).not.toHaveTextContent('费用未统计')
   })
 
   it('runs a knowledge-base query and renders citations', async () => {
@@ -595,7 +575,7 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-query-citation').textContent).toContain('transcript')
   })
 
-  it('first-run: renders the runtime install card, posts install, shows live log while installing', async () => {
+  it('first-run: exposes runtime preparation through the single engine verdict', async () => {
     const user = userEvent.setup()
     const { calls } = stubRoutes({
       'GET /vk/v1/health': {
@@ -615,13 +595,10 @@ describe('VkPanel', () => {
       },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
-    expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('未安装')
-    await user.click(screen.getByTestId('vk-runtime-install'))
-    await waitFor(() => {
-      expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('正在安装')
-    })
-    expect(screen.getByTestId('vk-runtime-log').textContent).toContain('manifest 核验通过')
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎还没准备好'))
+    await user.click(screen.getByTestId('vk-verdict-action'))
+    await waitFor(() => expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/install')).toBe(true))
+    expect(screen.getByTestId('vk-verdict')).toHaveTextContent('正在准备解析环境')
     expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/install')).toBe(true)
   })
 
@@ -640,74 +617,34 @@ describe('VkPanel', () => {
       },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
-    expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('offline')
-    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('重试安装')
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析环境没装成功'))
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('网络不可达')
+    expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('重试')
   })
 
-  it('detects an existing Python environment and adopts only a compatible candidate', async () => {
-    const user = userEvent.setup()
+  it('keeps runtime selection internal and does not render a developer environment picker', async () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured', reasonCode: 'not-installed', summary: '未安装' } },
       'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
-      'GET /vk/v1/runtime/status': {
-        body: { state: 'not-installed', version: null, reasonCode: null, summary: '解析引擎未安装', log: [], checkedAt: 't' },
-      },
-      'POST /vk/v1/runtime/detect': {
-        body: {
-          candidates: [{
-            pythonPath: 'C:/Python312/python.exe', source: '本机 PATH', version: '3.12.8', apiVersion: '1.2.0',
-            schemaVersion: '1.1.0', capabilities: [
-              { capability: 'word_timestamps', runtime: 'missing_dependency', detail: 'whisperx' },
-              { capability: 'visual_evidence', runtime: 'ready', detail: null },
-            ], compatible: true, reason: null,
-          }, {
-            pythonPath: 'C:/Python311/python.exe', source: '本机 PATH', version: '3.11.9', apiVersion: null,
-            schemaVersion: null, capabilities: [], compatible: false, reason: 'Python 版本不兼容',
-          }],
-          checkedAt: 't',
-        },
-      },
-      'POST /vk/v1/runtime/adopt': {
-        body: { state: 'installed', version: 'external-3.12.8', reasonCode: null, summary: '外部环境已就绪', log: [], checkedAt: 't' },
-      },
+      'GET /vk/v1/runtime/status': { body: { state: 'not-installed', version: null, reasonCode: null, summary: '解析引擎未安装', log: [], checkedAt: 't' } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
-    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('初始化爪爪专用解析环境（基础版）')
-    await user.click(screen.getByTestId('vk-runtime-detect'))
-    await waitFor(() => expect(screen.getByTestId('vk-runtime-candidates')).toBeInTheDocument())
-    expect(screen.getByTestId('vk-runtime-candidates').textContent).toContain('本机 PATH')
-    expect(screen.getByTestId('vk-runtime-candidates').textContent).not.toContain('Python 版本不兼容')
-    expect(screen.getByTestId('vk-runtime-incompatible-toggle')).toHaveTextContent('查看 1 个不兼容环境')
-    await user.click(screen.getByTestId('vk-runtime-incompatible-toggle'))
-    expect(screen.getByTestId('vk-runtime-candidates').textContent).toContain('Python 版本不兼容')
-    expect(screen.getAllByTestId('vk-runtime-capabilities')[0].textContent).toContain('word_timestamps')
-    expect(screen.getByTestId('vk-runtime-adopt-0')).toBeEnabled()
-    expect(screen.getByTestId('vk-runtime-adopt-1')).toBeDisabled()
-    await user.click(screen.getByTestId('vk-runtime-adopt-0'))
-    await waitFor(() => expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/adopt')).toBe(true))
-    const adopt = calls.find((item) => item.key === 'POST /vk/v1/runtime/adopt')
-    expect(JSON.parse(String(adopt!.init!.body))).toEqual({ pythonPath: 'C:/Python312/python.exe' })
-    expect(screen.getByTestId('vk-runtime-summary').textContent).toContain('外部环境')
-    expect(screen.getByTestId('vk-runtime-adopt-notice')).toHaveTextContent('已切换至 C:/Python312/python.exe')
-    expect(screen.getByTestId('vk-runtime-adopt-0')).toHaveTextContent('当前使用')
-    expect(screen.getByTestId('vk-runtime-adopt-0')).toBeDisabled()
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎还没准备好'))
+    expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/detect')).toBe(false)
+    expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/adopt')).toBe(false)
+    expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
   })
 
-  it('surfaces detect and adopt failures without hiding the dedicated install retry', async () => {
-    const user = userEvent.setup()
+  it('surfaces runtime preparation failures in the engine verdict', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured', reasonCode: 'not-installed', summary: '未安装' } },
       'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
       'GET /vk/v1/runtime/status': { body: { state: 'failed', version: null, reasonCode: 'offline', summary: '安装失败', log: [], checkedAt: 't' } },
-      'POST /vk/v1/runtime/detect': { status: 503, body: { error: '检测失败', reasonCode: 'detect-failed' } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
-    await user.click(screen.getByTestId('vk-runtime-detect'))
-    await waitFor(() => expect(screen.getByTestId('vk-runtime-detect-error').textContent).toContain('检测失败'))
-    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('重试安装')
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析环境没装成功'))
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('安装失败')
+    expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('重试')
   })
 
   it('does not poll-loop when an installed runtime is displayed', async () => {
@@ -719,8 +656,8 @@ describe('VkPanel', () => {
       },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-runtime-card')).toBeInTheDocument())
-    expect(screen.getByTestId('vk-runtime-install').textContent).toContain('重建爪爪专用环境')
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
     await new Promise((resolve) => setTimeout(resolve, 80))
     expect(calls.filter((item) => item.key === 'GET /vk/v1/health').length).toBeLessThanOrEqual(2)
     expect(calls.filter((item) => item.key === 'GET /vk/v1/runtime/status').length).toBeLessThanOrEqual(2)
@@ -739,10 +676,10 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => {
-      expect(screen.getByTestId('vk-health-summary').textContent).toContain('未配置')
+      expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎没有响应')
     })
     await waitFor(() => {
-      expect(screen.getByTestId('vk-panel').textContent).toContain('not-configured')
+      expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('video-knowledge runtime 未配置')
     })
   })
 })

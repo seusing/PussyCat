@@ -10,7 +10,6 @@ import { RefreshCw, Upload, X } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { HostRequestError } from '../../host/errors'
 import {
-  fetchVkDiagnostic,
   fetchVkHealth,
   fetchVkJob,
   fetchVkJobs,
@@ -31,18 +30,18 @@ import type {
   VkJobRow,
   VkJobView,
   VkPreviewProjection,
-  VkProcessingRequest,
   VkQueryAnswer,
   VkRuntimeStatus,
   VkRuntimeCandidate,
 } from '../../host/vkClient'
 import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
 import { VkProviderForm } from './VkProviderForm'
-import { estimateForPreset, formatEstimate } from './vkEstimates'
+import { estimateForPreset } from './vkEstimates'
 import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { copyText } from '../../lib/clipboard'
+import { isVkJobRerun } from './taskUiState'
 import './VkPanel.css'
 
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
@@ -72,11 +71,6 @@ const CAPABILITY_LABELS: Record<string, string> = {
   word_timestamps: '词级时间定位', speaker_diarization: '区分说话人',
   visual_evidence: '提取视觉证据', query_ready: '加入知识库检索',
 }
-const OUTPUT_LABELS: Record<string, string> = {
-  markdown_note: '知识笔记', quick_summary: '快速摘要', concept_cards: '概念卡片',
-  qa_cards: '问答卡片', interview_analysis: '访谈观点', science_explainer: '科普梳理',
-}
-
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested'])
 const SUCCESS_STATUSES = new Set(['done', 'partial', 'completed_after_cancel_request'])
 const VK_NOTIFICATIONS_KEY = 'opencli-app:vk-task-notifications:v1'
@@ -123,6 +117,32 @@ function taskNumberKey(row: VkJobRow): string {
   return `${row.job_id}|${row.submitted_at}`
 }
 
+function attachLogicalTaskIds(rows: VkJobRow[]): VkJobRow[] {
+  const byId = new Map(rows.map((row) => [row.job_id, row]))
+  const rootFor = (row: VkJobRow): VkJobRow => {
+    let current = row
+    const seen = new Set<string>()
+    while (current.parent_job_id && !seen.has(current.job_id)) {
+      seen.add(current.job_id)
+      const parent = byId.get(current.parent_job_id)
+      if (!parent) break
+      current = parent
+    }
+    return current
+  }
+  return rows.map((row) => ({ ...row, logicalTaskId: rootFor(row).job_id }))
+}
+
+function latestLogicalTasks(rows: VkJobRow[]): VkJobRow[] {
+  const latest = new Map<string, VkJobRow>()
+  for (const row of rows) {
+    const key = row.logicalTaskId ?? row.job_id
+    const previous = latest.get(key)
+    if (!previous || Date.parse(row.submitted_at) > Date.parse(previous.submitted_at)) latest.set(key, row)
+  }
+  return [...latest.values()].sort((left, right) => Date.parse(right.submitted_at) - Date.parse(left.submitted_at))
+}
+
 function primaryOutput(job: VkJobView): { id: string; title: string } | null {
   if (job.outputs?.note_path) return { id: job.outputs.note_path, title: '知识笔记' }
   const product = job.outputs?.product_artifacts?.[0]
@@ -140,34 +160,12 @@ function sourceLines(value: string): string[] {
   return [...new Set(value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))]
 }
 
-function isYouTubeSource(value: string): boolean {
-  try {
-    const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, '')
-    return hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be'
-  } catch {
-    return false
-  }
-}
-
 function errorText(error: unknown, fallback: string): string {
   if (error instanceof HostRequestError) {
     return error.reasonCode ? `${error.summary}(${error.reasonCode})` : error.summary
   }
   if (error instanceof Error) return error.message || fallback
   return fallback
-}
-
-/**
- * 金额显示精度按量级走。原先一律 `toFixed(4)`,于是 ¥0.42 被写成「¥0.4200」——
- * 两个尾零逐行重复,在任务列表里是纯噪声。但**不能直接改成两位**:单条任务低到
- * ¥0.003 是常态,两位会把它压成「¥0.00」,把真花掉的钱显示成零是最不能接受的一类错。
- * 所以:够得着分的用两位,不够的保留四位。若后端明确说当前通道未配置单价,
- * 零值必须写「费用未统计」,不能把未知费用说成免费。
- */
-function costLabel(cny: number, tracking = true): string {
-  const amount = cny === 0 ? '¥0' : cny >= 0.01 ? `¥${cny.toFixed(2)}` : `¥${cny.toFixed(4)}`
-  if (tracking) return amount
-  return cny === 0 ? '费用未统计' : `已统计 ${amount}（不完整）`
 }
 
 function elapsedLabel(row: { submitted_at: string; finished_at: string | null }): string {
@@ -182,14 +180,14 @@ function elapsedLabel(row: { submitted_at: string; finished_at: string | null })
 const STATUS_LABELS: Record<string, string> = {
   queued: '排队中',
   running: '运行中',
-  cancel_requested: '取消请求已发出',
-  cancelled: '已取消',
+  cancel_requested: '正在停止',
+  cancelled: '已中断',
   completed_after_cancel_request: '取消前已完成',
   failed: '失败',
   done: '已完成',
   partial: '部分完成',
   quarantined: '已隔离',
-  interrupted: '已中断(重启回收)',
+  interrupted: '已中断',
   submitted: '已提交',
 }
 
@@ -212,10 +210,11 @@ const fieldStyle = { background: 'var(--color-canvas)', border: '1px solid var(-
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
 
-export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
+export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   baseUrl?: string
   selectedJobId?: string | null
   onSelectJob?: (jobId: string | null) => void
+  refreshToken?: number
 }) {
   const base = baseUrl
   // —— 健康(BrowserBridgeStatus 姿势:进入时查一次 + 手动重检;前端只渲染不解释)——
@@ -239,15 +238,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
   // —— 首启 runtime 安装(v2 阶段3):sidecar 未安装时给安装卡;
   //    installing 期间 2s 轮询真实安装输出(不造百分比)——
   const [runtime, setRuntime] = useState<VkRuntimeStatus | null>(null)
-  const [runtimeSource, setRuntimeSource] = useState<'dedicated' | 'external' | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
   const [runtimeCandidates, setRuntimeCandidates] = useState<VkRuntimeCandidate[] | null>(null)
-  const [runtimeDetecting, setRuntimeDetecting] = useState(false)
-  const [runtimeDetectError, setRuntimeDetectError] = useState<string | null>(null)
-  const [runtimeAdoptError, setRuntimeAdoptError] = useState<string | null>(null)
-  const [runtimeAdoptingPath, setRuntimeAdoptingPath] = useState<string | null>(null)
-  const [runtimeAdoptNotice, setRuntimeAdoptNotice] = useState<string | null>(null)
-  const [showIncompatibleRuntimes, setShowIncompatibleRuntimes] = useState(false)
   const previousRuntimeState = useRef<string | null>(null)
   const refreshRuntime = useCallback(async () => {
     try {
@@ -277,16 +269,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
   // —— 模型通道:装机版没有 providers.local.toml,不配就一定会在最后一步 401 ——
   // 所以这件事必须在**提交之前**说出来,而不是等用户跑满 7 分半下载转写。
   const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null)
-  const [providerCostTracking, setProviderCostTracking] = useState<boolean | null>(null)
   const [providerFormOpen, setProviderFormOpen] = useState(false)
   const refreshProviders = useCallback(async () => {
     try {
       const settings = await fetchVkProviderSettings(base)
       setProviderConfigured(settings.configured)
-      setProviderCostTracking(settings.cost_tracking ?? true)
     } catch {
       setProviderConfigured(null)   // 问不到就别下结论,不冒充已配置
-      setProviderCostTracking(null)
     }
   }, [base])
   useEffect(() => { void refreshProviders() }, [refreshProviders])
@@ -310,44 +299,22 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
   const startInstall = async ({ rebuild = false }: { rebuild?: boolean } = {}) => {
     setInstallError(null)
     try {
-      setRuntimeSource('dedicated')
       // 已装状态下不带 rebuild 的话 Host 会按幂等直接返回现状 —— 按钮就成了空转。
       setRuntime(await postVkRuntimeInstall(base, { rebuild }))
     } catch (error) {
       setInstallError(errorText(error, '安装启动失败'))
     }
   }
-  const detectRuntime = async () => {
-    setRuntimeDetecting(true)
-    setRuntimeDetectError(null)
-    try {
-      const result = await postVkRuntimeDetect(base)
-      setRuntimeCandidates(result.candidates)
-    } catch (error) {
-      setRuntimeDetectError(errorText(error, '已有环境检测失败'))
-    } finally {
-      setRuntimeDetecting(false)
-    }
-  }
   const adoptRuntime = async (candidate: VkRuntimeCandidate) => {
-    setRuntimeAdoptError(null)
-    setRuntimeAdoptNotice(null)
-    setRuntimeAdoptingPath(candidate.pythonPath)
     try {
       const adopted = await postVkRuntimeAdopt(candidate.pythonPath, base)
       setRuntime(adopted)
-      setRuntimeSource(adopted.source === 'app-owned' ? 'dedicated' : 'external')
-      setRuntimeAdoptNotice(`已切换至 ${candidate.pythonPath}`)
       setRuntimeCandidates((items) => items?.map((item) => ({
         ...item,
         active: item.pythonPath === candidate.pythonPath,
       })) ?? null)
       await checkHealth()
-    } catch (error) {
-      setRuntimeAdoptError(errorText(error, '已有环境接入失败'))
-    } finally {
-      setRuntimeAdoptingPath(null)
-    }
+    } catch { /* 自动接入失败时保留当前环境，由健康结论显示真实可用状态。 */ }
   }
 
   // —— 表单(组件本地;store 只承担跨模块 handoff)——
@@ -383,20 +350,18 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
           reader.readAsText(file)
         })
       setSource((current) => sourceLines(`${current}\n${text}`).join('\n'))
-      setPreview(null)
     } catch (error) {
       setPreviewError(errorText(error, '链接文件读取失败'))
     }
   }
 
   // —— 预检 → 费用确认 → 提交 ——
-  const [preview, setPreview] = useState<VkProcessingRequest | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewing, setPreviewing] = useState(false)
   const [pendingSubmit, setPendingSubmit] = useState<PendingVkSubmit | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  // 投影是唯一携带原始 URL 的通道(1.3.0 凭据边界):preview 用它取公开回显,
-  // submit 用它执行——preview 响应是脱敏投影,不能作为提交载荷。
+  // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
   const buildProjection = (sourceValue = source.trim()): VkPreviewProjection => ({
     source: sourceValue,
     preset,
@@ -418,21 +383,19 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
       : {}),
   })
 
-  const doPreview = async () => {
+  const requestSubmit = async () => {
     setPreviewError(null)
-    setPreview(null)
+    setPreviewing(true)
     try {
       const [firstSource] = sourceLines(source)
       if (!firstSource) return
-      setPreview(await postVkPreview(buildProjection(firstSource), base))
+      const request = await postVkPreview(buildProjection(firstSource), base)
+      setPendingSubmit({ request, estimate: estimateForPreset(request.preset) })
     } catch (error) {
       setPreviewError(errorText(error, '预检失败'))
+    } finally {
+      setPreviewing(false)
     }
-  }
-
-  const requestSubmit = () => {
-    if (!preview) return
-    setPendingSubmit({ request: preview, estimate: estimateForPreset(preview.preset) })
   }
 
   const confirmSubmit = async () => {
@@ -440,16 +403,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
     setSubmitError(null)
     try {
       const sources = sourceLines(source)
-      if (sources.some(isYouTubeSource)) {
-        const diagnostic = await fetchVkDiagnostic(base)
-        if (diagnostic.usable !== true) {
-          const reason = typeof diagnostic.reason_code === 'string' ? `(${diagnostic.reason_code})` : ''
-          const action = typeof diagnostic.action === 'string'
-            ? diagnostic.action
-            : '请启动带远程调试端口 9224 的专用 Chrome 并完成登录'
-          throw new HostRequestError(`YouTube 浏览器会话不可用${reason}：${action}`, undefined, 409, 'youtube-session-unavailable')
-        }
-      }
       for (const sourceValue of sources) {
         await postVkJob({
           ...buildProjection(sourceValue),
@@ -458,7 +411,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
         }, base)
       }
       setPendingSubmit(null)
-      setPreview(null)
       await refreshJobs()
     } catch (error) {
       setPendingSubmit(null)
@@ -477,7 +429,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
   const [actionError, setActionError] = useState<string | null>(null)
   const [openingOutput, setOpeningOutput] = useState<string | null>(null)
   const [outputViewer, setOutputViewer] = useState<{ title: string; content: string } | null>(null)
-  const [diagnostic, setDiagnostic] = useState<string | null>(null)
   const jobsGen = useRef(0)
   const notificationPrefsRef = useRef(notifications)
   const previousStatusesRef = useRef<Map<string, string> | null>(null)
@@ -486,18 +437,21 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
   useEffect(() => { taskNumbersRef.current = taskNumbers }, [taskNumbers])
 
   const attachTaskNumbers = useCallback((rows: VkJobRow[]): VkJobRow[] => {
+    const logicalRows = attachLogicalTaskIds(rows)
+    const byId = new Map(logicalRows.map((row) => [row.job_id, row]))
     const nextNumbers = { ...taskNumbersRef.current }
     let next = Math.max(0, ...Object.values(nextNumbers)) + 1
     let changed = false
-    const numbered = rows.map((row) => {
-      const key = taskNumberKey(row)
+    const numbered = logicalRows.map((row) => {
+      const root = byId.get(row.logicalTaskId ?? row.job_id) ?? row
+      const key = taskNumberKey(root)
       let taskNumber = nextNumbers[key]
       if (taskNumber == null) {
         taskNumber = next++
         nextNumbers[key] = taskNumber
         changed = true
       }
-      return { ...row, taskNumber }
+      return { ...row, taskNumber, isRerun: isVkJobRerun(row.job_id) }
     })
     if (changed) {
       taskNumbersRef.current = nextNumbers
@@ -540,7 +494,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
       if (gen === jobsGen.current) setJobsError(errorText(error, '任务列表获取失败'))
     }
   }, [attachTaskNumbers, base])
-  useEffect(() => { void refreshJobs() }, [refreshJobs])
+  useEffect(() => { void refreshJobs() }, [refreshJobs, refreshToken])
   useEffect(() => {
     if (!jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
     const timer = setInterval(() => { void refreshJobs() }, 3000)
@@ -557,7 +511,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
     }
   }
 
-  const jobAction = async (jobId: string, action: 'cancel' | 'retry' | 'refresh') => {
+  const jobAction = async (jobId: string, action: 'cancel' | 'retry') => {
     setActionError(null)
     try {
       await postVkJobAction(jobId, action, base)
@@ -637,14 +591,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [outputViewer])
 
-  const showDiagnostic = async () => {
-    try {
-      setDiagnostic(JSON.stringify(await fetchVkDiagnostic(base), null, 2))
-    } catch (error) {
-      setDiagnostic(errorText(error, '诊断获取失败'))
-    }
-  }
-
   // —— 知识库查询 ——
   const [queryText, setQueryText] = useState('')
   const [queryAnswer, setQueryAnswer] = useState<VkQueryAnswer | null>(null)
@@ -659,8 +605,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
     }
   }
 
-  const previewEstimate = preview ? formatEstimate(estimateForPreset(preview.preset)) : null
-  const visibleJobs = jobs.filter((row) => !hiddenJobs[row.job_id])
+  const visibleJobs = latestLogicalTasks(jobs).filter((row) => !hiddenJobs[row.job_id])
   const tableNotifications = Object.fromEntries(
     visibleJobs.map((row) => [row.job_id, notifications[row.job_id] ?? true]),
   )
@@ -681,16 +626,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
         : runtime?.state === 'failed'
           ? {
             text: '解析环境没装成功', color: 'var(--color-danger)',
-            note: runtime.summary ?? undefined,
+            note: installError ?? runtime.summary ?? undefined,
             action: { label: '重试', run: () => { void startInstall({ rebuild: false }) } },
           }
           : runtime?.state === 'not-installed'
             ? {
               text: '解析引擎还没准备好', color: 'var(--color-warning)',
-              note: '需要在本机准备一次运行环境,之后就不用再管了。',
+              note: installError ?? '缺少本机解析运行环境，需要先完成一次准备。',
               action: { label: '一键准备', run: () => { void startInstall({ rebuild: false }) } },
             }
-            : !health || health.status === 'failed'
+            : !health || !['ok', 'ready'].includes(health.status)
               ? {
                 text: '解析引擎没有响应', color: 'var(--color-warning)',
                 note: health?.summary ?? '暂时联系不上解析引擎。',
@@ -700,7 +645,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
                 ? {
                   // 通道不通要在**第 1 秒**说,不是第 7.5 分钟。按钮已经说清了下一步,
                   // 再补一段解释后果的话只是噪声 —— 结论 + 动作,到此为止。
-                  text: '还没配置模型通道', color: 'var(--color-warning)',
+                   text: '解析引擎缺少模型通道', color: 'var(--color-warning)',
                   action: { label: '去配置', run: () => setProviderFormOpen(true) },
                 }
                 : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(activeCandidate) ?? undefined }
@@ -733,6 +678,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
         <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
           {verdict.text}
         </span>
+        {verdict.note && (
+          <span data-testid="vk-verdict-note" className="min-w-0 flex-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            {verdict.note}
+          </span>
+        )}
         {verdict.action && (
           <button
             type="button"
@@ -760,12 +710,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
         </button>
       </div>
       </InstallingBeam>
-      {verdict.note && (
-        <div data-testid="vk-verdict-note" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          {verdict.note}
-        </div>
-      )}
-
       {/* 开发者信息:默认折叠。路径、api/schema、逐项能力、环境列表与手动切换、
           重建、会话诊断、安装日志 —— 排障时全在这儿,平时一个字都不占版面。 */}
       {/* 模型配置不算「开发者信息」:key 会过期,这是用户需要回来改的正经设置。
@@ -793,88 +737,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
           </div>
         )}
       </div>
-
-      {/* 不用 runtime 门住整块:runtime 拿不到时恰恰最需要排障入口(健康摘要与会话诊断)。 */}
-      <details data-testid="vk-developer-details" className="mb-4">
-          <summary className="cursor-pointer text-xs" style={{ color: 'var(--color-fg-dim)' }}>开发者信息</summary>
-        <div data-testid="vk-runtime-card" className="mt-2 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-          {/* 「重新检测」已经移到上面那条健康条上的 ↻ —— 这里不再摆第二个同义按钮。 */}
-          <div className="mb-1 flex flex-wrap items-center gap-2 text-sm font-medium">
-            解析环境
-            <button type="button" data-testid="vk-diagnostic-button" onClick={() => { void showDiagnostic() }} className={outlineButton} style={outlineStyle}>
-              会话诊断
-            </button>
-          </div>
-          <div data-testid="vk-health-summary" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            {healthChecking ? '检测中…' : health ? `${health.summary}${health.apiVersion ? `(api ${health.apiVersion})` : ''}` : 'Host 不可达'}
-          </div>
-          {diagnostic && (
-            <pre data-testid="vk-diagnostic" className="mb-2 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{diagnostic}</pre>
-          )}
-          {/* 以下都依赖 runtime;拿不到时上面的健康摘要与会话诊断仍在,排障不断线。 */}
-          {runtime && (<>
-          <div data-testid="vk-runtime-summary" className="mb-2 text-xs" style={{ color: runtime.state === 'failed' ? 'var(--color-danger)' : 'var(--color-fg-dim)' }}>
-            {runtime.summary}
-            {runtime.reasonCode ? `(${runtime.reasonCode})` : ''}
-          </div>
-          {runtime.state !== 'installed' && <div className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            初始化爪爪专用解析环境（基础版）：复用本机 Python 3.12 与 uv 缓存。基础版含核心、字幕、下载，不含本地 ASR；安装会核验 SHA、创建独立环境并运行 smoke 检查。
-          </div>}
-          {runtime.state === 'installed' && <div className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            当前环境：{runtime.source ?? (runtimeSource === 'external' ? '已有环境（外部）' : '爪爪专用环境')}{runtime.pythonPath ? ` · ${runtime.pythonPath}` : ''}
-            。重建按钮会重新创建爪爪专用环境，不会修改外部环境。
-          </div>}
-          {runtime.log.length > 0 && (
-            <pre data-testid="vk-runtime-log" className="mb-2 max-h-40 overflow-auto rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>{runtime.log.join('\n')}</pre>
-          )}
-          {installError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{installError}</div>}
-          {runtimeDetectError && <div data-testid="vk-runtime-detect-error" className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{runtimeDetectError}</div>}
-          {runtimeAdoptError && <div data-testid="vk-runtime-adopt-error" className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{runtimeAdoptError}</div>}
-          {runtimeAdoptNotice && <div data-testid="vk-runtime-adopt-notice" role="status" className="mb-2 text-xs" style={{ color: 'var(--color-success)' }}>{runtimeAdoptNotice}</div>}
-          <div className="mb-2 flex flex-wrap gap-2">
-            {runtime.state !== 'installing' && runtime.state !== 'not-available' && (
-            <button
-              type="button"
-              data-testid="vk-runtime-install"
-              onClick={() => { void startInstall({ rebuild: runtime.state === 'installed' }) }}
-              className="rounded-lg px-4 py-2 text-sm font-medium"
-              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-            >
-              {runtime.state === 'installed'
-                ? '重建爪爪专用环境'
-                : runtime.state === 'failed'
-                  ? '重试安装：初始化爪爪专用解析环境（基础版）'
-                  : '初始化爪爪专用解析环境（基础版）'}
-            </button>
-            )}
-            {runtime.state !== 'not-available' && <button type="button" data-testid="vk-runtime-detect" onClick={() => { void detectRuntime() }} disabled={runtimeDetecting} className={outlineButton} style={outlineStyle}>
-              {runtimeDetecting ? '检测中…' : '检测已有环境'}
-            </button>}
-          </div>
-          {/* 环境列表直接摊开。原先还要再点一次「环境与能力管理」 —— 都已经在
-              默认折叠的开发者信息里了,再套一层展开只是多一道门。 */}
-          {runtimeCandidates && <div data-testid="vk-runtime-candidates" className="mt-2 space-y-2 text-xs">
-            {runtimeCandidates.filter((candidate) => candidate.compatible || showIncompatibleRuntimes).map((candidate) => {
-              const index = runtimeCandidates.indexOf(candidate)
-              const adopting = runtimeAdoptingPath === candidate.pythonPath
-              return <div key={candidate.pythonPath} className="rounded-lg p-2" style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
-              <div className="font-medium">{candidate.source} · Python {candidate.version ?? '未知'}</div>
-              <div>{candidate.pythonPath}</div>
-              <div>{candidate.apiVersion ? `api ${candidate.apiVersion}` : 'API 未知'} · {candidate.schemaVersion ? `schema ${candidate.schemaVersion}` : 'schema 未知'}</div>
-              <div data-testid="vk-runtime-capabilities">能力：{candidate.capabilities.length ? candidate.capabilities.map((cap) => `${cap.capability}=${cap.runtime}${cap.detail ? `(${cap.detail})` : ''}`).join('、') : '未返回能力'}</div>
-              {!candidate.compatible && <div style={{ color: 'var(--color-danger)' }}>不兼容：{candidate.reason ?? '版本或契约不匹配'}</div>}
-              <button type="button" data-testid={`vk-runtime-adopt-${index}`} disabled={!candidate.compatible || candidate.active || runtimeAdoptingPath !== null} onClick={() => { void adoptRuntime(candidate) }} className={outlineButton} style={outlineStyle}>
-                {candidate.active ? '当前使用' : adopting ? '切换中…' : '使用此环境'}
-              </button>
-            </div>})}
-            {runtimeCandidates.some((candidate) => !candidate.compatible) && <button type="button" data-testid="vk-runtime-incompatible-toggle" onClick={() => setShowIncompatibleRuntimes((show) => !show)} className={outlineButton} style={outlineStyle}>
-              {showIncompatibleRuntimes ? '隐藏不兼容环境' : `查看 ${runtimeCandidates.filter((candidate) => !candidate.compatible).length} 个不兼容环境`}
-            </button>}
-            {!runtimeCandidates.length && <div>未发现可用的本机环境</div>}
-          </div>}
-          </>)}
-        </div>
-      </details>
 
       {/* 提交表单 */}
       <div className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
@@ -906,7 +768,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
               id="vk-source-input"
               data-testid="vk-source"
               value={source}
-              onChange={(event) => { setSource(event.target.value); setPreview(null) }}
+              onChange={(event) => setSource(event.target.value)}
               placeholder={'每行一个视频链接\nhttps://…'}
               rows={3}
               className={fieldClass}
@@ -983,56 +845,17 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            data-testid="vk-preview-button"
-            disabled={!source.trim()}
-            onClick={() => { void doPreview() }}
-            className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
-            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-          >
-            查看处理方案
-          </button>
-          <button
-            type="button"
             data-testid="vk-submit-button"
-            disabled={!preview}
-            onClick={requestSubmit}
+            disabled={!source.trim() || previewing}
+            onClick={() => { void requestSubmit() }}
             className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
           >
-            开始解析
+            {previewing ? '正在准备…' : '开始解析'}
           </button>
         </div>
         {previewError && <div data-testid="vk-preview-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{previewError}</div>}
         {submitError && <div data-testid="vk-submit-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{submitError}</div>}
-        {preview && previewEstimate && (
-          <div data-testid="vk-preview" className="mt-3 rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)' }}>
-            <div className="mb-1 font-medium" style={{ color: 'var(--color-fg)' }}>处理方案（已应用默认设置）</div>
-            <div style={{ color: 'var(--color-fg-dim)' }}>
-              目的：{PRESET_LABELS[preview.preset] ?? preview.preset} · 内容：{CONTENT_TYPE_LABELS[preview.content_type] ?? preview.content_type}
-              {' · '}媒体：{MEDIA_POLICY_LABELS[preview.media_policy] ?? preview.media_policy}
-              {' · '}深度：{QUALITY_LABELS[preview.quality_profile] ?? preview.quality_profile}
-              {' · '}成本：{BUDGET_LABELS[preview.budget_profile] ?? preview.budget_profile}
-            </div>
-            <div style={{ color: 'var(--color-fg-dim)' }}>
-              输出：{preview.output_targets.map((target) => OUTPUT_LABELS[target] ?? target).join('、')}
-            </div>
-            <div style={{ color: 'var(--color-fg-dim)' }}>
-              增强能力：{preview.requested_capabilities.length ? preview.requested_capabilities.map((cap) => CAPABILITY_LABELS[cap] ?? cap).join('、') : '无'}
-              {' · '}证据审计报告：{preview.audit_requested ? '生成' : '不生成'}
-            </div>
-            <div data-testid="vk-preview-estimates" style={{ color: 'var(--color-fg-dim)' }}>
-              预估费用 {previewEstimate.cost} · 预估耗时 {previewEstimate.duration}
-            </div>
-            <div style={{ color: 'var(--color-fg-dim)' }}>
-              费用硬上限:{preview.max_cost_cny != null ? `¥${preview.max_cost_cny}` : '未设置'}
-            </div>
-            {health && health.capabilities.length > 0 && (
-              <div data-testid="vk-runtime-caps" style={{ color: 'var(--color-fg-dim)' }}>
-                环境能力:{health.capabilities.map((item) => `${item.capability}=${item.runtime}`).join('、')}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* 任务列表 */}
@@ -1074,16 +897,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob }: {
             <span className="text-sm font-medium">{STATUS_LABELS[selectedJob.status] ?? selectedJob.status}</span>
             <span style={{ color: 'var(--color-fg-dim)' }}>已耗时 {elapsedLabel(selectedJob)}</span>
             {selectedJob.progress?.model_calls != null && <span style={{ color: 'var(--color-fg-dim)' }}>模型调用 {selectedJob.progress.model_calls} 次</span>}
-            {selectedJob.cost_cny != null && (
-              <span style={{ color: 'var(--color-fg-dim)' }}>
-                {providerCostTracking === false
-                  ? costLabel(selectedJob.cost_cny, false)
-                  : `实际费用 ${costLabel(selectedJob.cost_cny)}`}
-              </span>
-            )}
             <span className="ml-auto" />
             <button type="button" data-testid="vk-job-retry" onClick={() => { void jobAction(selectedJob.job_id, 'retry') }} className={outlineButton} style={outlineStyle}>重试</button>
-            <button type="button" data-testid="vk-job-refresh" title="绕过来源版本缓存重新解析" onClick={() => { void jobAction(selectedJob.job_id, 'refresh') }} className={outlineButton} style={outlineStyle}>强制重跑</button>
             <button type="button" onClick={() => setSelectedJob(null)} className="rounded-lg px-2 py-1 text-sm leading-none" style={{ color: 'var(--color-fg-dim)' }}>×</button>
           </div>
           {selectedJob.error && <div className="mb-2" style={{ color: 'var(--color-danger)' }}>{selectedJob.error}</div>}
