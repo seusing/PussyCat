@@ -92,6 +92,14 @@
 
 .vk-task-banner button:hover { background: rgb(255 255 255 / 7%); color: var(--color-fg); }
 
+.vk-jobs-refresh-button.is-refreshing svg {
+  animation: vk-jobs-refresh-spin 800ms linear infinite;
+}
+
+@keyframes vk-jobs-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (max-width: 640px) {
   .vk-source-input-shell textarea { padding-right: 68px; }
   .vk-source-input-shell > .video-source-coverflow { right: 5px; transform: translateY(-50%) scale(.82); transform-origin: right center; }
@@ -99,4 +107,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .vk-source-file-input { transition: none; }
+  .vk-jobs-refresh-button.is-refreshing svg { animation: none; }
 }

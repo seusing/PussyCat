@@ -20,7 +20,11 @@ const AUTHORITY_GRANT: Record<string, string> = {
   'live-local-app': '连接本机正在运行的程序',
 }
 
-export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; registerSubmit?: (fn: (() => void) | null) => void }) {
+export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: {
+  onRun: () => void
+  registerSubmit?: (fn: (() => void) | null) => void
+  compactHeader?: boolean
+}) {
   const selected = useAppStore((s) => s.selected)
   const values = useAppStore((s) => s.values)
   const setValue = useAppStore((s) => s.setValue)
@@ -78,7 +82,7 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
 
   return (
     <div>
-      <div data-testid="command-header" className="mb-4 flex flex-wrap items-center gap-2">
+      {!compactHeader && <div data-testid="command-header" className="mb-4 flex flex-wrap items-center gap-2">
         <h2 className="shrink-0 text-lg font-semibold">{selected.name}</h2>
         <MicroButton
           variant="save"
@@ -106,7 +110,7 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
         <span data-testid="command-description" className="min-w-0 text-sm" style={{ flex: '1 1 16rem', color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
           {commandDescription(selected.command, selected.description)}
         </span>
-      </div>
+      </div>}
 
       <div className="mb-4">
         {selected.args.map((arg) => (

@@ -44,7 +44,7 @@ function resolvedRequest(overrides: Partial<VkProcessingRequest> = {}): VkProces
   }
 }
 
-type Route = { status?: number; body: unknown }
+type Route = { status?: number; body: unknown | (() => unknown | Promise<unknown>) }
 
 function stubRoutes(routes: Record<string, Route>) {
   const calls: Array<{ key: string; init?: RequestInit }> = []
@@ -61,14 +61,15 @@ function stubRoutes(routes: Record<string, Route>) {
       json: async () => ({ error: `no stub for ${key}` }),
       text: async () => JSON.stringify({ error: `no stub for ${key}` }),
     }
+    const body = typeof route.body === 'function' ? await route.body() : route.body
     return {
       ok: (route.status ?? 200) < 400,
       status: route.status ?? 200,
       headers: new Headers({
-        'content-type': typeof route.body === 'string' ? 'text/markdown; charset=utf-8' : 'application/json',
+        'content-type': typeof body === 'string' ? 'text/markdown; charset=utf-8' : 'application/json',
       }),
-      json: async () => route.body,
-      text: async () => typeof route.body === 'string' ? route.body : JSON.stringify(route.body),
+      json: async () => body,
+      text: async () => typeof body === 'string' ? body : JSON.stringify(body),
     }
   })
   vi.stubGlobal('fetch', impl)
@@ -425,6 +426,38 @@ describe('VkPanel', () => {
     jobsRoute.body = [job('job-1', 1), job('job-3', 3), job('job-4', 4)]
     await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
     await waitFor(() => expect(numbers()).toEqual(['4', '3', '1']))
+  })
+
+  it('手动刷新时清空旧表格并显示加载态，完成后再展示最新记录', async () => {
+    const initialJob = {
+      job_id: 'job-old', kind: 'run', status: 'done',
+      submitted_at: '2026-08-01T00:01:00+00:00', finished_at: '2026-08-01T00:02:00+00:00',
+      parent_job_id: null, cache_bypass: false,
+    }
+    const latestJob = { ...initialJob, job_id: 'job-latest', submitted_at: '2026-08-01T00:03:00+00:00' }
+    let jobsCall = 0
+    const refreshGate: { resolve?: (value: unknown) => void } = {}
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'GET /vk/v1/jobs': {
+        body: () => {
+          jobsCall += 1
+          if (jobsCall === 1) return [initialJob]
+          return new Promise((resolve) => { refreshGate.resolve = resolve })
+        },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('vk-job-open-job-old')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+    expect(screen.getByTestId('vk-jobs-refresh')).toHaveTextContent('刷新中')
+    expect(screen.queryByTestId('vk-job-open-job-old')).not.toBeInTheDocument()
+
+    refreshGate.resolve?.([latestJob])
+    await waitFor(() => expect(screen.getByTestId('vk-job-open-job-latest')).toBeInTheDocument())
+    expect(screen.getByTestId('vk-jobs-refresh')).toHaveTextContent('刷新')
   })
 
   it('folds an active internal run into its user request row', async () => {

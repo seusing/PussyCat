@@ -13,6 +13,9 @@ import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
 import { CommandConfig } from '../config/CommandConfig'
 import { RunPanel } from '../runs/RunPanel'
+import { MicroButton } from '../../components/MicroButton'
+import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
+import { commandDescription } from '../../data/zhCopy'
 
 type Stage = 'sites' | 'commands' | 'execute'
 type DisplayMode = 'carousel' | 'wheel'
@@ -54,6 +57,9 @@ export function InspirationPanel({
 }) {
   const allCommands = useAppStore((state) => state.commands)
   const selected = useAppStore((state) => state.selected)
+  const preferences = useAppStore((state) => state.preferences)
+  const toggleSiteFavorite = useAppStore((state) => state.toggleSiteFavorite)
+  const toggleCommandFavorite = useAppStore((state) => state.toggleCommandFavorite)
   const selectCommand = useAppStore((state) => state.selectCommand)
   const decisionFor = useAppStore((state) => state.decisionFor)
   const commands = useMemo(() => visibleCommands(allCommands), [allCommands])
@@ -128,9 +134,36 @@ export function InspirationPanel({
           <button type="button" onClick={() => { if (executionSite) setSite(executionSite); setStage('commands') }} aria-label="返回命令集合">
             <ArrowLeft size={17} />
           </button>
-          <div>
+          <div className="inspiration-command-heading">
             <span>{executionSite?.label ?? selected.site}</span>
-            <strong>{selected.name}</strong>
+            <div data-testid="command-header" className="flex flex-wrap items-center gap-2">
+              <strong>{selected.name}</strong>
+              <MicroButton
+                variant="save"
+                data-testid="fav-site"
+                onClick={() => toggleSiteFavorite(selected.site)}
+                active={isSiteFavorited(preferences, selected.site)}
+                aria-pressed={isSiteFavorited(preferences, selected.site)}
+                title={isSiteFavorited(preferences, selected.site) ? '取消收藏站点' : '收藏站点'}
+              >
+                {isSiteFavorited(preferences, selected.site) ? '已保存' : '稍后查看'}
+              </MicroButton>
+              <MicroButton
+                variant="favorite"
+                data-testid="fav-command"
+                onClick={() => toggleCommandFavorite(selected)}
+                active={isCommandFavorited(preferences, selected.command)}
+                aria-pressed={isCommandFavorited(preferences, selected.command)}
+                title={isCommandFavorited(preferences, selected.command) ? '取消收藏命令' : '收藏命令'}
+              >
+                {isCommandFavorited(preferences, selected.command) ? '已收藏' : '收藏'}
+              </MicroButton>
+              <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
+              {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
+              <span data-testid="command-description" className="min-w-0 text-sm" style={{ flex: '1 1 16rem', color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
+                {commandDescription(selected.command, selected.description)}
+              </span>
+            </div>
           </div>
           <label className="command-search execution-search">
             <Search size={16} aria-hidden="true" />
@@ -150,7 +183,7 @@ export function InspirationPanel({
         </div>
         <div className="command-workspace">
           <main data-testid="col-config" className="command-config-pane">
-            <CommandConfig onRun={onRun} registerSubmit={registerSubmit} />
+            <CommandConfig onRun={onRun} registerSubmit={registerSubmit} compactHeader />
           </main>
           <section data-testid="col-runs" className="command-run-pane">
             <RunPanel onCancel={onCancel} onRerun={onRerun} />

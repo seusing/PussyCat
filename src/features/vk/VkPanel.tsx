@@ -426,6 +426,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
 
   // —— 任务列表与详情(vk.db 真源;轮询只在有活跃任务时)——
   const [jobs, setJobs] = useState<VkJobRow[]>([])
+  const [jobsRefreshing, setJobsRefreshing] = useState(false)
   const [taskNumbers, setTaskNumbers] = useState<Record<string, number>>(() => loadNumberRecord(VK_TASK_NUMBERS_KEY))
   const [jobsError, setJobsError] = useState<string | null>(null)
   const [selectedJob, setSelectedJob] = useState<VkJobView | null>(null)
@@ -467,7 +468,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     return numbered
   }, [])
 
-  const refreshJobs = useCallback(async () => {
+  const refreshJobs = useCallback(async (options: { clear?: boolean; manual?: boolean } = {}) => {
+    const { clear = false, manual = false } = options
+    if (clear) setJobs([])
+    if (manual) setJobsRefreshing(true)
     const gen = ++jobsGen.current
     try {
       const rows = attachTaskNumbers(collapseInternalRunRows(await fetchVkJobs(base)))
@@ -498,6 +502,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       }
     } catch (error) {
       if (gen === jobsGen.current) setJobsError(errorText(error, '任务列表获取失败'))
+    } finally {
+      if (manual) setJobsRefreshing(false)
     }
   }, [attachTaskNumbers, base])
   useEffect(() => { void refreshJobs() }, [refreshJobs, refreshToken])
@@ -871,15 +877,17 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           <motion.button
             type="button"
             data-testid="vk-jobs-refresh"
-            onClick={() => { void refreshJobs() }}
-            className={`${outlineButton} vk-jobs-refresh-button`}
+            onClick={() => { void refreshJobs({ clear: true, manual: true }) }}
+            disabled={jobsRefreshing}
+            aria-busy={jobsRefreshing}
+            className={`${outlineButton} vk-jobs-refresh-button${jobsRefreshing ? ' is-refreshing' : ''}`}
             style={outlineStyle}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.96 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
           >
             <RefreshCw size={14} aria-hidden="true" />
-            <span>刷新</span>
+            <span>{jobsRefreshing ? '刷新中…' : '刷新'}</span>
           </motion.button>
         </div>
         {jobsError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{jobsError}</div>}

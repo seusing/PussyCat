@@ -148,6 +148,24 @@ test('没碰过的 key 不提交 —— 表示"别动已存的那把"', async ()
   expect(body.channels[0].model_id).toBe('gpt-5.6-luna')
 })
 
+test('推理强度可在自动、低、中、高之间调整并随通道保存', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await waitFor(() => expect(screen.getByTestId('vk-channel-reasoning-cheap')).toBeInTheDocument())
+
+  const effort = screen.getByTestId('vk-channel-reasoning-cheap') as HTMLSelectElement
+  expect(effort.value).toBe('')
+  await userEvent.selectOptions(effort, 'high')
+  await userEvent.click(screen.getByTestId('vk-provider-save'))
+
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string }[] }
+  expect(body.channels[0].reasoning_effort).toBe('high')
+})
+
 
 test('key 来自系统环境变量时说明它优先 —— 用户要改得去别处', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [channel({ key_from_environment: true })] }) } })

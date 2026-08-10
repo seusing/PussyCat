@@ -43,6 +43,8 @@ type Draft = {
   api_style: string
   /** 用户手动选过风格 —— 之后改模型名不再覆盖他的选择。 */
   api_style_touched: boolean
+  /** 空值表示跟随模型自动推断；其余值直接传给已有 provider 配置。 */
+  reasoning_effort: string
   /** 已存 key 的打码值。**空输入框会被当成"没设过"**,所以存过就得看得见。 */
   key_masked: string
   /** 中转站要求的额外请求头(如 codex 的 x-openai-actor-authorization)。
@@ -61,6 +63,7 @@ function toDraft(channel: VkProviderSettings['channels'][number]): Draft {
   return {
     id: channel.id, name: channel.name, base_url: channel.base_url, model_id: channel.model_id,
     key_env: channel.key_env, api_style: channel.api_style, api_style_touched: true,
+    reasoning_effort: channel.reasoning_effort_explicit ? channel.reasoning_effort : '',
     key_masked: channel.key_masked, extra_headers: { ...channel.extra_headers },
     api_key: '', key_touched: false,
   }
@@ -116,7 +119,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setDrafts((list) => [...list, {
       id, name: '新配置', base_url: '', model_id: '',
       key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
-      api_style_touched: false, key_masked: '', extra_headers: {},
+      api_style_touched: false, reasoning_effort: '', key_masked: '', extra_headers: {},
       api_key: '', key_touched: false,
     }])
   }
@@ -125,7 +128,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setDrafts((list) => list.some((d) => d.id === item.id) ? list : [...list, {
       id: item.id, name: item.name, base_url: item.base_url, model_id: item.model_id,
       key_env: item.key_env, api_style: inferApiStyle(item.model_id), api_style_touched: false,
-      key_masked: '', extra_headers: {}, api_key: '', key_touched: false,
+      reasoning_effort: '', key_masked: '', extra_headers: {}, api_key: '', key_touched: false,
     }])
   }
 
@@ -140,7 +143,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       setDrafts((list) => [...list, {
         id: channel.id, name: channel.name, base_url: channel.base_url,
         model_id: channel.model_id, key_env: channel.key_env, api_style: channel.api_style,
-        api_style_touched: true, key_masked: '', extra_headers: channel.extra_headers,
+        api_style_touched: true, reasoning_effort: '', key_masked: '', extra_headers: channel.extra_headers,
         api_key, key_touched: true,
       }])
       setNotice(`已从 cc-switch 导入「${channel.name}」，按「保存」后生效`)
@@ -197,7 +200,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     try {
       const payload: VkChannelPayload[] = drafts.map((d) => ({
         id: d.id, name: d.name, base_url: d.base_url, model_id: d.model_id,
-        key_env: d.key_env, api_style: d.api_style, extra_headers: d.extra_headers,
+        key_env: d.key_env, api_style: d.api_style,
+        reasoning_effort: d.reasoning_effort || null,
+        extra_headers: d.extra_headers,
         // 没碰过就不传 api_key —— 表示「不动已存的那把」,而不是清空。
         ...(d.key_touched ? { api_key: d.api_key } : {}),
       }))
@@ -318,6 +323,21 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                       <option key={style.id} value={style.id}>{style.label}</option>
                     ))}
                   </select>
+                  <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                    <span>推理强度</span>
+                    <select
+                      data-testid={`vk-channel-reasoning-${draft.id}`}
+                      className="rounded-lg px-2 py-1.5 text-xs outline-none"
+                      style={fieldStyle}
+                      value={draft.reasoning_effort}
+                      onChange={(e) => patch(draft.id, { reasoning_effort: e.target.value })}
+                    >
+                      <option value="">自动（跟随模型）</option>
+                      <option value="low">低</option>
+                      <option value="medium">中</option>
+                      <option value="high">高</option>
+                    </select>
+                  </label>
                   <button type="button" data-testid={`vk-channel-test-${draft.id}`}
                     onClick={() => { void runTest(draft) }} disabled={busy !== null}
                     className={outlineButton} style={outlineStyle}>
