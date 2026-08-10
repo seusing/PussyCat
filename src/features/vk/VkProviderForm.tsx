@@ -87,6 +87,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [roles, setRoles] = useState<Record<string, string>>({})
   const [results, setResults] = useState<Record<string, VkProviderTestResult>>({})
   const [models, setModels] = useState<Record<string, string[]>>({})
+  const [reasoningEfforts, setReasoningEfforts] = useState<Record<string, Record<string, string[]>>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -185,7 +186,14 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       setResults((prev) => ({ ...prev, [draft.id]: result }))
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
       if (result.base_url && result.base_url !== draft.base_url) patch(draft.id, { base_url: result.base_url })
-      if (result.models?.length) setModels((prev) => ({ ...prev, [draft.id]: result.models ?? [] }))
+      // Every click replaces the previous discovery result, including an empty
+      // result. Keeping stale choices would make refresh look real while still
+      // showing an older provider state.
+      setModels((prev) => ({ ...prev, [draft.id]: result.models ?? [] }))
+      setReasoningEfforts((prev) => ({
+        ...prev,
+        [draft.id]: result.reasoning_efforts ?? {},
+      }))
     } catch (err) {
       setError(err instanceof Error ? err.message : '连接测试失败')
     } finally {
@@ -245,6 +253,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           const result = results[draft.id]
           const saved = settings.channels.find((c) => c.id === draft.id)
           const showMasked = !draft.key_touched && !draft.revealed && draft.key_masked !== ''
+          const availableReasoningEfforts = reasoningEfforts[draft.id]?.[draft.model_id] ?? []
           return (
             <div key={draft.id} data-testid={`vk-channel-${draft.id}`} className="rounded-lg p-3"
               style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
@@ -325,18 +334,23 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   </select>
                   <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
                     <span>推理强度</span>
-                    <select
+                    <input
                       data-testid={`vk-channel-reasoning-${draft.id}`}
                       className="rounded-lg px-2 py-1.5 text-xs outline-none"
                       style={fieldStyle}
+                      list={`vk-reasoning-efforts-${draft.id}`}
                       value={draft.reasoning_effort}
+                      placeholder="自动（跟随模型）"
+                      title={availableReasoningEfforts.length
+                        ? '可选档位来自本次接口请求'
+                        : '接口未返回可选档位；留空为自动，也可手动填写服务商支持的值'}
                       onChange={(e) => patch(draft.id, { reasoning_effort: e.target.value })}
-                    >
-                      <option value="">自动（跟随模型）</option>
-                      <option value="low">低</option>
-                      <option value="medium">中</option>
-                      <option value="high">高</option>
-                    </select>
+                    />
+                    <datalist id={`vk-reasoning-efforts-${draft.id}`}>
+                      {availableReasoningEfforts.map((effort) => (
+                        <option key={effort} value={effort} />
+                      ))}
+                    </datalist>
                   </label>
                   <button type="button" data-testid={`vk-channel-test-${draft.id}`}
                     onClick={() => { void runTest(draft) }} disabled={busy !== null}

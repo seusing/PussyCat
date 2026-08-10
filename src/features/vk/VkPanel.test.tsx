@@ -460,6 +460,25 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-jobs-refresh')).toHaveTextContent('刷新')
   })
 
+  it('任务记录只在存在进行中任务时每 30 秒查询一次', async () => {
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval')
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'GET /vk/v1/jobs': { body: [{
+        job_id: 'job-active', kind: 'request', status: 'processing',
+        submitted_at: '2026-08-01T00:01:00+00:00', finished_at: null,
+        parent_job_id: null, cache_bypass: false,
+      }] },
+    })
+
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-active')
+
+    await waitFor(() => expect(intervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000))
+    intervalSpy.mockRestore()
+  })
+
   it('folds an active internal run into its user request row', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },

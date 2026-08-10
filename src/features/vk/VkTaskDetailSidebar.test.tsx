@@ -1,5 +1,5 @@
 import userEvent from '@testing-library/user-event'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkTaskDetailSidebar } from './VkTaskDetailSidebar'
 
@@ -14,6 +14,7 @@ vi.mock('thinking-orbs', () => ({
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('VkTaskDetailSidebar', () => {
@@ -57,6 +58,44 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByText('https://www.youtube.com/watch?v=1')).toBeInTheDocument()
     expect(screen.getByText('https://www.bilibili.com/video/BV1')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('任务正在执行')).toBeInTheDocument())
+  })
+
+  it('活跃任务在详情轮询返回终态后立即切换为失败界面', async () => {
+    let jobRequest = 0
+    let poll: (() => Promise<void>) | undefined
+    vi.stubGlobal('setInterval', (callback: TimerHandler, delay?: number) => {
+      if (delay === 1500) {
+        poll = callback as () => Promise<void>
+      }
+      return 999_999
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/job-live')) {
+        jobRequest += 1
+        return new Response(JSON.stringify({
+          job_id: 'job-live', kind: 'run', status: jobRequest === 1 ? 'running' : 'failed',
+          submitted_at: '2026-08-07T10:00:00Z', finished_at: jobRequest === 1 ? null : '2026-08-07T10:01:00Z',
+          parent_job_id: null, cache_bypass: false,
+          request: { source: 'https://example.com/v', preset: 'quick-summary' },
+          error: jobRequest === 1 ? null : '上游处理失败',
+        }), { status: 200 })
+      }
+      if (url.endsWith('/vk/v1/providers')) {
+        return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="job-live" baseUrl={BASE} onClose={() => {}} />)
+    expect(await screen.findByText('正在执行')).toBeInTheDocument()
+    await waitFor(() => expect(poll).toBeTypeOf('function'))
+
+    await act(async () => { await poll?.() })
+
+    expect(await screen.findByText('失败')).toBeInTheDocument()
+    expect(screen.getByText('上游处理失败')).toBeInTheDocument()
+    expect(screen.queryByLabelText('任务正在执行')).not.toBeInTheDocument()
   })
 
   it('stops an active task and exposes no retry or resubmit action', async () => {

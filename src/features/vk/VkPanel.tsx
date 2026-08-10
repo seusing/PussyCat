@@ -69,7 +69,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   word_timestamps: '词级时间定位', speaker_diarization: '区分说话人',
   visual_evidence: '提取视觉证据', query_ready: '加入知识库检索',
 }
-const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested'])
+const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
 const SUCCESS_STATUSES = new Set(['done', 'partial'])
 const VK_NOTIFICATIONS_KEY = 'opencli-app:vk-task-notifications:v1'
 const VK_HIDDEN_JOBS_KEY = 'opencli-app:vk-hidden-jobs:v1'
@@ -509,7 +509,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   useEffect(() => { void refreshJobs() }, [refreshJobs, refreshToken])
   useEffect(() => {
     if (!jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
-    const timer = setInterval(() => { void refreshJobs() }, 3000)
+    const timer = setInterval(() => { void refreshJobs() }, 30_000)
     return () => clearInterval(timer)
   }, [jobs, refreshJobs])
 

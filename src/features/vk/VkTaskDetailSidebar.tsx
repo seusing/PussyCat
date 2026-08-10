@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Check, ExternalLink, RefreshCw, Send, Square, X } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
@@ -72,8 +72,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [error, setError] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
+  const loadGeneration = useRef(0)
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current
     if (!jobId) {
       setJob(null)
       setError(null)
@@ -84,10 +86,12 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
         fetchVkJob(jobId, baseUrl),
         fetchVkProviderSettings(baseUrl).catch(() => null),
       ])
+      if (generation !== loadGeneration.current) return
       setJob(nextJob)
       setProviders(nextProviders)
       setError(null)
     } catch (loadError) {
+      if (generation !== loadGeneration.current) return
       setError(detailError(loadError))
     }
   }, [jobId, baseUrl])
@@ -95,7 +99,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   useEffect(() => { void load() }, [load])
   useEffect(() => {
     if (!job || !ACTIVE_STATUSES.has(job.status)) return
-    const timer = window.setInterval(() => { void load() }, 1500)
+    const timer = window.setInterval(load, 1500)
     return () => window.clearInterval(timer)
   }, [job, load])
 
@@ -173,7 +177,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       {job && (
         <div className="vk-task-detail-body">
           <div className="vk-task-detail-summary">
-            <span className={`vk-task-detail-badge ${failed ? 'is-failed' : interrupted ? 'is-interrupted' : rerunning ? 'is-rerunning' : active ? 'is-running' : 'is-completed'}`}>
+            <span role="status" aria-live="polite" className={`vk-task-detail-badge ${failed ? 'is-failed' : interrupted ? 'is-interrupted' : rerunning ? 'is-rerunning' : active ? 'is-running' : 'is-completed'}`}>
               {failed ? '失败' : interrupted ? '已中断' : stopping ? '正在停止' : rerunning ? '重跑中' : active ? '正在执行' : '已完成'}
             </span>
             <button type="button" onClick={() => { void load() }} aria-label="刷新任务详情" title="刷新">

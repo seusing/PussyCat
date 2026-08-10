@@ -148,22 +148,49 @@ test('没碰过的 key 不提交 —— 表示"别动已存的那把"', async ()
   expect(body.channels[0].model_id).toBe('gpt-5.6-luna')
 })
 
-test('推理强度可在自动、低、中、高之间调整并随通道保存', async () => {
+test('推理强度使用接口返回的档位并随通道保存', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers/test': { body: {
+      ok: true, reason_code: 'ok', message: 'ok', models: ['gpt-5.6-luna'],
+      reasoning_efforts: { 'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'] },
+      normalization_notes: [],
+    } },
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
   render(<VkProviderForm baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('vk-channel-reasoning-cheap')).toBeInTheDocument())
 
-  const effort = screen.getByTestId('vk-channel-reasoning-cheap') as HTMLSelectElement
+  const effort = screen.getByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
   expect(effort.value).toBe('')
-  await userEvent.selectOptions(effort, 'high')
+  expect(document.querySelectorAll('#vk-reasoning-efforts-cheap option')).toHaveLength(0)
+  await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
+  await waitFor(() => expect(document.querySelectorAll('#vk-reasoning-efforts-cheap option')).toHaveLength(5))
+  expect([...document.querySelectorAll('#vk-reasoning-efforts-cheap option')].map((option) => option.getAttribute('value')))
+    .toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+  await userEvent.type(effort, 'max')
   await userEvent.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string }[] }
-  expect(body.channels[0].reasoning_effort).toBe('high')
+  expect(body.channels[0].reasoning_effort).toBe('max')
+})
+
+test('接口未返回推理档位时不猜测，仍允许按服务商文档手动填写', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
+
+  expect(document.querySelectorAll('#vk-reasoning-efforts-cheap option')).toHaveLength(0)
+  await userEvent.type(effort, 'provider-private-tier')
+  await userEvent.click(screen.getByTestId('vk-provider-save'))
+
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string }[] }
+  expect(body.channels[0].reasoning_effort).toBe('provider-private-tier')
 })
 
 

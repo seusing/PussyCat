@@ -406,6 +406,8 @@ export interface VkProviderTestResult {
   retryable?: boolean
   detail?: string | null
   models?: string[]
+  /** Optional per-model capability metadata returned by compatible providers' /models extensions. */
+  reasoning_efforts?: Record<string, string[]>
   base_url?: string
   normalization_notes?: string[]
   key_stored?: boolean
