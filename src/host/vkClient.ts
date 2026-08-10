@@ -38,6 +38,7 @@ export interface VkProcessingRequest {
   requested_capabilities: string[]
   user_metadata: Record<string, unknown>
   max_cost_cny: number | null
+  reasoning_effort?: string | null
 }
 
 export interface VkPreviewProjection {
@@ -51,6 +52,7 @@ export interface VkPreviewProjection {
   capabilities?: string[]
   max_cost_cny?: number
   user_metadata?: Record<string, unknown>
+  reasoning_effort?: string
 }
 
 export interface VkJobRow {
@@ -202,7 +204,7 @@ export async function postVkJob(
 }
 
 export async function fetchVkJobs(baseUrl = DEFAULT_BASE_URL): Promise<VkJobRow[]> {
-  const response = await fetch(`${baseUrl}/vk/v1/jobs`)
+  const response = await fetch(`${baseUrl}/vk/v1/jobs`, { cache: 'no-store' })
   return parseVkResponse<VkJobRow[]>(response, '任务列表获取失败')
 }
 
@@ -262,6 +264,31 @@ export interface VkRuntimeDetectResponse {
   checkedAt: string
 }
 
+export interface VkCapabilityPack {
+  id: 'local-asr' | 'precision-transcript'
+  name: string
+  description: string
+  size_label: string
+  state: 'not-installed' | 'installing' | 'installed' | 'partial' | 'unavailable'
+  detail: string
+  installed_extras: string[]
+}
+
+export interface VkCapabilityPacksResponse {
+  packs: VkCapabilityPack[]
+  checked_at: string
+}
+
+export interface VkWrssStatus {
+  configured: boolean
+  base_url: string
+  state: 'not-configured' | 'saved' | 'reachable' | 'timeout' | 'unreachable'
+  message: string
+  status_code: number | null
+  protocol_verified: false
+  checked_at: string | null
+}
+
 export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
   const response = await fetch(`${baseUrl}/vk/v1/runtime/status`)
   return parseVkResponse<VkRuntimeStatus>(response, '解析引擎状态获取失败')
@@ -284,6 +311,35 @@ export async function postVkRuntimeDetect(baseUrl = DEFAULT_BASE_URL): Promise<V
 export async function postVkRuntimeAdopt(pythonPath: string, baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
   const response = await fetch(`${baseUrl}/vk/v1/runtime/adopt`, jsonInit({ pythonPath }))
   return parseVkResponse<VkRuntimeStatus>(response, '已有环境接入失败')
+}
+
+export async function fetchVkCapabilityPacks(baseUrl = DEFAULT_BASE_URL): Promise<VkCapabilityPacksResponse> {
+  const response = await fetch(`${baseUrl}/vk/v1/capability-packs`)
+  return parseVkResponse<VkCapabilityPacksResponse>(response, '能力包状态获取失败')
+}
+
+export async function postVkCapabilityPackInstall(
+  packId: VkCapabilityPack['id'], baseUrl = DEFAULT_BASE_URL,
+): Promise<VkRuntimeStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/capability-packs/install`, jsonInit({ pack_id: packId }))
+  return parseVkResponse<VkRuntimeStatus>(response, '能力包安装启动失败')
+}
+
+export async function fetchVkWrssStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkWrssStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss`)
+  return parseVkResponse<VkWrssStatus>(response, 'WeRSS 状态获取失败')
+}
+
+export async function saveVkWrss(
+  wrssBaseUrl: string, baseUrl = DEFAULT_BASE_URL,
+): Promise<VkWrssStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss/config`, jsonInit({ base_url: wrssBaseUrl }))
+  return parseVkResponse<VkWrssStatus>(response, 'WeRSS 地址保存失败')
+}
+
+export async function testVkWrss(baseUrl = DEFAULT_BASE_URL): Promise<VkWrssStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss/test`, jsonInit({}))
+  return parseVkResponse<VkWrssStatus>(response, 'WeRSS 连接测试失败')
 }
 
 export function vkOutputPath(outputId: string): string {

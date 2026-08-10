@@ -85,7 +85,7 @@
   font-weight: 600;
 }
 
-.vk-task-detail-badge.is-running { border-color: rgb(214 171 74 / 38%); background: rgb(214 171 74 / 12%); color: #edc66b; }
+.vk-task-detail-badge.is-running { border-color: rgb(91 141 239 / 52%); background: rgb(91 141 239 / 16%); color: #9fc2ff; }
 .vk-task-detail-badge.is-completed { border-color: rgb(74 194 99 / 35%); background: rgb(74 194 99 / 11%); color: #7ee18d; }
 .vk-task-detail-badge.is-failed { border-color: rgb(232 89 81 / 37%); background: rgb(232 89 81 / 12%); color: #ffaaa5; }
 
@@ -211,7 +211,7 @@
 .vk-task-action-icon > * { position: absolute; inset: 0; display: grid; place-items: center; }
 
 .vk-task-detail-badge.is-rerunning { border-color: rgb(139 92 246 / 46%); background: rgb(139 92 246 / 15%); color: #cdb8ff; }
-.vk-task-detail-badge.is-interrupted { border-color: rgb(180 188 204 / 34%); background: rgb(255 255 255 / 6%); color: var(--color-fg-dim); }
+.vk-task-detail-badge.is-interrupted { border-color: rgb(214 171 74 / 42%); background: rgb(214 171 74 / 13%); color: #edc66b; }
 
 @media (prefers-reduced-motion: reduce) {
   .vk-task-progress-track > span { transition: none; }

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import { InlineLoader } from 'generative-loaders'
+import 'generative-loaders/styles.css'
 import {
   Clapperboard,
   KeyRound,
@@ -241,7 +243,10 @@ export default function AppShell({
         </header>
 
         {catalogStatus === 'loading' && (
-          <div data-testid="catalog-loading" className="app-status-screen">正在加载命令目录…</div>
+          <div data-testid="catalog-loading" className="app-status-screen app-catalog-loading" role="status">
+            <InlineLoader variant="spark" size={32} label="灵感汲取中" />
+            <span className="app-catalog-loading-copy">灵感汲取中</span>
+          </div>
         )}
 
         {catalogStatus === 'error' && (

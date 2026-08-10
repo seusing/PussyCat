@@ -63,11 +63,11 @@ describe('VkTaskDetailSidebar', () => {
   it('活跃任务在详情轮询返回终态后立即切换为失败界面', async () => {
     let jobRequest = 0
     let poll: (() => Promise<void>) | undefined
-    vi.stubGlobal('setInterval', (callback: TimerHandler, delay?: number) => {
+    vi.spyOn(window, 'setInterval').mockImplementation((callback: TimerHandler, delay?: number) => {
       if (delay === 1500) {
         poll = callback as () => Promise<void>
       }
-      return 999_999
+      return 999_999 as never
     })
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

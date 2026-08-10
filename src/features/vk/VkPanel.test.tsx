@@ -258,10 +258,10 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
     for (const id of ['vk-source', 'vk-preset', 'vk-content-type', 'vk-media-policy',
-      'vk-quality', 'vk-budget-profile', 'vk-max-cost', 'vk-audit',
+      'vk-quality', 'vk-budget-profile', 'vk-max-cost', 'vk-reasoning-effort', 'vk-audit',
       'vk-cap-word_timestamps', 'vk-cap-speaker_diarization', 'vk-cap-visual_evidence',
       'vk-cap-query_ready', 'vk-submit-button',
-      'vk-query-input', 'vk-jobs-refresh']) {
+      'vk-query-input', 'vk-jobs-refresh', 'vk-capability-toggle']) {
       expect(screen.getByTestId(id)).toBeInTheDocument()
     }
     expect(screen.queryByTestId('vk-preview-button')).not.toBeInTheDocument()
@@ -300,24 +300,25 @@ describe('VkPanel', () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
-      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/preview': { body: resolvedRequest({ reasoning_effort: 'max' }) },
       'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
     })
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), 'https://example.com/v')
     await user.type(screen.getByTestId('vk-max-cost'), '1.5')
+    await user.type(screen.getByTestId('vk-reasoning-effort'), 'max')
     await user.click(screen.getByTestId('vk-submit-button'))
     const previewCall = calls.find((item) => item.key === 'POST /vk/v1/preview')
     expect(previewCall).toBeDefined()
     const projection = JSON.parse(String(previewCall!.init!.body))
-    expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5 })
+    expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5, reasoning_effort: 'max' })
     await waitFor(() => {
       expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(true)
     })
     const submit = calls.find((item) => item.key === 'POST /vk/v1/jobs')
     const payload = JSON.parse(String(submit!.init!.body))
     expect(payload).toMatchObject({
-      request: { source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5 },
+      request: { source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5, reasoning_effort: 'max' },
     })
     expect(payload.idempotency_key).toMatch(/[0-9a-f-]{36}/)
     expect(payload.client_job_id).toMatch(/[0-9a-f-]{36}/)
@@ -331,11 +332,12 @@ describe('VkPanel', () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
-      'POST /vk/v1/preview': { body: resolvedRequest({ source: first }) },
+      'POST /vk/v1/preview': { body: resolvedRequest({ source: first, reasoning_effort: 'max' }) },
       'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
     })
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), `${first}\n${second}`)
+    await user.type(screen.getByTestId('vk-reasoning-effort'), 'max')
     await user.click(screen.getByTestId('vk-submit-button'))
     await waitFor(() => {
       expect(calls.filter((item) => item.key === 'POST /vk/v1/jobs')).toHaveLength(2)
@@ -344,6 +346,10 @@ describe('VkPanel', () => {
       .filter((item) => item.key === 'POST /vk/v1/jobs')
       .map((item) => JSON.parse(String(item.init?.body)).request.source)
     expect(sources).toEqual([first, second])
+    const efforts = calls
+      .filter((item) => item.key === 'POST /vk/v1/jobs')
+      .map((item) => JSON.parse(String(item.init?.body)).request.reasoning_effort)
+    expect(efforts).toEqual(['max', 'max'])
   })
 
   it('uses the old universal job path for YouTube without a diagnostic gate', async () => {
@@ -428,7 +434,7 @@ describe('VkPanel', () => {
     await waitFor(() => expect(numbers()).toEqual(['4', '3', '1']))
   })
 
-  it('手动刷新时清空旧表格并显示加载态，完成后再展示最新记录', async () => {
+  it('手动刷新时保留旧表格并只在表格内显示加载态，完成后原子替换记录', async () => {
     const initialJob = {
       job_id: 'job-old', kind: 'run', status: 'done',
       submitted_at: '2026-08-01T00:01:00+00:00', finished_at: '2026-08-01T00:02:00+00:00',
@@ -453,7 +459,8 @@ describe('VkPanel', () => {
 
     await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
     expect(screen.getByTestId('vk-jobs-refresh')).toHaveTextContent('刷新中')
-    expect(screen.queryByTestId('vk-job-open-job-old')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vk-job-open-job-old')).toBeInTheDocument()
+    expect(screen.getByText('正在读取最新任务…')).toBeInTheDocument()
 
     refreshGate.resolve?.([latestJob])
     await waitFor(() => expect(screen.getByTestId('vk-job-open-job-latest')).toBeInTheDocument())
@@ -501,6 +508,30 @@ describe('VkPanel', () => {
     await waitFor(() => expect(screen.getAllByTestId('vk-job-row')).toHaveLength(1))
     expect(screen.getByTestId('vk-job-open-request-1')).toBeInTheDocument()
     expect(screen.queryByTestId('vk-job-open-run:run-1')).not.toBeInTheDocument()
+  })
+
+  it('folds a failed internal run into the failed request row', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': {
+        body: [
+          {
+            job_id: 'request-failed', kind: 'request', status: 'failed',
+            submitted_at: '2026-08-10T08:13:03.678Z', finished_at: '2026-08-10T08:15:41.377Z',
+            parent_job_id: null, cache_bypass: false,
+          },
+          {
+            job_id: 'run:failed-run', kind: 'run', status: 'failed', run_id: 'failed-run',
+            submitted_at: '2026-08-10T08:13:03.711Z', finished_at: '2026-08-10T08:15:41.360Z',
+            parent_job_id: null, cache_bypass: false,
+          },
+        ],
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getAllByTestId('vk-job-row')).toHaveLength(1))
+    expect(screen.getByTestId('vk-job-open-request-failed')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-job-open-run:failed-run')).not.toBeInTheDocument()
   })
 
   it('lists failed jobs with real status/elapsed and keeps diagnostics without exposing outputs', async () => {

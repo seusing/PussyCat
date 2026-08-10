@@ -14,7 +14,9 @@ import {
 } from './browser-bridge-repair.mjs'
 import { VkSidecarError } from './vk-sidecar.mjs'
 import { VkRuntimeError } from './vk-runtime.mjs'
-import { createRadarService, reasonOf } from './radar.mjs'
+import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from './vk-capability-packs.mjs'
+import { WrssIntegrationError } from './wrss-integration.mjs'
+import { createRadarService, diagnosticOf, reasonOf } from './radar.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
 
@@ -190,6 +192,7 @@ export function createHostServer({
   vkSidecar = null,
   vkJobShadow = null,
   vkRuntime = null,
+  wrssIntegration = null,
   radarService = createRadarService(),
 } = {}) {
   if (!policy) throw new Error('policy is required')
@@ -294,7 +297,9 @@ export function createHostServer({
           return
         }
         try {
-          await catalogService.refresh()
+          if (url.searchParams.get('refresh') === '1' || !catalogService.current()) {
+            await catalogService.refresh()
+          }
           const current = catalogService.current()
           writeJson(response, 200, {
             revision: current.revision,
@@ -370,6 +375,70 @@ export function createHostServer({
       }
 
       // 首启 runtime 安装编排(v2 阶段3):状态永 200 结构化;安装 202 单飞。
+      // Capability packs are a closed allow-list layered on top of the
+      // versioned runtime installer. They do not proxy to the sidecar, so
+      // status remains available while an upgrade is in flight.
+      if (url.pathname === '/vk/v1/capability-packs' && request.method === 'GET') {
+        if (vkRuntime?.capabilityPacks) {
+          writeJson(response, 200, vkRuntime.capabilityPacks())
+        } else {
+          writeJson(response, 200, projectCapabilityPacks({
+            bundleAvailable: false,
+            checkedAt: new Date().toISOString(),
+          }))
+        }
+        return
+      }
+      if (url.pathname === '/vk/v1/capability-packs/install' && request.method === 'POST') {
+        const body = await readJson(request, maxBodyBytes)
+        const pack = getCapabilityPack(body?.pack_id)
+        if (!vkRuntime) {
+          writeJson(response, 503, { error: 'runtime 安装编排未接线', reasonCode: 'bundle-missing' })
+          return
+        }
+        const before = vkRuntime.status()
+        if (before.state === 'not-available') {
+          writeJson(response, 503, { error: before.summary, reasonCode: before.reasonCode ?? 'bundle-missing' })
+          return
+        }
+        if (typeof vkRuntime.installCapabilityPack === 'function') {
+          // Stop the old sidecar only after active.json was switched.
+          void vkRuntime.installCapabilityPack(pack.id, {
+            afterActivate: async () => { await vkSidecar?.stop() },
+          }).catch(() => {})
+        } else {
+          // Compatibility for small injected test doubles.
+          void vkRuntime.install({ extras: pack.extras }).then(
+            async () => { await vkSidecar?.stop() },
+          ).catch(() => {})
+        }
+        writeJson(response, 202, vkRuntime.status())
+        return
+      }
+
+      // WeRSS phase 1: only a loopback service connection shell. The renderer
+      // never receives credentials and cannot turn this into an arbitrary URL proxy.
+      if (url.pathname === '/vk/v1/integrations/wrss' && request.method === 'GET') {
+        if (!wrssIntegration) {
+          writeJson(response, 503, { error: 'WeRSS 集成未接线', reasonCode: 'not-configured' })
+          return
+        }
+        writeJson(response, 200, wrssIntegration.status())
+        return
+      }
+      if (url.pathname === '/vk/v1/integrations/wrss/config' && request.method === 'POST') {
+        const body = await readJson(request, maxBodyBytes)
+        if (!wrssIntegration) throw new WrssIntegrationError(503, 'not-configured', 'WeRSS 集成未接线')
+        writeJson(response, 200, wrssIntegration.save(body?.base_url))
+        return
+      }
+      if (url.pathname === '/vk/v1/integrations/wrss/test' && request.method === 'POST') {
+        await readJson(request, maxBodyBytes)
+        if (!wrssIntegration) throw new WrssIntegrationError(503, 'not-configured', 'WeRSS 集成未接线')
+        writeJson(response, 200, await wrssIntegration.test())
+        return
+      }
+
       if (url.pathname === '/vk/v1/runtime/status' && request.method === 'GET') {
         writeJson(response, 200, vkRuntime ? vkRuntime.status() : {
           state: 'not-available', version: null, reasonCode: 'bundle-missing',
@@ -422,7 +491,11 @@ export function createHostServer({
         try {
           writeJson(response, 200, await radarService.get({ force: url.searchParams.get('force') === '1' }))
         } catch (error) {
-          writeJson(response, 502, { error: reasonOf(error), reasonCode: 'radar-unavailable' })
+          writeJson(response, 502, {
+            error: reasonOf(error),
+            reasonCode: 'radar-unavailable',
+            diagnostic: diagnosticOf(error),
+          })
         }
         return
       }
@@ -518,6 +591,8 @@ export function createHostServer({
           || error instanceof RunManagerError
           || error instanceof VkSidecarError
           || error instanceof VkRuntimeError
+          || error instanceof VkCapabilityPackError
+          || error instanceof WrssIntegrationError
           ? error.statusCode
           : 500
       )

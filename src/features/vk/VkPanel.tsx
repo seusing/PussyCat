@@ -23,6 +23,7 @@ import {
   postVkQuery,
   postVkRuntimeInstall,
   fetchVkProviderSettings,
+  testVkProvider,
   vkOutputUrl,
 } from '../../host/vkClient'
 import type {
@@ -36,6 +37,7 @@ import type {
 } from '../../host/vkClient'
 import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
 import { VkProviderForm } from './VkProviderForm'
+import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { copyText } from '../../lib/clipboard'
@@ -141,10 +143,19 @@ function collapseInternalRunRows(rows: VkJobRow[]): VkJobRow[] {
     if (row.kind !== 'run') return true
     return !requests.some((request) => {
       if (request.run_id && row.run_id && request.run_id === row.run_id) return true
-      if (!ACTIVE_STATUSES.has(request.status) || !ACTIVE_STATUSES.has(row.status)) return false
       const requestTime = Date.parse(request.submitted_at)
       const runTime = Date.parse(row.submitted_at)
-      return Number.isFinite(requestTime) && Number.isFinite(runTime) && Math.abs(requestTime - runTime) <= 2000
+      const startedTogether = Number.isFinite(requestTime)
+        && Number.isFinite(runTime)
+        && Math.abs(requestTime - runTime) <= 2000
+      if (!startedTogether) return false
+      if (ACTIVE_STATUSES.has(request.status) && ACTIVE_STATUSES.has(row.status)) return true
+      if (request.status !== row.status || !request.finished_at || !row.finished_at) return false
+      const requestFinished = Date.parse(request.finished_at)
+      const runFinished = Date.parse(row.finished_at)
+      return Number.isFinite(requestFinished)
+        && Number.isFinite(runFinished)
+        && Math.abs(requestFinished - runFinished) <= 2000
     })
   })
 }
@@ -286,6 +297,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   // 所以这件事必须在**提交之前**说出来,而不是等用户跑满 7 分半下载转写。
   const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null)
   const [providerFormOpen, setProviderFormOpen] = useState(false)
+  const [capabilityPacksOpen, setCapabilityPacksOpen] = useState(false)
+  const [taskReasoningEfforts, setTaskReasoningEfforts] = useState<string[]>([])
+  const [reasoningDiscovery, setReasoningDiscovery] = useState<string | null>(null)
+  const [reasoningDiscovering, setReasoningDiscovering] = useState(false)
   const refreshProviders = useCallback(async () => {
     try {
       const settings = await fetchVkProviderSettings(base)
@@ -295,6 +310,36 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     }
   }, [base])
   useEffect(() => { void refreshProviders() }, [refreshProviders])
+
+  const discoverTaskReasoningEfforts = async () => {
+    setReasoningDiscovering(true)
+    setReasoningDiscovery(null)
+    try {
+      const settings = await fetchVkProviderSettings(base)
+      const channelIds = new Set(Object.values(settings.roles).filter((value): value is string => !!value))
+      const channels = settings.channels.filter((channel) => channelIds.has(channel.id))
+      const discovered = await Promise.all(channels.map(async (channel) => {
+        const result = await testVkProvider({
+          base_url: channel.base_url,
+          key_env: channel.key_env,
+          api_style: channel.api_style,
+        }, base)
+        return result.reasoning_efforts?.[channel.model_id] ?? []
+      }))
+      const known = discovered.filter((items) => items.length > 0)
+      const intersection = known.length > 0
+        ? known.slice(1).reduce((items, next) => items.filter((item) => next.includes(item)), [...known[0]])
+        : []
+      setTaskReasoningEfforts(intersection)
+      setReasoningDiscovery(intersection.length > 0
+        ? `已从当前任务使用的模型通道读取 ${intersection.length} 个共同档位`
+        : '接口未返回可枚举档位；仍可输入中转站支持的值，任务会原样注入 reasoning.effort')
+    } catch (error) {
+      setReasoningDiscovery(errorText(error, '读取推理档位失败；可以保持自动或手动输入'))
+    } finally {
+      setReasoningDiscovering(false)
+    }
+  }
 
   const autoPickedRef = useRef(false)
   useEffect(() => {
@@ -343,6 +388,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [caps, setCaps] = useState<string[]>([])
   const [audit, setAudit] = useState(false)
   const [maxCost, setMaxCost] = useState('')
+  const [reasoningEffort, setReasoningEffort] = useState('')
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
 
   const handoff = useAppStore((s) => s.vkHandoff)
@@ -387,6 +433,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     ...(caps.length ? { capabilities: caps } : {}),
     ...(audit ? { audit: true } : {}),
     ...(maxCost.trim() ? { max_cost_cny: Number(maxCost) } : {}),
+    ...(reasoningEffort.trim() ? { reasoning_effort: reasoningEffort.trim() } : {}),
     ...(provenance
       ? {
           user_metadata: {
@@ -468,9 +515,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     return numbered
   }, [])
 
-  const refreshJobs = useCallback(async (options: { clear?: boolean; manual?: boolean } = {}) => {
-    const { clear = false, manual = false } = options
-    if (clear) setJobs([])
+  const refreshJobs = useCallback(async (options: { manual?: boolean } = {}) => {
+    const { manual = false } = options
     if (manual) setJobsRefreshing(true)
     const gen = ++jobsGen.current
     try {
@@ -744,11 +790,26 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         >
           {providerFormOpen ? '收起模型配置' : '模型配置'}
         </button>
+        <button
+          type="button"
+          data-testid="vk-capability-toggle"
+          aria-expanded={capabilityPacksOpen}
+          onClick={() => setCapabilityPacksOpen((open) => !open)}
+          className="ml-2 rounded-lg px-3 py-1.5 text-sm font-medium"
+          style={{
+            background: 'var(--color-hover)',
+            border: '1px solid var(--color-line)',
+            color: 'var(--color-fg)',
+          }}
+        >
+          {capabilityPacksOpen ? '收起能力中心' : '能力中心'}
+        </button>
         {providerFormOpen && (
           <div className="mt-2">
             <VkProviderForm baseUrl={base} onSaved={() => { void refreshProviders(); void checkHealth() }} />
           </div>
         )}
+        {capabilityPacksOpen && <VkCapabilityPacksPanel baseUrl={base} />}
       </div>
 
       {/* 提交表单 */}
@@ -831,6 +892,37 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               最高费用（¥）
               <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder="不设置上限" className={`${fieldClass} mt-1`} style={fieldStyle} />
             </label>
+            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+              统一推理强度
+              <div className="mt-1 flex gap-1.5">
+                <input
+                  data-testid="vk-reasoning-effort"
+                  list="vk-task-reasoning-options"
+                  value={reasoningEffort}
+                  onChange={(event) => setReasoningEffort(event.target.value)}
+                  placeholder="自动（跟随通道）"
+                  className={fieldClass}
+                  style={fieldStyle}
+                />
+                <datalist id="vk-task-reasoning-options">
+                  {taskReasoningEfforts.map((effort) => <option key={effort} value={effort} />)}
+                </datalist>
+                <button
+                  type="button"
+                  data-testid="vk-reasoning-refresh"
+                  onClick={() => { void discoverTaskReasoningEfforts() }}
+                  disabled={reasoningDiscovering}
+                  className="shrink-0 rounded-lg px-2 text-xs disabled:opacity-50"
+                  style={outlineStyle}
+                >
+                  {reasoningDiscovering ? '读取中…' : '读取档位'}
+                </button>
+              </div>
+              <span className="mt-1 block text-[11px]" style={{ color: 'var(--color-fg-dim)' }}>
+                单条与批量任务共用这一档；留空时沿用模型通道设置。
+                {reasoningDiscovery ? ` ${reasoningDiscovery}` : ''}
+              </span>
+            </label>
           </div>
           <fieldset className="mt-3 rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
             <legend style={{ color: 'var(--color-fg-dim)' }}>附加能力</legend>
@@ -877,7 +969,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           <motion.button
             type="button"
             data-testid="vk-jobs-refresh"
-            onClick={() => { void refreshJobs({ clear: true, manual: true }) }}
+            onClick={() => { void refreshJobs({ manual: true }) }}
             disabled={jobsRefreshing}
             aria-busy={jobsRefreshing}
             className={`${outlineButton} vk-jobs-refresh-button${jobsRefreshing ? ' is-refreshing' : ''}`}
@@ -893,6 +985,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         {jobsError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{jobsError}</div>}
         <VkTaskTable
           jobs={visibleJobs}
+          loading={jobsRefreshing}
           selectedJobId={selectedJobId ?? selectedJob?.job_id}
           notifications={tableNotifications}
           onSelect={(row) => { void openJob(row.job_id) }}

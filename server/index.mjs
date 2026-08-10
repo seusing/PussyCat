@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createHostServer } from './host-server.mjs'
 import { resolveOpenCliEntry, resolveManifestPath } from './opencli-entry.mjs'
@@ -8,6 +9,8 @@ import { VkSidecarManager } from './vk-sidecar.mjs'
 import { createVkJobShadow } from './vk-job-shadow.mjs'
 import { VkRuntimeManager } from './vk-runtime.mjs'
 import { resolveRunManagerOptions } from './run-manager-options.mjs'
+import { createWrssIntegration } from './wrss-integration.mjs'
+import { createRadarService } from './radar.mjs'
 
 // Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
 // 注:20 已 EOL,是"最低可运行"而非推荐;推荐当前 LTS(22/24)。
@@ -77,10 +80,12 @@ if (process.env.OPENCLI_HOST_PARENT_WATCH === '1') {
 
 try {
   const policy = loadExecutionPolicy(catalogPath)
+  const initialSnapshot = JSON.parse(readFileSync(catalogPath, 'utf8').replace(/^\uFEFF/, ''))
   const opencliEntry = resolveOpenCliEntry()
   const catalogService = createCatalogService({
     opencliEntry,
     resolveManifest: () => resolveManifestPath(opencliEntry),
+    initialSnapshot,
   })
   // video-knowledge sidecar(vk-shell-v1 契约):未配置时照常启动,/vk/v1/*
   // 返回类型化诊断;配置后首个请求按需拉起。v2 阶段3:HOME 指数据根,
@@ -105,6 +110,13 @@ try {
   const vkJobShadow = createVkJobShadow({
     stateFile: vkStateDir ? resolve(vkStateDir, 'vk-job-shadow.json') : undefined,
   })
+  const wrssIntegration = createWrssIntegration({
+    stateFile: vkStateDir ? resolve(vkStateDir, 'wrss-integration.json') : undefined,
+  })
+  const radarService = createRadarService({
+    stateFile: process.env.OPENCLI_HOST_RADAR_STATE_FILE
+      ?? (vkStateDir ? resolve(vkStateDir, 'radar-snapshot.json') : undefined),
+  })
   app = createHostServer({
     opencliEntry,
     policy,
@@ -113,6 +125,8 @@ try {
     vkSidecar,
     vkJobShadow,
     vkRuntime,
+    wrssIntegration,
+    radarService,
     runManagerOptions: resolveRunManagerOptions(process.env),
   })
 

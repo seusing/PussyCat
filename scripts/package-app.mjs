@@ -13,6 +13,7 @@
 //   4. version 恒为 0.1.0,不随提交递增,**无法从版本号判断新旧**。
 //      本脚本把 commit + 时刻写进 stamp 文件,并在报告里打出来。
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -69,8 +70,25 @@ function readStamp() {
  */
 function sourceSnapshot() {
   const commit = git('rev-parse', 'HEAD')
-  const dirty = git('status', '--porcelain') !== ''
-  return { commit, dirty, identity: dirty ? `${commit}-dirty` : commit }
+  const changed = [
+    ...git('diff', '--name-only', '-z', 'HEAD').split('\0'),
+    ...git('ls-files', '--others', '--exclude-standard', '-z').split('\0'),
+  ].filter(Boolean).sort()
+  const dirty = changed.length > 0
+  if (!dirty) return { commit, dirty, identity: commit }
+
+  // `HEAD-dirty` 无法区分同一提交上的两次不同修改，会让 package:check
+  // 把旧安装包误判为最新。路径、内容和删除标记共同组成工作区身份。
+  const digest = createHash('sha256')
+  for (const relativePath of changed) {
+    digest.update(relativePath)
+    digest.update('\0')
+    const absolutePath = join(root, relativePath)
+    if (existsSync(absolutePath)) digest.update(readFileSync(absolutePath))
+    else digest.update('<deleted>')
+    digest.update('\0')
+  }
+  return { commit, dirty, identity: `${commit}-dirty-${digest.digest('hex')}` }
 }
 
 /** 现有产物(只认当前 productName 的那一份)。 */
@@ -169,8 +187,9 @@ if (pruned.length > 0) console.log(`\n[package] 已清理历代改名残留:${pr
 // 拿到的可能是变更前、变更后,甚至半新半旧。不失败(产物是真的,多半就是想要的那个),
 // 但必须如实记下并显眼地说 —— 本脚本的承诺是"能说清这个包是哪个提交打的",
 // 说不清时就要说说不清,不能默默给一个好看的 commit。
-const headAfter = git('rev-parse', 'HEAD')
-const treeChangedDuringBuild = headAfter !== source.commit
+const sourceAfter = sourceSnapshot()
+const headAfter = sourceAfter.commit
+const treeChangedDuringBuild = sourceAfter.identity !== source.identity
 
 mkdirSync(dirname(STAMP), { recursive: true })
 writeFileSync(STAMP, `${JSON.stringify({

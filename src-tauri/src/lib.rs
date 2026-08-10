@@ -2,7 +2,9 @@ mod host_supervisor;
 
 use std::sync::Mutex;
 
-use tauri::{Manager, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    webview::PageLoadEvent, window::Color, Manager, Url, WebviewUrl, WebviewWindowBuilder,
+};
 
 use host_supervisor::{HostHandle, HostStartError};
 
@@ -167,6 +169,19 @@ fn open_main_window(app: &tauri::AppHandle, port: u16, pid: u32) -> tauri::Resul
     .inner_size(1280.0, 800.0)
     .min_inner_size(960.0, 600.0)
     .center()
+    // WebView2 在 HTML/CSS 首帧绘制前默认是白底；原生窗口与 WebView 同步设为产品底色，
+    // 避免启动时短暂闪出白色窗口。
+    .background_color(Color(15, 17, 21, 255))
+    // 冷启动时先让 WebView 在后台完成 index.html 与入口模块加载；否则 Windows 会先把一个
+    // 尚未首绘的空窗口摆到桌面上。Finished 发生在模块脚本执行之后，此时再显示主窗，
+    // 用户看到的第一帧就是深色应用壳，而不是白屏或空白深色窗。
+    .visible(false)
+    .on_page_load(|window, payload| {
+        if payload.event() == PageLoadEvent::Finished {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    })
     // **页面加载前**执行:晚一步前端就已经读过 window.__OPENCLI_BOOT__ 了。
     .initialization_script(boot_script(port, pid))
     .build()?;

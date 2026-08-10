@@ -99,7 +99,10 @@ test('catalog error 态渲染提示与重试按钮', () => {
 test('catalog loading 态渲染加载提示', () => {
   useAppStore.setState({ catalogStatus: 'loading' })
   render(<App />)
-  expect(screen.getByTestId('catalog-loading')).toBeInTheDocument()
+  const loading = screen.getByTestId('catalog-loading')
+  expect(loading).toHaveAttribute('role', 'status')
+  expect(loading).toHaveTextContent('灵感汲取中')
+  expect(loading.querySelector('.il-spark')).toBeInTheDocument()
 })
 
 // Task3 reviewer 发现回归：成功重试后不能残留旧 error banner（catalogStatus 驱动渲染 + catalogError 被清空）

@@ -343,5 +343,9 @@ describe('/vk/v1 proxy', () => {
     const body = await response.json()
     expect(body.reasonCode).toBe('radar-unavailable')
     expect(body.error).toContain('连不上 codexradar')
+    expect(body.diagnostic).toMatchObject({
+      endpoint: INSIGHTS_URL,
+      error: { name: 'Error' },
+    })
   })
 })

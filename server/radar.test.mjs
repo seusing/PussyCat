@@ -1,5 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createRadarService, DEFAULT_TTL_SECONDS, INSIGHTS_URL, MATRIX_URL, METRICS_URL } from './radar.mjs'
 
 const INSIGHTS = {
@@ -40,6 +43,11 @@ function stubFetch({ fail = null } = {}) {
     return { ok: true, status: 200, json: async () => body }
   }
   return { impl, calls }
+}
+
+function tempStateFile() {
+  const directory = mkdtempSync(join(tmpdir(), 'pussycat-radar-'))
+  return { directory, stateFile: join(directory, 'node-state', 'radar-snapshot.json') }
 }
 
 describe('createRadarService', () => {
@@ -154,5 +162,94 @@ describe('createRadarService', () => {
       expect(call.init.body).toBeUndefined()
       expect(JSON.stringify(call.init)).not.toContain('ookie')
     }
+  })
+
+  it('recovers on the next refresh after an upstream failure', async () => {
+    let clock = 1_000
+    let broken = false
+    const { impl } = stubFetch()
+    const service = createRadarService({
+      fetchImpl: async (...args) => {
+        if (broken) throw new Error('fetch failed')
+        return impl(...args)
+      },
+      now: () => clock,
+    })
+
+    await service.get()
+    broken = true
+    clock += (DEFAULT_TTL_SECONDS + 1) * 1000
+    expect((await service.get()).stale).toBe(true)
+
+    broken = false
+    const recovered = await service.get({ force: true })
+    expect(recovered.stale).toBe(false)
+    expect(recovered.cached).toBe(false)
+  })
+
+  it('returns a stale persisted snapshot when a cold start cannot reach upstream', async () => {
+    const { directory, stateFile } = tempStateFile()
+    try {
+      const first = createRadarService({ fetchImpl: stubFetch().impl, stateFile, now: () => 1_000 })
+      await first.get()
+      expect(JSON.parse(readFileSync(stateFile, 'utf8')).data.models).toHaveLength(1)
+
+      const restarted = createRadarService({
+        fetchImpl: async () => { throw new Error('fetch failed') },
+        stateFile,
+        now: () => 2_000,
+      })
+      const stale = await restarted.get()
+      expect(stale.stale).toBe(true)
+      expect(stale.models).toHaveLength(1)
+      expect(stale.fetchedAt).toBe(1_000)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('fails soft on a corrupt persisted snapshot', async () => {
+    const { directory, stateFile } = tempStateFile()
+    try {
+      const service = createRadarService({ fetchImpl: stubFetch().impl, stateFile })
+      await service.get()
+      writeFileSync(stateFile, '{not-json', 'utf8')
+      const fresh = await createRadarService({ fetchImpl: stubFetch().impl, stateFile }).get()
+      expect(fresh.stale).toBe(false)
+      expect(fresh.models).toHaveLength(1)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('retains a safe endpoint and error diagnostics for a single upstream failure', async () => {
+    let clock = 1_000
+    let brokenUrl = null
+    const matrixEndpoint = `${MATRIX_URL}?token=secret#fragment`
+    const { impl } = stubFetch()
+    const service = createRadarService({
+      urls: { matrix: matrixEndpoint },
+      fetchImpl: async (url, init) => {
+        if (url === brokenUrl) {
+          const error = new Error('proxy=https://user:secret@example.invalid')
+          error.name = 'TypeError'
+          error.code = 'ECONNRESET'
+          error.cause = new Error('connect https://user:secret@example.invalid')
+          throw error
+        }
+        return impl(url, init)
+      },
+      now: () => clock,
+    })
+
+    await service.get()
+    brokenUrl = matrixEndpoint
+    clock += (DEFAULT_TTL_SECONDS + 1) * 1000
+    const stale = await service.get()
+    expect(stale.diagnostic).toMatchObject({
+      endpoint: MATRIX_URL,
+      error: { name: 'TypeError', code: 'ECONNRESET', cause: { name: 'Error' } },
+    })
+    expect(JSON.stringify(stale)).not.toContain('secret')
   })
 })

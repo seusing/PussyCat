@@ -10,6 +10,7 @@ import { createHostServer } from './host-server.mjs'
 import { createCatalogService } from './catalog-service.mjs'
 import { buildExecutionPolicy, loadExecutionPolicy } from './policy.mjs'
 import { canonicalJson } from './policy-fingerprint.mjs'
+import { createWrssIntegration } from './wrss-integration.mjs'
 
 const origin = 'http://127.0.0.1:5173'
 // Task 6 起 `/start` 读的是 **decisionByKey**,不再是 allowedCommands。
@@ -77,6 +78,39 @@ function post(baseUrl, path, body, requestOrigin = origin) {
     body: JSON.stringify(body),
   })
 }
+
+describe('WeRSS loopback integration routes', () => {
+  it('returns saved/tested state through exact Host routes', async () => {
+    const wrssIntegration = createWrssIntegration({
+      fetchImpl: async () => ({ status: 200, body: null }),
+    })
+    const { baseUrl } = await setup({ wrssIntegration })
+
+    const saved = await post(baseUrl, '/vk/v1/integrations/wrss/config', {
+      base_url: 'http://127.0.0.1:8001',
+    })
+    expect(saved.status).toBe(200)
+    await expect(saved.json()).resolves.toMatchObject({ configured: true, state: 'saved' })
+
+    const tested = await post(baseUrl, '/vk/v1/integrations/wrss/test', {})
+    expect(tested.status).toBe(200)
+    await expect(tested.json()).resolves.toMatchObject({
+      configured: true, state: 'reachable', status_code: 200, protocol_verified: false,
+    })
+
+    const status = await fetch(`${baseUrl}/vk/v1/integrations/wrss`, { headers: { Origin: origin } })
+    await expect(status.json()).resolves.toMatchObject({ state: 'reachable' })
+  })
+
+  it('rejects remote and credential-bearing WeRSS URLs', async () => {
+    const { baseUrl } = await setup({ wrssIntegration: createWrssIntegration() })
+    for (const value of ['https://example.com', 'http://user:pass@127.0.0.1:8001']) {
+      const response = await post(baseUrl, '/vk/v1/integrations/wrss/config', { base_url: value })
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toMatchObject({ reasonCode: 'invalid-url' })
+    }
+  })
+})
 
 async function readSseUntilDone(response) {
   const reader = response.body.getReader()
@@ -442,7 +476,33 @@ describe('/catalog/effective', () => {
     }
   }
 
-  const effective = (baseUrl) => fetch(`${baseUrl}/catalog/effective`, { headers: { Origin: origin } })
+  const effective = (baseUrl, refresh = false) => fetch(
+    `${baseUrl}/catalog/effective${refresh ? '?refresh=1' : ''}`,
+    { headers: { Origin: origin } },
+  )
+
+  it('已有打包 seed 时首屏不刷新，显式 refresh=1 才刷新', async () => {
+    const snapshot = {
+      schemaVersion: 1, generatedAt: 1, opencliVersion: '9.9.9', source: 'bundled',
+      listSha256: 'x', manifestSha256: 'y', commands: [],
+    }
+    const policy = {
+      opencliVersion: '9.9.9', description: 'seeded', decisions: [],
+      decisionByKey: new Map(), allowedCommands: new Set(), deniedCommands: new Map(),
+    }
+    const state = { revision: 'seed-revision', snapshot, policy, generatedAt: 1 }
+    let refreshCalls = 0
+    const service = {
+      current: () => state,
+      refresh: async () => { refreshCalls += 1; return snapshot },
+      close: () => {},
+    }
+    const { baseUrl } = await setup({ catalogService: service })
+    expect((await effective(baseUrl)).status).toBe(200)
+    expect(refreshCalls).toBe(0)
+    expect((await effective(baseUrl, true)).status).toBe(200)
+    expect(refreshCalls).toBe(1)
+  })
 
   it('返回 envelope,snapshot 与 decisions 共享同一 revision', async () => {
     const { service } = liveCatalogService()
@@ -477,7 +537,7 @@ describe('/catalog/effective', () => {
     const { service } = liveCatalogService()
     const { baseUrl } = await setup({ catalogService: service })
     const a = await (await effective(baseUrl)).json()
-    const b = await (await effective(baseUrl)).json()
+    const b = await (await effective(baseUrl, true)).json()
     expect(b.revision).toBe(a.revision)
   })
 
@@ -488,7 +548,7 @@ describe('/catalog/effective', () => {
     const { service } = liveCatalogService()
     const { baseUrl } = await setup({ catalogService: service })
     const a = await (await effective(baseUrl)).json()
-    const b = await (await effective(baseUrl)).json()
+    const b = await (await effective(baseUrl, true)).json()
     expect(typeof a.policy.generatedAt).toBe('number')
     expect(b.policy.generatedAt).toBe(a.policy.generatedAt)
   })
@@ -499,7 +559,7 @@ describe('/catalog/effective', () => {
     const { baseUrl } = await setup({ catalogService: service })
     const before = await (await effective(baseUrl)).json()
     mutate()
-    const after = await (await effective(baseUrl)).json()
+    const after = await (await effective(baseUrl, true)).json()
     expect(after.revision).not.toBe(before.revision)
     expect(after.policy.generatedAt).not.toBe(before.policy.generatedAt)
   })
@@ -509,7 +569,7 @@ describe('/catalog/effective', () => {
     const { baseUrl } = await setup({ catalogService: service })
     const before = await (await effective(baseUrl)).json()
     mutate()
-    const after = await (await effective(baseUrl)).json()
+    const after = await (await effective(baseUrl, true)).json()
     // 先证明这确实是一次真变异,**且条数没变** —— 否则下面那条不等式可能只是
     // 「条数变了」撑起来的,摘要里取全文还是取 length 就无从区分。
     expect(after.snapshot.commands).toHaveLength(before.snapshot.commands.length)

@@ -163,10 +163,11 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
 
   const effort = screen.getByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
   expect(effort.value).toBe('')
-  expect(document.querySelectorAll('#vk-reasoning-efforts-cheap option')).toHaveLength(0)
+  expect(effort).toBeEnabled()
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
-  await waitFor(() => expect(document.querySelectorAll('#vk-reasoning-efforts-cheap option')).toHaveLength(5))
-  expect([...document.querySelectorAll('#vk-reasoning-efforts-cheap option')].map((option) => option.getAttribute('value')))
+  await waitFor(() => expect(effort).toBeEnabled())
+  const options = document.querySelectorAll('#vk-channel-reasoning-options-cheap option')
+  expect([...options].map((option) => (option as HTMLOptionElement).value))
     .toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   await userEvent.type(effort, 'max')
   await userEvent.click(screen.getByTestId('vk-provider-save'))
@@ -176,7 +177,25 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
   expect(body.channels[0].reasoning_effort).toBe('max')
 })
 
-test('接口未返回推理档位时不猜测，仍允许按服务商文档手动填写', async () => {
+test('中转站未返回推理档位时明确说明原因并保持自动', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers/test': { body: {
+      ok: true, reason_code: 'ok', message: 'ok', models: ['gpt-5.6-luna'],
+      reasoning_efforts: {}, normalization_notes: [],
+    } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
+
+  await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
+  await screen.findByTestId('vk-channel-reasoning-note-cheap')
+  expect(effort).toBeEnabled()
+  expect(effort.value).toBe('')
+  expect(screen.getByTestId('vk-channel-reasoning-note-cheap')).toHaveTextContent('中转站未返回可枚举档位')
+})
+
+test('接口未返回推理档位时仍允许按中转站文档手填', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
     'POST /vk/v1/providers': { body: SAVE_OK },
@@ -184,13 +203,13 @@ test('接口未返回推理档位时不猜测，仍允许按服务商文档手�
   render(<VkProviderForm baseUrl={BASE} />)
   const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
 
-  expect(document.querySelectorAll('#vk-reasoning-efforts-cheap option')).toHaveLength(0)
-  await userEvent.type(effort, 'provider-private-tier')
+  expect(effort).toBeEnabled()
+  await userEvent.type(effort, 'max')
   await userEvent.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
-  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string }[] }
-  expect(body.channels[0].reasoning_effort).toBe('provider-private-tier')
+  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string | null }[] }
+  expect(body.channels[0].reasoning_effort).toBe('max')
 })
 
 
@@ -308,6 +327,7 @@ test('两个角色各一个下拉,未指派时显示跟随默认', async () => {
   expect(screen.getByText('深度分析')).toBeInTheDocument()
   expect(screen.getByText('基础处理')).toBeInTheDocument()
   expect((screen.getByTestId('vk-role-deep_analysis') as HTMLSelectElement).value).toBe('')
+  expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('不会跨角色自动切换')
 })
 
 test('指派的角色随保存一起提交', async () => {

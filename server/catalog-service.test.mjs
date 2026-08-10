@@ -42,6 +42,22 @@ function emitSuccess(child, payload = LIST) {
 }
 
 describe('CatalogService', () => {
+  it('初始快照立即提供同源 policy，首屏不会 spawn opencli list', () => {
+    const initialSnapshot = {
+      schemaVersion: 1,
+      generatedAt: 123,
+      opencliVersion: '9.9.9',
+      source: 'bundled',
+      listSha256: 'list',
+      manifestSha256: 'manifest',
+      commands: JSON.parse(LIST),
+    }
+    const { service, spawnCalls } = setup({ initialSnapshot })
+    expect(spawnCalls).toHaveLength(0)
+    expect(service.current()).toMatchObject({ snapshot: initialSnapshot, generatedAt: 123 })
+    expect(service.current().policy.decisionByKey.get('a/ok')).toBeDefined()
+  })
+
   it('成功刷新:spawn 姿势正确 + snapshot/policy 原子生效', async () => {
     const { service, children, spawnCalls } = setup()
     const refreshing = service.refresh()

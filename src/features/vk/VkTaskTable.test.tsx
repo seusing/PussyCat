@@ -106,16 +106,30 @@ describe('VkTaskTable', () => {
     expect(onSelect).not.toHaveBeenCalled()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '任务 1 更多操作' }))
+    await user.click(screen.getByRole('button', { name: '任务 2 更多操作' }))
     const menu = screen.getByRole('menu')
     expect(onOpen).toHaveBeenCalledTimes(1)
     await user.click(within(menu).getByRole('menuitem', { name: '复制路径' }))
-    expect(onCopyPath).toHaveBeenCalledWith(JOBS[0])
+    expect(onCopyPath).toHaveBeenCalledWith(JOBS[1])
     expect(onSelect).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: '任务 1 更多操作' }))
+    await user.click(screen.getByRole('button', { name: '任务 2 更多操作' }))
     await user.click(screen.getByRole('menuitem', { name: '复制文件名' }))
-    expect(onCopyFileName).toHaveBeenCalledWith(JOBS[0])
+    expect(onCopyFileName).toHaveBeenCalledWith(JOBS[1])
+  })
+
+  it('disables output copy actions when a task has no successful output', async () => {
+    const user = userEvent.setup()
+    const onCopyPath = vi.fn()
+    const onCopyFileName = vi.fn()
+    render(<VkTaskTable {...makeProps({ onCopyPath, onCopyFileName })} />)
+
+    await user.click(screen.getByRole('button', { name: '任务 3 更多操作' }))
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getByRole('menuitem', { name: '复制路径' })).toBeDisabled()
+    expect(within(menu).getByRole('menuitem', { name: '复制文件名' })).toBeDisabled()
+    expect(onCopyPath).not.toHaveBeenCalled()
+    expect(onCopyFileName).not.toHaveBeenCalled()
   })
 
   it('toggles an individual notification without selecting its row', async () => {

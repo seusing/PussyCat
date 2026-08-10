@@ -22,6 +22,7 @@ export class CatalogServiceError extends Error {
 export function createCatalogService({
   opencliEntry,
   resolveManifest,
+  initialSnapshot,
   spawnImpl = spawn,
   readFileImpl = readFileSync,
   now = Date.now,
@@ -102,6 +103,21 @@ export function createCatalogService({
     } catch {
       return 'unknown'
     }
+  }
+
+  if (initialSnapshot) {
+    assertCatalogCommands(initialSnapshot.commands)
+    const policy = buildExecutionPolicy(initialSnapshot)
+    const revision = createHash('sha256').update(canonicalJson({
+      policySchemaVersion: POLICY_SCHEMA_VERSION,
+      opencliVersion: initialSnapshot.opencliVersion,
+      commands: initialSnapshot.commands,
+      decisions: policy.decisions,
+    })).digest('hex').slice(0, 16)
+    const generatedAt = Number.isFinite(initialSnapshot.generatedAt)
+      ? initialSnapshot.generatedAt
+      : now()
+    state = { snapshot: initialSnapshot, policy, revision, generatedAt }
   }
 
   const doRefresh = async () => {

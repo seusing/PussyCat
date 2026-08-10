@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { InlineLoader } from 'generative-loaders'
 import { Bell, BellOff, ChevronDown, Copy, FileText, Trash2 } from 'lucide-react'
 import type { VkJobRow } from '../../host/vkClient'
+import 'generative-loaders/styles.css'
 import './VkTaskTable.css'
 
 export type VkTaskNotifications = Readonly<Record<string, boolean>>
 
 export interface VkTaskTableProps {
   jobs: VkJobRow[]
+  loading?: boolean
   selectedJobId?: string
   notifications: VkTaskNotifications
   onSelect: (row: VkJobRow) => void
@@ -24,6 +27,7 @@ type NormalizedStatus = 'failed' | 'running' | 'rerunning' | 'stopping' | 'inter
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
 const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
 const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted', 'completed_after_cancel_request'])
+const OUTPUT_STATUSES = new Set(['done', 'partial'])
 
 function normalizeStatus(row: VkJobRow): NormalizedStatus {
   const value = row.status.trim().toLowerCase()
@@ -77,6 +81,7 @@ function stopRowSelection(event: MouseEvent<HTMLElement>): void {
 
 export function VkTaskTable({
   jobs,
+  loading = false,
   selectedJobId,
   notifications,
   onSelect,
@@ -96,7 +101,7 @@ export function VkTaskTable({
   useEffect(() => {
     if (!menuJobId) return
     const focusId = window.requestAnimationFrame(() => {
-      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
     })
     const dismiss = (event: globalThis.PointerEvent) => {
       const target = event.target as Node
@@ -155,7 +160,7 @@ export function VkTaskTable({
   }
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
     const current = items.indexOf(document.activeElement as HTMLButtonElement)
     let next = current
     if (event.key === 'ArrowDown') next = Math.min(items.length - 1, current + 1)
@@ -175,8 +180,9 @@ export function VkTaskTable({
   }
 
   return (
-    <div className="vk-task-table-shell">
-      <table className="vk-task-table">
+    <div className="vk-task-table-shell" aria-busy={loading}>
+      <div className="vk-task-table-viewport">
+        <table className="vk-task-table">
         <thead>
           <tr>
             <th scope="col">任务编号</th>
@@ -196,6 +202,7 @@ export function VkTaskTable({
             const taskNumber = row.taskNumber ?? index + 1
             const notificationEnabled = notifications[row.job_id] ?? false
             const status = normalizeStatus(row)
+            const canCopyOutput = OUTPUT_STATUSES.has(row.status.trim().toLowerCase())
             const selected = row.job_id === selectedJobId
             const menuOpen = row.job_id === menuJobId
             return (
@@ -285,11 +292,11 @@ export function VkTaskTable({
                         onClick={stopRowSelection}
                         onKeyDown={handleMenuKeyDown}
                       >
-                        <button type="button" role="menuitem" tabIndex={-1} onClick={() => runMenuAction(() => onCopyPath(row))}>
+                        <button type="button" role="menuitem" tabIndex={-1} disabled={!canCopyOutput} aria-disabled={!canCopyOutput} onClick={() => runMenuAction(() => onCopyPath(row))}>
                           <Copy size={15} aria-hidden="true" />
                           <span>复制路径</span>
                         </button>
-                        <button type="button" role="menuitem" tabIndex={-1} onClick={() => runMenuAction(() => onCopyFileName(row))}>
+                        <button type="button" role="menuitem" tabIndex={-1} disabled={!canCopyOutput} aria-disabled={!canCopyOutput} onClick={() => runMenuAction(() => onCopyFileName(row))}>
                           <FileText size={15} aria-hidden="true" />
                           <span>复制文件名</span>
                         </button>
@@ -315,7 +322,15 @@ export function VkTaskTable({
             )
           })}
         </tbody>
-      </table>
+        </table>
+      </div>
+
+      {loading && (
+        <div className="vk-task-table-loading" role="status" aria-live="polite">
+          <InlineLoader variant="matrix" size={26} color="currentColor" label="正在刷新任务" />
+          <span>正在读取最新任务…</span>
+        </div>
+      )}
 
       {pendingDelete && (
         <div className="vk-task-alert-backdrop" onMouseDown={(event) => event.stopPropagation()}>

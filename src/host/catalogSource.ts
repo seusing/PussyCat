@@ -3,9 +3,10 @@ import type { CatalogSnapshot } from '../data/types'
 import type { PolicyDecision } from '../data/policy'
 
 export type CatalogLoadResult = { snapshot: CatalogSnapshot; degraded?: string; decisions?: PolicyDecision[] }
+export type CatalogLoadOptions = { refresh?: boolean }
 export type CatalogSource = {
   kind: 'snapshot' | 'live'
-  load(): Promise<CatalogLoadResult>
+  load(options?: CatalogLoadOptions): Promise<CatalogLoadResult>
 }
 
 export function snapshotCatalogSource(fetchImpl?: typeof fetch): CatalogSource {
@@ -27,10 +28,11 @@ export function liveCatalogSource(baseUrl: string, fetchImpl?: typeof fetch): Ca
   const base = baseUrl.replace(/\/$/, '')
   return {
     kind: 'live',
-    async load() {
+    async load(options = {}) {
       const f = fetchImpl ?? fetch   // 调用时才解析全局,同上
       try {
-        const res = await f(`${base}/catalog/effective`)
+        const suffix = options.refresh ? '?refresh=1' : ''
+        const res = await f(`${base}/catalog/effective${suffix}`)
         if (!res.ok) throw new CatalogError(`刷新目录失败：HTTP ${res.status}`)
         const body = await res.json()
         const snapshot = assertSnapshot(body?.snapshot)

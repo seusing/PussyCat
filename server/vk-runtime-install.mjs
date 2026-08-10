@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { scrubSidecarText } from './vk-sidecar.mjs'
 import { writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
+import { normalizeRuntimeExtras } from './vk-capability-packs.mjs'
 
 const MIN_FREE_BYTES = 1 * 1024 ** 3
 const HEAVY_FREE_BYTES = 5 * 1024 ** 3
@@ -52,10 +53,20 @@ export async function installVkRuntime({
   version,
   python = '3.12',
   extras = [],
+  // Capability upgrades install into a new extras-specific directory.  Keep
+  // this flag explicit so the legacy rebuild path can retain its old cleanup
+  // behaviour while upgrades never remove the active runtime up front.
+  preserveActive = false,
   log = () => {},
   spawnImpl = spawn,
   fetchImpl = fetch,
 }) {
+  let normalizedExtras
+  try {
+    normalizedExtras = normalizeRuntimeExtras(extras)
+  } catch (error) {
+    throw new VkRuntimeInstallError(error.reasonCode ?? 'invalid-runtime-extra', error.message)
+  }
   const resolvedHome = resolve(home)
   const manifestFile = manifestPath ?? (bundleDir ? join(bundleDir, 'runtime-manifest.json') : undefined)
   if (!manifestFile || !existsSync(manifestFile)) {
@@ -103,14 +114,24 @@ export async function installVkRuntime({
   }
   const stats = statfsSync(resolvedHome)
   const freeBytes = stats.bavail * stats.bsize
-  const required = extras.includes('media-asr') ? HEAVY_FREE_BYTES : MIN_FREE_BYTES
+  const required = normalizedExtras.includes('media-asr') ? HEAVY_FREE_BYTES : MIN_FREE_BYTES
   log(`磁盘预检 free=${(freeBytes / 1024 ** 3).toFixed(2)}GiB required>=${(required / 1024 ** 3).toFixed(2)}GiB`)
   if (freeBytes < required) {
     throw new VkRuntimeInstallError('disk', '磁盘可用空间不足')
   }
 
-  const versionLabel = version ?? `${(manifest?.wheel?.name ?? 'wheel').replace(/\.whl$/, '')}+${manifest?.wheel?.sha256?.slice(0, 8) ?? 'unknown'}`
+  const baseVersionLabel = version ?? `${(manifest?.wheel?.name ?? 'wheel').replace(/\.whl$/, '')}+${manifest?.wheel?.sha256?.slice(0, 8) ?? 'unknown'}`
+  // The ordered extras identity is part of the directory name.  This keeps a
+  // media-asr install and a later precision-transcript upgrade isolated and
+  // makes a failed upgrade unable to damage the old active directory.
+  const extrasHash = normalizedExtras.length
+    ? createHash('sha256').update(JSON.stringify(normalizedExtras)).digest('hex').slice(0, 12)
+    : null
+  const versionLabel = extrasHash ? `${baseVersionLabel}+extras-${extrasHash}` : baseVersionLabel
   const versionDir = join(resolvedHome, 'runtime', 'versions', versionLabel)
+  // A normal explicit rebuild intentionally replaces its target directory.
+  // Capability upgrades use a different extras-hashed target, so cleaning a
+  // stale partial target cannot remove the old active runtime.
   if (existsSync(versionDir)) rmSync(versionDir, { recursive: true, force: true })
 
   const runStep = (step, command, argv) => new Promise((resolveStep, rejectStep) => {
@@ -143,8 +164,8 @@ export async function installVkRuntime({
   // —— venv + 安装(显式 uv;uv 输出=真实下载/初始化阶段,逐行透传 log)——
   await runStep('venv', uv, ['venv', '--python', python, versionDir])
   const pythonExe = join(versionDir, 'Scripts', 'python.exe')
-  const spec = extras.length
-    ? `video-knowledge[${extras.join(',')}] @ file:///${wheel.replace(/\\/g, '/')}`
+  const spec = normalizedExtras.length
+    ? `video-knowledge[${normalizedExtras.join(',')}] @ file:///${wheel.replace(/\\/g, '/')}`
     : wheel
   await runStep('install', uv, ['pip', 'install', '--link-mode', 'copy', '--python', pythonExe, spec])
 
@@ -213,7 +234,7 @@ export async function installVkRuntime({
     wheelSha256: manifest?.wheel?.sha256,
     uvSha256: manifest?.uv?.sha256,
     installedAt: new Date().toISOString(),
-    extras,
+    extras: normalizedExtras,
     apiVersion: smokeMeta?.api_version ?? null,
     schemaVersion: smokeMeta?.processing_request_schema_version ?? null,
     capabilities: Array.isArray(smokeMeta?.capabilities) ? smokeMeta.capabilities : [],

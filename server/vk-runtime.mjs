@@ -8,6 +8,9 @@ import {
   listOwnedRuntimeReceipts, resolveActiveRuntime, writeActiveRuntime, writeRuntimeReceipt,
 } from './vk-runtime-resolver.mjs'
 import { discoverVkRuntimePaths, probeVkRuntime } from './vk-runtime-probe.mjs'
+import {
+  RUNTIME_EXTRA_ORDER, getCapabilityPack, mergeRuntimeExtras, normalizeRuntimeExtras, projectCapabilityPacks,
+} from './vk-capability-packs.mjs'
 
 const LOG_TAIL_LINES = 60
 
@@ -26,6 +29,7 @@ export class VkRuntimeManager {
   #summary = null
   #log = []
   #installing = null
+  #installingExtras = []
   #adopting = false
 
   constructor({
@@ -56,9 +60,30 @@ export class VkRuntimeManager {
     if (this.#installing) {
       return {
         state: 'installing',
-        version: null,
+        version: active ? String(active.version ?? 'unknown') : null,
+        source: active?.source ?? null,
+        pythonPath: active?.pythonPath ?? null,
+        capabilities: Array.isArray(active?.capabilities) ? active.capabilities : [],
+        extras: Array.isArray(active?.extras) ? active.extras : [],
+        installingExtras: [...this.#installingExtras],
         reasonCode: null,
         summary: '正在安装解析引擎(真实下载/初始化输出见 log)',
+        log: this.#log.slice(-LOG_TAIL_LINES),
+        checkedAt: this.now(),
+      }
+    }
+    // During an upgrade the old active receipt remains valid. Report the
+    // failure while still projecting its version/extras for rollback callers.
+    if (this.#state === 'failed') {
+      return {
+        state: 'failed',
+        version: active ? String(active.version ?? 'unknown') : null,
+        source: active?.source ?? null,
+        pythonPath: active?.pythonPath ?? null,
+        capabilities: Array.isArray(active?.capabilities) ? active.capabilities : [],
+        extras: Array.isArray(active?.extras) ? active.extras : [],
+        reasonCode: this.#reasonCode,
+        summary: this.#summary ?? '安装失败',
         log: this.#log.slice(-LOG_TAIL_LINES),
         checkedAt: this.now(),
       }
@@ -106,6 +131,20 @@ export class VkRuntimeManager {
       log: this.#log.slice(-LOG_TAIL_LINES),
       checkedAt: this.now(),
     }
+  }
+
+  capabilityPacks() {
+    const status = this.status()
+    const active = this.activeRuntime()
+    const bundleAvailable = !!this.bundleDir
+      && existsSync(join(this.bundleDir, 'runtime-manifest.json'))
+    return projectCapabilityPacks({
+      activeRuntime: active,
+      bundleAvailable,
+      installingExtras: this.#installingExtras,
+      installing: status.state === 'installing',
+      checkedAt: this.now(),
+    })
   }
 
   async detect() {
@@ -175,13 +214,43 @@ export class VkRuntimeManager {
    * `beforeRebuild` 与 adopt 的 beforeActivate 同款,用来先停 sidecar:重建要删掉
    * 版本目录,而 Windows 上正在跑的 python.exe 会把目录锁住,不停就是 EBUSY。
    */
-  async install({ rebuild = false, beforeRebuild = async () => {} } = {}) {
+  async install({
+    rebuild = false,
+    beforeRebuild = async () => {},
+    extras = [],
+    afterActivate = async () => {},
+    preserveActive = false,
+  } = {}) {
     if (this.#adopting) {
       throw new VkRuntimeError(409, 'runtime-busy', '正在接管已有解析环境，请完成后再安装')
     }
-    if (this.#installing) return this.#installing
+    let requestedExtras
+    try {
+      requestedExtras = normalizeRuntimeExtras(extras)
+    } catch (error) {
+      throw new VkRuntimeError(400, error.reasonCode ?? 'invalid-runtime-extra', error.message)
+    }
+    const active = this.activeRuntime()
+    const currentExtras = normalizeRuntimeExtras(
+      Array.isArray(active?.extras)
+        ? active.extras.filter((extra) => typeof extra === 'string' && RUNTIME_EXTRA_ORDER.includes(extra))
+        : [],
+    )
+    const cumulativeExtras = mergeRuntimeExtras(currentExtras, requestedExtras)
+    const capabilityInstall = requestedExtras.length > 0
+    if (this.#installing) {
+      // Preserve single-flight for duplicate calls, but do not return a
+      // promise for a different package request.
+      if (!cumulativeExtras.every((extra) => this.#installingExtras.includes(extra))) {
+        throw new VkRuntimeError(409, 'runtime-busy', '能力包正在安装，请等待当前安装完成')
+      }
+      return this.#installing
+    }
     const snapshot = this.status()
-    if (snapshot.state === 'installed') {
+    if (capabilityInstall && requestedExtras.length > 0) {
+      const missing = cumulativeExtras.filter((extra) => !currentExtras.includes(extra))
+      if (!missing.length && snapshot.state === 'installed') return snapshot
+    } else if (snapshot.state === 'installed') {
       if (!rebuild) return snapshot
       await beforeRebuild()
     }
@@ -193,17 +262,30 @@ export class VkRuntimeManager {
     }
     this.#log = []
     this.#state = 'installing'
+    this.#installingExtras = cumulativeExtras
     this.#installing = this.installImpl({
       home: this.home,
       bundleDir: this.bundleDir,
+      extras: cumulativeExtras,
+      // Explicit rebuild keeps legacy cleanup semantics. Capability upgrades
+      // use a fresh extras-hashed directory and retain old active.
+      preserveActive: preserveActive || capabilityInstall,
       log: (line) => {
         this.#log.push(String(line))
         if (this.#log.length > 500) this.#log.shift()
       },
-    }).then((result) => {
+    }).then(async (result) => {
       this.#state = 'installed'
       this.#reasonCode = null
       this.#summary = null
+      try {
+        await afterActivate()
+      } catch (error) {
+        // active.json already points at the new verified runtime. A sidecar
+        // stop failure must not turn that successful activation into a false
+        // install failure; the next request can still retry stop/start.
+        this.#log.push(`after-activate: ${String(error?.message ?? error)}`)
+      }
       return result
     }).catch((error) => {
       this.#state = 'failed'
@@ -213,7 +295,28 @@ export class VkRuntimeManager {
       throw error
     }).finally(() => {
       this.#installing = null
+      this.#installingExtras = []
     })
     return this.#installing
+  }
+
+  async installCapabilityPack(packId, { afterActivate = async () => {} } = {}) {
+    const pack = getCapabilityPack(packId)
+    const active = this.activeRuntime()
+    const currentExtras = normalizeRuntimeExtras(
+      Array.isArray(active?.extras)
+        ? active.extras.filter((extra) => typeof extra === 'string' && RUNTIME_EXTRA_ORDER.includes(extra))
+        : [],
+    )
+    const cumulativeExtras = mergeRuntimeExtras(currentExtras, pack.extras)
+    const status = this.status()
+    if (!cumulativeExtras.some((extra) => !currentExtras.includes(extra)) && status.state === 'installed') {
+      return status
+    }
+    return this.install({
+      extras: pack.extras,
+      preserveActive: true,
+      afterActivate,
+    }).then(() => this.status())
   }
 }

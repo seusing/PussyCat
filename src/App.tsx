@@ -220,7 +220,7 @@ export default function App({
   const onRefreshCatalog = () => {
     const gen = ++loadGen.current
     setRefresh((r) => ({ ...r, state: 'refreshing', error: undefined, degraded: undefined }))
-    catalogSource.load()
+    catalogSource.load({ refresh: true })
       .then(({ snapshot, degraded, decisions }) => {
         if (gen !== loadGen.current) return
         useAppStore.getState().setCommands(snapshot.commands, decisions)
@@ -241,7 +241,7 @@ export default function App({
         error: { summary: '策略已更新，请重新确认后再试', detail: err.detail },
       })
       useAppStore.getState().revokeAcknowledgementCommand(cmd.command)   // 作废本地该条陈旧确认
-      catalogSource.load().then(({ snapshot, decisions }) => {
+      catalogSource.load({ refresh: true }).then(({ snapshot, decisions }) => {
         if (useAppStore.getState().selected?.command !== cmd.command) return   // 用户已切走,不弹陈旧对话框
         useAppStore.getState().setCommands(snapshot.commands, decisions)
         const fresh = decisions?.find((d) => d.commandKey === cmd.command)

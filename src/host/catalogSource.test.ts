@@ -29,6 +29,14 @@ test('live source: GET {base}/catalog/effective 成功,无 degraded,decisions �
   expect(gotDecisions).toEqual(decisions)
 })
 
+test('live source: 用户刷新时显式请求 refresh=1', async () => {
+  const fetchImpl = vi.fn().mockResolvedValue(okJson({
+    revision: 'r1', snapshot: SNAP, policy: { schemaVersion: 1, generatedAt: 1, decisions: [] },
+  }))
+  await liveCatalogSource('http://127.0.0.1:9999', fetchImpl as unknown as typeof fetch).load({ refresh: true })
+  expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:9999/catalog/effective?refresh=1')
+})
+
 test('live 失败 → 降级 snapshot 并带 degraded 原因,且不下发 decisions(不得编造判决,I-P1)', async () => {
   const fetchImpl = vi.fn()
     .mockRejectedValueOnce(new Error('ECONNREFUSED'))         // live

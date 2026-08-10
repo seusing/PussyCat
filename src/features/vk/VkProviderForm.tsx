@@ -112,6 +112,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const patchModel = (draft: Draft, model_id: string) =>
     patch(draft.id, {
       model_id,
+      ...(model_id === draft.model_id ? {} : { reasoning_effort: '' }),
       ...(draft.api_style_touched ? {} : { api_style: inferApiStyle(model_id) }),
     })
 
@@ -336,22 +337,28 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                     <span>推理强度</span>
                     <input
                       data-testid={`vk-channel-reasoning-${draft.id}`}
+                      list={`vk-channel-reasoning-options-${draft.id}`}
                       className="rounded-lg px-2 py-1.5 text-xs outline-none"
                       style={fieldStyle}
-                      list={`vk-reasoning-efforts-${draft.id}`}
                       value={draft.reasoning_effort}
+                      disabled={busy !== null}
                       placeholder="自动（跟随模型）"
                       title={availableReasoningEfforts.length
-                        ? '可选档位来自本次接口请求'
-                        : '接口未返回可选档位；留空为自动，也可手动填写服务商支持的值'}
+                        ? '下拉建议来自本次接口请求，也可以输入接口支持的其他值'
+                        : '接口未返回可枚举档位；可保持自动，或输入中转站支持的值'}
                       onChange={(e) => patch(draft.id, { reasoning_effort: e.target.value })}
                     />
-                    <datalist id={`vk-reasoning-efforts-${draft.id}`}>
+                    <datalist id={`vk-channel-reasoning-options-${draft.id}`}>
                       {availableReasoningEfforts.map((effort) => (
-                        <option key={effort} value={effort} />
+                        <option key={effort} value={effort}>{effort}</option>
                       ))}
                     </datalist>
                   </label>
+                  {result?.ok && availableReasoningEfforts.length === 0 && (
+                    <span data-testid={`vk-channel-reasoning-note-${draft.id}`} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                      中转站未返回可枚举档位；可保持自动，或输入其支持的值
+                    </span>
+                  )}
                   <button type="button" data-testid={`vk-channel-test-${draft.id}`}
                     onClick={() => { void runTest(draft) }} disabled={busy !== null}
                     className={outlineButton} style={outlineStyle}>
@@ -410,6 +417,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{settings.role_hints[role]}</span>
             </div>
           ))}
+          <div data-testid="vk-role-routing-note" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            每个角色只使用你指定的通道；通道失败时不会跨角色自动切换。需要改用其他模型时，请先修改对应角色并保存，再重试任务。
+          </div>
         </div>
       )}
 
