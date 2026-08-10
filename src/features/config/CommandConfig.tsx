@@ -78,8 +78,8 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
 
   return (
     <div>
-      <div className="mb-1 flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-        <span>{selected.site}</span>
+      <div data-testid="command-header" className="mb-4 flex flex-wrap items-center gap-2">
+        <h2 className="shrink-0 text-lg font-semibold">{selected.name}</h2>
         <MicroButton
           variant="save"
           data-testid="fav-site"
@@ -90,10 +90,6 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
         >
           {isSiteFavorited(preferences, selected.site) ? '已保存' : '稍后查看'}
         </MicroButton>
-        <span>/ {selected.name}</span>
-      </div>
-      <div className="mb-1 flex items-center gap-2">
-        <h2 className="text-lg font-semibold">{selected.name}</h2>
         <MicroButton
           variant="favorite"
           data-testid="fav-command"
@@ -106,9 +102,11 @@ export function CommandConfig({ onRun, registerSubmit }: { onRun: () => void; re
         </MicroButton>
         <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
         {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
+        {/* 说明和标题控件共用一行空间，窄窗口时自然换行，避免再占一整段底部高度。 */}
+        <span data-testid="command-description" className="min-w-0 text-sm" style={{ flex: '1 1 16rem', color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
+          {commandDescription(selected.command, selected.description)}
+        </span>
       </div>
-      {/* 试点八条用中文精简说明,其余回落 manifest 原文(见 data/zhCopy.ts:不做机翻) */}
-      <p className="mb-4" style={{ color: 'var(--color-fg-dim)' }}>{commandDescription(selected.command, selected.description)}</p>
 
       <div className="mb-4">
         {selected.args.map((arg) => (

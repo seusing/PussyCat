@@ -23,7 +23,7 @@ type NormalizedStatus = 'failed' | 'running' | 'rerunning' | 'stopping' | 'inter
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
 const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
-const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted'])
+const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted', 'completed_after_cancel_request'])
 
 function normalizeStatus(row: VkJobRow): NormalizedStatus {
   const value = row.status.trim().toLowerCase()

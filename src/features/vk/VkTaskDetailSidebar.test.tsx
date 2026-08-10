@@ -144,4 +144,23 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByLabelText('任务重跑中')).toHaveAttribute('data-speed', '0.9')
     expect(screen.getByRole('button', { name: '停止任务' })).toBeInTheDocument()
   })
+
+  it('treats late completion after a cancel request as interrupted and hides outputs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/cancelled-late')) return new Response(JSON.stringify({
+        job_id: 'cancelled-late', kind: 'request', status: 'completed_after_cancel_request',
+        submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:01:00Z',
+        parent_job_id: null, cache_bypass: false,
+        request: { source: 'https://example.com/v', preset: 'quick-summary' },
+        outputs: { note_path: 'out-note', request_path: null, audit_path: null, product_artifacts: [] },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+    render(<VkTaskDetailSidebar jobId="cancelled-late" baseUrl={BASE} onClose={() => {}} />)
+    expect(await screen.findByText('已中断')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '再次提交任务' })).toBeInTheDocument()
+    expect(screen.queryByText('解析结果')).not.toBeInTheDocument()
+  })
 })

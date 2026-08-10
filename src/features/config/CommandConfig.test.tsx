@@ -7,7 +7,7 @@ import type { CommandManifest } from '../../data/types'
 
 const cmd: CommandManifest = {
   command: 'x/go', site: 'x', name: 'go', description: '示例', access: 'read', browser: false,
-  args: [{ name: 'url', type: 'str', required: true }],
+  args: [{ name: 'url', type: 'str', required: true, help: '请输入目标地址' }],
 }
 // 刻意与 cmd 共用字段名 url（但非必填）：若 CommandConfig 切命令时不清 errors，
 // 旧的 errors.url 残留会让 DynamicField 对 cmdB 的 url 字段也错误地显示 error-url——
@@ -61,6 +61,28 @@ test('切换命令后旧字段错误不残留', async () => {
   expect(screen.getByTestId('error-url')).toBeInTheDocument()
   act(() => { useAppStore.getState().selectCommand(cmdB) })          // 切到 cmdB（非 DOM 事件触发的 store 直改，手动 act 包裹）
   await waitFor(() => expect(screen.queryByTestId('error-url')).not.toBeInTheDocument())
+})
+
+test('命令标题区域包含收藏、标签和说明且不再渲染旧面包屑', () => {
+  render(<CommandConfig onRun={() => {}} />)
+  const header = screen.getByTestId('command-header')
+  expect(screen.queryByTestId('command-breadcrumb')).not.toBeInTheDocument()
+  expect(screen.queryByText('/ go')).not.toBeInTheDocument()
+  expect(within(header).getByTestId('fav-site')).toBeInTheDocument()
+  expect(within(header).getByTestId('fav-command')).toBeInTheDocument()
+  expect(within(header).getByText('read')).toBeInTheDocument()
+  expect(within(header).getByTestId('command-description')).toHaveTextContent('示例')
+})
+
+test('参数帮助与参数名同在标签头且输入下不再单独显示帮助', () => {
+  render(<CommandConfig onRun={() => {}} />)
+  const field = screen.getByTestId('field-url')
+  const label = field.closest('label')
+  expect(label).not.toBeNull()
+  const fieldLabel = within(label as HTMLElement).getByTestId('field-label-url')
+  expect(within(fieldLabel).getByText('url')).toBeInTheDocument()
+  expect(within(fieldLabel).getByTestId('field-help-url')).toHaveTextContent('请输入目标地址')
+  expect(field.nextElementSibling?.getAttribute('data-testid')).not.toBe('field-help-url')
 })
 
 import { emptyPreferences } from '../../data/preferences'

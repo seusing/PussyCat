@@ -13,7 +13,10 @@ export function DynamicField({ arg, value, error, onChange, commandKey }: {
   const style = { background: 'var(--color-canvas)', border: `1px solid ${error ? 'var(--color-danger)' : 'var(--color-line)'}`, color: 'var(--color-fg)' }
   return (
     <label className="mb-3 block">
-      <span className="mb-1 block text-sm">{arg.name}{arg.required && <span style={{ color: 'var(--color-danger)' }}> *</span>}</span>
+      <span data-testid={`field-label-${arg.name}`} className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+        <span>{arg.name}{arg.required && <span style={{ color: 'var(--color-danger)' }}> *</span>}</span>
+        {help && <span data-testid={`field-help-${arg.name}`} className="min-w-0 text-xs" style={{ color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>{help}</span>}
+      </span>
       {kind === 'switch' ? (
         <input data-testid={`field-${arg.name}`} type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
       ) : kind === 'select' ? (
@@ -31,7 +34,6 @@ export function DynamicField({ arg, value, error, onChange, commandKey }: {
           value={String(value ?? '')}
           onChange={(e) => onChange(kind === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value)} />
       )}
-      {help && <span className="mt-1 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>{help}</span>}
       {error && <span data-testid={`error-${arg.name}`} className="mt-1 block text-xs" style={{ color: 'var(--color-danger)' }}>{error}</span>}
     </label>
   )

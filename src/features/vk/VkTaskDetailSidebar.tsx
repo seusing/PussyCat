@@ -16,8 +16,8 @@ import './VkTaskDetailSidebar.css'
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
 const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
-const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted'])
-const SUCCESS_STATUSES = new Set(['done', 'partial', 'completed_after_cancel_request'])
+const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted', 'completed_after_cancel_request'])
+const SUCCESS_STATUSES = new Set(['done', 'partial'])
 
 function detailError(error: unknown): string {
   if (error instanceof HostRequestError) return error.summary
@@ -101,16 +101,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
 
   const sources = useMemo(() => sourceItems(job), [job])
   const active = !!job && ACTIVE_STATUSES.has(job.status)
-  const failed = !!job && FAILED_STATUSES.has(job.status)
   const interrupted = !!job && INTERRUPTED_STATUSES.has(job.status)
   const completedSuccessfully = !!job && SUCCESS_STATUSES.has(job.status)
+  const failed = !!job && (FAILED_STATUSES.has(job.status) || (!active && !interrupted && !completedSuccessfully))
   const stopping = job?.status === 'cancel_requested'
   const rerunning = active && !!job && (!!job.parent_job_id || isVkJobRerun(job.job_id))
   const total = job
     ? Math.max(1, numericProgress(job.progress?.total_links) ?? (sources.length || 1))
     : 1
   const completed = job
-    ? Math.min(total, numericProgress(job.progress?.completed_links) ?? (active ? 0 : failed ? 0 : total))
+    ? Math.min(total, numericProgress(job.progress?.completed_links) ?? (active ? 0 : completedSuccessfully ? total : 0))
     : 0
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0
 
@@ -287,7 +287,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             )}
           </div>
 
-          {primaryOutputs(job).length > 0 && (
+          {completedSuccessfully && primaryOutputs(job).length > 0 && (
             <div className="vk-task-detail-section">
               <h3>解析结果</h3>
               <div className="vk-task-output-list">

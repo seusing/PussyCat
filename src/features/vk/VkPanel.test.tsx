@@ -294,7 +294,7 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('video-source-card-bilibili')).toHaveAttribute('data-count', '1')
   })
 
-  it('previews from the submit button, opens cost confirmation, then submits the original projection', async () => {
+  it('previews and submits directly from the submit button without a cost dialog', async () => {
     const user = userEvent.setup()
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
@@ -306,32 +306,24 @@ describe('VkPanel', () => {
     await user.type(screen.getByTestId('vk-source'), 'https://example.com/v')
     await user.type(screen.getByTestId('vk-max-cost'), '1.5')
     await user.click(screen.getByTestId('vk-submit-button'))
-    await screen.findByTestId('vk-cost-dialog')
     const previewCall = calls.find((item) => item.key === 'POST /vk/v1/preview')
     expect(previewCall).toBeDefined()
     const projection = JSON.parse(String(previewCall!.init!.body))
     expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5 })
-    expect(screen.getByTestId('vk-cost-dialog').textContent).toContain('估算不是承诺')
-    await user.click(screen.getByTestId('vk-cost-confirm'))
-
     await waitFor(() => {
       expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(true)
     })
     const submit = calls.find((item) => item.key === 'POST /vk/v1/jobs')
     const payload = JSON.parse(String(submit!.init!.body))
-    // 1.3.0:提交走投影(原始 source 只在执行通道),不回投 preview 的脱敏回显
-    expect(payload.request).toBeUndefined()
     expect(payload).toMatchObject({
-      source: 'https://example.com/v',
-      preset: 'quick-summary',
-      max_cost_cny: 1.5,
+      request: { source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5 },
     })
     expect(payload.idempotency_key).toMatch(/[0-9a-f-]{36}/)
     expect(payload.client_job_id).toMatch(/[0-9a-f-]{36}/)
-    await waitFor(() => expect(screen.queryByTestId('vk-cost-dialog')).toBeNull())
+    expect(screen.queryByTestId('vk-cost-dialog')).toBeNull()
   })
 
-  it('submits each imported link as its own durable job after one confirmation', async () => {
+  it('submits each imported link as its own durable job after inline previews', async () => {
     const user = userEvent.setup()
     const first = 'https://youtu.be/video-1'
     const second = 'https://www.bilibili.com/video/BV1'
@@ -344,15 +336,12 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), `${first}\n${second}`)
     await user.click(screen.getByTestId('vk-submit-button'))
-    await screen.findByTestId('vk-cost-dialog')
-    await user.click(screen.getByTestId('vk-cost-confirm'))
-
     await waitFor(() => {
       expect(calls.filter((item) => item.key === 'POST /vk/v1/jobs')).toHaveLength(2)
     })
     const sources = calls
       .filter((item) => item.key === 'POST /vk/v1/jobs')
-      .map((item) => JSON.parse(String(item.init?.body)).source)
+      .map((item) => JSON.parse(String(item.init?.body)).request.source)
     expect(sources).toEqual([first, second])
   })
 
@@ -367,9 +356,6 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), 'https://youtu.be/video-1')
     await user.click(screen.getByTestId('vk-submit-button'))
-    await screen.findByTestId('vk-cost-dialog')
-    await user.click(screen.getByTestId('vk-cost-confirm'))
-
     await waitFor(() => expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(true))
     expect(calls.some((item) => item.key === 'GET /vk/v1/diagnostic')).toBe(false)
   })
@@ -441,7 +427,31 @@ describe('VkPanel', () => {
     await waitFor(() => expect(numbers()).toEqual(['4', '3', '1']))
   })
 
-  it('lists jobs with real status/elapsed and surfaces budget_stop plus outputs in the detail', async () => {
+  it('folds an active internal run into its user request row', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': {
+        body: [
+          {
+            job_id: 'request-1', kind: 'request', status: 'running',
+            submitted_at: '2026-08-09T09:26:39.861Z', finished_at: null,
+            parent_job_id: null, cache_bypass: false,
+          },
+          {
+            job_id: 'run:run-1', kind: 'run', status: 'running', run_id: 'run-1',
+            submitted_at: '2026-08-09T09:26:39.900Z', finished_at: null,
+            parent_job_id: null, cache_bypass: false,
+          },
+        ],
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getAllByTestId('vk-job-row')).toHaveLength(1))
+    expect(screen.getByTestId('vk-job-open-request-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-job-open-run:run-1')).not.toBeInTheDocument()
+  })
+
+  it('lists failed jobs with real status/elapsed and keeps diagnostics without exposing outputs', async () => {
     const user = userEvent.setup()
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
@@ -474,13 +484,13 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-job-row').textContent).toContain('失败')
     expect(screen.getByTestId('vk-job-row').textContent).toContain('10m0s')
 
-    await user.click(screen.getByTestId('vk-job-open-run:run-1'))
+    await user.click(screen.getByTestId('vk-job-row'))
     await waitFor(() => expect(screen.getByTestId('vk-job-detail')).toBeInTheDocument())
     expect(screen.getByTestId('vk-budget-stop').textContent).toContain('worst_case_estimate_exceeds_max_cost_cny')
     expect(screen.getByTestId('vk-evidence-coverage').textContent).toContain('visual_evidence=gap(visual_disabled)')
-    expect(screen.getByTestId('vk-output-note')).toBeInTheDocument()
-    expect(screen.getByTestId('vk-output-audit')).toBeInTheDocument()
-    expect(screen.getByTestId('vk-output-product-json-0')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-output-note')).toBeNull()
+    expect(screen.queryByTestId('vk-output-audit')).toBeNull()
+    expect(screen.queryByTestId('vk-output-product-json-0')).toBeNull()
     expect(screen.getByTestId('vk-job-retry')).toBeInTheDocument()
   })
 

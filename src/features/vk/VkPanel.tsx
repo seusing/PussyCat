@@ -36,8 +36,6 @@ import type {
 } from '../../host/vkClient'
 import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
 import { VkProviderForm } from './VkProviderForm'
-import { estimateForPreset } from './vkEstimates'
-import { VkCostConfirmDialog, type PendingVkSubmit } from './VkCostConfirmDialog'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { copyText } from '../../lib/clipboard'
@@ -72,7 +70,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   visual_evidence: '提取视觉证据', query_ready: '加入知识库检索',
 }
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested'])
-const SUCCESS_STATUSES = new Set(['done', 'partial', 'completed_after_cancel_request'])
+const SUCCESS_STATUSES = new Set(['done', 'partial'])
 const VK_NOTIFICATIONS_KEY = 'opencli-app:vk-task-notifications:v1'
 const VK_HIDDEN_JOBS_KEY = 'opencli-app:vk-hidden-jobs:v1'
 const VK_TASK_NUMBERS_KEY = 'opencli-app:vk-task-numbers:v1'
@@ -133,6 +131,24 @@ function attachLogicalTaskIds(rows: VkJobRow[]): VkJobRow[] {
   return rows.map((row) => ({ ...row, logicalTaskId: rootFor(row).job_id }))
 }
 
+/** The sidecar exposes pipeline runs for historical inspection. They are not
+ * additional user submissions, so hide a run row when its request row is
+ * present in the same polling snapshot. */
+function collapseInternalRunRows(rows: VkJobRow[]): VkJobRow[] {
+  const requests = rows.filter((row) => row.kind !== 'run')
+  if (requests.length === 0) return rows
+  return rows.filter((row) => {
+    if (row.kind !== 'run') return true
+    return !requests.some((request) => {
+      if (request.run_id && row.run_id && request.run_id === row.run_id) return true
+      if (!ACTIVE_STATUSES.has(request.status) || !ACTIVE_STATUSES.has(row.status)) return false
+      const requestTime = Date.parse(request.submitted_at)
+      const runTime = Date.parse(row.submitted_at)
+      return Number.isFinite(requestTime) && Number.isFinite(runTime) && Math.abs(requestTime - runTime) <= 2000
+    })
+  })
+}
+
 function latestLogicalTasks(rows: VkJobRow[]): VkJobRow[] {
   const latest = new Map<string, VkJobRow>()
   for (const row of rows) {
@@ -182,7 +198,7 @@ const STATUS_LABELS: Record<string, string> = {
   running: '运行中',
   cancel_requested: '正在停止',
   cancelled: '已中断',
-  completed_after_cancel_request: '取消前已完成',
+  completed_after_cancel_request: '已中断',
   failed: '失败',
   done: '已完成',
   partial: '部分完成',
@@ -339,7 +355,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
 
   const importSourceFile = async (file: File | undefined) => {
     if (!file) return
-    setPreviewError(null)
+    setSubmitError(null)
     try {
       const text = typeof file.text === 'function'
         ? await file.text()
@@ -351,15 +367,14 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         })
       setSource((current) => sourceLines(`${current}\n${text}`).join('\n'))
     } catch (error) {
-      setPreviewError(errorText(error, '链接文件读取失败'))
+      setSubmitError(errorText(error, '链接文件读取失败'))
     }
   }
 
   // —— 预检 → 费用确认 → 提交 ——
-  const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewing, setPreviewing] = useState(false)
-  const [pendingSubmit, setPendingSubmit] = useState<PendingVkSubmit | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const submitInFlight = useRef(false)
 
   // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
   const buildProjection = (sourceValue = source.trim()): VkPreviewProjection => ({
@@ -384,37 +399,28 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   })
 
   const requestSubmit = async () => {
-    setPreviewError(null)
+    if (submitInFlight.current) return
+    const sources = sourceLines(source)
+    if (sources.length === 0) return
+    submitInFlight.current = true
+    setSubmitError(null)
     setPreviewing(true)
     try {
-      const [firstSource] = sourceLines(source)
-      if (!firstSource) return
-      const request = await postVkPreview(buildProjection(firstSource), base)
-      setPendingSubmit({ request, estimate: estimateForPreset(request.preset) })
-    } catch (error) {
-      setPreviewError(errorText(error, '预检失败'))
-    } finally {
-      setPreviewing(false)
-    }
-  }
-
-  const confirmSubmit = async () => {
-    if (!pendingSubmit) return
-    setSubmitError(null)
-    try {
-      const sources = sourceLines(source)
       for (const sourceValue of sources) {
+        const previewedRequest = await postVkPreview(buildProjection(sourceValue), base)
+        const request = { ...previewedRequest, source: sourceValue }
         await postVkJob({
-          ...buildProjection(sourceValue),
+          request,
           idempotency_key: crypto.randomUUID(),
           client_job_id: crypto.randomUUID(),
         }, base)
       }
-      setPendingSubmit(null)
       await refreshJobs()
     } catch (error) {
-      setPendingSubmit(null)
       setSubmitError(errorText(error, '任务提交失败'))
+    } finally {
+      submitInFlight.current = false
+      setPreviewing(false)
     }
   }
 
@@ -464,7 +470,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const refreshJobs = useCallback(async () => {
     const gen = ++jobsGen.current
     try {
-      const rows = attachTaskNumbers(await fetchVkJobs(base))
+      const rows = attachTaskNumbers(collapseInternalRunRows(await fetchVkJobs(base)))
       if (gen === jobsGen.current) {
         const previous = previousStatusesRef.current
         if (previous) {
@@ -538,6 +544,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     setActionError(null)
     try {
       const detail = await fetchVkJob(row.job_id, base)
+      if (!SUCCESS_STATUSES.has(detail.status)) throw new Error('任务尚未生成可用结果')
       setSelectedJob(detail)
       onSelectJob?.(row.job_id)
       const output = primaryOutput(detail)
@@ -854,7 +861,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             {previewing ? '正在准备…' : '开始解析'}
           </button>
         </div>
-        {previewError && <div data-testid="vk-preview-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{previewError}</div>}
         {submitError && <div data-testid="vk-submit-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{submitError}</div>}
       </div>
 
@@ -916,7 +922,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               证据覆盖:{selectedJob.capabilities.map((item) => `${item.capability}=${item.state}${item.reason ? `(${item.reason})` : ''}`).join('、')}
             </div>
           )}
-          <div className="flex flex-wrap gap-2">
+          {SUCCESS_STATUSES.has(selectedJob.status) && <div className="flex flex-wrap gap-2">
             {selectedJob.outputs?.note_path && (
               <button type="button" data-testid="vk-output-note" disabled={openingOutput !== null} onClick={() => { void openOutput(selectedJob.outputs!.note_path!, '知识笔记') }} className={outlineButton} style={outlineStyle}>笔记</button>
             )}
@@ -929,7 +935,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
                 <button type="button" data-testid={`vk-output-product-md-${index}`} disabled={openingOutput !== null} onClick={() => { void openOutput(artifact.markdown, `${artifact.preset} MD`) }} className={outlineButton} style={outlineStyle}>{artifact.preset} MD</button>
               </span>
             ))}
-          </div>
+          </div>}
         </div>
       )}
       {actionError && <div data-testid="vk-action-error" className="mb-4 text-xs" style={{ color: 'var(--color-danger)' }}>{actionError}</div>}
@@ -973,11 +979,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         )}
       </div>
 
-      <VkCostConfirmDialog
-        pending={pendingSubmit}
-        onCancel={() => setPendingSubmit(null)}
-        onConfirm={() => { void confirmSubmit() }}
-      />
       {outputViewer && (
         <div
           data-testid="vk-output-viewer"
