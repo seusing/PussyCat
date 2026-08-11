@@ -88,8 +88,8 @@ type AppState = {
   mode: 'demo' | 'connected'
   setMode: (mode: 'demo' | 'connected') => void
   // 模块切换。**不持久化**:这是浏览姿势(此刻在看哪个模块),不是用户偏好,重开回默认更合理。
-  activeModule: 'commands' | 'login' | 'vk' | 'radar'
-  setActiveModule: (m: 'commands' | 'login' | 'vk' | 'radar') => void
+  activeModule: 'commands' | 'login' | 'vk' | 'wrss' | 'radar'
+  setActiveModule: (m: 'commands' | 'login' | 'vk' | 'wrss' | 'radar') => void
   // 导航折叠状态。**必须放在 store 里,不能留在 SiteCommandNav 的 useState**:顶栏切到
   // 「登录状态/视频解析」时 AppShell 改渲染整页模块,三栏连同导航一起从树上摘掉
   // (AppShell.tsx 的 fullPage 分支),组件局部 state 随卸载归零——用户刚收起的分组

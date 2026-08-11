@@ -16,6 +16,7 @@ import { VkSidecarError } from './vk-sidecar.mjs'
 import { VkRuntimeError } from './vk-runtime.mjs'
 import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from './vk-capability-packs.mjs'
 import { WrssIntegrationError } from './wrss-integration.mjs'
+import { WrssRuntimeError } from './wrss-runtime.mjs'
 import { createRadarService, diagnosticOf, reasonOf } from './radar.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
@@ -193,6 +194,7 @@ export function createHostServer({
   vkJobShadow = null,
   vkRuntime = null,
   wrssIntegration = null,
+  wrssRuntime = null,
   radarService = createRadarService(),
 } = {}) {
   if (!policy) throw new Error('policy is required')
@@ -416,14 +418,33 @@ export function createHostServer({
         return
       }
 
+      // Managed WeRSS runtime. Enable is asynchronous; the renderer polls.
+      if (url.pathname === '/vk/v1/integrations/wrss/enable' && request.method === 'POST') {
+        await readJson(request, maxBodyBytes)
+        if (!wrssRuntime) {
+          writeJson(response, 503, { error: 'WeRSS runtime not available', reasonCode: 'not-available' })
+          return
+        }
+        void wrssRuntime.enable().catch(() => {})
+        writeJson(response, 202, wrssRuntime.status())
+        return
+      }
+
       // WeRSS phase 1: only a loopback service connection shell. The renderer
       // never receives credentials and cannot turn this into an arbitrary URL proxy.
       if (url.pathname === '/vk/v1/integrations/wrss' && request.method === 'GET') {
-        if (!wrssIntegration) {
+        if (!wrssIntegration && !wrssRuntime) {
           writeJson(response, 503, { error: 'WeRSS 集成未接线', reasonCode: 'not-configured' })
           return
         }
-        writeJson(response, 200, wrssIntegration.status())
+        const legacy = wrssIntegration?.status() ?? null
+        const managed = wrssRuntime?.status() ?? null
+        writeJson(response, 200, {
+          ...(legacy ?? {}),
+          ...(managed ?? {}),
+          legacy,
+          external: legacy,
+        })
         return
       }
       if (url.pathname === '/vk/v1/integrations/wrss/config' && request.method === 'POST') {
@@ -593,6 +614,7 @@ export function createHostServer({
           || error instanceof VkRuntimeError
           || error instanceof VkCapabilityPackError
           || error instanceof WrssIntegrationError
+          || error instanceof WrssRuntimeError
           ? error.statusCode
           : 500
       )
@@ -625,6 +647,7 @@ export function createHostServer({
       catalogService?.close()
       runManager.close()
       await vkSidecar?.stop()
+      await wrssRuntime?.close()
       broker.close()
       if (!server.listening) return
       const closed = new Promise((resolve, reject) => {

@@ -18,7 +18,7 @@ afterEach(() => {
 })
 
 describe('VkTaskDetailSidebar', () => {
-  it('renders real link progress and the configured model name', async () => {
+  it('renders real stage progress and the configured model name', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/vk/v1/jobs/job-1')) {
@@ -37,7 +37,7 @@ describe('VkTaskDetailSidebar', () => {
             preset: 'quick-summary',
             provider_profile: 'channel-a',
           },
-          progress: { completed_links: 1, total_links: 2 },
+          progress: { completed_stages: ['acquire', 'normalize'], current_stage: 'chapter' },
         }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }
       if (url.endsWith('/vk/v1/providers')) {
@@ -51,9 +51,11 @@ describe('VkTaskDetailSidebar', () => {
 
     render(<VkTaskDetailSidebar jobId="job-1" baseUrl={BASE} onClose={() => {}} />)
 
-    const progress = await screen.findByRole('progressbar', { name: '链接处理进度' })
-    expect(progress).toHaveAttribute('aria-valuenow', '1')
-    expect(progress).toHaveAttribute('aria-valuemax', '2')
+    const progress = await screen.findByRole('progressbar', { name: '处理阶段进度' })
+    expect(progress).toHaveAttribute('aria-valuenow', '25')
+    expect(progress).toHaveAttribute('aria-valuemax', '100')
+    expect(screen.getByText('阶段 2 / 4')).toBeInTheDocument()
+    expect(screen.getByText('理解视频重点')).toBeInTheDocument()
     expect(screen.getByText('我的总结模型')).toBeInTheDocument()
     expect(screen.getByText('https://www.youtube.com/watch?v=1')).toBeInTheDocument()
     expect(screen.getByText('https://www.bilibili.com/video/BV1')).toBeInTheDocument()
@@ -124,6 +126,11 @@ describe('VkTaskDetailSidebar', () => {
   it('retries a failed task by selecting the returned child execution', async () => {
     const user = userEvent.setup()
     const onJobChange = vi.fn()
+    const retryEvents: Array<{ jobId?: string }> = []
+    const onRetrySubmitted = (event: Event) => {
+      retryEvents.push((event as CustomEvent<{ jobId?: string }>).detail)
+    }
+    window.addEventListener('vk:job-retry-submitted', onRetrySubmitted)
     const calls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -140,7 +147,32 @@ describe('VkTaskDetailSidebar', () => {
     await user.click(await screen.findByRole('button', { name: '重试' }))
     await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('retry-child'))
     expect(calls.some((call) => call.endsWith('/retry'))).toBe(true)
+    expect(retryEvents).toEqual([{ jobId: 'retry-child' }])
     expect(screen.queryByRole('button', { name: '强制重跑' })).not.toBeInTheDocument()
+    window.removeEventListener('vk:job-retry-submitted', onRetrySubmitted)
+  })
+
+  it('does not announce a rerun when the retry request fails', async () => {
+    const user = userEvent.setup()
+    const onRetrySubmitted = vi.fn()
+    window.addEventListener('vk:job-retry-submitted', onRetrySubmitted)
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/failed-retry')) return new Response(JSON.stringify({
+        job_id: 'failed-retry', kind: 'run', status: 'failed', submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:01:00Z',
+        parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      if (url.endsWith('/retry')) return new Response(JSON.stringify({ error: 'retry failed' }), { status: 502 })
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="failed-retry" baseUrl={BASE} onClose={() => {}} />)
+    await user.click(await screen.findByRole('button', { name: '\u91cd\u8bd5' }))
+    await screen.findByRole('alert')
+
+    expect(onRetrySubmitted).not.toHaveBeenCalled()
+    window.removeEventListener('vk:job-retry-submitted', onRetrySubmitted)
   })
 
   it('resubmits a completed task as a new job and marks the fresh execution as rerunning', async () => {
@@ -182,6 +214,33 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByLabelText('任务重跑中')).toHaveAttribute('data-state', 'solving')
     expect(screen.getByLabelText('任务重跑中')).toHaveAttribute('data-speed', '0.9')
     expect(screen.getByRole('button', { name: '停止任务' })).toBeInTheDocument()
+  })
+
+  it('opens the canonical result inside the app', async () => {
+    const user = userEvent.setup()
+    const opened: Array<{ outputId?: string; title?: string }> = []
+    const listener = (event: Event) => {
+      opened.push((event as CustomEvent<{ outputId?: string; title?: string }>).detail)
+    }
+    window.addEventListener('vk:open-output', listener)
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/completed-output')) return new Response(JSON.stringify({
+        job_id: 'completed-output', kind: 'run', status: 'done', submitted_at: '2026-08-07T10:00:00Z',
+        finished_at: '2026-08-07T10:01:00Z', parent_job_id: null, cache_bypass: false,
+        request: { source: 'https://example.com/v', preset: 'quick-summary' },
+        outputs: { note_path: 'outputs/note.md', request_path: null, audit_path: null, product_artifacts: [] },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="completed-output" baseUrl={BASE} onClose={() => {}} />)
+    await user.click(await screen.findByRole('button', { name: '查看解析结果' }))
+
+    expect(opened).toEqual([{ outputId: 'outputs/note.md', title: '解析结果' }])
+    expect(screen.queryByText('quick-summary MD')).not.toBeInTheDocument()
+    window.removeEventListener('vk:open-output', listener)
   })
 
   it('treats late completion after a cancel request as interrupted and hides outputs', async () => {

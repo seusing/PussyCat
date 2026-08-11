@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { InlineLoader } from 'generative-loaders'
-import { Bell, BellOff, ChevronDown, Copy, FileText, Trash2 } from 'lucide-react'
+import { Bell, BellOff, ChevronDown, Download, Trash2 } from 'lucide-react'
 import type { VkJobRow } from '../../host/vkClient'
 import 'generative-loaders/styles.css'
 import './VkTaskTable.css'
@@ -17,8 +17,7 @@ export interface VkTaskTableProps {
   onSelect: (row: VkJobRow) => void
   onOpen: (row: VkJobRow) => void
   onToggleNotification: (id: string, enabled: boolean) => void
-  onCopyPath: (row: VkJobRow) => void
-  onCopyFileName: (row: VkJobRow) => void
+  onSave: (row: VkJobRow) => void
   onDelete: (row: VkJobRow) => void
 }
 
@@ -87,8 +86,7 @@ export function VkTaskTable({
   onSelect,
   onOpen,
   onToggleNotification,
-  onCopyPath,
-  onCopyFileName,
+  onSave,
   onDelete,
 }: VkTaskTableProps) {
   const [menuJobId, setMenuJobId] = useState<string | null>(null)
@@ -142,7 +140,7 @@ export function VkTaskTable({
     const rect = menuTriggerRefs.current.get(jobId)?.getBoundingClientRect()
     if (rect) {
       const width = 190
-      const height = 120
+      const height = 88
       const top = rect.bottom + 6 + height <= window.innerHeight
         ? rect.bottom + 6
         : Math.max(8, rect.top - height - 6)
@@ -202,7 +200,7 @@ export function VkTaskTable({
             const taskNumber = row.taskNumber ?? index + 1
             const notificationEnabled = notifications[row.job_id] ?? false
             const status = normalizeStatus(row)
-            const canCopyOutput = OUTPUT_STATUSES.has(row.status.trim().toLowerCase())
+            const canSaveOutput = OUTPUT_STATUSES.has(row.status.trim().toLowerCase())
             const selected = row.job_id === selectedJobId
             const menuOpen = row.job_id === menuJobId
             return (
@@ -292,13 +290,9 @@ export function VkTaskTable({
                         onClick={stopRowSelection}
                         onKeyDown={handleMenuKeyDown}
                       >
-                        <button type="button" role="menuitem" tabIndex={-1} disabled={!canCopyOutput} aria-disabled={!canCopyOutput} onClick={() => runMenuAction(() => onCopyPath(row))}>
-                          <Copy size={15} aria-hidden="true" />
-                          <span>复制路径</span>
-                        </button>
-                        <button type="button" role="menuitem" tabIndex={-1} disabled={!canCopyOutput} aria-disabled={!canCopyOutput} onClick={() => runMenuAction(() => onCopyFileName(row))}>
-                          <FileText size={15} aria-hidden="true" />
-                          <span>复制文件名</span>
+                        <button type="button" role="menuitem" tabIndex={-1} disabled={!canSaveOutput} aria-disabled={!canSaveOutput} onClick={() => runMenuAction(() => onSave(row))}>
+                          <Download size={15} aria-hidden="true" />
+                          <span>存到本地</span>
                         </button>
                         <button
                           type="button"

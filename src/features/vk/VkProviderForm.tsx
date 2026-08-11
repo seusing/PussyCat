@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
+import { Eye, EyeOff } from 'lucide-react'
 import {
   fetchVkProviderSettings,
   importVkCcSwitchChannel,
@@ -16,6 +18,56 @@ const fieldStyle = {
 } as const
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
+
+function VisibilityButton({
+  revealed,
+  disabled,
+  onClick,
+  testId,
+}: {
+  revealed: boolean
+  disabled: boolean
+  onClick: () => void
+  testId: string
+}) {
+  const [hovered, setHovered] = useState(false)
+  const iconState = revealed
+    ? (hovered ? 'eye' : 'eye-off')
+    : (hovered ? 'eye-off' : 'eye')
+  const Icon = iconState === 'eye' ? Eye : EyeOff
+
+  return (
+    <motion.button
+      type="button"
+      data-testid={testId}
+      data-icon={iconState}
+      onClick={onClick}
+      onMouseEnter={() => { if (!disabled) setHovered(true) }}
+      onMouseLeave={() => setHovered(false)}
+      disabled={disabled}
+      whileHover={disabled ? undefined : { scale: 1.02 }}
+      whileTap={disabled ? undefined : { scale: 0.96 }}
+      className="relative flex h-9 shrink-0 cursor-pointer items-center justify-center rounded-[40px] border border-white/5 bg-white/[0.04] px-6 text-sm font-medium text-white transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+      aria-label={revealed ? '隐藏 API key' : '显示 API key'}
+    >
+      <span className="relative flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.span
+            key={iconState}
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.5, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 600, damping: 25 }}
+            className="absolute inset-0 flex items-center justify-center"
+          >
+            <Icon className="h-4 w-4" />
+          </motion.span>
+        </AnimatePresence>
+      </span>
+      <span className="ml-2.5 tracking-tight">{revealed ? '隐藏' : '显示'}</span>
+    </motion.button>
+  )
+}
 
 /**
  * 按模型名猜接口风格。**只用来填默认值**,用户改了就以用户的为准。
@@ -305,15 +357,15 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                     value={draft.revealed ?? (showMasked ? draft.key_masked : draft.api_key)}
                     onChange={(e) => patch(draft.id, { api_key: e.target.value, key_touched: true, revealed: undefined })}
                   />
-                  <button type="button" data-testid={`vk-channel-reveal-${draft.id}`}
+                  <VisibilityButton
+                    testId={`vk-channel-reveal-${draft.id}`}
+                    revealed={Boolean(draft.revealed)}
                     onClick={() => {
                       if (draft.revealed) patch(draft.id, { revealed: undefined })
                       else void reveal(draft)
                     }}
                     disabled={busy !== null || (!saved?.key_stored && !draft.key_masked)}
-                    className={outlineButton} style={outlineStyle}>
-                    {draft.revealed ? '隐藏' : '显示'}
-                  </button>
+                  />
                   {showMasked && (
                     <button type="button" data-testid={`vk-channel-replace-${draft.id}`}
                       onClick={() => patch(draft.id, { key_touched: true, api_key: '', revealed: undefined })}

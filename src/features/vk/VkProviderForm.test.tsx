@@ -107,13 +107,21 @@ test('点「显示」才取明文 —— 这是唯一会把 key 送回前端的�
   render(<VkProviderForm baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('vk-channel-reveal-cheap')).toBeInTheDocument())
 
+  const revealButton = screen.getByTestId('vk-channel-reveal-cheap')
+  expect(revealButton).toHaveAttribute('data-icon', 'eye')
+  await userEvent.hover(revealButton)
+  expect(revealButton).toHaveAttribute('data-icon', 'eye-off')
+  await userEvent.unhover(revealButton)
+
   // 打开页面时没人问过 reveal
   expect(calls.some((c) => c.key.includes('reveal'))).toBe(false)
 
-  await userEvent.click(screen.getByTestId('vk-channel-reveal-cheap'))
+  await userEvent.click(revealButton)
 
   await waitFor(() => expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).value).toBe(SECRET))
   expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).type).toBe('text')
+  await userEvent.unhover(revealButton)
+  expect(revealButton).toHaveAttribute('data-icon', 'eye-off')
 })
 
 test('再点一次隐藏,退回打码值', async () => {

@@ -112,6 +112,26 @@ describe('WeRSS loopback integration routes', () => {
   })
 })
 
+describe('managed WeRSS runtime route', () => {
+  it('returns 202 immediately and closes the runtime on Host shutdown', async () => {
+    let enabled = 0
+    let closed = 0
+    const runtime = {
+      enable: async () => { enabled += 1 },
+      status: () => ({ state: 'installing', summary: 'installing', reason_code: null, progress_log: [], version: null, size_label: '约 356 MB（按需下载）', checked_at: new Date().toISOString() }),
+      close: async () => { closed += 1 },
+    }
+    const { app, baseUrl } = await setup({ wrssRuntime: runtime })
+    const response = await post(baseUrl, '/vk/v1/integrations/wrss/enable', {})
+    expect(response.status).toBe(202)
+    expect(await response.json()).toMatchObject({ state: 'installing' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(enabled).toBe(1)
+    await app.close()
+    expect(closed).toBe(1)
+  })
+})
+
 async function readSseUntilDone(response) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()

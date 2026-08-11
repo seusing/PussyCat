@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../store/appStore'
 
-const AUTO_DISMISS_MS = 5000
+const AUTO_DISMISS_MS = 3000
 
 export function UndoToast() {
   const lastUndo = useAppStore((s) => s.lastUndo)

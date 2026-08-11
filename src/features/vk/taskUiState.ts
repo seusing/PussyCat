@@ -1,5 +1,7 @@
 const VK_RERUN_JOBS_KEY = 'opencli-app:vk-rerun-jobs:v1'
 
+export const VK_OPEN_OUTPUT_EVENT = 'vk:open-output'
+
 function loadRerunJobs(): Record<string, true> {
   try {
     const parsed = JSON.parse(localStorage.getItem(VK_RERUN_JOBS_KEY) ?? '{}') as Record<string, unknown>

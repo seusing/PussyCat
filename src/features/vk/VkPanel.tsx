@@ -4,9 +4,10 @@
 // token。进度只显示真实状态/已耗时/实际费用,不造百分比(拍板 4)。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { BorderBeam } from 'border-beam'
-import { RefreshCw, Upload, X } from 'lucide-react'
+import { Check, Copy, Download, RefreshCw, Upload, X } from 'lucide-react'
+import Markdown from 'react-markdown'
 import { useAppStore } from '../../store/appStore'
 import { HostRequestError } from '../../host/errors'
 import {
@@ -24,7 +25,6 @@ import {
   postVkRuntimeInstall,
   fetchVkProviderSettings,
   testVkProvider,
-  vkOutputUrl,
 } from '../../host/vkClient'
 import type {
   VkHealth,
@@ -41,7 +41,8 @@ import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { copyText } from '../../lib/clipboard'
-import { isVkJobRerun } from './taskUiState'
+import { saveTextFileAs } from '../../lib/saveTextFile'
+import { isVkJobRerun, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import './VkPanel.css'
 
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
@@ -71,8 +72,16 @@ const CAPABILITY_LABELS: Record<string, string> = {
   word_timestamps: '词级时间定位', speaker_diarization: '区分说话人',
   visual_evidence: '提取视觉证据', query_ready: '加入知识库检索',
 }
-const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
+const ACTIVE_STATUSES = new Set([
+  'queued', 'running', 'cancel_requested', 'submitted', 'processing',
+  'retry_requested', 'retrying', 'rerunning',
+])
 const SUCCESS_STATUSES = new Set(['done', 'partial'])
+const INTERRUPTED_STATUSES = new Set(['cancelled', 'completed_after_cancel_request', 'interrupted'])
+const TASK_BANNER_DURATION_MS = 3_000
+const VK_JOB_DETAIL_TERMINAL_EVENT = 'vk:job-detail-terminal'
+const VK_JOB_TERMINAL_EVENT = 'vk:job-terminal'
+const VK_JOB_RETRY_SUBMITTED_EVENT = 'vk:job-retry-submitted'
 const VK_NOTIFICATIONS_KEY = 'opencli-app:vk-task-notifications:v1'
 const VK_HIDDEN_JOBS_KEY = 'opencli-app:vk-hidden-jobs:v1'
 const VK_TASK_NUMBERS_KEY = 'opencli-app:vk-task-numbers:v1'
@@ -230,6 +239,69 @@ const STATUS_LABELS: Record<string, string> = {
 function InstallingBeam({ on, children }: { on: boolean; children: ReactNode }) {
   if (!on) return <>{children}</>
   return <BorderBeam size="pulse-inner" colorVariant="ocean" theme="dark">{children}</BorderBeam>
+}
+
+type TaskBannerTone = 'info' | 'success' | 'danger' | 'warning' | 'rerun'
+type TaskBanner = {
+  id: string
+  message: string
+  tone: TaskBannerTone
+  createdAt: number
+}
+
+function TaskBannerNotice({ banner, onDismiss }: {
+  banner: TaskBanner
+  onDismiss: (id: string) => void
+}) {
+  const [modelValue, setModelValue] = useState(100)
+
+  useEffect(() => {
+    const updateProgress = () => {
+      const elapsed = Date.now() - banner.createdAt
+      setModelValue(Math.max(0, 100 - (elapsed / TASK_BANNER_DURATION_MS) * 100))
+    }
+    updateProgress()
+    const interval = setInterval(updateProgress, 50)
+    const timeout = setTimeout(() => {
+      setModelValue(0)
+      onDismiss(banner.id)
+    }, Math.max(0, TASK_BANNER_DURATION_MS - (Date.now() - banner.createdAt)))
+    return () => {
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [banner.createdAt, banner.id, onDismiss])
+
+  return (
+    <div
+      data-testid="vk-task-banner"
+      data-tone={banner.tone}
+      className={`vk-task-banner is-${banner.tone}`}
+      role="status"
+    >
+      <span>{banner.message}</span>
+      <button
+        type="button"
+        aria-label="关闭任务提醒"
+        title="关闭"
+        onClick={() => onDismiss(banner.id)}
+      >
+        <X size={17} aria-hidden="true" />
+      </button>
+      <div className="vk-task-banner-progress-track">
+        <div
+          data-testid="vk-task-banner-progress"
+          className={`vk-task-banner-progress is-${banner.tone}`}
+          role="progressbar"
+          aria-label="提醒剩余时间"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(modelValue)}
+          style={{ width: `${modelValue}%` }}
+        />
+      </div>
+    </div>
+  )
 }
 
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
@@ -420,7 +492,17 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   // —— 预检 → 费用确认 → 提交 ——
   const [previewing, setPreviewing] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [taskBanners, setTaskBanners] = useState<TaskBanner[]>([])
   const submitInFlight = useRef(false)
+  const dismissTaskBanner = useCallback((id: string) => {
+    setTaskBanners((current) => current.filter((item) => item.id !== id))
+  }, [])
+  const addTaskBanners = useCallback((banners: TaskBanner[]) => {
+    setTaskBanners((current) => [
+      ...current,
+      ...banners.filter((banner) => !current.some((item) => item.id === banner.id)),
+    ])
+  }, [])
 
   // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
   const buildProjection = (sourceValue = source.trim()): VkPreviewProjection => ({
@@ -452,6 +534,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     submitInFlight.current = true
     setSubmitError(null)
     setPreviewing(true)
+    const submissionNoticeId = `submitted:${crypto.randomUUID()}`
+    let submittedAny = false
     try {
       for (const sourceValue of sources) {
         const previewedRequest = await postVkPreview(buildProjection(sourceValue), base)
@@ -461,6 +545,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           idempotency_key: crypto.randomUUID(),
           client_job_id: crypto.randomUUID(),
         }, base)
+        if (!submittedAny) {
+          submittedAny = true
+          addTaskBanners([{
+            id: submissionNoticeId,
+            message: '\u4efb\u52a1\u5df2\u63d0\u4ea4',
+            tone: 'info',
+            createdAt: Date.now(),
+          }])
+        }
       }
       await refreshJobs()
     } catch (error) {
@@ -479,10 +572,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [selectedJob, setSelectedJob] = useState<VkJobView | null>(null)
   const [notifications, setNotifications] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_NOTIFICATIONS_KEY))
   const [hiddenJobs, setHiddenJobs] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_HIDDEN_JOBS_KEY))
-  const [taskBanners, setTaskBanners] = useState<Array<{ id: string; message: string; tone: 'success' | 'danger' }>>([])
   const [actionError, setActionError] = useState<string | null>(null)
   const [openingOutput, setOpeningOutput] = useState<string | null>(null)
-  const [outputViewer, setOutputViewer] = useState<{ title: string; content: string } | null>(null)
+  const [outputViewer, setOutputViewer] = useState<{ id: string; title: string; content: string } | null>(null)
+  const [outputCopied, setOutputCopied] = useState(false)
+  const [outputDownloadProgress, setOutputDownloadProgress] = useState<number | null>(null)
+  const [outputDownloadDone, setOutputDownloadDone] = useState(false)
+  const [outputDownloadHovered, setOutputDownloadHovered] = useState(false)
+  const outputDownloadController = useRef<AbortController | null>(null)
+  const outputDownloadResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const jobsGen = useRef(0)
   const notificationPrefsRef = useRef(notifications)
   const previousStatusesRef = useRef<Map<string, string> | null>(null)
@@ -523,16 +621,38 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       const rows = attachTaskNumbers(collapseInternalRunRows(await fetchVkJobs(base)))
       if (gen === jobsGen.current) {
         const previous = previousStatusesRef.current
+        const terminalTransitions = previous
+          ? rows.filter((row) => {
+              const before = previous.get(row.job_id)
+              return !!before && ACTIVE_STATUSES.has(before) && !ACTIVE_STATUSES.has(row.status)
+            })
+          : []
+        const selectedId = selectedJobId ?? selectedJob?.job_id ?? null
+        let selectedTerminalDetail: VkJobView | null = null
+        if (selectedId && terminalTransitions.some((row) => row.job_id === selectedId)) {
+          try {
+            selectedTerminalDetail = await fetchVkJob(selectedId, base)
+          } catch {
+            // The list remains authoritative even if this one detail read races sidecar shutdown.
+          }
+        }
+        if (gen !== jobsGen.current) return
         if (previous) {
           const notices = rows.flatMap((row) => {
             const before = previous.get(row.job_id)
             if (!before || !ACTIVE_STATUSES.has(before) || ACTIVE_STATUSES.has(row.status)) return []
             if (notificationPrefsRef.current[row.job_id] === false) return []
             const success = SUCCESS_STATUSES.has(row.status)
+            const interrupted = INTERRUPTED_STATUSES.has(row.status)
             return [{
               id: `${row.job_id}:${row.finished_at ?? row.status}`,
               message: success ? `任务${row.taskNumber}已完成` : `任务${row.taskNumber}遇到了些问题`,
               tone: success ? 'success' as const : 'danger' as const,
+              createdAt: Date.now(),
+              ...(interrupted ? {
+                message: `\u4efb\u52a1${row.taskNumber}\u5df2\u4e2d\u65ad`,
+                tone: 'warning' as const,
+              } : {}),
             }]
           })
           if (notices.length) {
@@ -544,20 +664,45 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         }
         previousStatusesRef.current = new Map(rows.map((row) => [row.job_id, row.status]))
         setJobs(rows)
+        if (selectedTerminalDetail) setSelectedJob(selectedTerminalDetail)
         setJobsError(null)
+        if (selectedId && terminalTransitions.some((row) => row.job_id === selectedId)) {
+          window.dispatchEvent(new CustomEvent(VK_JOB_TERMINAL_EVENT, {
+            detail: { jobId: selectedId },
+          }))
+        }
       }
     } catch (error) {
       if (gen === jobsGen.current) setJobsError(errorText(error, '任务列表获取失败'))
     } finally {
       if (manual) setJobsRefreshing(false)
     }
-  }, [attachTaskNumbers, base])
+  }, [attachTaskNumbers, base, selectedJob?.job_id, selectedJobId])
   useEffect(() => { void refreshJobs() }, [refreshJobs, refreshToken])
   useEffect(() => {
     if (!jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
-    const timer = setInterval(() => { void refreshJobs() }, 30_000)
+    const timer = setInterval(() => { void refreshJobs() }, 15_000)
     return () => clearInterval(timer)
   }, [jobs, refreshJobs])
+  useEffect(() => {
+    const refreshFromDetail = () => { void refreshJobs() }
+    const notifyRetrySubmitted = (event: Event) => {
+      const jobId = (event as CustomEvent<{ jobId?: string }>).detail?.jobId
+      if (!jobId) return
+      addTaskBanners([{
+        id: `retry-submitted:${jobId}`,
+        message: '\u4efb\u52a1\u5df2\u91cd\u65b0\u63d0\u4ea4\uff0c\u6b63\u5728\u91cd\u8dd1',
+        tone: 'rerun',
+        createdAt: Date.now(),
+      }])
+    }
+    window.addEventListener(VK_JOB_DETAIL_TERMINAL_EVENT, refreshFromDetail)
+    window.addEventListener(VK_JOB_RETRY_SUBMITTED_EVENT, notifyRetrySubmitted)
+    return () => {
+      window.removeEventListener(VK_JOB_DETAIL_TERMINAL_EVENT, refreshFromDetail)
+      window.removeEventListener(VK_JOB_RETRY_SUBMITTED_EVENT, notifyRetrySubmitted)
+    }
+  }, [addTaskBanners, refreshJobs])
 
   const openJob = async (jobId: string) => {
     setActionError(null)
@@ -572,7 +717,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const jobAction = async (jobId: string, action: 'cancel' | 'retry') => {
     setActionError(null)
     try {
-      await postVkJobAction(jobId, action, base)
+      const result = await postVkJobAction(jobId, action, base)
+      if (action === 'retry') {
+        const retryJobId = typeof result.job_id === 'string' ? result.job_id : jobId
+        addTaskBanners([{
+          id: `retry-submitted:${retryJobId}`,
+          message: '\u4efb\u52a1\u5df2\u91cd\u65b0\u63d0\u4ea4\uff0c\u6b63\u5728\u91cd\u8dd1',
+          tone: 'rerun',
+          createdAt: Date.now(),
+        }])
+      }
       await refreshJobs()
       await openJob(jobId)
     } catch (error) {
@@ -580,17 +734,79 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     }
   }
 
-  const openOutput = async (outputId: string, title: string) => {
+  const resetOutputDownload = useCallback(() => {
+    outputDownloadController.current?.abort()
+    outputDownloadController.current = null
+    if (outputDownloadResetTimer.current) clearTimeout(outputDownloadResetTimer.current)
+    outputDownloadResetTimer.current = null
+    setOutputDownloadProgress(null)
+    setOutputDownloadDone(false)
+    setOutputDownloadHovered(false)
+  }, [])
+
+  const closeOutputViewer = useCallback(() => {
+    resetOutputDownload()
+    setOutputViewer(null)
+  }, [resetOutputDownload])
+
+  const openOutput = useCallback(async (outputId: string, title: string) => {
     setActionError(null)
     setOpeningOutput(outputId)
+    setOutputCopied(false)
+    resetOutputDownload()
     try {
-      setOutputViewer({ title, content: await fetchVkOutputText(outputId, base) })
+      setOutputViewer({ id: outputId, title, content: await fetchVkOutputText(outputId, base) })
     } catch (error) {
       setActionError(errorText(error, '结果读取失败'))
     } finally {
       setOpeningOutput(null)
     }
-  }
+  }, [base, resetOutputDownload])
+
+  const downloadOutput = useCallback(async () => {
+    if (!outputViewer) return
+    if (outputDownloadController.current) {
+      resetOutputDownload()
+      return
+    }
+
+    const controller = new AbortController()
+    outputDownloadController.current = controller
+    setOutputDownloadDone(false)
+    setOutputDownloadProgress(0)
+    setActionError(null)
+    try {
+      const saved = await saveTextFileAs(outputFileName(outputViewer.id), outputViewer.content, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (outputDownloadController.current === controller) setOutputDownloadProgress(progress)
+        },
+      })
+      if (controller.signal.aborted) return
+      setOutputDownloadProgress(null)
+      if (saved) {
+        setOutputDownloadDone(true)
+        outputDownloadResetTimer.current = setTimeout(() => {
+          setOutputDownloadDone(false)
+          outputDownloadResetTimer.current = null
+        }, 1_200)
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) setActionError(errorText(error, '保存失败'))
+      setOutputDownloadProgress(null)
+    } finally {
+      if (outputDownloadController.current === controller) outputDownloadController.current = null
+    }
+  }, [outputViewer, resetOutputDownload])
+
+  useEffect(() => {
+    const openRequestedOutput = (event: Event) => {
+      const detail = (event as CustomEvent<{ outputId?: string; title?: string }>).detail
+      if (detail?.outputId) void openOutput(detail.outputId, detail.title || '解析结果')
+    }
+    window.addEventListener(VK_OPEN_OUTPUT_EVENT, openRequestedOutput)
+    return () => window.removeEventListener(VK_OPEN_OUTPUT_EVENT, openRequestedOutput)
+  }, [openOutput])
 
   const openTaskResult = async (row: VkJobRow) => {
     setActionError(null)
@@ -606,16 +822,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     }
   }
 
-  const copyTaskOutput = async (row: VkJobRow, mode: 'path' | 'name') => {
+  const saveTaskOutput = async (row: VkJobRow) => {
     setActionError(null)
     try {
       const detail = await fetchVkJob(row.job_id, base)
       const output = primaryOutput(detail)
       if (!output) throw new Error('任务尚未生成可用结果')
-      const value = mode === 'path' ? vkOutputUrl(output.id, base) : outputFileName(output.id)
-      if (!await copyText(value)) throw new Error('复制失败')
+      const content = await fetchVkOutputText(output.id, base)
+      await saveTextFileAs(outputFileName(output.id), content)
     } catch (error) {
-      setActionError(errorText(error, '复制失败'))
+      setActionError(errorText(error, '保存失败'))
     }
   }
 
@@ -644,11 +860,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   useEffect(() => {
     if (!outputViewer) return
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOutputViewer(null)
+      if (event.key === 'Escape') closeOutputViewer()
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [outputViewer])
+  }, [closeOutputViewer, outputViewer])
+
+  useEffect(() => () => {
+    outputDownloadController.current?.abort()
+    if (outputDownloadResetTimer.current) clearTimeout(outputDownloadResetTimer.current)
+  }, [])
 
   // —— 知识库查询 ——
   const [queryText, setQueryText] = useState('')
@@ -714,17 +935,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       {taskBanners.length > 0 && (
         <div className="vk-task-banners" aria-live="polite">
           {taskBanners.map((banner) => (
-            <div key={banner.id} data-testid="vk-task-banner" className={`vk-task-banner is-${banner.tone}`} role="status">
-              <span>{banner.message}</span>
-              <button
-                type="button"
-                aria-label="关闭任务提醒"
-                title="关闭"
-                onClick={() => setTaskBanners((current) => current.filter((item) => item.id !== banner.id))}
-              >
-                <X size={15} aria-hidden="true" />
-              </button>
-            </div>
+            <TaskBannerNotice key={banner.id} banner={banner} onDismiss={dismissTaskBanner} />
           ))}
         </div>
       )}
@@ -991,8 +1202,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           onSelect={(row) => { void openJob(row.job_id) }}
           onOpen={(row) => { void openTaskResult(row) }}
           onToggleNotification={toggleTaskNotification}
-          onCopyPath={(row) => { void copyTaskOutput(row, 'path') }}
-          onCopyFileName={(row) => { void copyTaskOutput(row, 'name') }}
+          onSave={(row) => { void saveTaskOutput(row) }}
           onDelete={hideTaskRecord}
         />
       </div>
@@ -1086,7 +1296,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6"
           style={{ background: 'rgba(0, 0, 0, 0.68)' }}
           onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setOutputViewer(null)
+            if (event.currentTarget === event.target) closeOutputViewer()
           }}
         >
           <section
@@ -1100,8 +1310,73 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               <h2 id="vk-output-viewer-title" className="min-w-0 flex-1 truncate text-sm font-medium">{outputViewer.title}</h2>
               <button
                 type="button"
+                data-testid="vk-output-viewer-copy"
+                onClick={() => {
+                  void copyText(outputViewer.content).then((copied) => {
+                    if (copied) setOutputCopied(true)
+                    else setActionError('复制内容失败')
+                  })
+                }}
+                className="vk-output-copy-button"
+              >
+                <Copy size={14} aria-hidden="true" />
+                <span>{outputCopied ? '已复制' : '复制内容'}</span>
+              </button>
+              <motion.button
+                type="button"
+                data-testid="vk-output-viewer-download"
+                data-state={outputDownloadProgress !== null ? 'downloading' : outputDownloadDone ? 'done' : 'idle'}
+                onClick={() => { void downloadOutput() }}
+                onMouseEnter={() => setOutputDownloadHovered(true)}
+                onMouseLeave={() => setOutputDownloadHovered(false)}
+                aria-label={outputDownloadProgress !== null ? '取消下载' : '下载至本地'}
+                aria-busy={outputDownloadProgress !== null}
+                className="vk-output-download-button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.96 }}
+                transition={{ type: 'spring', stiffness: 600, damping: 25 }}
+              >
+                {outputDownloadProgress !== null && (
+                  <span
+                    data-testid="vk-output-download-progress"
+                    className="vk-output-download-progress"
+                    style={{ width: `${outputDownloadProgress}%` }}
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(outputDownloadProgress)}
+                  />
+                )}
+                <span className="vk-output-download-content">
+                  {outputDownloadProgress !== null ? (
+                    <span>{Math.round(outputDownloadProgress)}% · 点击取消</span>
+                  ) : (
+                    <>
+                      <span className="relative flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+                        <AnimatePresence mode="popLayout" initial={false}>
+                          <motion.span
+                            key={outputDownloadDone || outputDownloadHovered ? 'check' : 'download'}
+                            initial={{ scale: 0.5, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.5, opacity: 0 }}
+                            transition={{ type: 'spring', stiffness: 600, damping: 25 }}
+                            className="absolute inset-0 flex items-center justify-center"
+                          >
+                            {outputDownloadDone || outputDownloadHovered
+                              ? <Check className="h-4 w-4" />
+                              : <Download className="h-4 w-4" />}
+                          </motion.span>
+                        </AnimatePresence>
+                      </span>
+                      <span>{outputDownloadDone ? '已保存' : '下载至本地'}</span>
+                    </>
+                  )}
+                </span>
+              </motion.button>
+              <button
+                type="button"
                 data-testid="vk-output-viewer-close"
-                onClick={() => setOutputViewer(null)}
+                onClick={closeOutputViewer}
                 aria-label="关闭结果"
                 title="关闭"
                 className="rounded px-2 py-1 text-lg leading-none"
@@ -1110,7 +1385,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
                 ×
               </button>
             </header>
-            <pre data-testid="vk-output-viewer-content" className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 text-xs leading-5">{outputViewer.content}</pre>
+            <div data-testid="vk-output-viewer-content" className="vk-output-viewer-content min-h-0 flex-1 overflow-auto p-4">
+              <Markdown>{outputViewer.content}</Markdown>
+            </div>
           </section>
         </div>
       )}

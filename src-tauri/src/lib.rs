@@ -300,6 +300,8 @@ pub fn run() {
                 }
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         // 日志**无条件注册**(release 也要):supervisor 把 Host 的 stdout/stderr 全量排空
         // 后转成 log 记录(spec §4),没有 logger 的话这些 `log::` 调用全是空操作 ——
         // 发布版一旦出问题就彻底没有诊断信息,而发布版恰恰是最需要它的地方。

@@ -26,6 +26,8 @@ log = "0.4"
 # (已在依赖树里,tauri 自己也用它,不引入新的编译代价。)
 dunce = "1"
 tauri = { version = "2.11.3", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 tauri-plugin-log = "2"
 # 单实例:必须**最先**注册,早于任何 Host bootstrap(spec §5)——否则第二实例会先拉起第二个 Node 再被劝退。
 tauri-plugin-single-instance = "2"

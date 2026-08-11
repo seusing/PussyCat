@@ -1,15 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Copy, Download, PlugZap, RefreshCw } from 'lucide-react'
+import { Download, RefreshCw } from 'lucide-react'
 import {
   fetchVkCapabilityPacks,
-  fetchVkWrssStatus,
   postVkCapabilityPackInstall,
-  saveVkWrss,
-  testVkWrss,
   type VkCapabilityPack,
-  type VkWrssStatus,
 } from '../../host/vkClient'
-import { copyText } from '../../lib/clipboard'
 
 const fieldStyle = {
   background: 'var(--color-canvas)',
@@ -20,7 +15,6 @@ const fieldStyle = {
 function errorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
 }
-
 function packTone(state: VkCapabilityPack['state']) {
   if (state === 'installed') return 'var(--color-success)'
   if (state === 'installing') return 'var(--color-accent)'
@@ -41,21 +35,13 @@ function packLabel(state: VkCapabilityPack['state']) {
 
 export function VkCapabilityPacksPanel({ baseUrl }: { baseUrl?: string }) {
   const [packs, setPacks] = useState<VkCapabilityPack[]>([])
-  const [wrss, setWrss] = useState<VkWrssStatus | null>(null)
-  const [wrssUrl, setWrssUrl] = useState('http://127.0.0.1:8001')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
-      const [packResult, wrssResult] = await Promise.all([
-        fetchVkCapabilityPacks(baseUrl),
-        fetchVkWrssStatus(baseUrl),
-      ])
+      const packResult = await fetchVkCapabilityPacks(baseUrl)
       setPacks(packResult.packs)
-      setWrss(wrssResult)
-      setWrssUrl(wrssResult.base_url)
       setError(null)
     } catch (cause) {
       setError(errorText(cause, '能力状态获取失败'))
@@ -79,28 +65,6 @@ export function VkCapabilityPacksPanel({ baseUrl }: { baseUrl?: string }) {
       setError(errorText(cause, '能力包安装启动失败'))
     } finally {
       setBusy(null)
-    }
-  }
-
-  const saveAndTestWrss = async () => {
-    setBusy('wrss')
-    setError(null)
-    try {
-      await saveVkWrss(wrssUrl, baseUrl)
-      const result = await testVkWrss(baseUrl)
-      setWrss(result)
-      setWrssUrl(result.base_url)
-    } catch (cause) {
-      setError(errorText(cause, 'WeRSS 连接失败'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const copyWrssUrl = async () => {
-    if (await copyText(wrssUrl)) {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
     }
   }
 
@@ -147,38 +111,6 @@ export function VkCapabilityPacksPanel({ baseUrl }: { baseUrl?: string }) {
             </div>
           </article>
         ))}
-
-        <article data-testid="vk-pack-wrss" className="rounded-lg p-3 md:col-span-2" style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium" style={{ color: 'var(--color-fg)' }}>公众号 WeRSS</div>
-              <div className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>连接你已经运行的 we-mp-rss；当前先接服务与 Web 界面，正文入库协议待后续对接。</div>
-            </div>
-            <span className="shrink-0 text-xs font-medium" style={{ color: wrss?.state === 'reachable' ? 'var(--color-success)' : 'var(--color-fg-dim)' }}>
-              {wrss?.state === 'reachable' ? '服务可达' : wrss?.configured ? '待测试' : '未配置'}
-            </span>
-          </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <input
-              aria-label="WeRSS 地址"
-              value={wrssUrl}
-              onChange={(event) => setWrssUrl(event.target.value)}
-              className="min-w-0 flex-1 rounded-lg px-3 py-2 text-xs outline-none"
-              style={fieldStyle}
-            />
-            <button type="button" onClick={() => { void saveAndTestWrss() }} disabled={busy !== null} className="flex items-center justify-center gap-1 rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-50" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
-              <PlugZap size={13} aria-hidden="true" /> 保存并测试
-            </button>
-            <button type="button" onClick={() => { void copyWrssUrl() }} className="flex items-center justify-center gap-1 rounded-lg px-3 py-2 text-xs" style={fieldStyle}>
-              {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
-              {copied ? '已复制' : '复制地址'}
-            </button>
-          </div>
-          <div className="mt-2 text-xs" style={{ color: wrss?.state === 'unreachable' || wrss?.state === 'timeout' ? 'var(--color-danger)' : 'var(--color-fg-dim)' }}>
-            {wrss?.message ?? '正在读取 WeRSS 状态…'}
-            {wrss?.status_code ? `（HTTP ${wrss.status_code}）` : ''}
-          </div>
-        </article>
       </div>
     </section>
   )

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, ExternalLink, RefreshCw, Send, Square, X } from 'lucide-react'
+import { Check, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
-  downloadVkOutput,
   fetchVkJob,
   fetchVkProviderSettings,
   postVkJob,
@@ -11,22 +10,24 @@ import {
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
-import { isVkJobRerun, markVkJobAsRerun } from './taskUiState'
+import { isVkJobRerun, markVkJobAsRerun, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import './VkTaskDetailSidebar.css'
 
-const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
+const ACTIVE_STATUSES = new Set([
+  'queued', 'running', 'cancel_requested', 'submitted', 'processing',
+  'retry_requested', 'retrying', 'rerunning',
+])
 const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
 const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted', 'completed_after_cancel_request'])
 const SUCCESS_STATUSES = new Set(['done', 'partial'])
+const VK_JOB_DETAIL_TERMINAL_EVENT = 'vk:job-detail-terminal'
+const VK_JOB_TERMINAL_EVENT = 'vk:job-terminal'
+const VK_JOB_RETRY_SUBMITTED_EVENT = 'vk:job-retry-submitted'
 
 function detailError(error: unknown): string {
   if (error instanceof HostRequestError) return error.summary
   if (error instanceof Error) return error.message
   return '任务详情获取失败'
-}
-
-function numericProgress(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null
 }
 
 function sourceItems(job: VkJobView | null): string[] {
@@ -35,14 +36,53 @@ function sourceItems(job: VkJobView | null): string[] {
   return [...new Set(source.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))]
 }
 
-function primaryOutputs(job: VkJobView): Array<{ id: string; label: string }> {
-  const outputs: Array<{ id: string; label: string }> = []
-  if (job.outputs?.note_path) outputs.push({ id: job.outputs.note_path, label: '知识笔记' })
-  if (job.outputs?.audit_path) outputs.push({ id: job.outputs.audit_path, label: '证据审计' })
-  for (const artifact of job.outputs?.product_artifacts ?? []) {
-    if (artifact.markdown) outputs.push({ id: artifact.markdown, label: `${artifact.preset} MD` })
+function primaryOutput(job: VkJobView): { id: string; label: string } | null {
+  if (job.outputs?.note_path) return { id: job.outputs.note_path, label: '查看解析结果' }
+  const artifact = job.outputs?.product_artifacts?.find((item) => item.markdown)
+  return artifact?.markdown ? { id: artifact.markdown, label: '查看解析结果' } : null
+}
+
+type TaskPhase = Readonly<{ label: string; stages: readonly string[] }>
+
+const QUICK_SUMMARY_PHASES: readonly TaskPhase[] = [
+  { label: '获取视频内容', stages: ['acquire', 'normalize'] },
+  { label: '理解视频重点', stages: ['chapter'] },
+  { label: '整理知识笔记', stages: ['note'] },
+  { label: '生成解析结果', stages: ['product'] },
+]
+
+const FULL_ANALYSIS_PHASES: readonly TaskPhase[] = [
+  { label: '获取视频内容', stages: ['acquire', 'normalize'] },
+  { label: '理解视频结构', stages: ['chapter'] },
+  { label: '核对关键信息', stages: ['claim', 'qc'] },
+  { label: '整理知识笔记', stages: ['note'] },
+  { label: '生成解析结果', stages: ['product'] },
+]
+
+function stageProgress(job: VkJobView, successful: boolean): {
+  completed: number
+  total: number
+  percent: number
+  currentLabel: string
+} {
+  const phases = job.request?.preset === 'quick-summary' ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES
+  const rawCompleted = Array.isArray(job.progress?.completed_stages) ? job.progress.completed_stages : []
+  const completedStages = new Set(rawCompleted.filter((stage): stage is string => typeof stage === 'string'))
+  let completed = 0
+  if (successful) completed = phases.length
+  else {
+    for (const phase of phases) {
+      if (!phase.stages.every((stage) => completedStages.has(stage))) break
+      completed += 1
+    }
   }
-  return outputs
+  const current = phases[Math.min(completed, phases.length - 1)]
+  return {
+    completed,
+    total: phases.length,
+    percent: Math.round((completed / phases.length) * 100),
+    currentLabel: successful ? '解析完成' : current.label,
+  }
 }
 
 function configuredModelName(job: VkJobView, settings: VkProviderSettings | null): string {
@@ -73,6 +113,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
   const loadGeneration = useRef(0)
+  const previousJobStatus = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     const generation = ++loadGeneration.current
@@ -90,13 +131,32 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       setJob(nextJob)
       setProviders(nextProviders)
       setError(null)
+      const previous = previousJobStatus.current
+      previousJobStatus.current = nextJob.status
+      if (previous && ACTIVE_STATUSES.has(previous) && !ACTIVE_STATUSES.has(nextJob.status)) {
+        window.dispatchEvent(new CustomEvent(VK_JOB_DETAIL_TERMINAL_EVENT, {
+          detail: { jobId: nextJob.job_id },
+        }))
+      }
     } catch (loadError) {
       if (generation !== loadGeneration.current) return
       setError(detailError(loadError))
     }
   }, [jobId, baseUrl])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    previousJobStatus.current = null
+    void load()
+  }, [load])
+  useEffect(() => {
+    if (!jobId) return
+    const syncTerminalDetail = (event: Event) => {
+      const terminalJobId = (event as CustomEvent<{ jobId?: string }>).detail?.jobId
+      if (terminalJobId === jobId) void load()
+    }
+    window.addEventListener(VK_JOB_TERMINAL_EVENT, syncTerminalDetail)
+    return () => window.removeEventListener(VK_JOB_TERMINAL_EVENT, syncTerminalDetail)
+  }, [jobId, load])
   useEffect(() => {
     if (!job || !ACTIVE_STATUSES.has(job.status)) return
     const timer = window.setInterval(load, 1500)
@@ -110,13 +170,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const failed = !!job && (FAILED_STATUSES.has(job.status) || (!active && !interrupted && !completedSuccessfully))
   const stopping = job?.status === 'cancel_requested'
   const rerunning = active && !!job && (!!job.parent_job_id || isVkJobRerun(job.job_id))
-  const total = job
-    ? Math.max(1, numericProgress(job.progress?.total_links) ?? (sources.length || 1))
-    : 1
-  const completed = job
-    ? Math.min(total, numericProgress(job.progress?.completed_links) ?? (active ? 0 : completedSuccessfully ? total : 0))
-    : 0
-  const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+  const progress = job
+    ? stageProgress(job, completedSuccessfully)
+    : { completed: 0, total: 4, percent: 0, currentLabel: '准备处理' }
 
   const runAction = async (action: 'cancel' | 'retry' | 'resubmit') => {
     if (!jobId || !job) return
@@ -131,7 +187,13 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       if (action === 'retry') {
         const result = await postVkJobAction(jobId, 'retry', baseUrl)
         const nextJobId = typeof result.job_id === 'string' ? result.job_id : null
-        if (nextJobId) onJobChange?.(nextJobId)
+        if (nextJobId) {
+          markVkJobAsRerun(nextJobId)
+          window.dispatchEvent(new CustomEvent(VK_JOB_RETRY_SUBMITTED_EVENT, {
+            detail: { jobId: nextJobId },
+          }))
+          onJobChange?.(nextJobId)
+        }
         else await load()
         return
       }
@@ -195,25 +257,25 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 aria-label={rerunning ? '任务重跑中' : '任务处理中'}
               />
               <div className="vk-task-progress-copy">
-                <strong>{completed} / {total}</strong>
-                <span>链接已完成</span>
+                <strong>阶段 {Math.min(progress.completed + 1, progress.total)} / {progress.total}</strong>
+                <span>{progress.currentLabel}</span>
               </div>
             </div>
           )}
 
           <div className="vk-task-progress-meta">
             <span>处理进度</span>
-            <strong>{percent}%</strong>
+            <strong>{progress.percent}%</strong>
           </div>
           <div
             className="vk-task-progress-track"
             role="progressbar"
-            aria-label="链接处理进度"
+            aria-label="处理阶段进度"
             aria-valuemin={0}
-            aria-valuemax={total}
-            aria-valuenow={completed}
+            aria-valuemax={100}
+            aria-valuenow={progress.percent}
           >
-            <span style={{ width: `${percent}%` }} />
+            <span style={{ width: `${progress.percent}%` }} />
           </div>
 
           <dl className="vk-task-detail-list">
@@ -291,16 +353,19 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             )}
           </div>
 
-          {completedSuccessfully && primaryOutputs(job).length > 0 && (
+          {completedSuccessfully && primaryOutput(job) && (
             <div className="vk-task-detail-section">
               <h3>解析结果</h3>
               <div className="vk-task-output-list">
-                {primaryOutputs(job).map((output) => (
-                  <button key={output.id} type="button" onClick={() => { void downloadVkOutput(output.id, baseUrl) }}>
-                    <span>{output.label}</span>
-                    <ExternalLink size={14} aria-hidden="true" />
-                  </button>
-                ))}
+                <button type="button" onClick={() => {
+                  const output = primaryOutput(job)
+                  if (output) window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
+                    detail: { outputId: output.id, title: '解析结果' },
+                  }))
+                }}>
+                  <span>{primaryOutput(job)?.label}</span>
+                  <Eye size={14} aria-hidden="true" />
+                </button>
               </div>
             </div>
           )}

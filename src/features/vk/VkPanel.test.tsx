@@ -1,11 +1,17 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkPanel } from './VkPanel'
 import { useAppStore } from '../../store/appStore'
 import type { VkProcessingRequest } from '../../host/vkClient'
+import { saveTextFileAs } from '../../lib/saveTextFile'
+import { VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+
+vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
 
 const initialState = useAppStore.getState()
 beforeEach(() => {
+  vi.useRealTimers()
+  vi.mocked(saveTextFileAs).mockReset().mockResolvedValue(true)
   useAppStore.setState(initialState, true)
 })
 
@@ -323,6 +329,16 @@ describe('VkPanel', () => {
     expect(payload.idempotency_key).toMatch(/[0-9a-f-]{36}/)
     expect(payload.client_job_id).toMatch(/[0-9a-f-]{36}/)
     expect(screen.queryByTestId('vk-cost-dialog')).toBeNull()
+    const banner = await screen.findByTestId('vk-task-banner')
+    expect(banner).toHaveTextContent('\u4efb\u52a1\u5df2\u63d0\u4ea4')
+    expect(banner).toHaveAttribute('data-tone', 'info')
+    expect(banner).toHaveClass('is-info')
+    const progress = screen.getByTestId('vk-task-banner-progress')
+    expect(progress).toHaveClass('is-info')
+    expect(Number(progress.getAttribute('aria-valuenow'))).toBeGreaterThan(90)
+
+    await user.click(screen.getByRole('button', { name: '\u5173\u95ed\u4efb\u52a1\u63d0\u9192' }))
+    expect(screen.queryByTestId('vk-task-banner')).not.toBeInTheDocument()
   })
 
   it('submits each imported link as its own durable job after inline previews', async () => {
@@ -350,6 +366,8 @@ describe('VkPanel', () => {
       .filter((item) => item.key === 'POST /vk/v1/jobs')
       .map((item) => JSON.parse(String(item.init?.body)).request.reasoning_effort)
     expect(efforts).toEqual(['max', 'max'])
+    expect(screen.getAllByTestId('vk-task-banner')).toHaveLength(1)
+    expect(screen.getByTestId('vk-task-banner')).toHaveTextContent('\u4efb\u52a1\u5df2\u63d0\u4ea4')
   })
 
   it('uses the old universal job path for YouTube without a diagnostic gate', async () => {
@@ -473,7 +491,7 @@ describe('VkPanel', () => {
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
       'GET /vk/v1/jobs': { body: [{
-        job_id: 'job-active', kind: 'request', status: 'processing',
+        job_id: 'job-active', kind: 'request', status: 'retrying',
         submitted_at: '2026-08-01T00:01:00+00:00', finished_at: null,
         parent_job_id: null, cache_bypass: false,
       }] },
@@ -482,8 +500,63 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await screen.findByTestId('vk-job-open-job-active')
 
-    await waitFor(() => expect(intervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000))
+    await waitFor(() => expect(intervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000))
     intervalSpy.mockRestore()
+  })
+
+  it('syncs an open detail in the same refresh that observes an active task becoming terminal', async () => {
+    const user = userEvent.setup()
+    let status = 'running'
+    const jobsRoute: Route = { body: () => [{
+      job_id: 'job-sync', kind: 'request', status,
+      submitted_at: '2026-08-11T00:01:00+00:00',
+      finished_at: status === 'running' ? null : '2026-08-11T00:02:00+00:00',
+      parent_job_id: null, cache_bypass: false,
+    }] }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'GET /vk/v1/jobs': jobsRoute,
+      'GET /vk/v1/jobs/job-sync': { body: () => ({
+        job_id: 'job-sync', kind: 'request', status,
+        submitted_at: '2026-08-11T00:01:00+00:00',
+        finished_at: status === 'running' ? null : '2026-08-11T00:02:00+00:00',
+        parent_job_id: null, cache_bypass: false,
+        request: { source: 'https://example.com/video', preset: 'quick-summary' },
+        error: status === 'failed' ? 'terminal detail error' : null,
+      }) },
+    })
+
+    render(<VkPanel baseUrl={BASE} />)
+    await user.click(await screen.findByTestId('vk-job-row'))
+    await screen.findByTestId('vk-job-detail')
+
+    status = 'failed'
+    await user.click(screen.getByTestId('vk-jobs-refresh'))
+
+    await waitFor(() => expect(screen.getByTestId('vk-job-detail')).toHaveTextContent('terminal detail error'))
+    expect(screen.getByTestId('vk-job-row')).toHaveTextContent('\u5931\u8d25')
+    expect(screen.getByText(/\u4efb\u52a1\d+\u9047\u5230\u4e86\u4e9b\u95ee\u9898/)).toBeInTheDocument()
+  })
+
+  it('shows one rerun-colored notice for one successful retry event', async () => {
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(calls.some((call) => call.key === 'GET /vk/v1/jobs')).toBe(true))
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('vk:job-retry-submitted', { detail: { jobId: 'retry-child' } }))
+      window.dispatchEvent(new CustomEvent('vk:job-retry-submitted', { detail: { jobId: 'retry-child' } }))
+    })
+
+    const notices = screen.getAllByTestId('vk-task-banner')
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toHaveTextContent('\u4efb\u52a1\u5df2\u91cd\u65b0\u63d0\u4ea4\uff0c\u6b63\u5728\u91cd\u8dd1')
+    expect(notices[0]).toHaveAttribute('data-tone', 'rerun')
+    expect(screen.getByTestId('vk-task-banner-progress')).toHaveClass('is-rerun')
   })
 
   it('folds an active internal run into its user request row', async () => {
@@ -605,8 +678,9 @@ describe('VkPanel', () => {
     await user.click(await screen.findByTestId('vk-output-note'))
 
     const dialog = await screen.findByRole('dialog')
-    expect(dialog).toHaveTextContent('# 测试笔记')
-    expect(dialog).toHaveTextContent('正文 **加粗**')
+    expect(screen.getByRole('heading', { level: 1, name: '测试笔记' })).toBeInTheDocument()
+    expect(dialog.querySelector('strong')).toHaveTextContent('加粗')
+    expect(screen.getByRole('button', { name: '复制内容' })).toBeInTheDocument()
     expect(calls.some((call) => call.key === 'GET /vk/v1/outputs/notes%2Fa.md')).toBe(true)
 
     await user.click(screen.getByRole('button', { name: /关闭/ }))
@@ -666,6 +740,38 @@ describe('VkPanel', () => {
     await waitFor(() => expect(screen.getByTestId('vk-query-answer')).toBeInTheDocument())
     expect(screen.getByTestId('vk-query-answer').textContent).toContain('光速约每秒三十万公里')
     expect(screen.getByTestId('vk-query-citation').textContent).toContain('transcript')
+  })
+
+  it('keeps the local-download button fixed while progress is cancellable', async () => {
+    let finishSaving: (saved: boolean) => void = () => undefined
+    vi.mocked(saveTextFileAs).mockImplementation((_name, _content, options) => {
+      options?.onProgress?.(37)
+      return new Promise((resolve) => { finishSaving = resolve })
+    })
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/outputs/note.md': { body: '# 解析结果' },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    act(() => {
+      window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
+        detail: { outputId: 'note.md', title: '知识笔记' },
+      }))
+    })
+
+    const button = await screen.findByTestId('vk-output-viewer-download')
+    expect(button).toHaveAttribute('data-state', 'idle')
+    await userEvent.click(button)
+    await waitFor(() => expect(button).toHaveAttribute('data-state', 'downloading'))
+    expect(screen.getByTestId('vk-output-download-progress')).toHaveAttribute('aria-valuenow', '37')
+    const options = vi.mocked(saveTextFileAs).mock.calls[0]?.[2]
+    expect(options?.signal?.aborted).toBe(false)
+
+    await userEvent.click(button)
+    expect(options?.signal?.aborted).toBe(true)
+    expect(button).toHaveAttribute('data-state', 'idle')
+    finishSaving(false)
   })
 
   it('first-run: exposes runtime preparation through the single engine verdict', async () => {
@@ -738,6 +844,76 @@ describe('VkPanel', () => {
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析环境没装成功'))
     expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('安装失败')
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('重试')
+  })
+
+  it('keeps each task notice for exactly three seconds while its progress continuously decreases', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(100_000)
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval')
+    const user = userEvent.setup()
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-timed', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/v')
+    await user.click(screen.getByTestId('vk-submit-button'))
+
+    const progress = screen.getByTestId('vk-task-banner-progress')
+    expect(progress).toHaveAttribute('aria-valuenow', '100')
+    const progressTick = intervalSpy.mock.calls.find((call) => call[1] === 50)?.[0]
+    const dismissAtThreeSeconds = timeoutSpy.mock.calls.find((call) => call[1] === 3_000)?.[0]
+    expect(progressTick).toBeTypeOf('function')
+    expect(dismissAtThreeSeconds).toBeTypeOf('function')
+
+    nowSpy.mockReturnValue(101_500)
+    act(() => { if (typeof progressTick === 'function') progressTick() })
+    expect(screen.getByTestId('vk-task-banner')).toBeInTheDocument()
+    expect(Number(progress.getAttribute('aria-valuenow'))).toBeLessThan(100)
+    expect(Number(progress.getAttribute('aria-valuenow'))).toBeGreaterThan(0)
+    act(() => { if (typeof dismissAtThreeSeconds === 'function') dismissAtThreeSeconds() })
+    expect(screen.queryByTestId('vk-task-banner')).not.toBeInTheDocument()
+    nowSpy.mockRestore()
+    timeoutSpy.mockRestore()
+    intervalSpy.mockRestore()
+  })
+
+  it('uses success, warning, and danger notices for completed, interrupted, and failed jobs', async () => {
+    const row = (job_id: string, status: string, minute: number, finished_at: string | null = null) => ({
+      job_id, kind: 'request', status,
+      submitted_at: `2026-08-11T00:0${minute}:00+00:00`, finished_at,
+      parent_job_id: null, cache_bypass: false,
+    })
+    const jobsRoute: Route = { body: [
+      row('job-done-notice', 'running', 1),
+      row('job-interrupted-notice', 'processing', 2),
+      row('job-failed-notice', 'queued', 3),
+    ] }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': jobsRoute,
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-done-notice')
+
+    jobsRoute.body = [
+      row('job-done-notice', 'done', 1, '2026-08-11T00:10:00+00:00'),
+      row('job-interrupted-notice', 'completed_after_cancel_request', 2, '2026-08-11T00:10:00+00:00'),
+      row('job-failed-notice', 'failed', 3, '2026-08-11T00:10:00+00:00'),
+    ]
+    await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+
+    const completed = await screen.findByText(/\u4efb\u52a1\d+\u5df2\u5b8c\u6210/)
+    const interrupted = screen.getByText(/\u4efb\u52a1\d+\u5df2\u4e2d\u65ad/)
+    const failed = screen.getByText(/\u4efb\u52a1\d+\u9047\u5230\u4e86\u4e9b\u95ee\u9898/)
+    expect(completed.closest('[data-testid="vk-task-banner"]')).toHaveAttribute('data-tone', 'success')
+    expect(interrupted.closest('[data-testid="vk-task-banner"]')).toHaveAttribute('data-tone', 'warning')
+    expect(failed.closest('[data-testid="vk-task-banner"]')).toHaveAttribute('data-tone', 'danger')
+    expect(screen.getAllByTestId('vk-task-banner-progress').map((item) => item.className)).toEqual(
+      expect.arrayContaining(['vk-task-banner-progress is-success', 'vk-task-banner-progress is-warning', 'vk-task-banner-progress is-danger']),
+    )
   })
 
   it('does not poll-loop when an installed runtime is displayed', async () => {

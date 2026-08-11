@@ -41,8 +41,7 @@ function makeProps(overrides: Partial<VkTaskTableProps> = {}): VkTaskTableProps 
     onSelect: vi.fn(),
     onOpen: vi.fn(),
     onToggleNotification: vi.fn(),
-    onCopyPath: vi.fn(),
-    onCopyFileName: vi.fn(),
+    onSave: vi.fn(),
     onDelete: vi.fn(),
     ...overrides,
   }
@@ -97,9 +96,8 @@ describe('VkTaskTable', () => {
     const user = userEvent.setup()
     const onOpen = vi.fn()
     const onSelect = vi.fn()
-    const onCopyPath = vi.fn()
-    const onCopyFileName = vi.fn()
-    render(<VkTaskTable {...makeProps({ onOpen, onSelect, onCopyPath, onCopyFileName })} />)
+    const onSave = vi.fn()
+    render(<VkTaskTable {...makeProps({ onOpen, onSelect, onSave })} />)
 
     await user.click(screen.getByTestId('vk-job-open-job-running'))
     expect(onOpen).toHaveBeenCalledWith(JOBS[0])
@@ -109,27 +107,20 @@ describe('VkTaskTable', () => {
     await user.click(screen.getByRole('button', { name: '任务 2 更多操作' }))
     const menu = screen.getByRole('menu')
     expect(onOpen).toHaveBeenCalledTimes(1)
-    await user.click(within(menu).getByRole('menuitem', { name: '复制路径' }))
-    expect(onCopyPath).toHaveBeenCalledWith(JOBS[1])
+    await user.click(within(menu).getByRole('menuitem', { name: '存到本地' }))
+    expect(onSave).toHaveBeenCalledWith(JOBS[1])
     expect(onSelect).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole('button', { name: '任务 2 更多操作' }))
-    await user.click(screen.getByRole('menuitem', { name: '复制文件名' }))
-    expect(onCopyFileName).toHaveBeenCalledWith(JOBS[1])
   })
 
-  it('disables output copy actions when a task has no successful output', async () => {
+  it('disables saving when a task has no successful output', async () => {
     const user = userEvent.setup()
-    const onCopyPath = vi.fn()
-    const onCopyFileName = vi.fn()
-    render(<VkTaskTable {...makeProps({ onCopyPath, onCopyFileName })} />)
+    const onSave = vi.fn()
+    render(<VkTaskTable {...makeProps({ onSave })} />)
 
     await user.click(screen.getByRole('button', { name: '任务 3 更多操作' }))
     const menu = screen.getByRole('menu')
-    expect(within(menu).getByRole('menuitem', { name: '复制路径' })).toBeDisabled()
-    expect(within(menu).getByRole('menuitem', { name: '复制文件名' })).toBeDisabled()
-    expect(onCopyPath).not.toHaveBeenCalled()
-    expect(onCopyFileName).not.toHaveBeenCalled()
+    expect(within(menu).getByRole('menuitem', { name: '存到本地' })).toBeDisabled()
+    expect(onSave).not.toHaveBeenCalled()
   })
 
   it('toggles an individual notification without selecting its row', async () => {

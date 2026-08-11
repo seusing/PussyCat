@@ -10,6 +10,7 @@ import { createVkJobShadow } from './vk-job-shadow.mjs'
 import { VkRuntimeManager } from './vk-runtime.mjs'
 import { resolveRunManagerOptions } from './run-manager-options.mjs'
 import { createWrssIntegration } from './wrss-integration.mjs'
+import { WrssRuntimeManager } from './wrss-runtime.mjs'
 import { createRadarService } from './radar.mjs'
 
 // Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
@@ -104,6 +105,12 @@ try {
       ?? (vkHome ? resolve(vkHome, 'data') : undefined),
     configDir: process.env.OPENCLI_HOST_VK_CONFIG_DIR
       ?? (vkHome ? resolve(vkHome, 'config') : undefined),
+    baseEnv: {
+      ...process.env,
+      VK_OPENCLI_BROWSER_BRIDGE: '1',
+      VK_OPENCLI_NODE_PATH: process.execPath,
+      VK_OPENCLI_ENTRY: opencliEntry,
+    },
   })
   const vkStateDir = process.env.OPENCLI_HOST_VK_STATE_DIR
     ?? (vkHome ? resolve(vkHome, 'node-state') : undefined)
@@ -112,6 +119,10 @@ try {
   })
   const wrssIntegration = createWrssIntegration({
     stateFile: vkStateDir ? resolve(vkStateDir, 'wrss-integration.json') : undefined,
+  })
+  const wrssRuntime = new WrssRuntimeManager({
+    home: vkHome,
+    bundleDir: process.env.OPENCLI_HOST_VK_BUNDLE_DIR,
   })
   const radarService = createRadarService({
     stateFile: process.env.OPENCLI_HOST_RADAR_STATE_FILE
@@ -126,6 +137,7 @@ try {
     vkJobShadow,
     vkRuntime,
     wrssIntegration,
+    wrssRuntime,
     radarService,
     runManagerOptions: resolveRunManagerOptions(process.env),
   })

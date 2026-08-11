@@ -289,6 +289,31 @@ export interface VkWrssStatus {
   checked_at: string | null
 }
 
+export type WrssRuntimeState = 'not-available' | 'not-installed' | 'installing' | 'installed' | 'starting' | 'running' | 'failed'
+
+export interface WrssManagedStatus {
+  state: WrssRuntimeState
+  summary: string
+  reason_code: string | null
+  progress_log: string[]
+  version: string | null
+  size_label: string
+  ui_url?: string
+  checked_at: string
+  legacy?: VkWrssStatus | null
+  external?: VkWrssStatus | null
+}
+
+export async function fetchVkWrssManagedStatus(baseUrl = DEFAULT_BASE_URL): Promise<WrssManagedStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss`, { cache: 'no-store' })
+  return parseVkResponse<WrssManagedStatus>(response, 'WeRSS 状态获取失败')
+}
+
+export async function postVkWrssEnable(baseUrl = DEFAULT_BASE_URL): Promise<WrssManagedStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss/enable`, jsonInit({}))
+  return parseVkResponse<WrssManagedStatus>(response, 'WeRSS 启用失败')
+}
+
 export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
   const response = await fetch(`${baseUrl}/vk/v1/runtime/status`)
   return parseVkResponse<VkRuntimeStatus>(response, '解析引擎状态获取失败')

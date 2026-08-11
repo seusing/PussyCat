@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { UndoToast } from './UndoToast'
 import { useAppStore } from '../store/appStore'
@@ -19,4 +19,17 @@ test('取消站点收藏后显示 toast,点撤销回滚', async () => {
   await userEvent.click(screen.getByTestId('undo-button'))
   expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])
   expect(screen.queryByTestId('undo-toast')).not.toBeInTheDocument()
+})
+
+test('通知固定显示三秒后自动关闭', () => {
+  vi.useFakeTimers()
+  useAppStore.getState().toggleSiteFavorite('x')
+  useAppStore.getState().toggleSiteFavorite('x')
+  render(<UndoToast />)
+
+  act(() => { vi.advanceTimersByTime(2_999) })
+  expect(screen.getByTestId('undo-toast')).toBeInTheDocument()
+  act(() => { vi.advanceTimersByTime(1) })
+  expect(screen.queryByTestId('undo-toast')).not.toBeInTheDocument()
+  vi.useRealTimers()
 })

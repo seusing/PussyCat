@@ -14,6 +14,7 @@ import { LoginStatusPanel } from './features/login/LoginStatusPanel'
 import { VkPanel } from './features/vk/VkPanel'
 import { VkTaskDetailSidebar } from './features/vk/VkTaskDetailSidebar'
 import { RadarPanel } from './features/radar/RadarPanel'
+import WrssPanel from './features/wrss/WrssPanel'
 import { InspirationPanel } from './features/inspiration/InspirationPanel'
 import {
   isLoginCheckRunId, loginCheckRunId, parseWhoamiResult,
@@ -326,7 +327,9 @@ export default function App({
                       setVkRightPanelOpen(!!jobId)
                     }}
                   />
-                : <RadarPanel baseUrl={baseUrl} />
+                : activeModule === 'wrss'
+                  ? <WrssPanel baseUrl={baseUrl} />
+                  : <RadarPanel baseUrl={baseUrl} />
         }
         rightPanel={activeModule === 'vk'
           ? <VkTaskDetailSidebar
