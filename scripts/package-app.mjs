@@ -21,6 +21,8 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const STAMP = join(root, '.package-stamp.json')
 const BUNDLE = join(root, 'src-tauri/target/release/bundle')
+const VK_MANIFEST = join(root, 'src-tauri/resources/vk/runtime-manifest.json')
+const PUSSYCAT_LOCK = join(root, 'package-lock.json')
 
 const args = new Set(process.argv.slice(2))
 const CHECK_ONLY = args.has('--check')
@@ -58,6 +60,64 @@ function productName() {
 function readStamp() {
   if (!existsSync(STAMP)) return undefined
   try { return JSON.parse(readFileSync(STAMP, 'utf8')) } catch { return undefined }
+}
+
+export function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
+/** Accept both legacy string artifacts and provenance-aware { path, sha256 } artifacts. */
+export function stampArtifactPaths(stampValue) {
+  if (!Array.isArray(stampValue?.artifacts)) return []
+  return stampValue.artifacts
+    .map((artifact) => typeof artifact === 'string' ? artifact : artifact?.path)
+    .filter((artifact) => typeof artifact === 'string' && artifact.length > 0)
+}
+
+/**
+ * Legacy stamps only prove an artifact path. New stamps also prove its bytes.
+ * A provenance-aware entry must therefore still be present in currentArtifacts
+ * and match the SHA-256 captured at package time.
+ */
+export function areStampArtifactsCurrent(stampValue, currentArtifactPaths) {
+  if (!Array.isArray(stampValue?.artifacts) || stampValue.artifacts.length === 0) return true
+  return stampValue.artifacts.every((artifact) => {
+    if (typeof artifact === 'string') return currentArtifactPaths.includes(artifact)
+    if (!artifact
+      || typeof artifact.path !== 'string'
+      || typeof artifact.sha256 !== 'string'
+      || !currentArtifactPaths.includes(artifact.path)
+      || !existsSync(artifact.path)) return false
+    return sha256(artifact.path) === artifact.sha256
+  })
+}
+
+export function createPackageStamp({
+  name,
+  source,
+  startedAt,
+  fresh,
+  treeChangedDuringBuild,
+  headAfter,
+  vkManifestPath = VK_MANIFEST,
+  pussyCatLockPath = PUSSYCAT_LOCK,
+}) {
+  const vkManifest = JSON.parse(readFileSync(vkManifestPath, 'utf8'))
+  if (!vkManifest?.source || typeof vkManifest.source !== 'object') {
+    throw new Error('[package] vk runtime manifest is missing source provenance')
+  }
+  return {
+    productName: name,
+    source: source.identity,
+    commit: source.commit,
+    dirty: source.dirty,
+    ...(treeChangedDuringBuild ? { treeChangedDuringBuild: true, headAfterBuild: headAfter } : {}),
+    builtAt: new Date(startedAt).toISOString(),
+    videoKnowledgeSource: vkManifest.source,
+    vkBundleManifestSha256: sha256(vkManifestPath),
+    pussyCatLockSha256: existsSync(pussyCatLockPath) ? sha256(pussyCatLockPath) : null,
+    artifacts: fresh.map((path) => ({ path, sha256: sha256(path) })),
+  }
 }
 
 /**
@@ -121,12 +181,17 @@ function pruneForeignArtifacts(name) {
   return removed
 }
 
+export function main() {
 const name = productName()
 const source = sourceSnapshot()
 const identity = source.identity
 const stamp = readStamp()
 const artifacts = currentArtifacts(name)
-const upToDate = !!stamp && stamp.source === identity && stamp.productName === name && artifacts.length > 0
+const upToDate = !!stamp
+  && stamp.source === identity
+  && stamp.productName === name
+  && artifacts.length > 0
+  && areStampArtifactsCurrent(stamp, artifacts)
 
 if (CHECK_ONLY) {
   // 供钩子/脚本调用:0 = 已是最新无需打包,1 = 需要打包。**不做任何构建。**
@@ -192,15 +257,15 @@ const headAfter = sourceAfter.commit
 const treeChangedDuringBuild = sourceAfter.identity !== source.identity
 
 mkdirSync(dirname(STAMP), { recursive: true })
-writeFileSync(STAMP, `${JSON.stringify({
-  productName: name,
-  source: identity,
-  commit: source.commit,
-  dirty: source.dirty,
-  ...(treeChangedDuringBuild ? { treeChangedDuringBuild: true, headAfterBuild: headAfter } : {}),
-  builtAt: new Date(startedAt).toISOString(),
-  artifacts: fresh,
-}, null, 2)}\n`)
+const packageStamp = createPackageStamp({
+  name,
+  source,
+  startedAt,
+  fresh,
+  treeChangedDuringBuild,
+  headAfter,
+})
+writeFileSync(STAMP, `${JSON.stringify(packageStamp, null, 2)}\n`)
 
 console.log(`\n[package] ✅ ${name} 打包完成`)
 console.log(`[package] 源码 ${identity}`)
@@ -212,3 +277,7 @@ if (treeChangedDuringBuild) {
   console.log(`[package] ⚠️ 构建期间 HEAD 从 ${source.commit.slice(0, 12)} 变成了 ${headAfter.slice(0, 12)}。`)
   console.log('[package] 这个包的来源是混合态,归属说不清。建议重跑一次以拿到可归属的产物。')
 }
+}
+
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : undefined
+if (invokedPath === fileURLToPath(import.meta.url)) main()
