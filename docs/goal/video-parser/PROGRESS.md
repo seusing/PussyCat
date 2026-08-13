@@ -23,4 +23,8 @@
 - 模型配置新增通道启用/禁用、备用顺序添加/删除/上移/下移和同源风险提示；失效通道只在连接测试后标记，并提供禁用/删除操作，不会自动删除配置。保存时严格拒绝未知、重复或不可用路由。
 - 任务详情新增真实模型尝试列表，展示阶段、实际通道、请求/回报模型、状态、重试序号、耗时和切换原因；不向界面暴露 endpoint、query 或 key。
 - 阶段 3 红→绿证据：`video-parser-stage3-red-to-green.txt`。Python 定向 143 passed；全量 1404 passed、6 skipped、2 deselected；ruff 与 mypy 全绿。PussyCat 定向 41 passed；全量 900 passed；前端 build 与 9 项 host verification 全绿。
-- 正在进行：阶段 4 懒加载媒体获取链，先梳理平台字幕、ASR、低质触发 OCR 的现有分支与缓存/取消边界，再写红测。
+- 阶段 4 已完成：采集链改为“平台字幕 → 音频 ASR → 只有 ASR 低质才获取/复用低清视频做内嵌字幕与 OCR”。ASR 门禁联合时长、语音覆盖、可用时的置信度、乱码率、重复率、cue/字符数；第二阶段复用已有视频，并记录分阶段耗时、分支、质量信号和降级原因。
+- 阶段 4 安全/运维边界：FunASR 只接受完整本地模型目录（`config.yaml` + `configuration.json` + `model.pt`），缺失或部分缓存立即失败，不静默下载；下载、转写和 OCR 均有取消检查，run-scoped 失败/完成清理同时覆盖首阶段音频与二阶段视频。
+- 阶段 4 真机分支评测：10 条小红书本地视频，0 次远程模型调用、0 次模型下载；10/10 ASR 通过组合门禁，因此没有强行走 OCR。冷模型加载 47.086s，单条 ASR p50=42.328s，总转写 396.207s。10 条各保留 320 字预览并人工审查：0/10 出现明显乱码、空文本、循环重复或跨主题；但无逐字 gold transcript，故不声称 WER 或“每个字都正确”。低质 ASR 触发 OCR 由注入低覆盖/低置信/乱码/重复/空输出的回归测试覆盖。
+- 阶段 4 证据：Python 全量 1417 passed、6 skipped、2 deselected；Ruff 全绿；Mypy 92 个源文件全绿；`video-parser-stage4-red-to-green.txt`、`video-parser-stage4-xhs-branches.json`及原始本地 ASR 日志。真实大模型调用累计仍为 3/15。
+- 正在进行：阶段 5 证据与深度，先冻结稳定 segment ID 及三档证据策略，再优化引用/QC token，避免用纯序号及逐 claim 调用。
