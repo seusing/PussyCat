@@ -86,6 +86,12 @@ function stageProgress(job: VkJobView, successful: boolean): {
 }
 
 function configuredModelName(job: VkJobView, settings: VkProviderSettings | null): string {
+  const actualRoutes = [...new Set(
+    (job.progress?.model_attempts ?? []).map((attempt) => attempt.provider_route),
+  )]
+  if (actualRoutes.length > 0) {
+    return actualRoutes.map((route) => modelAttemptName(route, settings)).join(' → ')
+  }
   const profile = typeof job.request?.provider_profile === 'string' ? job.request.provider_profile : ''
   const direct = settings?.channels.find((channel) => channel.id === profile)
   if (direct) return direct.name
@@ -99,6 +105,18 @@ function configuredModelName(job: VkJobView, settings: VkProviderSettings | null
   if (assigned) return assigned.name
   if (profile && profile !== 'default') return profile
   return '跟随默认模型配置'
+}
+
+const MODEL_ATTEMPT_STATUS: Record<string, string> = {
+  ok: '成功',
+  transient_error: '临时故障',
+  permanent_error: '配置或请求错误',
+  schema_error: '响应格式错误',
+}
+
+function modelAttemptName(route: string, settings: VkProviderSettings | null): string {
+  const channelId = route.split(':', 1)[0]
+  return settings?.channels.find((channel) => channel.id === channelId)?.name ?? route
 }
 
 export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
@@ -292,6 +310,26 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               <dd>{job.submitted_at ? new Date(job.submitted_at).toLocaleString('zh-CN') : '—'}</dd>
             </div>
           </dl>
+
+          {(job.progress?.model_attempts?.length ?? 0) > 0 && (
+            <div className="vk-task-detail-section" data-testid="vk-model-attempts">
+              <h3>模型调用记录</h3>
+              <ol className="vk-model-attempt-list">
+                {job.progress!.model_attempts!.map((attempt) => (
+                  <li key={`${attempt.attempt_number}-${attempt.created_at}`}>
+                    <div>
+                      <strong>第 {attempt.attempt_number} 次 · {modelAttemptName(attempt.provider_route, providers)}</strong>
+                      <span className={`is-${attempt.status}`}>{MODEL_ATTEMPT_STATUS[attempt.status] ?? attempt.status}</span>
+                    </div>
+                    <p>{attempt.stage} · {attempt.model_reported || attempt.model_requested} · {Math.max(0, attempt.latency_ms)} ms</p>
+                    {attempt.switch_reason === 'previous_route_transient_error' && (
+                      <p className="vk-model-switch-reason">上一通道发生临时故障，已按你的备用顺序切换</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
 
           <div className="vk-task-detail-section">
             <h3>提交内容</h3>

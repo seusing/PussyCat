@@ -118,12 +118,29 @@ export interface VkJobView {
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number
-  progress?: { model_calls?: number } & Record<string, unknown>
+  progress?: {
+    model_calls?: number
+    model_attempts?: VkModelAttempt[] | null
+  } & Record<string, unknown>
   request_fingerprint?: string | null
   budget_stop?: VkBudgetStop | null
   capabilities?: VkCapabilityResult[]
   request?: { source?: string; preset?: string } & Record<string, unknown>
   outputs?: Partial<VkJobOutputs>
+}
+
+export interface VkModelAttempt {
+  attempt_number: number
+  stage: string
+  provider_route: string
+  model_requested: string
+  model_reported: string
+  api_style: string
+  retry_index: number
+  latency_ms: number
+  status: 'ok' | 'transient_error' | 'permanent_error' | 'schema_error' | string
+  created_at: string
+  switch_reason: 'previous_route_transient_error' | string | null
 }
 
 export interface VkQueryCitation {
@@ -413,6 +430,7 @@ export interface VkChannel {
   reasoning_effort: string
   reasoning_effort_explicit: boolean
   extra_headers: Record<string, string>
+  enabled: boolean
 }
 
 export interface VkImportableChannel {
@@ -468,6 +486,12 @@ export interface VkProviderSettings {
   roles: Record<string, string | null>
   /** 只含**显式**指派 —— 界面据此区分「指定了」与「跟随默认」。 */
   role_assignments: Record<string, string>
+  /** 角色 → 用户显式排序的备用通道，不含主通道。 */
+  role_fallbacks: Record<string, string[]>
+  /** 角色 → 实际可用的完整顺序（主通道在前）。 */
+  role_routes: Record<string, string[]>
+  /** 同一上游等不会阻止保存、但会削弱冗余的提醒。 */
+  role_route_warnings: Record<string, string[]>
   role_labels: Record<string, string>
   role_hints: Record<string, string>
   /** 还没指到通道的角色 —— 界面据此点名,而不是笼统说"没配好"。 */
@@ -512,6 +536,7 @@ export interface VkChannelPayload {
   api_style?: string
   reasoning_effort?: string | null
   extra_headers?: Record<string, string>
+  enabled?: boolean
   api_key?: string
 }
 
@@ -528,7 +553,11 @@ export async function fetchVkProviderSettings(baseUrl = DEFAULT_BASE_URL): Promi
 }
 
 export async function saveVkProviderSettings(
-  payload: { channels: VkChannelPayload[]; roles?: Record<string, string> },
+  payload: {
+    channels: VkChannelPayload[]
+    roles?: Record<string, string>
+    role_fallbacks?: Record<string, string[]>
+  },
   baseUrl = DEFAULT_BASE_URL,
 ): Promise<VkProviderSaveResult> {
   const response = await fetch(`${baseUrl}/vk/v1/providers`, jsonInit(payload))

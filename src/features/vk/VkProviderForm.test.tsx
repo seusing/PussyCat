@@ -12,6 +12,7 @@ function channel(over: Record<string, unknown> = {}) {
     api_style: 'openai_completions', key_stored: true, key_from_environment: false,
     key_masked: 'sk-rela••••••••••6789',
     reasoning_effort: 'low', reasoning_effort_explicit: false, extra_headers: {},
+    enabled: true,
     ...over,
   }
 }
@@ -21,6 +22,9 @@ function settings(over: Record<string, unknown> = {}) {
     channels: [channel()],
     roles: { deep_analysis: 'cheap', basic: 'cheap' },
     role_assignments: {},
+    role_fallbacks: {},
+    role_routes: { deep_analysis: ['cheap'], basic: ['cheap'] },
+    role_route_warnings: {},
     role_labels: { deep_analysis: '深度分析', basic: '基础处理' },
     role_hints: { deep_analysis: '提炼观点', basic: '章节划分、质检等其余步骤' },
     unassigned_roles: [],
@@ -325,7 +329,7 @@ test('从本机既有配置一键导入_地址与模型名现成', async () => {
 
 // ── 角色指派 ────────────────────────────────────────────────────────────
 
-test('两个角色各一个下拉,未指派时显示跟随默认', async () => {
+test('两个角色各有主通道下拉,未指派时明确为空', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
 
@@ -335,7 +339,7 @@ test('两个角色各一个下拉,未指派时显示跟随默认', async () => {
   expect(screen.getByText('深度分析')).toBeInTheDocument()
   expect(screen.getByText('基础处理')).toBeInTheDocument()
   expect((screen.getByTestId('vk-role-deep_analysis') as HTMLSelectElement).value).toBe('')
-  expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('不会跨角色自动切换')
+  expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('不会换通道掩盖配置问题')
 })
 
 test('指派的角色随保存一起提交', async () => {
@@ -354,6 +358,89 @@ test('指派的角色随保存一起提交', async () => {
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string> }
   expect(body.roles).toEqual({ deep_analysis: 'smart' })
+})
+
+test('备用通道按用户排序保存,并明确只在临时上游错误时切换', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
+      channels: [
+        channel(),
+        channel({ id: 'backup-a', name: '备用 A', base_url: 'https://a.example/v1' }),
+        channel({ id: 'backup-b', name: '备用 B', base_url: 'https://b.example/v1' }),
+      ],
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: ['backup-a', 'backup-b'] },
+      role_routes: { basic: ['cheap', 'backup-a', 'backup-b'] },
+    }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const first = await screen.findByTestId('vk-role-fallback-basic-0')
+  expect(first).toHaveValue('backup-a')
+  expect(screen.getByTestId('vk-role-fallback-basic-1')).toHaveValue('backup-b')
+  await user.click(screen.getByRole('button', { name: '下移基础处理备用 1' }))
+  expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup-b')
+  await user.click(screen.getByTestId('vk-provider-save'))
+
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
+    role_fallbacks: Record<string, string[]>
+  }
+  expect(body.role_fallbacks.basic).toEqual(['backup-b', 'backup-a'])
+  expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('仅超时、429 或上游 5xx')
+})
+
+test('添加备用不会提供主通道或已经选过的通道', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+    channels: [channel(), channel({ id: 'backup', name: '备用' })],
+    role_assignments: { basic: 'cheap' },
+  }) } })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await user.click(await screen.findByTestId('vk-role-fallback-add-basic'))
+  expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup')
+  expect(screen.getByTestId('vk-role-fallback-add-basic')).toBeDisabled()
+})
+
+test('同一上游的主备只提醒不替用户改配置', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+    channels: [channel(), channel({ id: 'backup', name: '备用' })],
+    role_assignments: { basic: 'cheap' },
+    role_fallbacks: { basic: ['backup'] },
+    role_route_warnings: { basic: ['主通道和备用 1 来自同一上游，故障时可能一起不可用'] },
+  }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent('同一上游')
+  expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup')
+})
+
+test('连接确认永久失效后可禁用且不会自动删除', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers/test': { body: {
+      ok: false, reason_code: 'unauthorized', message: 'API key 已过期', retryable: false,
+      fix_hint: '更换 key', models: [], normalization_notes: [],
+    } },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await user.click(await screen.findByTestId('vk-channel-test-cheap'))
+  expect(await screen.findByTestId('vk-channel-invalid-cheap')).toHaveTextContent('不会自动删除')
+  await user.click(screen.getByTestId('vk-channel-toggle-cheap'))
+  expect(screen.getByTestId('vk-channel-disabled-cheap')).toBeInTheDocument()
+  expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
+  await user.click(screen.getByTestId('vk-provider-save'))
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
+    channels: Array<{ id: string; enabled: boolean }>
+  }
+  expect(body.channels).toContainEqual(expect.objectContaining({ id: 'cheap', enabled: false }))
 })
 
 // ── 测试连接 ────────────────────────────────────────────────────────────

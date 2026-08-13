@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Eye, EyeOff } from 'lucide-react'
+import { ChevronDown, ChevronUp, Eye, EyeOff, Plus, Trash2 } from 'lucide-react'
 import {
   fetchVkProviderSettings,
   importVkCcSwitchChannel,
@@ -105,6 +105,7 @@ type Draft = {
   /** 用户这次输入的 key(未保存);未 touched 时不提交,表示"不改动已存的那把"。 */
   api_key: string
   key_touched: boolean
+  enabled: boolean
   /** 点了「显示」之后取回的明文,只活在组件里 */
   revealed?: string
 }
@@ -117,7 +118,7 @@ function toDraft(channel: VkProviderSettings['channels'][number]): Draft {
     key_env: channel.key_env, api_style: channel.api_style, api_style_touched: true,
     reasoning_effort: channel.reasoning_effort_explicit ? channel.reasoning_effort : '',
     key_masked: channel.key_masked, extra_headers: { ...channel.extra_headers },
-    api_key: '', key_touched: false,
+    api_key: '', key_touched: false, enabled: channel.enabled !== false,
   }
 }
 
@@ -137,6 +138,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [settings, setSettings] = useState<VkProviderSettings | null>(null)
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [roles, setRoles] = useState<Record<string, string>>({})
+  const [roleFallbacks, setRoleFallbacks] = useState<Record<string, string[]>>({})
   const [results, setResults] = useState<Record<string, VkProviderTestResult>>({})
   const [models, setModels] = useState<Record<string, string[]>>({})
   const [reasoningEfforts, setReasoningEfforts] = useState<Record<string, Record<string, string[]>>>({})
@@ -151,6 +153,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       setSettings(loaded)
       setDrafts(loaded.channels.map(toDraft))
       setRoles({ ...loaded.role_assignments })
+      setRoleFallbacks(Object.fromEntries(
+        Object.entries(loaded.role_fallbacks ?? {}).map(([role, ids]) => [role, [...ids]]),
+      ))
     } catch (err) {
       setError(err instanceof Error ? err.message : '模型配置读取失败')
     }
@@ -174,7 +179,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       id, name: '新配置', base_url: '', model_id: '',
       key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
       api_style_touched: false, reasoning_effort: '', key_masked: '', extra_headers: {},
-      api_key: '', key_touched: false,
+      api_key: '', key_touched: false, enabled: true,
     }])
   }
 
@@ -183,6 +188,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       id: item.id, name: item.name, base_url: item.base_url, model_id: item.model_id,
       key_env: item.key_env, api_style: inferApiStyle(item.model_id), api_style_touched: false,
       reasoning_effort: '', key_masked: '', extra_headers: {}, api_key: '', key_touched: false,
+      enabled: true,
     }])
   }
 
@@ -198,7 +204,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         id: channel.id, name: channel.name, base_url: channel.base_url,
         model_id: channel.model_id, key_env: channel.key_env, api_style: channel.api_style,
         api_style_touched: true, reasoning_effort: '', key_masked: '', extra_headers: channel.extra_headers,
-        api_key, key_touched: true,
+        api_key, key_touched: true, enabled: true,
       }])
       setNotice(`已从 cc-switch 导入「${channel.name}」，按「保存」后生效`)
     } catch (err) {
@@ -211,6 +217,37 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const removeChannel = (id: string) => {
     setDrafts((list) => list.filter((d) => d.id !== id))
     setRoles((current) => Object.fromEntries(Object.entries(current).filter(([, v]) => v !== id)))
+    setRoleFallbacks((current) => Object.fromEntries(
+      Object.entries(current).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
+    ))
+  }
+
+  const setChannelEnabled = (id: string, enabled: boolean) => {
+    patch(id, { enabled })
+    if (enabled) return
+    setRoles((current) => Object.fromEntries(Object.entries(current).filter(([, value]) => value !== id)))
+    setRoleFallbacks((current) => Object.fromEntries(
+      Object.entries(current).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
+    ))
+  }
+
+  const patchRoleFallback = (role: string, index: number, value: string) => {
+    setRoleFallbacks((current) => {
+      const next = [...(current[role] ?? [])]
+      if (value) next[index] = value
+      else next.splice(index, 1)
+      return { ...current, [role]: next }
+    })
+  }
+
+  const moveRoleFallback = (role: string, index: number, offset: -1 | 1) => {
+    setRoleFallbacks((current) => {
+      const next = [...(current[role] ?? [])]
+      const target = index + offset
+      if (target < 0 || target >= next.length) return current
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return { ...current, [role]: next }
+    })
   }
 
   const reveal = async (draft: Draft) => {
@@ -264,10 +301,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         key_env: d.key_env, api_style: d.api_style,
         reasoning_effort: d.reasoning_effort || null,
         extra_headers: d.extra_headers,
+        enabled: d.enabled,
         // 没碰过就不传 api_key —— 表示「不动已存的那把」,而不是清空。
         ...(d.key_touched ? { api_key: d.api_key } : {}),
       }))
-      const result = await saveVkProviderSettings({ channels: payload, roles }, baseUrl)
+      const result = await saveVkProviderSettings({ channels: payload, roles, role_fallbacks: roleFallbacks }, baseUrl)
       setNotice([
         '已保存并立即生效',
         ...result.normalization_notes,
@@ -322,7 +360,18 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 <button type="button" data-testid={`vk-channel-remove-${draft.id}`}
                   onClick={() => removeChannel(draft.id)} className={outlineButton}
                   style={{ ...outlineStyle, color: 'var(--color-fg-dim)' }}>删除</button>
+                <button type="button" data-testid={`vk-channel-toggle-${draft.id}`}
+                  onClick={() => setChannelEnabled(draft.id, !draft.enabled)} className={outlineButton}
+                  style={{ ...outlineStyle, color: draft.enabled ? 'var(--color-fg-dim)' : 'var(--color-warning)' }}>
+                  {draft.enabled ? '禁用' : '启用'}
+                </button>
               </div>
+
+              {!draft.enabled && (
+                <div data-testid={`vk-channel-disabled-${draft.id}`} className="mb-2 text-xs" style={{ color: 'var(--color-warning)' }}>
+                  已禁用，不会用于新任务；配置仍保留，可随时重新启用或删除。
+                </div>
+              )}
 
               <div className="space-y-2">
                 <input
@@ -436,6 +485,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   下一步：{result.fix_hint}
                 </div>
               )}
+              {result && !result.ok && !result.retryable && draft.enabled && (
+                <div data-testid={`vk-channel-invalid-${draft.id}`} className="mt-1 text-xs" style={{ color: 'var(--color-danger)' }}>
+                  此配置当前不可用。可修正后重试连接，或选择禁用/删除；爪爪不会自动删除。
+                </div>
+              )}
               {result?.normalization_notes?.map((note) => (
                 <div key={note} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{note}</div>
               ))}
@@ -447,8 +501,14 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       {/* —— 角色指派 —— */}
       {drafts.length > 0 && (
         <div className="mt-4 space-y-2">
-          {roleKeys.map((role) => (
-            <div key={role} className="flex flex-wrap items-center gap-2">
+          {roleKeys.map((role) => {
+            const fallbacks = roleFallbacks[role] ?? []
+            const primary = roles[role] ?? ''
+            const selected = new Set([primary, ...fallbacks].filter(Boolean))
+            const available = drafts.filter((draft) => draft.enabled)
+            return (
+            <div key={role} data-testid={`vk-role-routing-${role}`} className="rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
+              <div className="flex flex-wrap items-center gap-2">
               <span className="w-16 shrink-0 text-sm">{settings.role_labels[role]}</span>
               <select
                 data-testid={`vk-role-${role}`}
@@ -464,13 +524,50 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               >
                 {/* 没有"跟随默认"了 —— 没指就是没指,跑到那一步会失败,得说出来。 */}
                 <option value="">— 还没指定 —</option>
-                {drafts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {available.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
               <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{settings.role_hints[role]}</span>
+              </div>
+              <div className="mt-2 space-y-1.5 pl-0 sm:pl-[4.5rem]">
+                {fallbacks.map((channelId, index) => (
+                  <div key={`${role}-${index}`} className="flex flex-wrap items-center gap-1.5">
+                    <span className="w-14 text-xs" style={{ color: 'var(--color-fg-dim)' }}>备用 {index + 1}</span>
+                    <select
+                      data-testid={`vk-role-fallback-${role}-${index}`}
+                      className="rounded-lg px-2 py-1.5 text-xs outline-none"
+                      style={{ ...fieldStyle, minWidth: '12rem' }}
+                      value={channelId}
+                      onChange={(event) => patchRoleFallback(role, index, event.target.value)}
+                    >
+                      <option value="">— 删除这条备用 —</option>
+                      {available.map((draft) => (
+                        <option key={draft.id} value={draft.id} disabled={draft.id !== channelId && selected.has(draft.id)}>{draft.name}</option>
+                      ))}
+                    </select>
+                    <button type="button" aria-label={`上移${settings.role_labels[role]}备用 ${index + 1}`} disabled={index === 0}
+                      onClick={() => moveRoleFallback(role, index, -1)} className={outlineButton} style={outlineStyle}><ChevronUp size={13} /></button>
+                    <button type="button" aria-label={`下移${settings.role_labels[role]}备用 ${index + 1}`} disabled={index === fallbacks.length - 1}
+                      onClick={() => moveRoleFallback(role, index, 1)} className={outlineButton} style={outlineStyle}><ChevronDown size={13} /></button>
+                    <button type="button" aria-label={`删除${settings.role_labels[role]}备用 ${index + 1}`}
+                      onClick={() => patchRoleFallback(role, index, '')} className={outlineButton} style={outlineStyle}><Trash2 size={13} /></button>
+                  </div>
+                ))}
+                <button type="button" data-testid={`vk-role-fallback-add-${role}`}
+                  disabled={!primary || !available.some((draft) => !selected.has(draft.id))}
+                  onClick={() => {
+                    const next = available.find((draft) => !selected.has(draft.id))
+                    if (next) setRoleFallbacks((current) => ({ ...current, [role]: [...fallbacks, next.id] }))
+                  }} className={outlineButton} style={outlineStyle}>
+                  <Plus size={13} className="mr-1 inline" />添加备用通道
+                </button>
+                {(settings.role_route_warnings?.[role] ?? []).map((warning) => (
+                  <div key={warning} data-testid={`vk-role-warning-${role}`} className="text-xs" style={{ color: 'var(--color-warning)' }}>{warning}</div>
+                ))}
+              </div>
             </div>
-          ))}
+          )})}
           <div data-testid="vk-role-routing-note" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            每个角色只使用你指定的通道；通道失败时不会跨角色自动切换。需要改用其他模型时，请先修改对应角色并保存，再重试任务。
+            每个角色只使用这里明确列出的顺序；仅超时、429 或上游 5xx 才切到下一条。鉴权、参数或模型不支持会直接停止，不会换通道掩盖配置问题。
           </div>
         </div>
       )}

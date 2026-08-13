@@ -153,6 +153,34 @@
 .vk-task-detail-section li,
 .vk-task-detail-section p { color: var(--color-fg-dim); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 
+.vk-model-attempt-list {
+  list-style: none;
+  padding: 0 !important;
+}
+
+.vk-model-attempt-list li {
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: #171a20;
+  padding: 9px 10px;
+}
+
+.vk-model-attempt-list li > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vk-model-attempt-list strong { color: var(--color-fg); font-size: 12px; }
+.vk-model-attempt-list p { margin: 3px 0 0; }
+.vk-model-attempt-list span { font-size: 11px; }
+.vk-model-attempt-list .is-ok { color: var(--color-success); }
+.vk-model-attempt-list .is-transient_error { color: var(--color-warning); }
+.vk-model-attempt-list .is-permanent_error,
+.vk-model-attempt-list .is-schema_error { color: var(--color-danger); }
+.vk-model-attempt-list .vk-model-switch-reason { color: #9fc2ff; }
+
 .vk-task-detail-actions,
 .vk-task-output-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 

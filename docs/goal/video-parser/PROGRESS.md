@@ -19,4 +19,8 @@
 - JSONL 契约：逐条强制记录双仓 commit、输入 SHA/时长/转写模式、目标/深度/推理强度/缓存策略、实际模型/route/API、硬件、阶段耗时、token、模型调用数、重试、失败原因和状态；失败耗时与成功交付耗时分开，少于 30 条不报告 p95。
 - 阶段 2 真实基准：48.634 秒、OCR 来源的游戏样本以本地 SRT 输入；同一热进程、显式绕过成品缓存、`reasoning_effort=low`，3 次均成功且每次严格 1 次模型调用、0 重试：35.967s / 29.611s / 42.708s；delivered p50=35.967s，p90=42.708s，满足 p50≤60s；样本不足 30 次，未报告 p95。费用状态 unknown，未虚构人民币费用。
 - 阶段 2 证据：`video-parser-stage2-red-to-green.txt`、`video-parser-stage2-quick-hot.raw.jsonl`、`video-parser-stage2-quick-hot.summary.json`、`video-parser-stage2-quality-audit.json`。当前 Python 全量闸门 1386 passed、6 skipped、2 deselected；ruff 全绿；mypy 91 个源文件全绿。真实模型调用累计 3/15。
-- 正在进行：阶段 3 每角色显式有序备用通道；先写 transient 切换与 permanent 不切换红测，再补任务详情实际 route/原因/尝试数。
+- 阶段 3 已完成：基础处理、深度分析各自支持显式有序主备通道；未声明备用时保持单路由，不会跨角色切换。连接超时、HTTP 429、HTTP 5xx 才会重试/切换；401/403、其他 4xx、无效地址以及非超时请求错误会立即停止。
+- 模型配置新增通道启用/禁用、备用顺序添加/删除/上移/下移和同源风险提示；失效通道只在连接测试后标记，并提供禁用/删除操作，不会自动删除配置。保存时严格拒绝未知、重复或不可用路由。
+- 任务详情新增真实模型尝试列表，展示阶段、实际通道、请求/回报模型、状态、重试序号、耗时和切换原因；不向界面暴露 endpoint、query 或 key。
+- 阶段 3 红→绿证据：`video-parser-stage3-red-to-green.txt`。Python 定向 143 passed；全量 1404 passed、6 skipped、2 deselected；ruff 与 mypy 全绿。PussyCat 定向 41 passed；全量 900 passed；前端 build 与 9 项 host verification 全绿。
+- 正在进行：阶段 4 懒加载媒体获取链，先梳理平台字幕、ASR、低质触发 OCR 的现有分支与缓存/取消边界，再写红测。

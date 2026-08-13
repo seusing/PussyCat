@@ -62,6 +62,40 @@ describe('VkTaskDetailSidebar', () => {
     await waitFor(() => expect(screen.getByLabelText('任务正在执行')).toBeInTheDocument())
   })
 
+  it('shows every actual model attempt and explains a configured fallback switch', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/job-fallback')) {
+        return new Response(JSON.stringify({
+          job_id: 'job-fallback', kind: 'run', status: 'done',
+          submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:00:03Z',
+          parent_job_id: null, cache_bypass: false,
+          request: { source: 'https://example.com/v', preset: 'quick-summary' },
+          progress: { completed_stages: ['acquire', 'normalize', 'chapter', 'note', 'product'], model_attempts: [
+            { attempt_number: 1, stage: 'chapter', provider_route: 'primary:default', model_requested: 'm1', model_reported: '', api_style: 'openai_responses', retry_index: 0, latency_ms: 1200, status: 'transient_error', created_at: '2026-08-07T10:00:01Z', switch_reason: null },
+            { attempt_number: 2, stage: 'chapter', provider_route: 'backup:default', model_requested: 'm2', model_reported: 'm2', api_style: 'openai_responses', retry_index: 0, latency_ms: 800, status: 'ok', created_at: '2026-08-07T10:00:02Z', switch_reason: 'previous_route_transient_error' },
+          ] },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/providers')) {
+        return new Response(JSON.stringify({
+          channels: [{ id: 'primary', name: '主站' }, { id: 'backup', name: '备用站' }], roles: {},
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="job-fallback" baseUrl={BASE} onClose={() => {}} />)
+
+    const attempts = await screen.findByTestId('vk-model-attempts')
+    expect(attempts).toHaveTextContent('第 1 次 · 主站')
+    expect(attempts).toHaveTextContent('临时故障')
+    expect(attempts).toHaveTextContent('第 2 次 · 备用站')
+    expect(attempts).toHaveTextContent('已按你的备用顺序切换')
+    expect(screen.getByText('主站 → 备用站')).toBeInTheDocument()
+    expect(attempts).not.toHaveTextContent('https://')
+  })
+
   it('活跃任务在详情轮询返回终态后立即切换为失败界面', async () => {
     let jobRequest = 0
     let poll: (() => Promise<void>) | undefined
