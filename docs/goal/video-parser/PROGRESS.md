@@ -27,4 +27,8 @@
 - 阶段 4 安全/运维边界：FunASR 只接受完整本地模型目录（`config.yaml` + `configuration.json` + `model.pt`），缺失或部分缓存立即失败，不静默下载；下载、转写和 OCR 均有取消检查，run-scoped 失败/完成清理同时覆盖首阶段音频与二阶段视频。
 - 阶段 4 真机分支评测：10 条小红书本地视频，0 次远程模型调用、0 次模型下载；10/10 ASR 通过组合门禁，因此没有强行走 OCR。冷模型加载 47.086s，单条 ASR p50=42.328s，总转写 396.207s。10 条各保留 320 字预览并人工审查：0/10 出现明显乱码、空文本、循环重复或跨主题；但无逐字 gold transcript，故不声称 WER 或“每个字都正确”。低质 ASR 触发 OCR 由注入低覆盖/低置信/乱码/重复/空输出的回归测试覆盖。
 - 阶段 4 证据：Python 全量 1417 passed、6 skipped、2 deselected；Ruff 全绿；Mypy 92 个源文件全绿；`video-parser-stage4-red-to-green.txt`、`video-parser-stage4-xhs-branches.json`及原始本地 ASR 日志。真实大模型调用累计仍为 3/15。
-- 正在进行：阶段 5 证据与深度，先冻结稳定 segment ID 及三档证据策略，再优化引用/QC token，避免用纯序号及逐 claim 调用。
+- 阶段 5 已完成：规范化转写段现在用 `source_revision_id + start_ms + end_ms + NFKC/空白归一文本` 生成稳定 `segment_id`，不依赖易漂移的序号；模型只返回片段 ID，服务端在章内展开为现有 `EvidenceRef`，未知或越章 ID 直接拒绝。Transcript artifact 升至 0.3.0，同时保留 0.1/0.2 校验兼容；旧模型的完整 evidence 响应与旧 claim artifact 继续可读。
+- 阶段 5 深度策略：快速总结仍不进入 claim/QC；均衡档只做 EvidenceRef、数字、专名与 grounding keyword 的机械校验且零 QC 模型调用；深入档只把机械失败 claim 与其已选引用片段合成每章一个 batch，最多一次调用，修订后再做数字/专名硬校验。不会重传全章转写，也不会逐 claim、逐轮调用。
+- 阶段 5 指标：20 条固定引用基准中，短 ID 输出较完整时间戳+原文输出字符量下降 65.92%（目标 ≥40%）；每章批量 QC 较旧逐 claim×2 轮输入字符量下降 69.91%（目标 ≥60%）；服务端展开引用机械支持率 20/20=100%（目标 ≥90%）。这是 tokenizer 无关字符代理，不冒充供应商计费 token。阶段内没有新增真实模型调用，累计仍为 3/15。
+- 阶段 5 证据：`video-parser-stage5-red-to-green.txt`；定向 29 passed，runner/cache/budget/audit/product 回归 122 passed；全量 knowledge 1049 passed、2 deselected、23 个既有 Pillow warning；Ruff 全绿、Mypy 92 个源文件全绿、diff check 通过。
+- 正在进行：阶段 6 目标×深度执行矩阵；将目标 rubric/schema 与处理深度拆开，并升级请求、artifact、prompt 与缓存版本，旧任务保持明确兼容。
