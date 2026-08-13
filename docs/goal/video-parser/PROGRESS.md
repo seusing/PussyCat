@@ -32,3 +32,8 @@
 - 阶段 5 指标：20 条固定引用基准中，短 ID 输出较完整时间戳+原文输出字符量下降 65.92%（目标 ≥40%）；每章批量 QC 较旧逐 claim×2 轮输入字符量下降 69.91%（目标 ≥60%）；服务端展开引用机械支持率 20/20=100%（目标 ≥90%）。这是 tokenizer 无关字符代理，不冒充供应商计费 token。阶段内没有新增真实模型调用，累计仍为 3/15。
 - 阶段 5 证据：`video-parser-stage5-red-to-green.txt`；定向 29 passed，runner/cache/budget/audit/product 回归 122 passed；全量 knowledge 1049 passed、2 deselected、23 个既有 Pillow warning；Ruff 全绿、Mypy 92 个源文件全绿、diff check 通过。
 - 正在进行：阶段 6 目标×深度执行矩阵；将目标 rubric/schema 与处理深度拆开，并升级请求、artifact、prompt 与缓存版本，旧任务保持明确兼容。
+- 2026-08-13：阶段 6 完成。处理目的与处理深度已完全拆分：快速总结/课程学习/访谈分析/科普讲解 × 快速/均衡/深入 12 种组合全部合法。新请求使用 ProcessingRequest 1.3.0 与 BatchManifest 1.2.0，旧请求仍按原 quality_profile 语义回放。
+- 阶段 6 执行语义：StagePlan 2 仅由深度决定 DAG；目标只控制系统 rubric 和产物 schema。快速档四种目标都跳过 claim/QC，但会从章节概述生成非空的目标化产物；均衡/深入保留 claim/QC。超长转写按 segment 边界分块，单次模型输入上限 48,000 字符并确定性合并。
+- 阶段 6 可用性边界：深入访谈只在 pyannote 包和完整本地模型快照已存在时自动启用说话人分离，绝不静默下载；访谈/视觉能力不可用时产物显式记录 degradation_notes。Prompt pack 升至 0.5.0，请求/计划/prompt/artifact 版本共同确保缓存明确失效。
+- 阶段 6 证据：`video-parser-stage6-red-to-green.txt`；Python 全量 knowledge 1086 passed、2 deselected、23 个既有 Pillow warning，Ruff 全绿，Mypy 92 个源文件全绿；PussyCat 全量 901 passed，production build 通过。阶段内无新增真实模型调用，累计仍为 3/15。
+- 下一步：阶段 7 只基于基准证据收尾；优先补齐阶段耗时/token/成本溯源，只在硬件与 provider 实测证明收益时才开启并发。

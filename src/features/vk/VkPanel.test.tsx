@@ -39,7 +39,7 @@ function resolvedRequest(overrides: Partial<VkProcessingRequest> = {}): VkProces
     media_policy: 'audio_transcript',
     output_targets: ['markdown_note', 'quick_summary'],
     language: 'auto',
-    quality_profile: 'fast',
+    processing_depth: 'balanced',
     budget_profile: 'economy',
     provider_profile: 'default',
     audit_requested: false,
@@ -264,7 +264,7 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
     for (const id of ['vk-source', 'vk-preset', 'vk-content-type', 'vk-media-policy',
-      'vk-quality', 'vk-budget-profile', 'vk-max-cost', 'vk-reasoning-effort', 'vk-audit',
+      'vk-processing-depth', 'vk-budget-profile', 'vk-max-cost', 'vk-reasoning-effort', 'vk-audit',
       'vk-cap-word_timestamps', 'vk-cap-speaker_diarization', 'vk-cap-visual_evidence',
       'vk-cap-query_ready', 'vk-submit-button',
       'vk-query-input', 'vk-jobs-refresh', 'vk-capability-toggle']) {
@@ -274,6 +274,13 @@ describe('VkPanel', () => {
     expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
     expect(screen.getByTestId('vk-advanced-settings')).not.toHaveAttribute('open')
     expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('处理目的')
+    expect(screen.getByTestId('vk-processing-depth')).toHaveAccessibleName('处理深度')
+    expect(screen.getByTestId('vk-advanced-settings')).not.toContainElement(
+      screen.getByTestId('vk-processing-depth'),
+    )
+    expect(screen.getByTestId('vk-advanced-settings')).toContainElement(
+      screen.getByTestId('vk-reasoning-effort'),
+    )
     expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
   })
 
@@ -317,14 +324,15 @@ describe('VkPanel', () => {
     const previewCall = calls.find((item) => item.key === 'POST /vk/v1/preview')
     expect(previewCall).toBeDefined()
     const projection = JSON.parse(String(previewCall!.init!.body))
-    expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5, reasoning_effort: 'max' })
+    expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', processing_depth: 'balanced', max_cost_cny: 1.5, reasoning_effort: 'max' })
+    expect(projection).not.toHaveProperty('quality_profile')
     await waitFor(() => {
       expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(true)
     })
     const submit = calls.find((item) => item.key === 'POST /vk/v1/jobs')
     const payload = JSON.parse(String(submit!.init!.body))
     expect(payload).toMatchObject({
-      request: { source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5, reasoning_effort: 'max' },
+      request: { source: 'https://example.com/v', preset: 'quick-summary', processing_depth: 'balanced', max_cost_cny: 1.5, reasoning_effort: 'max' },
     })
     expect(payload.idempotency_key).toMatch(/[0-9a-f-]{36}/)
     expect(payload.client_job_id).toMatch(/[0-9a-f-]{36}/)
@@ -339,6 +347,28 @@ describe('VkPanel', () => {
 
     await user.click(screen.getByRole('button', { name: '\u5173\u95ed\u4efb\u52a1\u63d0\u9192' }))
     expect(screen.queryByTestId('vk-task-banner')).not.toBeInTheDocument()
+  })
+
+  it('sends the selected deep processing depth in the preview payload', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/preview': { body: resolvedRequest({ processing_depth: 'deep' }) },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-deep', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/deep')
+    await user.selectOptions(screen.getByTestId('vk-processing-depth'), 'deep')
+    await user.click(screen.getByTestId('vk-submit-button'))
+
+    await waitFor(() => {
+      expect(calls.some((item) => item.key === 'POST /vk/v1/preview')).toBe(true)
+    })
+    const previewCall = calls.find((item) => item.key === 'POST /vk/v1/preview')!
+    const projection = JSON.parse(String(previewCall.init?.body))
+    expect(projection.processing_depth).toBe('deep')
+    expect(projection).not.toHaveProperty('quality_profile')
   })
 
   it('submits each imported link as its own durable job after inline previews', async () => {

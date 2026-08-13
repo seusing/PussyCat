@@ -31,7 +31,8 @@ export interface VkProcessingRequest {
   media_policy: string
   output_targets: string[]
   language: string
-  quality_profile: string
+  processing_depth?: string
+  quality_profile?: string
   budget_profile: string
   provider_profile: string
   audit_requested: boolean
@@ -46,7 +47,7 @@ export interface VkPreviewProjection {
   preset: string
   content_type?: string
   media_policy?: string
-  quality_profile?: string
+  processing_depth?: string
   budget_profile?: string
   audit?: boolean
   capabilities?: string[]

@@ -48,7 +48,7 @@ import './VkPanel.css'
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
 const CONTENT_TYPES = ['auto', 'course_lecture', 'interview_podcast', 'science_explainer', 'tutorial', 'other_knowledge', 'generic_knowledge']
 const MEDIA_POLICIES = ['subtitle_only', 'audio_transcript', 'low_res_visual', 'video_required']
-const QUALITY_PROFILES = ['fast', 'balanced', 'thorough']
+const PROCESSING_DEPTHS = ['quick', 'balanced', 'deep']
 const BUDGET_PROFILES = ['economy', 'standard', 'quality']
 const CAPABILITIES = ['word_timestamps', 'speaker_diarization', 'visual_evidence', 'query_ready']
 
@@ -66,7 +66,7 @@ const MEDIA_POLICY_LABELS: Record<string, string> = {
   subtitle_only: '仅使用平台字幕', audio_transcript: '字幕缺失时转写音频',
   low_res_visual: '加入低清视觉证据', video_required: '下载完整视频并分析画面',
 }
-const QUALITY_LABELS: Record<string, string> = { fast: '快速', balanced: '均衡', thorough: '深入' }
+const PROCESSING_DEPTH_LABELS: Record<string, string> = { quick: '快速', balanced: '均衡', deep: '深入' }
 const BUDGET_LABELS: Record<string, string> = { economy: '经济', standard: '标准', quality: '质量优先' }
 const CAPABILITY_LABELS: Record<string, string> = {
   word_timestamps: '词级时间定位', speaker_diarization: '区分说话人',
@@ -455,7 +455,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [preset, setPreset] = useState('quick-summary')
   const [contentType, setContentType] = useState('')
   const [mediaPolicy, setMediaPolicy] = useState('')
-  const [quality, setQuality] = useState('')
+  const [processingDepth, setProcessingDepth] = useState('balanced')
   const [budgetProfile, setBudgetProfile] = useState('')
   const [caps, setCaps] = useState<string[]>([])
   const [audit, setAudit] = useState(false)
@@ -510,7 +510,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     preset,
     ...(contentType ? { content_type: contentType } : {}),
     ...(mediaPolicy ? { media_policy: mediaPolicy } : {}),
-    ...(quality ? { quality_profile: quality } : {}),
+    processing_depth: processingDepth,
     ...(budgetProfile ? { budget_profile: budgetProfile } : {}),
     ...(caps.length ? { capabilities: caps } : {}),
     ...(audit ? { audit: true } : {}),
@@ -1068,6 +1068,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             {PRESETS.map((value) => <option key={value} value={value}>{PRESET_LABELS[value]}</option>)}
           </select>
         </label>
+        <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+          处理深度
+          <select data-testid="vk-processing-depth" value={processingDepth} onChange={(e) => setProcessingDepth(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+            {PROCESSING_DEPTHS.map((value) => <option key={value} value={value}>{PROCESSING_DEPTH_LABELS[value]}</option>)}
+          </select>
+        </label>
         <details data-testid="vk-advanced-settings" className="mb-3 rounded-lg p-2 text-xs" style={{ border: '1px solid var(--color-line)' }}>
           <summary className="cursor-pointer select-none" style={{ color: 'var(--color-fg-dim)' }}>高级设置</summary>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1083,13 +1089,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               <select data-testid="vk-media-policy" value={mediaPolicy} onChange={(e) => setMediaPolicy(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
                 <option value="">跟随处理目的</option>
                 {MEDIA_POLICIES.map((value) => <option key={value} value={value}>{MEDIA_POLICY_LABELS[value]}</option>)}
-              </select>
-            </label>
-            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
-              处理深度
-              <select data-testid="vk-quality" value={quality} onChange={(e) => setQuality(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                <option value="">跟随处理目的</option>
-                {QUALITY_PROFILES.map((value) => <option key={value} value={value}>{QUALITY_LABELS[value]}</option>)}
               </select>
             </label>
             <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
