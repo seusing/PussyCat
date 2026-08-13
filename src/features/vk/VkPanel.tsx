@@ -368,6 +368,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   // —— 模型通道:装机版没有 providers.local.toml,不配就一定会在最后一步 401 ——
   // 所以这件事必须在**提交之前**说出来,而不是等用户跑满 7 分半下载转写。
   const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null)
+  const [costTracking, setCostTracking] = useState<boolean | null>(null)
   const [providerFormOpen, setProviderFormOpen] = useState(false)
   const [capabilityPacksOpen, setCapabilityPacksOpen] = useState(false)
   const [taskReasoningEfforts, setTaskReasoningEfforts] = useState<string[]>([])
@@ -377,8 +378,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     try {
       const settings = await fetchVkProviderSettings(base)
       setProviderConfigured(settings.configured)
+      setCostTracking(settings.cost_tracking ?? false)
     } catch {
       setProviderConfigured(null)   // 问不到就别下结论,不冒充已配置
+      setCostTracking(null)
     }
   }, [base])
   useEffect(() => { void refreshProviders() }, [refreshProviders])
@@ -1100,7 +1103,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             </label>
             <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
               最高费用（¥）
-              <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder="不设置上限" className={`${fieldClass} mt-1`} style={fieldStyle} />
+              <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder={costTracking === false ? '当前通道无可信价格' : '不设置上限'} disabled={costTracking === false} className={`${fieldClass} mt-1 disabled:cursor-not-allowed disabled:opacity-55`} style={fieldStyle} />
+              {costTracking === false && (
+                <span className="mt-1 block text-[11px]">当前通道未配置可靠单价，不能使用人民币费用上限</span>
+              )}
             </label>
             <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
               统一推理强度
@@ -1157,6 +1163,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             </div>
           </fieldset>
         </details>
+        <div data-testid="vk-third-party-data-notice" className="mb-3 rounded-lg px-3 py-2 text-[11px] leading-relaxed" style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}>
+          为完成解析，视频中提取的字幕或语音转写会发送到你在“模型配置”中选择的第三方模型服务；爪爪不会替该服务改变其数据处理规则。
+        </div>
         <div className="flex items-center gap-2">
           <button
             type="button"

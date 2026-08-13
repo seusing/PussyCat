@@ -122,6 +122,8 @@ export interface VkJobView {
   progress?: {
     model_calls?: number
     model_attempts?: VkModelAttempt[] | null
+    stage_metrics?: VkStageMetric[] | null
+    usage?: VkRunUsage | null
   } & Record<string, unknown>
   request_fingerprint?: string | null
   budget_stop?: VkBudgetStop | null
@@ -142,6 +144,27 @@ export interface VkModelAttempt {
   status: 'ok' | 'transient_error' | 'permanent_error' | 'schema_error' | string
   created_at: string
   switch_reason: 'previous_route_transient_error' | string | null
+}
+
+export interface VkStageMetric {
+  stage: string
+  status: string
+  started_at?: string | null
+  finished_at?: string | null
+  elapsed_s: number | null
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number
+  model_calls: number
+}
+
+export interface VkRunUsage {
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number
+  model_calls: number
+  cost_cny: number | null
+  cost_status: 'estimated' | 'unknown' | string
 }
 
 export interface VkQueryCitation {

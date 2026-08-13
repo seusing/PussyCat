@@ -30,6 +30,12 @@ function detailError(error: unknown): string {
   return '任务详情获取失败'
 }
 
+function secondsLabel(value: number | null): string {
+  if (value === null) return '进行中'
+  if (value < 1) return `${Math.round(value * 1000)} ms`
+  return `${value.toFixed(2)} 秒`
+}
+
 function sourceItems(job: VkJobView | null): string[] {
   const source = job?.request?.source
   if (typeof source !== 'string') return []
@@ -310,6 +316,37 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               <dd>{job.submitted_at ? new Date(job.submitted_at).toLocaleString('zh-CN') : '—'}</dd>
             </div>
           </dl>
+
+          {job.progress?.usage && (
+            <div className="vk-task-detail-section" data-testid="vk-run-metrics">
+              <h3>本次解析用量</h3>
+              <dl className="vk-run-metrics-grid">
+                <div><dt>输入 {job.progress.usage.input_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
+                <div><dt>输出 {job.progress.usage.output_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
+                <div><dt>缓存 Token</dt><dd>{job.progress.usage.cached_tokens.toLocaleString('zh-CN')}</dd></div>
+                <div>
+                  <dt>费用</dt>
+                  <dd>{job.progress.usage.cost_status === 'unknown' || job.progress.usage.cost_cny === null
+                    ? '未统计（通道未提供可信价格）'
+                    : `估算 ¥${job.progress.usage.cost_cny.toFixed(4)}`}</dd>
+                </div>
+              </dl>
+            </div>
+          )}
+
+          {(job.progress?.stage_metrics?.length ?? 0) > 0 && (
+            <div className="vk-task-detail-section" data-testid="vk-stage-metrics">
+              <h3>阶段耗时</h3>
+              <ol className="vk-stage-metric-list">
+                {job.progress!.stage_metrics!.map((metric, index) => (
+                  <li key={`${metric.stage}-${index}`}>
+                    <div><strong>{metric.stage}</strong><span>{secondsLabel(metric.elapsed_s)}</span></div>
+                    <p>{metric.model_calls} 次模型调用 · 输入 {metric.input_tokens.toLocaleString('zh-CN')} · 输出 {metric.output_tokens.toLocaleString('zh-CN')}</p>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
 
           {(job.progress?.model_attempts?.length ?? 0) > 0 && (
             <div className="vk-task-detail-section" data-testid="vk-model-attempts">

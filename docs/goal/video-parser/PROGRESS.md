@@ -37,3 +37,7 @@
 - 阶段 6 可用性边界：深入访谈只在 pyannote 包和完整本地模型快照已存在时自动启用说话人分离，绝不静默下载；访谈/视觉能力不可用时产物显式记录 degradation_notes。Prompt pack 升至 0.5.0，请求/计划/prompt/artifact 版本共同确保缓存明确失效。
 - 阶段 6 证据：`video-parser-stage6-red-to-green.txt`；Python 全量 knowledge 1086 passed、2 deselected、23 个既有 Pillow warning，Ruff 全绿，Mypy 92 个源文件全绿；PussyCat 全量 901 passed，production build 通过。阶段内无新增真实模型调用，累计仍为 3/15。
 - 下一步：阶段 7 只基于基准证据收尾；优先补齐阶段耗时/token/成本溯源，只在硬件与 provider 实测证明收益时才开启并发。
+- 2026-08-14：阶段 7 完成。`model_calls` 新增成本来源状态，历史/未知单价明确标为 unknown；任务详情展示逐阶段实际耗时、Token 和调用次数，整次用量区分估算费用与未知费用。当前通道没有可信单价时，前后端共同禁止无法兑现的人民币费用上限。
+- 数据边界已经产品化呈现：提交任务前明确说明字幕或语音转写将发送到用户选择的第三方模型服务。没有引入新的依赖，也没有新增真实模型调用，累计仍为 3/15。
+- 并发评审结论为暂不启用：当前阶段记录使用共享 `current_stage_run_id`，预算累计也未实现并发原子预留；真实可比样本少于 30 条，中转站安全并发/限流边界未知。详见 `STAGE7-DECISION.md`。只有完成上下文隔离、原子预算、取消/重试并发测试并证明 p50 改善且失败率不恶化后才重新开启评估。
+- 阶段 7 最终闸门：Python knowledge 全量 1091 passed、2 deselected（23 个既有 Pillow 弃用告警），Ruff 全绿、Mypy 92 个源文件全绿；PussyCat 全量 903 passed，production build 通过。无新增真实 provider 调用。

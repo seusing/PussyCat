@@ -748,6 +748,23 @@ describe('VkPanel', () => {
     expect(detail).not.toHaveTextContent('费用未统计')
   })
 
+  it('explains third-party transcript transfer and disables a CNY cap when prices are unknown', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/providers': {
+        body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true, cost_tracking: false },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-third-party-data-notice')).toHaveTextContent('字幕或语音转写')
+    expect(screen.getByTestId('vk-third-party-data-notice')).toHaveTextContent('第三方模型服务')
+    await userEvent.click(screen.getByText('高级设置'))
+    expect(screen.getByTestId('vk-max-cost')).toBeDisabled()
+    expect(screen.getByText('当前通道未配置可靠单价，不能使用人民币费用上限')).toBeInTheDocument()
+  })
+
   it('runs a knowledge-base query and renders citations', async () => {
     const user = userEvent.setup()
     stubRoutes({

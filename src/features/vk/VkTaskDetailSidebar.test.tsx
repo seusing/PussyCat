@@ -62,6 +62,40 @@ describe('VkTaskDetailSidebar', () => {
     await waitFor(() => expect(screen.getByLabelText('任务正在执行')).toBeInTheDocument())
   })
 
+  it('shows real stage timing and token usage while keeping unknown cost honest', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/job-metrics')) return new Response(JSON.stringify({
+        job_id: 'job-metrics', kind: 'run', status: 'done',
+        submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:00:10Z',
+        parent_job_id: null, cache_bypass: false,
+        request: { source: 'https://example.com/v', preset: 'quick-summary' },
+        progress: {
+          completed_stages: ['acquire', 'normalize', 'chapter', 'note', 'product'],
+          usage: { input_tokens: 1234, output_tokens: 321, cached_tokens: 100, cost_cny: null, cost_status: 'unknown' },
+          stage_metrics: [
+            { stage: 'acquire', status: 'done', elapsed_s: 2.5, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0 },
+            { stage: 'chapter', status: 'done', elapsed_s: 7.25, input_tokens: 1234, output_tokens: 321, cached_tokens: 100, model_calls: 1 },
+          ],
+        },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="job-metrics" baseUrl={BASE} onClose={() => {}} />)
+
+    const metrics = await screen.findByTestId('vk-run-metrics')
+    expect(metrics).toHaveTextContent('输入 1,234')
+    expect(metrics).toHaveTextContent('输出 321')
+    expect(metrics).toHaveTextContent('费用未统计')
+    const stages = screen.getByTestId('vk-stage-metrics')
+    expect(stages).toHaveTextContent('acquire')
+    expect(stages).toHaveTextContent('2.50 秒')
+    expect(stages).toHaveTextContent('chapter')
+    expect(stages).toHaveTextContent('7.25 秒')
+  })
+
   it('shows every actual model attempt and explains a configured fallback switch', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

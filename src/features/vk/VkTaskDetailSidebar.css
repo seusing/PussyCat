@@ -147,6 +147,40 @@
 .vk-task-detail-list dt { color: var(--color-fg-dim); }
 .vk-task-detail-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 
+.vk-run-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.vk-run-metrics-grid > div,
+.vk-stage-metric-list li {
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: #171a20;
+  padding: 9px 10px;
+}
+
+.vk-run-metrics-grid dt { color: var(--color-fg-dim); font-size: 11px; }
+.vk-run-metrics-grid dd { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+
+.vk-stage-metric-list {
+  list-style: none;
+  padding: 0 !important;
+}
+
+.vk-stage-metric-list li > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vk-stage-metric-list strong { color: var(--color-fg); font-size: 12px; }
+.vk-stage-metric-list span { color: var(--color-fg-dim); font-size: 11px; }
+.vk-stage-metric-list p { margin: 3px 0 0; }
+
 .vk-task-detail-section { margin-top: 20px; }
 .vk-task-detail-section h3 { margin: 0 0 9px; font-size: 12px; font-weight: 650; }
 .vk-task-detail-section ol { display: grid; gap: 7px; margin: 0; padding-left: 20px; }
