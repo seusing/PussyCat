@@ -10,3 +10,13 @@
 - Python wheel 已从干净提交 `caa0a22` 构建成功：`video_knowledge-0.1.0-py3-none-any.whl`。
 - bundle/package 来源追溯已完成代码审查：构建前同时拒绝 Python 与 PussyCat 的 tracked/untracked 脏状态；runtime manifest 记录双仓 commit、`dirty=false` 与两个 lockfile SHA；package stamp 记录 runtime manifest SHA、lockfile SHA，并逐个记录和复核安装产物 SHA。兼容旧 stamp，但新 stamp 的安装包被替换或损坏时不再误判为最新。
 - 正在进行：跑 PussyCat 全量闸门并提交来源追溯改造；随后从双仓干净提交生成可验证 bundle，再建立固定语料的可重复 JSONL 基准框架。
+- PussyCat 来源追溯提交：`d29df67`（`build-trace-video-bundle-and-installers-to-clean-sources`）；全量 Vitest 通过，前端 build 通过。由干净 Python `caa0a22` + 干净 PussyCat `d29df67` 生成 runtime bundle，manifest 记录 wheel SHA `434459a8fe4a…`。
+- 阶段 1 提交：Python `a1204b4`（`fix-bound-provider-retries-and-separate-untrusted-input`）。完成非 JSON HTTP 错误保真、429/5xx/网络异常与永久错误分类、Retry-After 秒数/HTTP-date、jitter、末次不等待、取消可打断等待、主备共享尝试数/截止时间、Responses 截断分类、统一输出上限三接口映射，以及 system/instructions 与不可信字幕 input 分离；prompt pack 升至 0.2.0。
+- 阶段 1 红→绿证据：`docs/evidence/video-parser-stage1-red-to-green.txt`。最终 Python 闸门：1364 passed、6 skipped、2 deselected；ruff 与 mypy 全绿。
+- 阶段 2 产品实现提交：Python `f86943e`（`feat-video-parser-stage2-grounded-one-call-quick-analysis`）。`auto` 原样进入首次总结并在同一调用返回/持久化 `resolved_content_type + confidence`；快速 DAG 保持无 claim/QC；用户产物包含概述、关键点、步骤/结论、时间导航和温和提示，隐藏内部 claim/evidence；数字、中文数字、Latin 标识符和书名号/引号专名做原文 grounding，失败项删除或降级，不花第二次模型调用。Quick artifact 升至 1.2，兼容 1.0/1.1。
+- 阶段 2 基准/投影跟进提交：Python `26278d1`（`test-video-parser-stage2-record-real-latency-and-readable-navigation`）。真实产物审查发现章节 grounding 降级后导航暴露“内容片段/需确认”兜底，已改为优先使用通过 grounding 的关键点与结论时间戳，并以红→绿回归锁定。
+- 固定语料：`docs/evidence/video-parser-benchmark-corpus.v1.json` 冻结 6 条，覆盖短/长、平台字幕/本地字幕/无字幕 ASR/无字幕 OCR、游戏/讲解；只保存引用与 SHA，不分发媒体。
+- JSONL 契约：逐条强制记录双仓 commit、输入 SHA/时长/转写模式、目标/深度/推理强度/缓存策略、实际模型/route/API、硬件、阶段耗时、token、模型调用数、重试、失败原因和状态；失败耗时与成功交付耗时分开，少于 30 条不报告 p95。
+- 阶段 2 真实基准：48.634 秒、OCR 来源的游戏样本以本地 SRT 输入；同一热进程、显式绕过成品缓存、`reasoning_effort=low`，3 次均成功且每次严格 1 次模型调用、0 重试：35.967s / 29.611s / 42.708s；delivered p50=35.967s，p90=42.708s，满足 p50≤60s；样本不足 30 次，未报告 p95。费用状态 unknown，未虚构人民币费用。
+- 阶段 2 证据：`video-parser-stage2-red-to-green.txt`、`video-parser-stage2-quick-hot.raw.jsonl`、`video-parser-stage2-quick-hot.summary.json`、`video-parser-stage2-quality-audit.json`。当前 Python 全量闸门 1386 passed、6 skipped、2 deselected；ruff 全绿；mypy 91 个源文件全绿。真实模型调用累计 3/15。
+- 正在进行：阶段 3 每角色显式有序备用通道；先写 transient 切换与 permanent 不切换红测，再补任务详情实际 route/原因/尝试数。
