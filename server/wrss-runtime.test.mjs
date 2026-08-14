@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { gzipSync } from 'node:zlib'
@@ -11,6 +11,7 @@ import {
   WRSS_SOURCE_FALLBACK_URL,
   WRSS_SOURCE_SHA256,
   WRSS_SOURCE_URL,
+  resolveWrssConfigTemplate,
 } from './wrss-runtime.mjs'
 
 const { proxyFetch, proxyAgents, FakeProxyAgent } = vi.hoisted(() => {
@@ -61,13 +62,13 @@ function tarGzip(entries) {
   return gzipSync(Buffer.concat([...entries.map(tarEntry), Buffer.alloc(1024)]))
 }
 
-function weRssArchive({ omit = [] } = {}) {
+function weRssArchive({ omit = [], configName = 'config.example.yaml' } = {}) {
   const root = 'we-mp-rss-1.5.2'
   const entries = [
     { name: `${root}/`, type: '5' },
     { name: `${root}/main.py`, content: 'host="0.0.0.0"\r\nhost="0.0.0.0"\r\nprint("环境变量:")\r\nfor k,v in os.environ.items():\r\n    print(k,v)\r\n' },
     { name: `${root}/requirements.txt`, content: '' },
-    { name: `${root}/config.example.yaml`, content: 'port: 8001\n' },
+    { name: `${root}/${configName}`, content: 'port: 8001\n' },
     { name: `${root}/static/`, type: '5' },
     { name: `${root}/static/index.html`, content: '<html><head></head><body></body></html>' },
     { name: `${root}/docs/`, type: '5' },
@@ -139,6 +140,17 @@ describe('extractTarGzipSecure', () => {
 
     expect(() => extractTarGzipSecure(archive, destination)).toThrowError(expect.objectContaining({ reasonCode: 'archive-security' }))
     expect(existsSync(join(destination, 'safe', 'file.txt'))).toBe(false)
+  })
+})
+
+describe('resolveWrssConfigTemplate', () => {
+  it('accepts the node template name used by some WeRSS archives', async () => {
+    const { root } = await fixture()
+    const source = join(root, 'source')
+    mkdirSync(source, { recursive: true })
+    writeFileSync(join(source, 'config-node.yaml'), 'port: 8001\n')
+
+    expect(resolveWrssConfigTemplate(source)).toMatchObject({ name: 'config-node.yaml' })
   })
 })
 
@@ -272,6 +284,43 @@ describe('WrssRuntimeManager', () => {
     expect(patchedMain).not.toContain('host="0.0.0.0"')
     expect(patchedMain).not.toContain('os.environ.items()')
     expect(readFileSync(join(receipt.sourceDir, 'static', 'pussycat-bootstrap.js'), 'utf8')).toContain('localStorage.setItem')
+    await manager.close()
+  })
+
+  it('normalizes an alternate config template into the installed source', async () => {
+    const { root, bundle } = await fixture()
+    const runStepImpl = vi.fn(async ({ step, argv }) => {
+      if (step === 'venv') {
+        const python = join(argv.at(-1), 'Scripts')
+        mkdirSync(python, { recursive: true })
+        writeFileSync(join(python, 'python.exe'), 'python')
+      }
+    })
+    const manager = new WrssRuntimeManager({
+      home: root,
+      bundleDir: bundle,
+      sha256FileImpl: (path) => path.endsWith('uv.exe') ? uvSha : WRSS_SOURCE_SHA256,
+      fetchImpl: async (url) => {
+        if (url === WRSS_SOURCE_URL) return { ok: true, status: 200, arrayBuffer: async () => weRssArchive({ configName: 'config-node.yaml' }) }
+        if (url.endsWith('/api/v1/auth/login')) return ok({ data: { access_token: 'token' } })
+        return ok()
+      },
+      runStepImpl,
+      getPortImpl: async () => 4326,
+      spawnImpl: () => {
+        const child = new EventEmitter()
+        child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+        child.kill = () => child.emit('close', 0)
+        return child
+      },
+      readyTimeoutMs: 100,
+      readyPollMs: 1,
+    })
+
+    await expect(manager.enable()).resolves.toMatchObject({ state: 'running' })
+    const version = readdirSync(join(root, 'wrss', 'versions'))[0]
+    expect(readFileSync(join(root, 'wrss', 'versions', version, 'src', 'config.example.yaml'), 'utf8'))
+      .toContain('port: 8001')
     await manager.close()
   })
 

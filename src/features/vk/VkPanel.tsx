@@ -944,29 +944,32 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       )}
       {/* 健康条 */}
       <InstallingBeam on={runtime?.state === 'installing'}>
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+      <div className="mb-4 flex flex-col gap-2 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
         {/* 一句结论。正常时**只有这一行**,没有按钮 —— 路径、版本、能力清单、
             环境列表全部收进下面默认折叠的开发者信息。用户关心的只有能不能用、
             不能用怎么办;其余是给开发者的,不该占据版面。 */}
-        <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
-          {verdict.text}
-        </span>
-        {verdict.note && (
-          <span data-testid="vk-verdict-note" className="min-w-0 flex-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            {verdict.note}
+        <div className="min-w-0 flex-1">
+          <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
+            {verdict.text}
           </span>
-        )}
-        {verdict.action && (
-          <button
-            type="button"
-            data-testid="vk-verdict-action"
-            onClick={verdict.action.run}
-            className="rounded-lg px-3 py-1 text-sm font-medium"
-            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-          >
-            {verdict.action.label}
-          </button>
-        )}
+          {verdict.note && (
+            <span data-testid="vk-verdict-note" className="ml-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+              {verdict.note}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          {verdict.action && (
+            <button
+              type="button"
+              data-testid="vk-verdict-action"
+              onClick={verdict.action.run}
+              className="rounded-lg px-3 py-1 text-sm font-medium"
+              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+            >
+              {verdict.action.label}
+            </button>
+          )}
         {/* 想重新看一眼状态时只有这一个键。原先「重新检测」藏在开发者信息里、和
             会话诊断/重建/检测已有环境挤成一排 —— 用户要的其实只是"再查一次"。 */}
         <button
@@ -976,11 +979,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           disabled={healthChecking}
           aria-label="重新检测"
           title="重新检测解析引擎状态"
-          className="ml-auto rounded px-1.5 py-0.5 text-xs disabled:opacity-40"
+          className="rounded px-1.5 py-0.5 text-xs disabled:opacity-40"
           style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}
         >
           ↻
         </button>
+        </div>
       </div>
       </InstallingBeam>
       {/* 开发者信息:默认折叠。路径、api/schema、逐项能力、环境列表与手动切换、

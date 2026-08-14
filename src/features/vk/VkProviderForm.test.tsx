@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkProviderForm } from './VkProviderForm'
 
@@ -64,9 +64,24 @@ function stubRoutes(routes: Record<string, Route>) {
   return { calls }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 const SAVE_OK = { saved: true, normalization_notes: [], keys_written: [], keys_injected: [], configured: true }
 
 afterEach(() => { vi.unstubAllGlobals() })
+
+async function openChannelEditor(id = 'cheap') {
+  await userEvent.click(await screen.findByTestId(`vk-channel-edit-${id}`))
+  return screen.getByRole('dialog', { name: '编辑配置' })
+}
+
+async function commitChannelEditor() {
+  await userEvent.click(screen.getByTestId('vk-provider-modal-submit'))
+}
 
 // ── key 的进出 ──────────────────────────────────────────────────────────
 
@@ -74,6 +89,7 @@ test('已保存的 key 以打码值示人 —— 空输入框会被当成"没设
   stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
 
+  await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-key-cheap')).toBeInTheDocument())
   const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
   expect(input.value).toBe('sk-rela••••••••••6789')
@@ -87,6 +103,7 @@ test('点「更换」才清空成可输入的密码框', async () => {
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
   render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-replace-cheap')).toBeInTheDocument())
 
   await userEvent.click(screen.getByTestId('vk-channel-replace-cheap'))
@@ -96,6 +113,7 @@ test('点「更换」才清空成可输入的密码框', async () => {
   expect(input.type).toBe('password')
 
   await userEvent.type(input, 'sk-brand-new')
+  await commitChannelEditor()
   await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { api_key: string }[] }
@@ -109,6 +127,7 @@ test('点「显示」才取明文 —— 这是唯一会把 key 送回前端的�
     'POST /vk/v1/providers/reveal': { body: { key_env: 'VK_CHANNEL_CHEAP_KEY', found: true, api_key: SECRET, source: 'stored' } },
   })
   render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-reveal-cheap')).toBeInTheDocument())
 
   const revealButton = screen.getByTestId('vk-channel-reveal-cheap')
@@ -134,6 +153,7 @@ test('再点一次隐藏,退回打码值', async () => {
     'POST /vk/v1/providers/reveal': { body: { key_env: 'VK_CHANNEL_CHEAP_KEY', found: true, api_key: SECRET, source: 'stored' } },
   })
   render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-reveal-cheap')).toBeInTheDocument())
 
   await userEvent.click(screen.getByTestId('vk-channel-reveal-cheap'))
@@ -171,6 +191,7 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
   render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-reasoning-cheap')).toBeInTheDocument())
 
   const effort = screen.getByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
@@ -182,6 +203,7 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
   expect([...options].map((option) => (option as HTMLOptionElement).value))
     .toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   await userEvent.type(effort, 'max')
+  await commitChannelEditor()
   await userEvent.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
@@ -198,6 +220,7 @@ test('中转站未返回推理档位时明确说明原因并保持自动', async
     } },
   })
   render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
   const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
 
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
@@ -213,10 +236,12 @@ test('接口未返回推理档位时仍允许按中转站文档手填', async ()
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
   render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
   const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
 
   expect(effort).toBeEnabled()
   await userEvent.type(effort, 'max')
+  await commitChannelEditor()
   await userEvent.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
@@ -286,6 +311,103 @@ test('没有内置预设 —— 走 API key 的话官方站和中转站配置形
   await waitFor(() => expect(screen.getByTestId('vk-channel-add')).toBeInTheDocument())
   expect(screen.queryByText(/智谱/)).not.toBeInTheDocument()
   expect(screen.queryByText(/OpenAI（官方）/)).not.toBeInTheDocument()
+})
+
+test('配置清单移除旧说明,创建弹窗与关键操作都有可访问名称', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const create = await screen.findByRole('button', { name: '创建配置' })
+  expect(screen.queryByText('一条通道 = 地址 + 模型 + key')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '复用' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '编辑' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '删除' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '禁用' })).toBeInTheDocument()
+
+  await user.click(create)
+  expect(screen.getByRole('dialog', { name: '创建配置' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '关闭模型配置弹窗' })).toBeInTheDocument()
+})
+
+test('取消创建会丢弃草稿,取消编辑会恢复打开弹窗前的内容', async () => {
+  const user = userEvent.setup()
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [], configured: false }) } })
+  const first = render(<VkProviderForm baseUrl={BASE} />)
+  await user.click(await screen.findByTestId('vk-channel-add'))
+  await user.clear(screen.getByTestId('vk-modal-name'))
+  await user.type(screen.getByTestId('vk-modal-name'), '不会保留')
+  await user.click(screen.getByTestId('vk-provider-modal-cancel'))
+  expect(screen.getByText('暂无模型配置')).toBeInTheDocument()
+
+  first.unmount()
+  vi.unstubAllGlobals()
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
+  await user.clear(screen.getByTestId('vk-modal-name'))
+  await user.type(screen.getByTestId('vk-modal-name'), '临时名称')
+  await user.click(screen.getByTestId('vk-provider-modal-cancel'))
+  expect(screen.getByTestId('vk-channel-name-cheap')).toHaveTextContent('GPT 5.6 Luna')
+})
+
+test('启用与禁用按钮按状态反向播放 Play/Pause 动效', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const toggle = await screen.findByTestId('vk-channel-toggle-cheap')
+  expect(toggle).toHaveAccessibleName('禁用')
+  expect(toggle).toHaveAttribute('data-icon', 'pause')
+  await user.hover(toggle)
+  expect(toggle).toHaveAttribute('data-icon', 'play')
+  await user.unhover(toggle)
+  await user.click(toggle)
+  expect(toggle).toHaveAccessibleName('启用')
+  await user.unhover(toggle)
+  expect(toggle).toHaveAttribute('data-icon', 'play')
+  await user.hover(toggle)
+  expect(toggle).toHaveAttribute('data-icon', 'pause')
+})
+
+test('复用保留上游和已存 key 引用,新模型可独立编辑且不提交明文 key', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await user.click(await screen.findByTestId('vk-channel-reuse-cheap'))
+  const dialog = screen.getByRole('dialog', { name: '创建配置' })
+  const reusedUrl = within(dialog).getByPlaceholderText(/接口地址/) as HTMLInputElement
+  const reusedModel = within(dialog).getByPlaceholderText(/模型名称/) as HTMLInputElement
+  const reusedKey = within(dialog).getByPlaceholderText('粘贴 API key') as HTMLInputElement
+
+  expect(reusedUrl.value).toBe('https://api.example.com/v1')
+  expect(reusedKey.value).toBe('sk-rela••••••••••6789')
+  expect(reusedKey.readOnly).toBe(true)
+  await user.clear(reusedModel)
+  await user.type(reusedModel, 'gpt-5.6-sol')
+  expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('gpt-5.6-luna')
+
+  await user.click(within(dialog).getByTestId('vk-provider-modal-submit'))
+  await user.click(screen.getByTestId('vk-provider-save'))
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+
+  const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
+    channels: Array<Record<string, unknown>>
+  }
+  const original = body.channels.find((item) => item.id === 'cheap')!
+  const reused = body.channels.find((item) => item.id !== 'cheap')!
+  expect(original.model_id).toBe('gpt-5.6-luna')
+  expect(reused).toMatchObject({
+    base_url: 'https://api.example.com/v1',
+    key_env: 'VK_CHANNEL_CHEAP_KEY',
+    model_id: 'gpt-5.6-sol',
+  })
+  expect('api_key' in original).toBe(false)
+  expect('api_key' in reused).toBe(false)
 })
 
 test('接口风格随模型名自动填上 —— 别让用户在三个技术名词里选', async () => {
@@ -445,6 +567,55 @@ test('连接确认永久失效后可禁用且不会自动删除', async () => {
 
 // ── 测试连接 ────────────────────────────────────────────────────────────
 
+test('不同配置的连接测试各自忙碌,一条 pending 不会锁住另一条', async () => {
+  const first = deferred<unknown>()
+  const second = deferred<unknown>()
+  const testBodies: unknown[] = []
+  const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
+  const impl = vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') {
+      return Promise.resolve(response(settings({
+        channels: [
+          channel(),
+          channel({ id: 'smart', name: 'GPT 5.6 Sol', model_id: 'gpt-5.6-sol', key_env: 'VK_CHANNEL_SMART_KEY' }),
+        ],
+      })))
+    }
+    if (key === 'POST /vk/v1/providers/test') {
+      testBodies.push(init?.body ? JSON.parse(String(init.body)) : undefined)
+      const pending = testBodies.length === 1 ? first : second
+      return pending.promise.then(response)
+    }
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) })
+  })
+  vi.stubGlobal('fetch', impl)
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
+  const smartTest = screen.getByTestId('vk-channel-test-smart')
+  await user.click(cheapTest)
+  await waitFor(() => expect(cheapTest).toBeDisabled())
+  expect(smartTest).toBeEnabled()
+
+  await user.click(smartTest)
+  await waitFor(() => expect(testBodies).toHaveLength(2))
+  expect(cheapTest).toBeDisabled()
+  expect(smartTest).toBeDisabled()
+
+  first.resolve({ ok: true, reason_code: 'ok', message: 'cheap ok', models: [], normalization_notes: [] })
+  await waitFor(() => expect(cheapTest).toBeEnabled())
+  expect(smartTest).toBeDisabled()
+
+  second.resolve({ ok: true, reason_code: 'ok', message: 'smart ok', models: [], normalization_notes: [] })
+  await waitFor(() => expect(smartTest).toBeEnabled())
+  expect(testBodies).toEqual([
+    expect.objectContaining({ base_url: 'https://api.example.com/v1', key_env: 'VK_CHANNEL_CHEAP_KEY' }),
+    expect.objectContaining({ base_url: 'https://api.example.com/v1', key_env: 'VK_CHANNEL_SMART_KEY' }),
+  ])
+})
+
 test('测试失败时给根因和下一步,不是一段原始日志', async () => {
   stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
@@ -476,9 +647,11 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
 
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
 
+  await waitFor(() => expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('api.example.com'))
+  await openChannelEditor()
   await waitFor(() => expect((screen.getByTestId('vk-channel-url-cheap') as HTMLInputElement).value)
     .toBe('https://api.example.com/v1'))
-  expect(screen.getByTestId('vk-channel-cheap').textContent).toContain('已自动补上 https://')
+  expect(screen.getByText('已自动补上 https://')).toBeInTheDocument()
   // 测出来的模型名做成下拉,省掉手抄
   expect(document.querySelectorAll('#vk-models-cheap option')).toHaveLength(2)
 })
@@ -511,6 +684,7 @@ test('接口风格可选并随保存/测试一起提交 —— 漏掉它,respons
     'POST /vk/v1/providers/test': { body: { ok: true, reason_code: 'ok', message: 'ok', models: [], normalization_notes: [] } },
   })
   render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-style-cheap')).toBeInTheDocument())
 
   await userEvent.selectOptions(screen.getByTestId('vk-channel-style-cheap'), 'openai_responses')
@@ -519,6 +693,7 @@ test('接口风格可选并随保存/测试一起提交 —— 漏掉它,respons
   const test = calls.find((c) => c.key.includes('providers/test'))!.body as { api_style: string }
   expect(test.api_style).toBe('openai_responses')
 
+  await commitChannelEditor()
   await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { api_style: string }[] }
@@ -573,6 +748,7 @@ test('点某一条才拉明文,并把地址/模型/接口风格/请求头一起�
   expect(screen.getByTestId('vk-channel-url-hhcoding-sol')).toHaveValue('https://hhcoding.fun')
   expect(screen.getByTestId('vk-channel-style-hhcoding-sol')).toHaveValue('openai_responses')
 
+  await commitChannelEditor()
   await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as {

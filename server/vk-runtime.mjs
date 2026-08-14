@@ -14,7 +14,7 @@ import {
 } from './vk-runtime-resolver.mjs'
 import { discoverVkRuntimePaths, probeVkRuntime } from './vk-runtime-probe.mjs'
 import {
-  RUNTIME_EXTRA_ORDER, getCapabilityPack, mergeRuntimeExtras, normalizeRuntimeExtras, projectCapabilityPacks,
+  RUNTIME_EXTRA_ORDER, getCapabilityPack, inspectLocalAsrCache, mergeRuntimeExtras, normalizeRuntimeExtras, projectCapabilityPacks,
 } from './vk-capability-packs.mjs'
 
 const LOG_TAIL_LINES = 60
@@ -164,6 +164,7 @@ export class VkRuntimeManager {
       bundleAvailable,
       installingExtras: this.#installingExtras,
       installing: status.state === 'installing',
+      localModelCache: inspectLocalAsrCache({ bundleDir: this.bundleDir, home: this.home, env: this.env }),
       checkedAt: this.now(),
     })
   }
@@ -395,6 +396,7 @@ export class VkRuntimeManager {
     this.#installing = this.installImpl({
       home: this.home,
       bundleDir: this.bundleDir,
+      env: this.env,
       extras: cumulativeExtras,
       log: (line) => {
         this.#log.push(String(line))

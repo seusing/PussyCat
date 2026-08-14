@@ -339,6 +339,8 @@ export interface VkCapabilityPack {
   extras?: string[]
   dependencies_installed?: boolean
   model_downloaded?: boolean | null
+  local_cache_state?: 'verified' | 'available' | 'partial' | 'missing' | 'unknown' | null
+  local_cache_files?: { reusable: number; total: number } | null
 }
 
 export interface VkCapabilityPacksResponse {

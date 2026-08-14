@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -200,6 +200,12 @@ describe('installVkRuntime', () => {
     const bundle = makeBundle({ mediaAsr: true })
     const home = tempDir('vk-home-')
     const calls = []
+    const logs = []
+    const previousPackA = join(home, 'models', 'asr', 'previous-a', 'models')
+    const previousPackB = join(home, 'models', 'asr', 'previous-b', 'models')
+    const configuredCache = join(home, 'configured-modelscope-cache')
+    mkdirSync(previousPackA, { recursive: true })
+    mkdirSync(previousPackB, { recursive: true })
     const modelCache = join(home, 'models', 'asr', 'fixture', 'models')
     const spawnImpl = (program, argv, options) => {
       calls.push([program, argv, options])
@@ -210,7 +216,7 @@ describe('installVkRuntime', () => {
           if (argv.includes('video_knowledge.runtime_models')) {
             child.stdout.write(`VK_MODEL_PACK_RESULT=${JSON.stringify({
               ready: true, cache_root: modelCache, receipt: join(home, 'model-receipt.json'),
-              reused: false,
+              reused: false, linked: 2, copied: 3, downloaded: 1,
             })}\n`)
           }
           if (argv.includes('video_knowledge.runtime_smoke')) {
@@ -230,6 +236,8 @@ describe('installVkRuntime', () => {
       bundleDir: bundle,
       extras: ['media-asr'],
       spawnImpl,
+      env: { ...process.env, MODELSCOPE_CACHE: configuredCache },
+      log: (line) => logs.push(line),
       fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({
         service: 'video-knowledge', shell_mode: true, api_version: '1.4.0',
         processing_request_schema_version: '1.1.0',
@@ -241,11 +249,19 @@ describe('installVkRuntime', () => {
 
     expect(receipt.modelPacks).toEqual([expect.objectContaining({
       id: 'local-asr', cacheRoot: modelCache, reused: false,
+      reusedFiles: 5, downloadedFiles: 1,
     })])
     expect(receipt.asrSmoke).toMatchObject({ ready: true, transcript: '本地语音识别正常' })
     expect(receipt.ffmpegVersion).toBe('ffmpeg fixture')
     const smokeCall = calls.find(([_program, argv]) => argv.includes('video_knowledge.runtime_smoke'))
+    const modelCall = calls.find(([_program, argv]) => argv.includes('video_knowledge.runtime_models'))
     const guiCall = calls.find(([_program, argv]) => argv.includes('gui'))
+    const legacyCacheArgs = modelCall[1].flatMap((arg, index, argv) => (
+      arg === '--legacy-cache' ? [argv[index + 1]] : []
+    ))
+    expect(legacyCacheArgs).toEqual(expect.arrayContaining([configuredCache, previousPackA, previousPackB]))
+    expect(modelCall[1].filter((arg) => arg === '--legacy-cache')).toHaveLength(legacyCacheArgs.length)
+    expect(logs).toContain('models-asr: 校验完成 reused=5 downloaded=1')
     expect(smokeCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
     expect(guiCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
   })

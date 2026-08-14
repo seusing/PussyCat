@@ -4,6 +4,10 @@
 // but it must never be able to smuggle an arbitrary uv/pip extra into the
 // runtime installer.
 
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, relative, resolve } from 'node:path'
+
 export const RUNTIME_EXTRA_ORDER = Object.freeze([
   'media-asr',
   'alignment-whisperx',
@@ -38,6 +42,93 @@ export const CAPABILITY_PACKS = Object.freeze([
 
 const PACK_BY_ID = new Map(CAPABILITY_PACKS.map((pack) => [pack.id, pack]))
 const EXTRA_INDEX = new Map(RUNTIME_EXTRA_ORDER.map((extra, index) => [extra, index]))
+
+function readJson(path) {
+  try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
+}
+
+function safeFile(path, expectedSize) {
+  try {
+    return statSync(path).isFile() && statSync(path).size === expectedSize
+  } catch {
+    return false
+  }
+}
+
+function inside(root, path) {
+  const rel = relative(resolve(root), resolve(path))
+  return rel === '' || (!rel.startsWith('..') && !/^[A-Za-z]:[\\/]/.test(rel))
+}
+
+/**
+ * Inspect common ModelScope locations without hashing multi-gigabyte files on
+ * every status poll.  Exact SHA-256 verification still happens in the
+ * Python installer; this projection tells the user whether that installer
+ * can reuse local files and how many files need attention.
+ */
+export function inspectLocalAsrCache({ bundleDir, home, env = process.env } = {}) {
+  const runtimeManifest = bundleDir ? readJson(join(bundleDir, 'runtime-manifest.json')) : null
+  const pack = Array.isArray(runtimeManifest?.runtime?.modelPacks)
+    ? runtimeManifest.runtime.modelPacks.find((item) => item?.id === 'local-asr')
+    : null
+  if (!pack?.manifest || !bundleDir) {
+    return { state: 'unknown', reusableFiles: 0, totalFiles: 0, missingFiles: [], mismatchedFiles: [], root: null }
+  }
+  const manifestPath = resolve(bundleDir, pack.manifest)
+  if (!inside(bundleDir, manifestPath) || !existsSync(manifestPath)) {
+    return { state: 'unknown', reusableFiles: 0, totalFiles: 0, missingFiles: [], mismatchedFiles: [], root: null }
+  }
+  const manifest = readJson(manifestPath)
+  const models = Array.isArray(manifest?.models) ? manifest.models : []
+  const roots = []
+  if (home && pack.manifestSha256) roots.push(join(resolve(home), 'models', 'asr', pack.manifestSha256, 'models'))
+  if (typeof env?.MODELSCOPE_CACHE === 'string' && env.MODELSCOPE_CACHE.trim()) roots.push(env.MODELSCOPE_CACHE.trim())
+  const userCache = join(homedir(), '.cache', 'modelscope')
+  roots.push(join(userCache, 'hub', 'models'), join(userCache, 'hub'))
+  const uniqueRoots = [...new Set(roots.map((root) => resolve(root)))]
+  const missingFiles = []
+  const mismatchedFiles = []
+  let reusableFiles = 0
+  let totalFiles = 0
+  let selectedRoot = null
+  for (const model of models) {
+    const files = Array.isArray(model?.files) ? model.files : []
+    for (const file of files) {
+      totalFiles += 1
+      const candidates = uniqueRoots.flatMap((root) => [
+        join(root, 'iic', String(model.directory ?? ''), String(file.path ?? '')),
+        join(root, String(model.directory ?? ''), String(file.path ?? '')),
+      ])
+      const exactSize = candidates.find((candidate) => safeFile(candidate, Number(file.size)))
+      if (exactSize) {
+        reusableFiles += 1
+        if (!selectedRoot) selectedRoot = exactSize.slice(0, exactSize.length - (String(file.path ?? '').length + 1))
+        continue
+      }
+      const existing = candidates.find((candidate) => {
+        try { return statSync(candidate).isFile() } catch { return false }
+      })
+      ;(existing ? mismatchedFiles : missingFiles).push(`${model.directory}/${file.path}`)
+    }
+  }
+  const appPackReceipt = home && pack.manifestSha256
+    ? readJson(join(resolve(home), 'models', 'asr', pack.manifestSha256, 'model-pack-receipt.json'))
+    : null
+  const verified = appPackReceipt?.schema === 'vk-asr-model-pack-receipt@1'
+    && appPackReceipt?.status === 'verified'
+    && appPackReceipt?.manifestSha256 === pack.manifestSha256
+    && reusableFiles === totalFiles
+  const state = verified ? 'verified' : reusableFiles === totalFiles ? 'available' : reusableFiles > 0 ? 'partial' : 'missing'
+  return {
+    state,
+    reusableFiles,
+    totalFiles,
+    missingFiles,
+    mismatchedFiles,
+    root: selectedRoot,
+    manifestSha256: pack.manifestSha256 ?? null,
+  }
+}
 
 export class VkCapabilityPackError extends Error {
   constructor(message, reasonCode = 'invalid-capability-pack') {
@@ -132,6 +223,7 @@ export function projectCapabilityPacks({
   bundleAvailable = true,
   installingExtras = [],
   installing = false,
+  localModelCache = null,
   checkedAt = new Date().toISOString(),
 } = {}) {
   const activeExtras = Array.isArray(activeRuntime?.extras) ? activeRuntime.extras : []
@@ -169,8 +261,13 @@ export function projectCapabilityPacks({
     else if (complete && (runtimeMissing || modelMissing || smokeMissing)) state = 'partial'
     else if (complete) state = 'installed'
     else if (partial) state = 'partial'
-    const detail = modelMissing
-      ? '依赖已存在，但模型尚未按当前 manifest 校验'
+    const cacheState = pack.id === 'local-asr' ? localModelCache?.state : null
+    const detail = modelMissing && cacheState === 'available'
+      ? `已发现本地模型缓存（${localModelCache.reusableFiles}/${localModelCache.totalFiles} 个文件），安装时逐文件校验并复用`
+      : modelMissing && cacheState === 'partial'
+        ? `已发现本地模型缓存（${localModelCache.reusableFiles}/${localModelCache.totalFiles} 个文件），只补齐缺失或不匹配文件`
+        : modelMissing
+          ? '依赖已存在，但模型尚未按当前 manifest 校验'
       : smokeMissing
         ? '模型已校验，但 FFmpeg 与离线转写 smoke 尚未通过'
         : packDetail(pack, state, installedExtras, capabilities)
@@ -187,6 +284,10 @@ export function projectCapabilityPacks({
       extras: [...pack.extras],
       dependencies_installed: complete,
       model_downloaded: pack.id === 'local-asr' ? asrModelReady : null,
+      local_cache_state: pack.id === 'local-asr' ? cacheState : null,
+      local_cache_files: pack.id === 'local-asr' && localModelCache
+        ? { reusable: localModelCache.reusableFiles, total: localModelCache.totalFiles }
+        : null,
     }
   })
   return { packs, checked_at: checkedAt }

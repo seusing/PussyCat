@@ -42,6 +42,12 @@ function sizeLabel(bytes: number) {
   return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`
 }
 
+function installLabel(pack: VkCapabilityPack) {
+  if (pack.id === 'local-asr' && pack.local_cache_state === 'available') return '校验并复用'
+  if (pack.id === 'local-asr' && pack.local_cache_state === 'partial') return '校验并补齐'
+  return '安装'
+}
+
 export function VkCapabilityPacksPanel({
   baseUrl,
   onRuntimeChanged,
@@ -152,7 +158,7 @@ export function VkCapabilityPacksPanel({
                   className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
                   style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
                 >
-                  <Download size={13} aria-hidden="true" /> 安装
+                  <Download size={13} aria-hidden="true" /> {installLabel(pack)}
                 </button>
               )}
             </div>
@@ -163,7 +169,10 @@ export function VkCapabilityPacksPanel({
       {runtimeVersions && runtimeVersions.versions.length > 1 && (
         <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--color-line)' }}>
           <div className="mb-2 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>解析引擎版本</h3>
+            <div>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>解析引擎版本（用于回滚）</h3>
+              <p className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>这里是独立的 Python 运行环境，不是 ASR/WhisperX 模型；只清理非活动且非保留回滚版本。</p>
+            </div>
             {runtimeVersions.reclaimableBytes > 0 && (
               <button
                 type="button"

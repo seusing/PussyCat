@@ -11,10 +11,10 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
+  copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
   rmSync, statfsSync, writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { scrubSidecarText } from './vk-sidecar.mjs'
 import {
@@ -33,6 +33,22 @@ import {
 
 const MIN_FREE_BYTES = 1 * 1024 ** 3
 const HEAVY_FREE_BYTES = 5 * 1024 ** 3
+
+function legacyModelCacheRoots(home, env = process.env) {
+  const roots = []
+  if (typeof env.MODELSCOPE_CACHE === 'string' && env.MODELSCOPE_CACHE.trim()) {
+    roots.push(env.MODELSCOPE_CACHE.trim())
+  }
+  const userCache = join(homedir(), '.cache', 'modelscope')
+  roots.push(join(userCache, 'hub', 'models'), join(userCache, 'hub'))
+  const appCache = join(resolve(home), 'models', 'asr')
+  try {
+    for (const entry of readdirSync(appCache, { withFileTypes: true })) {
+      if (entry.isDirectory()) roots.push(join(appCache, entry.name, 'models'))
+    }
+  } catch { /* no previous app-owned model packs */ }
+  return [...new Set(roots.map((root) => resolve(root)))]
+}
 
 export class VkRuntimeInstallError extends Error {
   constructor(reasonCode, message, detail) {
@@ -85,7 +101,9 @@ export async function installVkRuntime({
   log = () => {},
   spawnImpl = spawn,
   fetchImpl = fetch,
+  env = process.env,
 }) {
+  const baseEnv = { ...process.env, ...env }
   let normalizedExtras
   try {
     normalizedExtras = normalizeRuntimeExtras(extras)
@@ -221,7 +239,7 @@ export async function installVkRuntime({
     log(`${step}: ${command.split(/[\\/]/).pop()} ${argv.join(' ')}`)
     const child = spawnImpl(command, argv, {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, ...stepEnv },
+      env: { ...baseEnv, ...stepEnv },
     })
     let output = ''
     child.stdout?.on('data', (chunk) => {
@@ -280,16 +298,25 @@ export async function installVkRuntime({
   for (const pack of modelPackAssets) {
     if (pack.id !== 'local-asr') continue
     const packRoot = join(resolvedHome, 'models', 'asr', pack.manifestSha256)
-    const modelOutput = await runStep('models-asr', pythonExe, [
+    const modelArgs = [
       '-m', 'video_knowledge.runtime_models', 'install',
       '--manifest', pack.manifestPath,
       '--expected-manifest-sha', pack.manifestSha256,
       '--pack-root', packRoot,
-    ])
+    ]
+    for (const cacheRoot of legacyModelCacheRoots(resolvedHome, baseEnv)) {
+      modelArgs.push('--legacy-cache', cacheRoot)
+    }
+    log(`models-asr: 检查本机缓存 ${Math.max(0, (modelArgs.length - 9) / 2)} 个位置，逐文件复用并校验`)
+    const modelOutput = await runStep('models-asr', pythonExe, modelArgs)
     const modelResult = prefixedJson(modelOutput, 'VK_MODEL_PACK_RESULT=', 'model-install-failed')
     if (modelResult?.ready !== true || typeof modelResult?.cache_root !== 'string') {
       throw new VkRuntimeInstallError('model-install-failed', 'ASR 模型能力包未通过校验')
     }
+    log(
+      `models-asr: 校验完成 reused=${Number(modelResult.linked ?? 0) + Number(modelResult.copied ?? 0)} `
+      + `downloaded=${Number(modelResult.downloaded ?? 0)}`,
+    )
     modelEnvironment = { MODELSCOPE_CACHE: modelResult.cache_root }
     const smokeOutput = await runStep('smoke-asr', pythonExe, [
       '-m', 'video_knowledge.runtime_smoke', '--audio', pack.smokePath,
@@ -305,6 +332,8 @@ export async function installVkRuntime({
       cacheRoot: modelResult.cache_root,
       receipt: modelResult.receipt,
       reused: modelResult.reused === true,
+      reusedFiles: Number(modelResult.linked ?? 0) + Number(modelResult.copied ?? 0),
+      downloadedFiles: Number(modelResult.downloaded ?? 0),
     })
   }
 
@@ -318,7 +347,7 @@ export async function installVkRuntime({
     const token = 'runtime-smoke-token-0123456789abcdef'
     const gui = spawnImpl(pythonExe, ['-m', 'video_knowledge', 'gui', '--root', join(smokeRoot, 'data'), '--config-dir', join(smokeRoot, 'config'), '--port', '0', '--no-browser'], {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, ...modelEnvironment, VK_UI_TOKEN: token },
+      env: { ...baseEnv, ...modelEnvironment, VK_UI_TOKEN: token },
     })
     try {
       const port = await new Promise((resolvePort, rejectPort) => {

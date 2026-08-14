@@ -57,6 +57,34 @@ describe('VkCapabilityPacksPanel', () => {
     ))
   })
 
+  it('offers verification and reuse when a complete local ASR cache is available', async () => {
+    const availablePacks = {
+      ...packs,
+      packs: packs.packs.map((pack) => pack.id === 'local-asr'
+        ? { ...pack, local_cache_state: 'available' }
+        : pack),
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string) => (
+      url.endsWith('/runtime/versions') ? response(runtimeVersions) : response(availablePacks)
+    )))
+    render(<VkCapabilityPacksPanel />)
+    expect(await screen.findByRole('button', { name: '校验并复用' })).toBeInTheDocument()
+  })
+
+  it('offers verification and completion when the local ASR cache is partial', async () => {
+    const partialPacks = {
+      ...packs,
+      packs: packs.packs.map((pack) => pack.id === 'local-asr'
+        ? { ...pack, local_cache_state: 'partial' }
+        : pack),
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string) => (
+      url.endsWith('/runtime/versions') ? response(runtimeVersions) : response(partialPacks)
+    )))
+    render(<VkCapabilityPacksPanel />)
+    expect(await screen.findByRole('button', { name: '校验并补齐' })).toBeInTheDocument()
+  })
+
   it('does not expose a WeRSS URL input or save/copy controls', async () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => readResponse(url)))
     render(<VkCapabilityPacksPanel />)
@@ -86,7 +114,8 @@ describe('VkCapabilityPacksPanel', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<VkCapabilityPacksPanel onRuntimeChanged={changed} />)
 
-    await screen.findByText('解析引擎版本')
+    await screen.findByRole('heading', { name: '解析引擎版本（用于回滚）' })
+    expect(screen.getByText(/独立的 Python 运行环境/)).toHaveTextContent('不是 ASR/WhisperX 模型')
     fireEvent.click(screen.getByTitle('回滚到 v2'))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/runtime/rollback'),

@@ -211,6 +211,37 @@ function isInside(parent, child) {
   return childRelative === '' || (!isAbsolute(childRelative) && !childRelative.startsWith('..') && !childRelative.startsWith('/') && !childRelative.startsWith('\\'))
 }
 
+const WRSS_CONFIG_TEMPLATE_NAMES = Object.freeze([
+  'config.example.yaml',
+  'config.example.yml',
+  'config-node.yaml',
+  'config-node.yml',
+])
+
+function isRegularFile(path) {
+  try { return statSync(path).isFile() } catch { return false }
+}
+
+/**
+ * Resolve the upstream configuration template without trusting a single
+ * filename.  WeRSS releases have used both the example and node template
+ * names; the installed copy is normalised to config.example.yaml below.
+ */
+export function resolveWrssConfigTemplate(sourceRoot) {
+  for (const name of WRSS_CONFIG_TEMPLATE_NAMES) {
+    const candidate = join(sourceRoot, name)
+    if (isRegularFile(candidate)) return { path: candidate, name }
+  }
+  let entries = []
+  try { entries = readdirSync(sourceRoot, { withFileTypes: true }) } catch { return null }
+  const fallback = entries.find((entry) => (
+    entry.isFile() && /^config(?:[.-](?:example|node))?\.ya?ml$/i.test(entry.name)
+  ))
+  return fallback
+    ? { path: join(sourceRoot, fallback.name), name: fallback.name }
+    : null
+}
+
 function atomicJson(file, value) {
   mkdirSync(dirname(file), { recursive: true })
   const temporary = `${file}.tmp-${process.pid}-${Date.now()}`
@@ -498,15 +529,16 @@ export class WrssRuntimeManager {
       visit(extraction)
       if (roots.length !== 1) throw new WrssRuntimeError(500, 'archive-layout', 'WeRSS 压缩包目录结构不符合预期')
       const sourceRoot = roots[0]
+      const configTemplate = resolveWrssConfigTemplate(sourceRoot)
       const requiredPaths = [
         'main.py',
         'requirements.txt',
-        'config.example.yaml',
         join('static', 'index.html'),
       ]
-      if (requiredPaths.some((path) => !existsSync(join(sourceRoot, path)))) {
+      if (requiredPaths.some((path) => !isRegularFile(join(sourceRoot, path))) || !configTemplate) {
         throw new WrssRuntimeError(500, 'archive-layout', 'WeRSS 压缩包缺少必需文件')
       }
+      this.#pushLog(`已识别 WeRSS 配置模板：${configTemplate.name}`)
       const source = readFileSync(join(sourceRoot, 'main.py'), 'utf8')
       const hostMatches = source.match(/host="0\.0\.0\.0"/g) ?? []
       if (hostMatches.length !== 2) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 主程序安全补丁目标不符合预期')
@@ -536,8 +568,13 @@ export class WrssRuntimeManager {
       cpSync(sourceRoot, finalSource, { recursive: true })
       const venvDir = join(versionDir, 'py')
       const pythonExe = join(venvDir, 'Scripts', 'python.exe')
+      const copiedTemplate = join(finalSource, configTemplate.name)
       const configExample = join(finalSource, 'config.example.yaml')
-      if (!existsSync(configExample)) throw new WrssRuntimeError(500, 'archive-layout', 'WeRSS 配置模板不存在')
+      if (!isRegularFile(copiedTemplate)) {
+        throw new WrssRuntimeError(500, 'archive-layout', 'WeRSS 配置模板复制失败')
+      }
+      if (configTemplate.name !== 'config.example.yaml') cpSync(copiedTemplate, configExample)
+      if (!isRegularFile(configExample)) throw new WrssRuntimeError(500, 'archive-layout', 'WeRSS 配置模板不存在')
       const configPath = join(this.home, 'config.yaml')
       if (!existsSync(configPath)) cpSync(configExample, configPath)
       const uvEnv = {
