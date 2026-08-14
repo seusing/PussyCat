@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Download, RefreshCw } from 'lucide-react'
+import { Download, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import {
   fetchVkCapabilityPacks,
+  fetchVkRuntimeVersions,
   postVkCapabilityPackInstall,
+  postVkRuntimeCleanup,
+  postVkRuntimeRollback,
   type VkCapabilityPack,
+  type VkRuntimeVersionsResponse,
 } from '../../host/vkClient'
 
 const fieldStyle = {
@@ -33,15 +37,31 @@ function packLabel(state: VkCapabilityPack['state']) {
   } as const)[state]
 }
 
-export function VkCapabilityPacksPanel({ baseUrl }: { baseUrl?: string }) {
+function sizeLabel(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`
+}
+
+export function VkCapabilityPacksPanel({
+  baseUrl,
+  onRuntimeChanged,
+}: {
+  baseUrl?: string
+  onRuntimeChanged?: () => void
+}) {
   const [packs, setPacks] = useState<VkCapabilityPack[]>([])
+  const [runtimeVersions, setRuntimeVersions] = useState<VkRuntimeVersionsResponse | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const packResult = await fetchVkCapabilityPacks(baseUrl)
+      const [packResult, versionResult] = await Promise.all([
+        fetchVkCapabilityPacks(baseUrl),
+        fetchVkRuntimeVersions(baseUrl),
+      ])
       setPacks(packResult.packs)
+      setRuntimeVersions(versionResult)
       setError(null)
     } catch (cause) {
       setError(errorText(cause, '能力状态获取失败'))
@@ -61,8 +81,35 @@ export function VkCapabilityPacksPanel({ baseUrl }: { baseUrl?: string }) {
     try {
       await postVkCapabilityPackInstall(pack.id, baseUrl)
       await refresh()
+      onRuntimeChanged?.()
     } catch (cause) {
       setError(errorText(cause, '能力包安装启动失败'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const rollback = async (version: string) => {
+    setBusy(`rollback:${version}`)
+    setError(null)
+    try {
+      await postVkRuntimeRollback(version, baseUrl)
+      await refresh()
+      onRuntimeChanged?.()
+    } catch (cause) {
+      setError(errorText(cause, '解析引擎回滚失败'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const cleanup = async () => {
+    setBusy('cleanup')
+    setError(null)
+    try {
+      setRuntimeVersions(await postVkRuntimeCleanup(baseUrl))
+    } catch (cause) {
+      setError(errorText(cause, '解析引擎清理失败'))
     } finally {
       setBusy(null)
     }
@@ -112,6 +159,49 @@ export function VkCapabilityPacksPanel({ baseUrl }: { baseUrl?: string }) {
           </article>
         ))}
       </div>
+
+      {runtimeVersions && runtimeVersions.versions.length > 1 && (
+        <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--color-line)' }}>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>解析引擎版本</h3>
+            {runtimeVersions.reclaimableBytes > 0 && (
+              <button
+                type="button"
+                onClick={() => { void cleanup() }}
+                disabled={busy !== null}
+                className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
+                style={fieldStyle}
+              >
+                <Trash2 size={13} aria-hidden="true" /> 清理 {sizeLabel(runtimeVersions.reclaimableBytes)}
+              </button>
+            )}
+          </div>
+          <div className="divide-y" style={{ borderColor: 'var(--color-line)' }}>
+            {runtimeVersions.versions.map((runtimeVersion) => (
+              <div key={runtimeVersion.version} className="flex min-w-0 items-center gap-3 py-2 text-xs">
+                <div className="min-w-0 flex-1">
+                  <div className="break-all font-medium" style={{ color: 'var(--color-fg)' }}>{runtimeVersion.version}</div>
+                  <div className="mt-0.5" style={{ color: 'var(--color-fg-dim)' }}>
+                    {sizeLabel(runtimeVersion.sizeBytes)} · {runtimeVersion.active ? '当前使用' : runtimeVersion.retainedForRollback ? '保留回滚' : '可清理'}
+                  </div>
+                </div>
+                {!runtimeVersion.active && (
+                  <button
+                    type="button"
+                    title={`回滚到 ${runtimeVersion.version}`}
+                    onClick={() => { void rollback(runtimeVersion.version) }}
+                    disabled={busy !== null}
+                    className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 font-medium disabled:opacity-50"
+                    style={fieldStyle}
+                  >
+                    <RotateCcw size={13} aria-hidden="true" /> 回滚
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

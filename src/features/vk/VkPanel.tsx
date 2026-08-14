@@ -1023,7 +1023,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             <VkProviderForm baseUrl={base} onSaved={() => { void refreshProviders(); void checkHealth() }} />
           </div>
         )}
-        {capabilityPacksOpen && <VkCapabilityPacksPanel baseUrl={base} />}
+        {capabilityPacksOpen && (
+          <VkCapabilityPacksPanel
+            baseUrl={base}
+            onRuntimeChanged={() => { void refreshRuntime(); void checkHealth() }}
+          />
+        )}
       </div>
 
       {/* 提交表单 */}

@@ -547,6 +547,7 @@ fn configure_host_env(cmd: &mut Command) {
     // 哪个可执行文件 —— 放任继承等于把 spawn 向量交给任何能设用户环境变量的东西,
     // 比改写监听地址更危险,必须移除。开发直连(npm run dev:server)不经本函数。
     cmd.env_remove("OPENCLI_HOST_VK_PYTHON")
+        .env_remove("OPENCLI_HOST_VK_ALLOW_EXTERNAL_RUNTIME")
         .env_remove("OPENCLI_HOST_VK_ROOT")
         .env_remove("OPENCLI_HOST_VK_CONFIG_DIR")
         .env_remove("OPENCLI_HOST_VK_STATE_DIR")

@@ -66,7 +66,13 @@ describe('build-vk-bundle provenance', () => {
     const pythonLock = 'python-lock\n'
     const pussyCatLock = 'app-lock\n'
     const wheelContent = 'fake-wheel'
-    const pythonRepo = makeRepo('vk-python-clean-', { 'uv.lock': pythonLock })
+    const modelManifest = '{"schema":"fixture"}\n'
+    const smokeAudio = 'fixture-wave'
+    const pythonRepo = makeRepo('vk-python-clean-', {
+      'uv.lock': pythonLock,
+      'src/video_knowledge/resources/asr-model-pack.json': modelManifest,
+      'src/video_knowledge/resources/runtime-asr-smoke.wav': smokeAudio,
+    })
     const pussyCatRepo = makeRepo('vk-pussycat-manifest-', { 'package-lock.json': pussyCatLock })
     const bundleFiles = mkdtempSync(join(tmpdir(), 'vk-bundle-files-'))
     temporaryDirectories.push(bundleFiles)
@@ -80,6 +86,7 @@ describe('build-vk-bundle provenance', () => {
       wheelPath,
       uvPath: process.execPath,
       outDir,
+      requirementsExporter: ({ extras }) => `profile=${extras.join('+') || 'base'}\n`,
     })
     const fromDisk = JSON.parse(readFileSync(join(outDir, 'runtime-manifest.json'), 'utf8'))
 
@@ -94,5 +101,27 @@ describe('build-vk-bundle provenance', () => {
     })
     expect(manifest.wheel.sha256).toBe(sha256(wheelContent))
     expect(manifest.uv.sha256).toBe(sha256(readFileSync(process.execPath)))
+    expect(manifest).toMatchObject({
+      schema: 'vk-runtime-bundle@2',
+      runtime: {
+        contractSchema: 'vk-runtime-contract@1',
+        pythonImplementation: 'cpython',
+        pythonVersion: '3.12',
+        pythonAbi: 'cp312',
+        platform: 'x86_64-pc-windows-msvc',
+      },
+    })
+    expect(manifest.runtime.requirements).toHaveLength(8)
+    for (const requirements of manifest.runtime.requirements) {
+      expect(requirements.sha256).toBe(sha256(readFileSync(join(outDir, requirements.name))))
+    }
+    expect(manifest.runtime.modelPacks).toEqual([{
+      id: 'local-asr',
+      requiredExtra: 'media-asr',
+      manifest: 'asr-model-pack.json',
+      manifestSha256: sha256(modelManifest),
+      smoke: 'runtime-asr-smoke.wav',
+      smokeSha256: sha256(smokeAudio),
+    }])
   })
 })

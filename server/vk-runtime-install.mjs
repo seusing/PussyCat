@@ -12,13 +12,24 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
-  rmSync, statfsSync,
+  rmSync, statfsSync, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { scrubSidecarText } from './vk-sidecar.mjs'
-import { writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
+import {
+  ownedRuntimeSizeBytes,
+  writeActiveRuntime,
+  writeRuntimeReceipt,
+} from './vk-runtime-resolver.mjs'
 import { normalizeRuntimeExtras } from './vk-capability-packs.mjs'
+import {
+  RUNTIME_RECEIPT_SCHEMA,
+  RUNTIME_TARGET,
+  runtimeContractFingerprint,
+  runtimeModelPacksFor,
+  runtimeRequirementsFor,
+} from './vk-runtime-contract.mjs'
 
 const MIN_FREE_BYTES = 1 * 1024 ** 3
 const HEAVY_FREE_BYTES = 5 * 1024 ** 3
@@ -44,6 +55,24 @@ function classifyUvFailure(text) {
   return 'install-failed'
 }
 
+function bundleFile(root, name) {
+  if (typeof name !== 'string' || !name) return null
+  const path = resolve(root, name)
+  const rel = relative(root, path)
+  if (rel.startsWith('..') || isAbsolute(rel)) return null
+  return path
+}
+
+function prefixedJson(output, prefix, reasonCode) {
+  const line = output.split(/\r?\n/).findLast((item) => item.startsWith(prefix))
+  if (!line) throw new VkRuntimeInstallError(reasonCode, `${reasonCode} 未返回结果`)
+  try {
+    return JSON.parse(line.slice(prefix.length))
+  } catch {
+    throw new VkRuntimeInstallError(reasonCode, `${reasonCode} 返回了损坏的结果`)
+  }
+}
+
 export async function installVkRuntime({
   home,
   bundleDir,
@@ -53,10 +82,6 @@ export async function installVkRuntime({
   version,
   python = '3.12',
   extras = [],
-  // Capability upgrades install into a new extras-specific directory.  Keep
-  // this flag explicit so the legacy rebuild path can retain its old cleanup
-  // behaviour while upgrades never remove the active runtime up front.
-  preserveActive = false,
   log = () => {},
   spawnImpl = spawn,
   fetchImpl = fetch,
@@ -78,10 +103,49 @@ export async function installVkRuntime({
   } catch {
     throw new VkRuntimeInstallError('bundle-missing', 'runtime-manifest.json 损坏')
   }
-  const wheel = resolve(wheelPath ?? join(bundleDir, manifest?.wheel?.name ?? ''))
-  const uv = resolve(uvPath ?? join(bundleDir, manifest?.uv?.name ?? ''))
-  if (!existsSync(wheel)) throw new VkRuntimeInstallError('bundle-missing', `wheel 不存在: ${manifest?.wheel?.name}`)
-  if (!existsSync(uv)) throw new VkRuntimeInstallError('bundle-missing', `uv 不存在: ${manifest?.uv?.name}`)
+  const requirements = runtimeRequirementsFor(manifest, normalizedExtras)
+  const runtimeFingerprint = runtimeContractFingerprint(manifest, normalizedExtras)
+  if (!requirements || !runtimeFingerprint) {
+    throw new VkRuntimeInstallError(
+      'bundle-contract-missing',
+      '安装包缺少当前能力组合的锁定依赖契约',
+    )
+  }
+  if (
+    manifest?.runtime?.pythonImplementation !== RUNTIME_TARGET.pythonImplementation
+    || manifest?.runtime?.pythonVersion !== RUNTIME_TARGET.pythonVersion
+    || manifest?.runtime?.pythonAbi !== RUNTIME_TARGET.pythonAbi
+    || manifest?.runtime?.platform !== RUNTIME_TARGET.platform
+  ) {
+    throw new VkRuntimeInstallError('unsupported-runtime-target', '安装包 runtime 目标与当前产品不一致')
+  }
+  const requirementsRoot = bundleDir ? resolve(bundleDir) : dirname(resolve(manifestFile))
+  const wheel = wheelPath
+    ? resolve(wheelPath)
+    : bundleFile(requirementsRoot, manifest?.wheel?.name)
+  const uv = uvPath
+    ? resolve(uvPath)
+    : bundleFile(requirementsRoot, manifest?.uv?.name)
+  const requirementsPath = bundleFile(requirementsRoot, requirements.name)
+  const selectedModelPacks = runtimeModelPacksFor(manifest, normalizedExtras)
+  if (!wheel || !existsSync(wheel)) throw new VkRuntimeInstallError('bundle-missing', `wheel 不存在: ${manifest?.wheel?.name}`)
+  if (!uv || !existsSync(uv)) throw new VkRuntimeInstallError('bundle-missing', `uv 不存在: ${manifest?.uv?.name}`)
+  if (!requirementsPath || !existsSync(requirementsPath)) {
+    throw new VkRuntimeInstallError('bundle-missing', `锁定依赖文件不存在: ${requirements.name}`)
+  }
+  const modelPackAssets = selectedModelPacks.map((pack) => ({
+    ...pack,
+    manifestPath: bundleFile(requirementsRoot, pack.manifest),
+    smokePath: bundleFile(requirementsRoot, pack.smoke),
+  }))
+  for (const pack of modelPackAssets) {
+    if (!pack.manifestPath || !existsSync(pack.manifestPath)) {
+      throw new VkRuntimeInstallError('bundle-missing', `模型 manifest 不存在: ${pack.manifest}`)
+    }
+    if (!pack.smokePath || !existsSync(pack.smokePath)) {
+      throw new VkRuntimeInstallError('bundle-missing', `ASR smoke 音频不存在: ${pack.smoke}`)
+    }
+  }
 
   // —— SHA 前置核验(不匹配即停止,绝不激活)——
   const wheelDigest = sha256File(wheel)
@@ -100,7 +164,28 @@ export async function installVkRuntime({
       `expected=${manifest?.uv?.sha256} actual=${uvDigest}`,
     )
   }
-  log(`manifest 核验通过 wheel=${wheelDigest.slice(0, 12)}… uv=${uvDigest.slice(0, 12)}…`)
+  const requirementsDigest = sha256File(requirementsPath)
+  if (requirements.sha256 !== requirementsDigest) {
+    throw new VkRuntimeInstallError(
+      'sha-mismatch',
+      '锁定依赖文件 SHA-256 与 manifest 不符,拒绝安装',
+      `expected=${requirements.sha256} actual=${requirementsDigest}`,
+    )
+  }
+  for (const pack of modelPackAssets) {
+    const manifestDigest = sha256File(pack.manifestPath)
+    const smokeDigest = sha256File(pack.smokePath)
+    if (manifestDigest !== pack.manifestSha256 || smokeDigest !== pack.smokeSha256) {
+      throw new VkRuntimeInstallError(
+        'sha-mismatch',
+        `模型能力包 ${pack.id} 与 manifest 不符,拒绝安装`,
+      )
+    }
+  }
+  log(
+    `manifest 核验通过 wheel=${wheelDigest.slice(0, 12)}… `
+    + `requirements=${requirementsDigest.slice(0, 12)}… uv=${uvDigest.slice(0, 12)}…`,
+  )
 
   // —— 预检 ——
   if (resolvedHome.length > 100) {
@@ -120,24 +205,23 @@ export async function installVkRuntime({
     throw new VkRuntimeInstallError('disk', '磁盘可用空间不足')
   }
 
-  const baseVersionLabel = version ?? `${(manifest?.wheel?.name ?? 'wheel').replace(/\.whl$/, '')}+${manifest?.wheel?.sha256?.slice(0, 8) ?? 'unknown'}`
-  // The ordered extras identity is part of the directory name.  This keeps a
-  // media-asr install and a later precision-transcript upgrade isolated and
-  // makes a failed upgrade unable to damage the old active directory.
-  const extrasHash = normalizedExtras.length
-    ? createHash('sha256').update(JSON.stringify(normalizedExtras)).digest('hex').slice(0, 12)
-    : null
-  const versionLabel = extrasHash ? `${baseVersionLabel}+extras-${extrasHash}` : baseVersionLabel
+  const wheelLabel = (manifest?.wheel?.name ?? 'wheel').replace(/\.whl$/, '')
+  const baseVersionLabel = version ?? wheelLabel
+  // The fingerprint covers wheel, uv.lock export, target ABI and extras. A
+  // capability upgrade therefore gets a fresh directory without deleting the
+  // active runtime, even when the wheel itself did not change.
+  const versionLabel = `${baseVersionLabel}+runtime-${runtimeFingerprint.slice(0, 12)}`
   const versionDir = join(resolvedHome, 'runtime', 'versions', versionLabel)
   // A normal explicit rebuild intentionally replaces its target directory.
-  // Capability upgrades use a different extras-hashed target, so cleaning a
+  // Capability upgrades use a different fingerprinted target, so cleaning a
   // stale partial target cannot remove the old active runtime.
   if (existsSync(versionDir)) rmSync(versionDir, { recursive: true, force: true })
 
-  const runStep = (step, command, argv) => new Promise((resolveStep, rejectStep) => {
+  const runStep = (step, command, argv, stepEnv = {}) => new Promise((resolveStep, rejectStep) => {
     log(`${step}: ${command.split(/[\\/]/).pop()} ${argv.join(' ')}`)
     const child = spawnImpl(command, argv, {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...stepEnv },
     })
     let output = ''
     child.stdout?.on('data', (chunk) => {
@@ -153,21 +237,76 @@ export async function installVkRuntime({
     child.once('error', (error) => rejectStep(new VkRuntimeInstallError('install-failed', `${step} 无法启动`, String(error?.message ?? error))))
     child.once('close', (code) => {
       if (code === 0) resolveStep(output)
-      else rejectStep(new VkRuntimeInstallError(
-        step.startsWith('smoke') ? `smoke-${step.slice(6)}` : classifyUvFailure(output),
-        `${step} 失败(exit ${code})`,
-        scrubSidecarText(output.slice(-800)),
-      ))
+      else {
+        let reasonCode = step.startsWith('smoke')
+          ? `smoke-${step.slice(6)}`
+          : classifyUvFailure(output)
+        if (step.startsWith('models-')) {
+          try {
+            reasonCode = prefixedJson(output, 'VK_MODEL_PACK_RESULT=', 'model-install-failed')?.reason
+              ?? 'model-install-failed'
+          } catch {
+            reasonCode = 'model-install-failed'
+          }
+        } else if (step === 'pip-check') {
+          reasonCode = 'pip-check-failed'
+        }
+        rejectStep(new VkRuntimeInstallError(
+          reasonCode,
+          `${step} 失败(exit ${code})`,
+          scrubSidecarText(output.slice(-800)),
+        ))
+      }
     })
   })
 
   // —— venv + 安装(显式 uv;uv 输出=真实下载/初始化阶段,逐行透传 log)——
   await runStep('venv', uv, ['venv', '--python', python, versionDir])
+  mkdirSync(versionDir, { recursive: true })
   const pythonExe = join(versionDir, 'Scripts', 'python.exe')
-  const spec = normalizedExtras.length
-    ? `video-knowledge[${normalizedExtras.join(',')}] @ file:///${wheel.replace(/\\/g, '/')}`
-    : wheel
-  await runStep('install', uv, ['pip', 'install', '--link-mode', 'copy', '--python', pythonExe, spec])
+  await runStep('install-locked', uv, [
+    'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
+    '--no-deps', '--require-hashes', '-r', requirementsPath,
+  ])
+  await runStep('install-wheel', uv, [
+    'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
+    '--no-deps', wheel,
+  ])
+  const pipCheckOutput = await runStep('pip-check', uv, ['pip', 'check', '--python', pythonExe])
+
+  const installedModelPacks = []
+  let modelEnvironment = {}
+  let asrSmoke = null
+  for (const pack of modelPackAssets) {
+    if (pack.id !== 'local-asr') continue
+    const packRoot = join(resolvedHome, 'models', 'asr', pack.manifestSha256)
+    const modelOutput = await runStep('models-asr', pythonExe, [
+      '-m', 'video_knowledge.runtime_models', 'install',
+      '--manifest', pack.manifestPath,
+      '--expected-manifest-sha', pack.manifestSha256,
+      '--pack-root', packRoot,
+    ])
+    const modelResult = prefixedJson(modelOutput, 'VK_MODEL_PACK_RESULT=', 'model-install-failed')
+    if (modelResult?.ready !== true || typeof modelResult?.cache_root !== 'string') {
+      throw new VkRuntimeInstallError('model-install-failed', 'ASR 模型能力包未通过校验')
+    }
+    modelEnvironment = { MODELSCOPE_CACHE: modelResult.cache_root }
+    const smokeOutput = await runStep('smoke-asr', pythonExe, [
+      '-m', 'video_knowledge.runtime_smoke', '--audio', pack.smokePath,
+    ], modelEnvironment)
+    asrSmoke = prefixedJson(smokeOutput, 'VK_ASR_SMOKE_RESULT=', 'smoke-asr')
+    if (asrSmoke?.ready !== true || !asrSmoke?.transcript) {
+      throw new VkRuntimeInstallError('smoke-asr', '真实 ASR smoke 未产生转写')
+    }
+    installedModelPacks.push({
+      id: pack.id,
+      manifest: pack.manifest,
+      manifestSha256: pack.manifestSha256,
+      cacheRoot: modelResult.cache_root,
+      receipt: modelResult.receipt,
+      reused: modelResult.reused === true,
+    })
+  }
 
   // —— 四门 smoke ——
   await runStep('smoke-import', pythonExe, ['-c', 'import video_knowledge, importlib.metadata as m; print("import ok", m.version("video-knowledge"))'])
@@ -179,7 +318,7 @@ export async function installVkRuntime({
     const token = 'runtime-smoke-token-0123456789abcdef'
     const gui = spawnImpl(pythonExe, ['-m', 'video_knowledge', 'gui', '--root', join(smokeRoot, 'data'), '--config-dir', join(smokeRoot, 'config'), '--port', '0', '--no-browser'], {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, VK_UI_TOKEN: token },
+      env: { ...process.env, ...modelEnvironment, VK_UI_TOKEN: token },
     })
     try {
       const port = await new Promise((resolvePort, rejectPort) => {
@@ -196,6 +335,17 @@ export async function installVkRuntime({
       const meta = await response.json()
       if (!response.ok || meta.service !== 'video-knowledge' || meta.shell_mode !== true) {
         throw new VkRuntimeInstallError('smoke-api', `meta 握手异常 status=${response.status}`)
+      }
+      if (normalizedExtras.includes('media-asr')) {
+        const local = Array.isArray(meta.capabilities)
+          ? meta.capabilities.find((item) => item?.capability === 'local_transcription')
+          : null
+        if (local?.runtime !== 'ready') {
+          throw new VkRuntimeInstallError(
+            'smoke-asr-capability',
+            `本地转写能力未就绪: ${local?.detail ?? 'missing capability'}`,
+          )
+        }
       }
       smokeMeta = meta
       log(`smoke-api: handshake ok api_version=${meta.api_version}`)
@@ -224,15 +374,63 @@ export async function installVkRuntime({
     log(`真实库迁移完成 applied=${result.stdout.trim()}`)
   }
 
+  const packageInventoryOutput = await runStep('inventory-packages', pythonExe, [
+    '-c',
+    'import importlib.metadata as m,json; rows=sorted(({"name":d.metadata["Name"].lower(),"version":d.version} for d in m.distributions()),key=lambda row:row["name"]); print(json.dumps(rows,separators=(",",":"),sort_keys=True))',
+  ])
+  let packages
+  try {
+    packages = JSON.parse(packageInventoryOutput.trim())
+  } catch {
+    throw new VkRuntimeInstallError('inventory-failed', '已安装包清单无法解析')
+  }
+  const packageInventorySha256 = createHash('sha256')
+    .update(JSON.stringify(packages))
+    .digest('hex')
+  const inventoryPath = join(versionDir, 'runtime-inventory.json')
+  writeFileSync(inventoryPath, `${JSON.stringify({
+    schema: 'vk-runtime-inventory@1',
+    runtimeFingerprint,
+    packages,
+    packageInventorySha256,
+    pipCheck: {
+      status: 'passed',
+      output: scrubSidecarText(pipCheckOutput.trim()).slice(-1_000),
+    },
+    modelPacks: installedModelPacks,
+    asrSmoke,
+  }, null, 2)}\n`, 'utf8')
+  const runtimeSizeBytes = ownedRuntimeSizeBytes({
+    home: resolvedHome,
+    runtime: { source: 'app-owned', pythonPath: pythonExe },
+  })
+
   // —— 原子切换 ——
   const receipt = writeRuntimeReceipt(resolvedHome, {
-    schema: 'vk-runtime-receipt@1',
+    schema: RUNTIME_RECEIPT_SCHEMA,
     source: 'app-owned',
     version: versionLabel,
     pythonPath: pythonExe,
     wheel: manifest?.wheel?.name,
     wheelSha256: manifest?.wheel?.sha256,
     uvSha256: manifest?.uv?.sha256,
+    pythonLockSha256: manifest?.source?.pythonLockSha256,
+    requirements: requirements.name,
+    requirementsSha256: requirements.sha256,
+    runtimeFingerprint,
+    runtimeTarget: {
+      pythonImplementation: manifest.runtime.pythonImplementation,
+      pythonVersion: manifest.runtime.pythonVersion,
+      pythonAbi: manifest.runtime.pythonAbi,
+      platform: manifest.runtime.platform,
+    },
+    packageInventory: 'runtime-inventory.json',
+    packageInventorySha256,
+    runtimeSizeBytes,
+    pipCheck: 'passed',
+    modelPacks: installedModelPacks,
+    asrSmoke,
+    ffmpegVersion: asrSmoke?.ffmpeg ?? null,
     installedAt: new Date().toISOString(),
     extras: normalizedExtras,
     apiVersion: smokeMeta?.api_version ?? null,

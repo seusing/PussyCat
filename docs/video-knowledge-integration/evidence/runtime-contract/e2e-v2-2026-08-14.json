@@ -1,0 +1,63 @@
+{
+  "schema": "vk-runtime-contract-e2e-evidence@1",
+  "date": "2026-08-14",
+  "validation": {
+    "temporaryCleanSnapshots": true,
+    "productionAppDataModified": false,
+    "bundleSchema": "vk-runtime-bundle@2",
+    "requirementsProfiles": 8,
+    "bundleHashesVerified": true,
+    "firstAttempt": {
+      "result": "failed",
+      "reason": "Windows MAX_PATH in model staging directory"
+    },
+    "secondAttempt": {
+      "result": "passed",
+      "fix": "short same-parent staging directory while retaining the full final manifest content address"
+    },
+    "finalRevalidation": {
+      "result": "passed",
+      "resolverProjectionElapsedMs": 17
+    }
+  },
+  "artifacts": {
+    "applicationWheelSha256": "503736f67b4f62c13899b6f96c6203540525385f73d68f00ca8cf7aff8e88555",
+    "requirementsSha256": "976ed355b19884077ab6f6daa364f93a4be14cdbf21ac2f849e7f3bb370b4919",
+    "modelManifestSha256": "4b508d2104f08ac422a6d987785d66005bf025a754a394d62f51c975a4583434",
+    "smokeAudioSha256": "9d5b0deb3ff824aa86a0393c3e97d164521ed6f5871f1aa1761d53f77bd695bd"
+  },
+  "runtime": {
+    "version": "video_knowledge-0.1.0-py3-none-any+runtime-2c6bd01e530c",
+    "runtimeFingerprint": "2c6bd01e530cc29bb1de8cf2b4dab06e5a95e622f75ad46d06522a4666140269",
+    "packageInventorySha256": "228c187ea5bf916343fb91c3e14d10627f215cc3059640ceb2bc1dc309ebd4ac",
+    "installedDistributionCount": 85,
+    "pipCheck": "passed",
+    "logicalSizeBytes": 2032113952,
+    "current": true,
+    "legacyUnreproducible": false
+  },
+  "modelPack": {
+    "ready": true,
+    "fullManifestVerification": "passed",
+    "tags": {
+      "asr": "v2.0.9",
+      "vad": "v2.0.4",
+      "punctuation": "v2.0.4"
+    }
+  },
+  "smoke": {
+    "ready": true,
+    "transcript": "本地语音识别运行正常。",
+    "transcriptSha256": "9206eace57aa086affad81e4e44378c103d041b18fa38677ee4436011562e3c4",
+    "elapsedMs": 106822,
+    "ffmpegVersion": "N-126086-ge5ecfe8970-20260812",
+    "apiVersion": "1.7.0",
+    "processingRequestSchemaVersion": "1.3.0"
+  },
+  "capabilityProjection": {
+    "state": "installed",
+    "dependenciesInstalled": true,
+    "modelDownloaded": true,
+    "detail": "依赖、模型、FFmpeg 与离线转写均已验证"
+  }
+}

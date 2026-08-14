@@ -467,6 +467,26 @@ export function createHostServer({
         })
         return
       }
+      if (url.pathname === '/vk/v1/runtime/versions' && request.method === 'GET') {
+        if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
+        writeJson(response, 200, vkRuntime.versions())
+        return
+      }
+      if (url.pathname === '/vk/v1/runtime/rollback' && request.method === 'POST') {
+        const body = await readJson(request, maxBodyBytes)
+        if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
+        const status = await vkRuntime.rollback(body?.version, {
+          afterActivate: async () => { await vkSidecar?.stop() },
+        })
+        writeJson(response, 200, status)
+        return
+      }
+      if (url.pathname === '/vk/v1/runtime/cleanup' && request.method === 'POST') {
+        await readJson(request, maxBodyBytes)
+        if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
+        writeJson(response, 200, vkRuntime.cleanup())
+        return
+      }
       if (url.pathname === '/vk/v1/runtime/install' && request.method === 'POST') {
         if (!vkRuntime) {
           writeJson(response, 503, { error: 'runtime 安装编排未接线', reasonCode: 'bundle-missing' })
@@ -484,6 +504,7 @@ export function createHostServer({
         void vkRuntime.install({
           rebuild: body?.rebuild === true,
           beforeRebuild: async () => { await vkSidecar?.stop() },
+          afterActivate: async () => { await vkSidecar?.stop() },
         }).catch(() => {})
         writeJson(response, 202, vkRuntime.status())
         return

@@ -117,11 +117,11 @@ export class VkSidecarManager {
 
   // spawn 时动态调用统一 resolver；adopt 先 stop，下一次请求即可读取新 active，
   // 首启安装完成后**无需重启 Node** 即可拉起 sidecar(v2 阶段3)。
-  #resolvePython() {
-    if (this.pythonPath) return this.pythonPath
+  #resolveRuntime() {
+    if (this.pythonPath) return { pythonPath: this.pythonPath, source: 'development-override' }
     try {
       const runtime = this.runtimeResolver?.()
-      if (runtime?.pythonPath) return runtime.pythonPath
+      if (runtime?.pythonPath) return runtime
     } catch {
       // 统一落到下方显式开发注入或 not-installed 诊断。
     }
@@ -167,8 +167,8 @@ export class VkSidecarManager {
     if (this.#state === 'ok' && this.#child) {
       return { port: this.#port, token: this.#token }
     }
-    const resolvedPython = this.#resolvePython()
-    if (!resolvedPython || !this.rootDir) {
+    const resolvedRuntime = this.#resolveRuntime()
+    if (!resolvedRuntime?.pythonPath || !this.rootDir) {
       this.#state = 'not-configured'
       throw new VkSidecarError(503, 'video-knowledge runtime 未安装或未配置', {
         reasonCode: this.homeDir ? 'not-installed' : 'not-configured',
@@ -177,7 +177,13 @@ export class VkSidecarManager {
           : '设置 OPENCLI_HOST_VK_PYTHON 或 OPENCLI_HOST_VK_HOME 后重试',
       })
     }
-    this.resolvedPythonPath = resolvedPython
+    this.resolvedPythonPath = resolvedRuntime.pythonPath
+    const asrModels = Array.isArray(resolvedRuntime.modelPacks)
+      ? resolvedRuntime.modelPacks.find((pack) => pack?.id === 'local-asr')
+      : null
+    this.resolvedRuntimeEnv = typeof asrModels?.cacheRoot === 'string'
+      ? { MODELSCOPE_CACHE: asrModels.cacheRoot }
+      : {}
     if (!this.#starting) {
       this.#starting = this.#start().finally(() => {
         this.#starting = null
@@ -205,6 +211,7 @@ export class VkSidecarManager {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...this.baseEnv,
+        ...this.resolvedRuntimeEnv,
         VK_CHROME_CDP_URL: this.baseEnv.VK_CHROME_CDP_URL
           ?? this.baseEnv.vk_chrome_cdp_url
           ?? DEFAULT_CHROME_CDP_URL,

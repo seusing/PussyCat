@@ -2,10 +2,15 @@
 // 提供 not-installed/installing/installed/failed 类型化状态与单飞安装。
 // 进度=安装核心逐行透传的真实输出(已脱敏),不造百分比。
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { installVkRuntime } from './vk-runtime-install.mjs'
 import {
-  listOwnedRuntimeReceipts, resolveActiveRuntime, writeActiveRuntime, writeRuntimeReceipt,
+  listOwnedRuntimeReceipts,
+  ownedRuntimeSizeBytes,
+  removeOwnedRuntimeReceipt,
+  resolveActiveRuntime,
+  writeActiveRuntime,
+  writeRuntimeReceipt,
 } from './vk-runtime-resolver.mjs'
 import { discoverVkRuntimePaths, probeVkRuntime } from './vk-runtime-probe.mjs'
 import {
@@ -13,6 +18,10 @@ import {
 } from './vk-capability-packs.mjs'
 
 const LOG_TAIL_LINES = 60
+
+function pathKey(value) {
+  return typeof value === 'string' ? resolve(value).toLowerCase() : null
+}
 
 export class VkRuntimeError extends Error {
   constructor(statusCode, reasonCode, message) {
@@ -31,6 +40,7 @@ export class VkRuntimeManager {
   #installing = null
   #installingExtras = []
   #adopting = false
+  #sizeCache = new Map()
 
   constructor({
     home,
@@ -47,12 +57,15 @@ export class VkRuntimeManager {
     this.discoverImpl = discoverImpl
     this.probeImpl = probeImpl
     this.env = env
+    this.allowExternalRuntime = env.OPENCLI_HOST_VK_ALLOW_EXTERNAL_RUNTIME === '1'
     this.now = now
     this.detected = new Map()
   }
 
   activeRuntime() {
-    return resolveActiveRuntime({ home: this.home, bundleDir: this.bundleDir })
+    const runtime = resolveActiveRuntime({ home: this.home, bundleDir: this.bundleDir })
+    if (runtime?.source === 'external' && !this.allowExternalRuntime) return null
+    return runtime
   }
 
   status() {
@@ -65,6 +78,8 @@ export class VkRuntimeManager {
         pythonPath: active?.pythonPath ?? null,
         capabilities: Array.isArray(active?.capabilities) ? active.capabilities : [],
         extras: Array.isArray(active?.extras) ? active.extras : [],
+        current: active?.current === true,
+        legacyUnreproducible: active?.legacyUnreproducible === true,
         installingExtras: [...this.#installingExtras],
         reasonCode: null,
         summary: '正在安装解析引擎(真实下载/初始化输出见 log)',
@@ -82,6 +97,8 @@ export class VkRuntimeManager {
         pythonPath: active?.pythonPath ?? null,
         capabilities: Array.isArray(active?.capabilities) ? active.capabilities : [],
         extras: Array.isArray(active?.extras) ? active.extras : [],
+        current: active?.current === true,
+        legacyUnreproducible: active?.legacyUnreproducible === true,
         reasonCode: this.#reasonCode,
         summary: this.#summary ?? '安装失败',
         log: this.#log.slice(-LOG_TAIL_LINES),
@@ -96,8 +113,12 @@ export class VkRuntimeManager {
         pythonPath: active.pythonPath,
         capabilities: Array.isArray(active.capabilities) ? active.capabilities : [],
         extras: Array.isArray(active.extras) ? active.extras : [],
+        current: active.current === true,
+        legacyUnreproducible: active.legacyUnreproducible === true,
         reasonCode: null,
-        summary: `解析引擎已就绪(${active.version ?? 'unknown'})`,
+        summary: active.current
+          ? `解析引擎已就绪(${active.version ?? 'unknown'})`
+          : `现有解析引擎可继续使用，当前安装包有待验证的新运行时(${active.version ?? 'unknown'})`,
         log: this.#log.slice(-LOG_TAIL_LINES),
         checkedAt: this.now(),
       }
@@ -147,12 +168,118 @@ export class VkRuntimeManager {
     })
   }
 
+  #ownedSnapshot() {
+    const active = this.activeRuntime()
+    const activePath = pathKey(active?.receiptPath)
+    const receipts = listOwnedRuntimeReceipts({ home: this.home, bundleDir: this.bundleDir })
+    const rollback = receipts.find((receipt) => pathKey(receipt.receiptPath) !== activePath) ?? null
+    return { active, activePath, receipts, rollbackPath: pathKey(rollback?.receiptPath) }
+  }
+
+  #runtimeSize(receipt) {
+    if (Number.isSafeInteger(receipt.runtimeSizeBytes) && receipt.runtimeSizeBytes >= 0) {
+      return receipt.runtimeSizeBytes
+    }
+    const key = pathKey(receipt.receiptPath) ?? pathKey(receipt.pythonPath)
+    if (key && this.#sizeCache.has(key)) return this.#sizeCache.get(key)
+    const size = ownedRuntimeSizeBytes({ home: this.home, runtime: receipt })
+    if (key) this.#sizeCache.set(key, size)
+    return size
+  }
+
+  versions() {
+    const snapshot = this.#ownedSnapshot()
+    const versions = snapshot.receipts.map((receipt) => {
+      const receiptPath = pathKey(receipt.receiptPath)
+      const active = receiptPath === snapshot.activePath
+      const retainedForRollback = !active && receiptPath === snapshot.rollbackPath
+      const sizeBytes = this.#runtimeSize(receipt)
+      return {
+        version: String(receipt.version ?? 'unknown'),
+        installedAt: receipt.installedAt ?? null,
+        extras: Array.isArray(receipt.extras) ? receipt.extras : [],
+        active,
+        current: receipt.current === true,
+        legacyUnreproducible: receipt.legacyUnreproducible === true,
+        retainedForRollback,
+        removable: !active && !retainedForRollback,
+        sizeBytes,
+      }
+    })
+    return {
+      versions,
+      reclaimableBytes: versions
+        .filter((runtime) => runtime.removable)
+        .reduce((total, runtime) => total + runtime.sizeBytes, 0),
+      checkedAt: this.now(),
+    }
+  }
+
+  async rollback(version, { afterActivate = async () => {} } = {}) {
+    if (this.#installing || this.#adopting) {
+      throw new VkRuntimeError(409, 'runtime-busy', '解析环境正在变更，请完成后再回滚')
+    }
+    if (typeof version !== 'string' || !version.trim()) {
+      throw new VkRuntimeError(400, 'invalid-runtime-version', 'version 必须是非空字符串')
+    }
+    const snapshot = this.#ownedSnapshot()
+    const matches = snapshot.receipts.filter((receipt) => String(receipt.version) === version)
+    if (matches.length !== 1) {
+      throw new VkRuntimeError(
+        matches.length ? 409 : 404,
+        matches.length ? 'runtime-version-ambiguous' : 'runtime-version-not-found',
+        matches.length ? 'runtime 版本标识不唯一' : 'runtime 版本不存在或已失效',
+      )
+    }
+    const selected = matches[0]
+    if (pathKey(selected.receiptPath) === snapshot.activePath) return this.status()
+    writeActiveRuntime(this.home, selected)
+    this.#state = 'installed'
+    this.#reasonCode = null
+    this.#summary = null
+    try {
+      await afterActivate()
+    } catch (error) {
+      this.#log.push(`rollback-after-activate: ${String(error?.message ?? error)}`)
+    }
+    return this.status()
+  }
+
+  cleanup() {
+    if (this.#installing || this.#adopting) {
+      throw new VkRuntimeError(409, 'runtime-busy', '解析环境正在变更，请完成后再清理')
+    }
+    const snapshot = this.#ownedSnapshot()
+    const removed = []
+    for (const receipt of snapshot.receipts) {
+      const receiptPath = pathKey(receipt.receiptPath)
+      if (receiptPath === snapshot.activePath || receiptPath === snapshot.rollbackPath) continue
+      try {
+        removed.push(removeOwnedRuntimeReceipt({ home: this.home, runtime: receipt }))
+      } catch (error) {
+        throw new VkRuntimeError(409, 'runtime-cleanup-failed', String(error?.message ?? error))
+      }
+    }
+    const remaining = this.versions()
+    return {
+      ...remaining,
+      removed,
+      reclaimedBytes: removed.reduce((total, runtime) => total + runtime.sizeBytes, 0),
+    }
+  }
+
   async detect() {
-    const paths = this.discoverImpl({ home: this.home, bundleDir: this.bundleDir, env: this.env })
+    const paths = this.discoverImpl({
+      home: this.home,
+      bundleDir: this.bundleDir,
+      env: this.env,
+      allowExternalRuntime: this.allowExternalRuntime,
+    })
     const activePath = this.activeRuntime()?.pythonPath?.toLowerCase() ?? null
     const candidates = []
     this.detected.clear()
     for (const path of paths) {
+      if (!this.allowExternalRuntime && path.source !== 'app-owned') continue
       const candidate = await this.probeImpl(path)
       candidates.push({ ...candidate, active: candidate.pythonPath.toLowerCase() === activePath })
       this.detected.set(String(candidate.pythonPath).toLowerCase(), path.source)
@@ -170,6 +297,9 @@ export class VkRuntimeManager {
     const known = this.detected.get(pythonPath.toLowerCase())
     if (!known) {
       throw new VkRuntimeError(400, 'candidate-not-detected', '请先执行受控发现，再选择候选环境')
+    }
+    if (known !== 'app-owned' && !this.allowExternalRuntime) {
+      throw new VkRuntimeError(403, 'external-runtime-disabled', '生产模式不接管外部解析环境')
     }
     this.#adopting = true
     try {
@@ -219,7 +349,6 @@ export class VkRuntimeManager {
     beforeRebuild = async () => {},
     extras = [],
     afterActivate = async () => {},
-    preserveActive = false,
   } = {}) {
     if (this.#adopting) {
       throw new VkRuntimeError(409, 'runtime-busy', '正在接管已有解析环境，请完成后再安装')
@@ -249,10 +378,10 @@ export class VkRuntimeManager {
     const snapshot = this.status()
     if (capabilityInstall && requestedExtras.length > 0) {
       const missing = cumulativeExtras.filter((extra) => !currentExtras.includes(extra))
-      if (!missing.length && snapshot.state === 'installed') return snapshot
+      if (!missing.length && snapshot.state === 'installed' && snapshot.current) return snapshot
     } else if (snapshot.state === 'installed') {
-      if (!rebuild) return snapshot
-      await beforeRebuild()
+      if (!rebuild && snapshot.current) return snapshot
+      if (rebuild && snapshot.current) await beforeRebuild()
     }
     if (snapshot.state === 'not-available') {
       const error = new Error(snapshot.summary)
@@ -267,9 +396,6 @@ export class VkRuntimeManager {
       home: this.home,
       bundleDir: this.bundleDir,
       extras: cumulativeExtras,
-      // Explicit rebuild keeps legacy cleanup semantics. Capability upgrades
-      // use a fresh extras-hashed directory and retain old active.
-      preserveActive: preserveActive || capabilityInstall,
       log: (line) => {
         this.#log.push(String(line))
         if (this.#log.length > 500) this.#log.shift()
@@ -310,12 +436,15 @@ export class VkRuntimeManager {
     )
     const cumulativeExtras = mergeRuntimeExtras(currentExtras, pack.extras)
     const status = this.status()
-    if (!cumulativeExtras.some((extra) => !currentExtras.includes(extra)) && status.state === 'installed') {
+    if (
+      !cumulativeExtras.some((extra) => !currentExtras.includes(extra))
+      && status.state === 'installed'
+      && status.current
+    ) {
       return status
     }
     return this.install({
       extras: pack.extras,
-      preserveActive: true,
       afterActivate,
     }).then(() => this.status())
   }

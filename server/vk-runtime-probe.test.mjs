@@ -40,9 +40,15 @@ describe('runtime discovery and probe', () => {
     const candidates = discoverVkRuntimePaths({
       home: join(localAppData, '爪爪-data'),
       env: { USERPROFILE: userProfile, LOCALAPPDATA: localAppData, VIRTUAL_ENV: join(userProfile, 'virtual') },
+      allowExternalRuntime: true,
     })
     expect(candidates.map((item) => item.source).sort()).toEqual(['developer-venv', 'user-python', 'virtual-env'])
     expect(candidates.every((item) => item.pythonPath.endsWith('python.exe'))).toBe(true)
+
+    expect(discoverVkRuntimePaths({
+      home: join(localAppData, '爪爪-data'),
+      env: { USERPROFILE: userProfile, LOCALAPPDATA: localAppData, VIRTUAL_ENV: join(userProfile, 'virtual') },
+    })).toEqual([])
   })
 
   it('returns the public candidate contract and enforces API/schema minimums', async () => {

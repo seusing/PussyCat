@@ -286,6 +286,9 @@ export interface VkRuntimeStatus {
   source?: string | null
   pythonPath?: string | null
   capabilities?: VkRuntimeCapability[]
+  extras?: string[]
+  current?: boolean
+  legacyUnreproducible?: boolean
 }
 
 export interface VkRuntimeCandidate {
@@ -305,6 +308,26 @@ export interface VkRuntimeDetectResponse {
   checkedAt: string
 }
 
+export interface VkRuntimeVersion {
+  version: string
+  installedAt: string | null
+  extras: string[]
+  active: boolean
+  current: boolean
+  legacyUnreproducible: boolean
+  retainedForRollback: boolean
+  removable: boolean
+  sizeBytes: number
+}
+
+export interface VkRuntimeVersionsResponse {
+  versions: VkRuntimeVersion[]
+  reclaimableBytes: number
+  checkedAt: string
+  removed?: Array<{ version: string; sizeBytes: number }>
+  reclaimedBytes?: number
+}
+
 export interface VkCapabilityPack {
   id: 'local-asr' | 'precision-transcript'
   name: string
@@ -313,6 +336,9 @@ export interface VkCapabilityPack {
   state: 'not-installed' | 'installing' | 'installed' | 'partial' | 'unavailable'
   detail: string
   installed_extras: string[]
+  extras?: string[]
+  dependencies_installed?: boolean
+  model_downloaded?: boolean | null
 }
 
 export interface VkCapabilityPacksResponse {
@@ -358,6 +384,23 @@ export async function postVkWrssEnable(baseUrl = DEFAULT_BASE_URL): Promise<Wrss
 export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
   const response = await fetch(`${baseUrl}/vk/v1/runtime/status`)
   return parseVkResponse<VkRuntimeStatus>(response, '解析引擎状态获取失败')
+}
+
+export async function fetchVkRuntimeVersions(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeVersionsResponse> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/versions`)
+  return parseVkResponse<VkRuntimeVersionsResponse>(response, '解析引擎版本获取失败')
+}
+
+export async function postVkRuntimeRollback(
+  version: string, baseUrl = DEFAULT_BASE_URL,
+): Promise<VkRuntimeStatus> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/rollback`, jsonInit({ version }))
+  return parseVkResponse<VkRuntimeStatus>(response, '解析引擎回滚失败')
+}
+
+export async function postVkRuntimeCleanup(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeVersionsResponse> {
+  const response = await fetch(`${baseUrl}/vk/v1/runtime/cleanup`, jsonInit({}))
+  return parseVkResponse<VkRuntimeVersionsResponse>(response, '解析引擎清理失败')
 }
 
 /** rebuild=true 才会在**已装**状态下真正重建;否则 Host 按幂等处理、直接返回现状。 */

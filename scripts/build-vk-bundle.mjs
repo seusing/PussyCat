@@ -5,6 +5,13 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  RUNTIME_CONTRACT_SCHEMA,
+  RUNTIME_TARGET,
+  enumerateRuntimeExtraProfiles,
+  runtimeRequirementsFilename,
+  runtimeRequirementsKey,
+} from '../server/vk-runtime-contract.mjs'
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const DEFAULT_PYTHON_SOURCE_DIR = 'C:\\Users\\Lauseusing\\Developer\\video-knowledge-m1-productization'
@@ -50,13 +57,48 @@ export function collectBundleSource({ pythonSourceDir, pussyCatRoot }) {
   }
 }
 
+export function exportLockedRequirements({
+  uvPath,
+  pythonSourceDir,
+  extras,
+  spawnSyncImpl = spawnSync,
+}) {
+  const args = [
+    'export', '--locked', '--offline', '--no-dev', '--no-emit-project',
+    '--no-annotate', '--no-header', '--format', 'requirements.txt',
+    '--python', RUNTIME_TARGET.pythonVersion,
+  ]
+  for (const extra of extras) args.push('--extra', extra)
+  const result = spawnSyncImpl(uvPath, args, {
+    cwd: pythonSourceDir,
+    shell: false,
+    windowsHide: true,
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+  })
+  if (result.status !== 0) {
+    throw new Error(
+      `[vk-bundle] requirements export failed (${runtimeRequirementsKey(extras)}): `
+      + `${String(result.stderr ?? '').trim()}`,
+    )
+  }
+  const normalized = String(result.stdout ?? '').replaceAll('\r\n', '\n')
+  if (!normalized.trim()) {
+    throw new Error(`[vk-bundle] requirements export is empty (${runtimeRequirementsKey(extras)})`)
+  }
+  return normalized.endsWith('\n') ? normalized : `${normalized}\n`
+}
+
 export function buildVkBundle({
   root = projectRoot,
   wheelPath = process.env.VK_WHEEL_PATH
     ?? 'C:\\Users\\Lauseusing\\Developer\\video-knowledge-m1-productization\\dist\\video_knowledge-0.1.0-py3-none-any.whl',
   uvPath = process.env.VK_UV_PATH ?? 'C:\\Users\\Lauseusing\\.local\\bin\\uv.exe',
   pythonSourceDir = process.env.VK_PYTHON_SOURCE_DIR ?? DEFAULT_PYTHON_SOURCE_DIR,
+  modelManifestPath = join(pythonSourceDir, 'src', 'video_knowledge', 'resources', 'asr-model-pack.json'),
+  modelSmokePath = join(pythonSourceDir, 'src', 'video_knowledge', 'resources', 'runtime-asr-smoke.wav'),
   outDir = join(root, 'src-tauri', 'resources', 'vk'),
+  requirementsExporter = exportLockedRequirements,
 } = {}) {
   // Validate provenance before deleting the previous known-good bundle.
   const source = collectBundleSource({ pythonSourceDir, pussyCatRoot: root })
@@ -68,14 +110,29 @@ export function buildVkBundle({
   if (uvVersion.status !== 0) {
     throw new Error(`[vk-bundle] uv unavailable: ${uvPath}`)
   }
+  if (!existsSync(modelManifestPath) || !existsSync(modelSmokePath)) {
+    throw new Error('[vk-bundle] ASR model manifest or smoke audio is missing')
+  }
+
+  const requirementsPayloads = enumerateRuntimeExtraProfiles().map((extras) => ({
+    key: runtimeRequirementsKey(extras),
+    extras,
+    name: runtimeRequirementsFilename(extras),
+    content: requirementsExporter({ uvPath, pythonSourceDir, extras }),
+  }))
 
   rmSync(outDir, { recursive: true, force: true })
   mkdirSync(outDir, { recursive: true })
   copyFileSync(wheelPath, join(outDir, basename(wheelPath)))
   copyFileSync(uvPath, join(outDir, 'uv.exe'))
+  copyFileSync(modelManifestPath, join(outDir, 'asr-model-pack.json'))
+  copyFileSync(modelSmokePath, join(outDir, 'runtime-asr-smoke.wav'))
+  for (const requirements of requirementsPayloads) {
+    writeFileSync(join(outDir, requirements.name), requirements.content, 'utf8')
+  }
 
   const manifest = {
-    schema: 'vk-runtime-bundle@1',
+    schema: 'vk-runtime-bundle@2',
     generatedAt: new Date().toISOString(),
     source,
     wheel: {
@@ -87,6 +144,24 @@ export function buildVkBundle({
       name: 'uv.exe',
       version: (uvVersion.stdout ?? '').trim(),
       sha256: sha256(join(outDir, 'uv.exe')),
+    },
+    runtime: {
+      contractSchema: RUNTIME_CONTRACT_SCHEMA,
+      ...RUNTIME_TARGET,
+      requirements: requirementsPayloads.map(({ key, extras, name }) => ({
+        key,
+        extras,
+        name,
+        sha256: sha256(join(outDir, name)),
+      })),
+      modelPacks: [{
+        id: 'local-asr',
+        requiredExtra: 'media-asr',
+        manifest: 'asr-model-pack.json',
+        manifestSha256: sha256(join(outDir, 'asr-model-pack.json')),
+        smoke: 'runtime-asr-smoke.wav',
+        smokeSha256: sha256(join(outDir, 'runtime-asr-smoke.wav')),
+      }],
     },
   }
   writeFileSync(

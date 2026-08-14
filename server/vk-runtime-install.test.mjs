@@ -17,18 +17,47 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop(), { recursive: true, force: true })
 })
 
-function makeBundle({ corruptWheelSha = false } = {}) {
+function makeBundle({ corruptWheelSha = false, mediaAsr = false } = {}) {
   const bundle = tempDir('vk-bundle-')
   const wheel = join(bundle, 'video_knowledge-0.1.0-py3-none-any.whl')
   const uv = join(bundle, 'uv.exe')
   writeFileSync(wheel, 'wheel-bytes')
   writeFileSync(uv, 'uv-bytes')
+  const requirementsName = mediaAsr ? 'requirements-media-asr.txt' : 'requirements-base.txt'
+  const requirements = join(bundle, requirementsName)
+  writeFileSync(requirements, 'requests==2.0 --hash=sha256:fixture\n')
+  const modelManifest = join(bundle, 'asr-model-pack.json')
+  const smokeAudio = join(bundle, 'runtime-asr-smoke.wav')
+  if (mediaAsr) {
+    writeFileSync(modelManifest, '{"schema":"fixture"}\n')
+    writeFileSync(smokeAudio, 'wave')
+  }
   writeFileSync(join(bundle, 'runtime-manifest.json'), JSON.stringify({
+    schema: 'vk-runtime-bundle@2',
+    source: { pythonLockSha256: 'c'.repeat(64) },
     wheel: {
       name: 'video_knowledge-0.1.0-py3-none-any.whl',
       sha256: corruptWheelSha ? 'f'.repeat(64) : sha256File(wheel),
     },
     uv: { name: 'uv.exe', sha256: sha256File(uv) },
+    runtime: {
+      contractSchema: 'vk-runtime-contract@1',
+      pythonImplementation: 'cpython',
+      pythonVersion: '3.12',
+      pythonAbi: 'cp312',
+      platform: 'x86_64-pc-windows-msvc',
+      requirements: [{
+        key: mediaAsr ? 'media-asr' : 'base',
+        extras: mediaAsr ? ['media-asr'] : [],
+        name: requirementsName,
+        sha256: sha256File(requirements),
+      }],
+      modelPacks: mediaAsr ? [{
+        id: 'local-asr', requiredExtra: 'media-asr',
+        manifest: 'asr-model-pack.json', manifestSha256: sha256File(modelManifest),
+        smoke: 'runtime-asr-smoke.wav', smokeSha256: sha256File(smokeAudio),
+      }] : [],
+    },
   }))
   return bundle
 }
@@ -100,6 +129,7 @@ describe('installVkRuntime', () => {
           child.stdout.write('gui=http://127.0.0.1:45678\n')
         } else {
           if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
+          if (argv.some((arg) => String(arg).includes('importlib.metadata'))) child.stdout.write('[]\n')
           child.emit('close', 0)
         }
       })
@@ -117,9 +147,106 @@ describe('installVkRuntime', () => {
     const receipt = JSON.parse(readFileSync(join(versionDir, 'runtime-receipt.json'), 'utf8'))
     const active = JSON.parse(readFileSync(join(home, 'runtime', 'active.json'), 'utf8'))
     expect(receipt).toMatchObject({
-      schema: 'vk-runtime-receipt@1', source: 'app-owned', version: result.version,
+      schema: 'vk-runtime-receipt@2', source: 'app-owned', version: result.version,
       apiVersion: '1.4.0', schemaVersion: '1.1.0',
+      pythonLockSha256: 'c'.repeat(64),
+      requirements: 'requirements-base.txt',
+      runtimeSizeBytes: expect.any(Number),
+      pipCheck: 'passed',
     })
+    expect(receipt.runtimeFingerprint).toMatch(/^[a-f0-9]{64}$/)
+    expect(receipt.packageInventorySha256).toMatch(/^[a-f0-9]{64}$/)
     expect(active).toMatchObject({ source: 'app-owned', receiptPath: join(versionDir, 'runtime-receipt.json') })
+  })
+
+  it('installs only the hashed lock graph before installing the wheel without dependencies', async () => {
+    const bundle = makeBundle()
+    const home = tempDir('vk-home-')
+    const calls = []
+    const spawnImpl = (program, argv) => {
+      calls.push([program, argv])
+      const child = new FakeChild()
+      queueMicrotask(() => {
+        if (argv.includes('gui')) child.stdout.write('gui=http://127.0.0.1:45678\n')
+        else {
+          if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
+          if (argv.some((arg) => String(arg).includes('importlib.metadata'))) child.stdout.write('[]\n')
+          child.emit('close', 0)
+        }
+      })
+      return child
+    }
+    await installVkRuntime({
+      home,
+      bundleDir: bundle,
+      spawnImpl,
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({
+        service: 'video-knowledge', shell_mode: true, api_version: '1.4.0',
+        processing_request_schema_version: '1.1.0', capabilities: [],
+      }) }),
+    })
+
+    const installCalls = calls.filter(([_program, argv]) => argv[0] === 'pip' && argv[1] === 'install')
+    expect(installCalls).toHaveLength(2)
+    expect(installCalls[0][1]).toEqual(expect.arrayContaining([
+      '--no-deps', '--require-hashes', '-r', join(bundle, 'requirements-base.txt'),
+    ]))
+    expect(installCalls[1][1]).toEqual(expect.arrayContaining(['--no-deps']))
+    expect(installCalls[1][1]).not.toContain('--require-hashes')
+    expect(calls.some(([_program, argv]) => argv[0] === 'pip' && argv[1] === 'check')).toBe(true)
+  })
+
+  it('materializes and smokes the pinned ASR model pack before activation', async () => {
+    const bundle = makeBundle({ mediaAsr: true })
+    const home = tempDir('vk-home-')
+    const calls = []
+    const modelCache = join(home, 'models', 'asr', 'fixture', 'models')
+    const spawnImpl = (program, argv, options) => {
+      calls.push([program, argv, options])
+      const child = new FakeChild()
+      queueMicrotask(() => {
+        if (argv.includes('gui')) child.stdout.write('gui=http://127.0.0.1:45678\n')
+        else {
+          if (argv.includes('video_knowledge.runtime_models')) {
+            child.stdout.write(`VK_MODEL_PACK_RESULT=${JSON.stringify({
+              ready: true, cache_root: modelCache, receipt: join(home, 'model-receipt.json'),
+              reused: false,
+            })}\n`)
+          }
+          if (argv.includes('video_knowledge.runtime_smoke')) {
+            child.stdout.write(`VK_ASR_SMOKE_RESULT=${JSON.stringify({
+              ready: true, transcript: '本地语音识别正常', ffmpeg: 'ffmpeg fixture',
+            })}\n`)
+          }
+          if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
+          if (argv.some((arg) => String(arg).includes('importlib.metadata'))) child.stdout.write('[]\n')
+          child.emit('close', 0)
+        }
+      })
+      return child
+    }
+    const result = await installVkRuntime({
+      home,
+      bundleDir: bundle,
+      extras: ['media-asr'],
+      spawnImpl,
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({
+        service: 'video-knowledge', shell_mode: true, api_version: '1.4.0',
+        processing_request_schema_version: '1.1.0',
+        capabilities: [{ capability: 'local_transcription', runtime: 'ready' }],
+      }) }),
+    })
+    const versionDir = join(home, 'runtime', 'versions', result.version)
+    const receipt = JSON.parse(readFileSync(join(versionDir, 'runtime-receipt.json'), 'utf8'))
+
+    expect(receipt.modelPacks).toEqual([expect.objectContaining({
+      id: 'local-asr', cacheRoot: modelCache, reused: false,
+    })])
+    expect(receipt.asrSmoke).toMatchObject({ ready: true, transcript: '本地语音识别正常' })
+    expect(receipt.ffmpegVersion).toBe('ffmpeg fixture')
+    const smokeCall = calls.find(([_program, argv]) => argv.includes('video_knowledge.runtime_smoke'))
+    const guiCall = calls.find(([_program, argv]) => argv.includes('gui'))
+    expect(smokeCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
+    expect(guiCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
   })
 })

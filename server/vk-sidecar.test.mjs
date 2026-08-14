@@ -293,7 +293,11 @@ describe('VkSidecarManager', () => {
     const calls = []
     let activePython = 'C:\\fixture\\runtime-a\\python.exe'
     const manager = new VkSidecarManager({
-      runtimeResolver: () => ({ pythonPath: activePython, source: 'external' }),
+      runtimeResolver: () => ({
+        pythonPath: activePython,
+        source: 'app-owned',
+        modelPacks: [{ id: 'local-asr', cacheRoot: `${activePython}-models` }],
+      }),
       rootDir: 'C:\\fixture\\vk-data',
       configDir: 'C:\\fixture\\vk-config',
       spawnImpl: (...args) => {
@@ -320,6 +324,10 @@ describe('VkSidecarManager', () => {
     expect(calls.map(([program]) => program)).toEqual([
       'C:\\fixture\\runtime-a\\python.exe',
       'C:\\fixture\\runtime-b\\python.exe',
+    ])
+    expect(calls.map(([, , options]) => options.env.MODELSCOPE_CACHE)).toEqual([
+      'C:\\fixture\\runtime-a\\python.exe-models',
+      'C:\\fixture\\runtime-b\\python.exe-models',
     ])
   })
 

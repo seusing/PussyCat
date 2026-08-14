@@ -14,8 +14,8 @@ export const CAPABILITY_PACKS = Object.freeze([
   Object.freeze({
     id: 'local-asr',
     name: '本地语音识别',
-    description: '为没有字幕的视频启用本地语音识别依赖。模型会在首次使用时按需处理。',
-    size_label: '约 1.2 GB',
+    description: '为没有字幕的视频安装并校验本地语音识别依赖与模型。',
+    size_label: '依赖约 1.9 GiB + 模型约 2.0 GiB',
     extras: Object.freeze(['media-asr']),
     capabilities: Object.freeze(['local_transcription', 'media_asr']),
   }),
@@ -114,9 +114,7 @@ function packDetail(pack, state, installedExtras, capabilities) {
       if (local?.runtime === 'missing_dependency' || local?.state === 'missing_dependency') {
         return missingDependencyText([local])
       }
-      // Dependency installation is not model download.  Keep this wording
-      // explicit so a green pack cannot be read as a cached model guarantee.
-      return '依赖已安装，首次使用可能下载模型'
+      return '依赖、模型、FFmpeg 与离线转写均已验证'
     }
     return '依赖已安装'
   }
@@ -142,6 +140,17 @@ export function projectCapabilityPacks({
   const installedExtras = [...new Set(activeExtras.filter((extra) => typeof extra === 'string'))]
   const targetExtras = normalizeRuntimeExtras(installingExtras)
   const capabilities = activeRuntime?.capabilities
+  const asrModelReady = Array.isArray(activeRuntime?.modelPacks)
+    && activeRuntime.modelPacks.some((item) => (
+      item?.id === 'local-asr'
+      && typeof item.cacheRoot === 'string'
+      && item.cacheRoot.length > 0
+      && typeof item.manifestSha256 === 'string'
+      && item.manifestSha256.length > 0
+    ))
+  const asrSmokeReady = activeRuntime?.asrSmoke?.ready === true
+    && typeof activeRuntime?.ffmpegVersion === 'string'
+    && activeRuntime.ffmpegVersion.length > 0
 
   const packs = CAPABILITY_PACKS.map((pack) => {
     const installedCount = pack.extras.filter((extra) => installedExtras.includes(extra)).length
@@ -152,13 +161,19 @@ export function projectCapabilityPacks({
     const runtimeMissing = capabilityEntries.some(
       (entry) => entry.runtime === 'missing_dependency' || entry.state === 'missing_dependency',
     )
+    const modelMissing = pack.id === 'local-asr' && complete && !asrModelReady
+    const smokeMissing = pack.id === 'local-asr' && complete && !asrSmokeReady
     let state = 'not-installed'
     if (!bundleAvailable) state = 'unavailable'
     else if (isInstalling) state = 'installing'
-    else if (complete && runtimeMissing) state = 'partial'
+    else if (complete && (runtimeMissing || modelMissing || smokeMissing)) state = 'partial'
     else if (complete) state = 'installed'
     else if (partial) state = 'partial'
-    const detail = packDetail(pack, state, installedExtras, capabilities)
+    const detail = modelMissing
+      ? '依赖已存在，但模型尚未按当前 manifest 校验'
+      : smokeMissing
+        ? '模型已校验，但 FFmpeg 与离线转写 smoke 尚未通过'
+        : packDetail(pack, state, installedExtras, capabilities)
     return {
       id: pack.id,
       name: pack.name,
@@ -171,7 +186,7 @@ export function projectCapabilityPacks({
       // model distinction machine-readable without changing the UI contract.
       extras: [...pack.extras],
       dependencies_installed: complete,
-      model_downloaded: null,
+      model_downloaded: pack.id === 'local-asr' ? asrModelReady : null,
     }
   })
   return { packs, checked_at: checkedAt }

@@ -27,13 +27,19 @@ function addCandidate(map, pythonPath, source) {
   if (!map.has(key)) map.set(key, { pythonPath: canonical, source })
 }
 
-export function discoverVkRuntimePaths({ home, bundleDir, env = process.env } = {}) {
+export function discoverVkRuntimePaths({
+  home,
+  bundleDir,
+  env = process.env,
+  allowExternalRuntime = false,
+} = {}) {
   const found = new Map()
   const active = resolveActiveRuntime({ home, bundleDir })
   if (active?.source === 'app-owned') addCandidate(found, active.pythonPath, 'app-owned')
   for (const receipt of listOwnedRuntimeReceipts({ home, bundleDir })) {
     addCandidate(found, receipt.pythonPath, 'app-owned')
   }
+  if (!allowExternalRuntime) return [...found.values()].slice(0, 64)
   addCandidate(found, executableAt(env.VIRTUAL_ENV), 'virtual-env')
   addCandidate(found, executableAt(env.CONDA_PREFIX), 'conda-prefix')
 

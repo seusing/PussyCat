@@ -132,6 +132,62 @@ describe('managed WeRSS runtime route', () => {
   })
 })
 
+describe('video-knowledge runtime lifecycle routes', () => {
+  it('lists versions, switches active before stopping the sidecar, and cleans stale versions', async () => {
+    const events = []
+    const versionResult = {
+      versions: [{ version: 'v2', active: true, removable: false, sizeBytes: 10 }],
+      reclaimableBytes: 20,
+      checkedAt: '2026-08-14T00:00:00Z',
+    }
+    const runtime = {
+      versions: () => versionResult,
+      rollback: async (version, { afterActivate }) => {
+        events.push(`active:${version}`)
+        await afterActivate()
+        return { state: 'installed', version }
+      },
+      cleanup: () => ({ ...versionResult, removed: [{ version: 'v1', sizeBytes: 20 }], reclaimedBytes: 20 }),
+    }
+    const sidecar = { stop: async () => { events.push('sidecar:stop') } }
+    const { baseUrl } = await setup({ vkRuntime: runtime, vkSidecar: sidecar })
+
+    const listed = await fetch(`${baseUrl}/vk/v1/runtime/versions`, { headers: { Origin: origin } })
+    expect(listed.status).toBe(200)
+    await expect(listed.json()).resolves.toMatchObject(versionResult)
+
+    const rolledBack = await post(baseUrl, '/vk/v1/runtime/rollback', { version: 'v1' })
+    expect(rolledBack.status).toBe(200)
+    await expect(rolledBack.json()).resolves.toMatchObject({ state: 'installed', version: 'v1' })
+    expect(events).toEqual(['active:v1', 'sidecar:stop'])
+
+    const cleaned = await post(baseUrl, '/vk/v1/runtime/cleanup', {})
+    expect(cleaned.status).toBe(200)
+    await expect(cleaned.json()).resolves.toMatchObject({ reclaimedBytes: 20 })
+  })
+
+  it('stops an already-running sidecar after a normal install activates its runtime', async () => {
+    const events = []
+    let finishInstall
+    const installed = new Promise((resolveInstalled) => { finishInstall = resolveInstalled })
+    const runtime = {
+      status: () => ({ state: 'not-installed', reasonCode: null, summary: 'pending' }),
+      install: async ({ afterActivate }) => {
+        events.push('active:new')
+        await afterActivate()
+        finishInstall()
+      },
+    }
+    const sidecar = { stop: async () => { events.push('sidecar:stop') } }
+    const { baseUrl } = await setup({ vkRuntime: runtime, vkSidecar: sidecar })
+
+    const response = await post(baseUrl, '/vk/v1/runtime/install', {})
+    expect(response.status).toBe(202)
+    await installed
+    expect(events).toEqual(['active:new', 'sidecar:stop'])
+  })
+})
+
 async function readSseUntilDone(response) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()

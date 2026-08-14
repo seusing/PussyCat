@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -18,8 +18,25 @@ afterEach(() => {
 
 function bundleDir() {
   const dir = tempDir('vk-bundle-')
-  writeFileSync(join(dir, 'runtime-manifest.json'), '{}')
+  writeFileSync(join(dir, 'runtime-manifest.json'), JSON.stringify({
+    schema: 'vk-runtime-bundle@1',
+    wheel: { name: 'fixture.whl', sha256: 'a'.repeat(64) },
+    uv: { name: 'uv.exe', sha256: 'b'.repeat(64) },
+  }))
   return dir
+}
+
+function ownedRuntime(home, version, installedAt) {
+  const versionDir = join(home, 'runtime', 'versions', version)
+  const pythonPath = join(versionDir, 'Scripts', 'python.exe')
+  mkdirSync(join(versionDir, 'Scripts'), { recursive: true })
+  writeFileSync(pythonPath, `python-${version}`)
+  writeFileSync(join(versionDir, 'payload.bin'), version.repeat(16))
+  return writeRuntimeReceipt(home, {
+    schema: 'vk-runtime-receipt@1', source: 'app-owned', version, pythonPath,
+    wheelSha256: 'a'.repeat(64), apiVersion: '1.4.0', schemaVersion: '1.1.0',
+    capabilities: [], extras: [], installedAt,
+  })
 }
 
 describe('VkRuntimeManager', () => {
@@ -129,6 +146,7 @@ describe('VkRuntimeManager', () => {
     const pythonPath = 'C:\\fixture\\developer\\.venv\\Scripts\\python.exe'
     const manager = new VkRuntimeManager({
       home: tempDir('vk-home-'), bundleDir: bundleDir(),
+      env: { OPENCLI_HOST_VK_ALLOW_EXTERNAL_RUNTIME: '1' },
       installImpl: async () => { await gate },
       discoverImpl: () => [{ pythonPath, source: 'developer-venv' }],
       probeImpl: async ({ source }) => ({
@@ -169,5 +187,70 @@ describe('VkRuntimeManager', () => {
     expect(detected.candidates[0]).toMatchObject({ active: true, source: 'app-owned' })
     await manager.adopt(ownedPython)
     expect(manager.status()).toMatchObject({ source: 'app-owned', pythonPath: ownedPython })
+  })
+
+  it('生产模式不发现也不接管外部 runtime', async () => {
+    const pythonPath = 'C:\\fixture\\developer\\.venv\\Scripts\\python.exe'
+    const manager = new VkRuntimeManager({
+      home: tempDir('vk-home-'), bundleDir: bundleDir(), env: {},
+      discoverImpl: () => [{ pythonPath, source: 'developer-venv' }],
+      probeImpl: async () => ({
+        pythonPath, source: 'developer-venv', compatible: true,
+        apiVersion: '1.4.0', schemaVersion: '1.1.0', capabilities: [],
+      }),
+    })
+
+    expect((await manager.detect()).candidates).toEqual([])
+    const error = await manager.adopt(pythonPath).catch((item) => item)
+    expect(error).toMatchObject({ statusCode: 400, reasonCode: 'candidate-not-detected' })
+  })
+
+  it('lists sizes, rolls back atomically, and cleans all but active plus one fallback', async () => {
+    const home = tempDir('vk-home-')
+    const first = ownedRuntime(home, 'v1', '2026-08-01T00:00:00Z')
+    const second = ownedRuntime(home, 'v2', '2026-08-02T00:00:00Z')
+    const third = ownedRuntime(home, 'v3', '2026-08-03T00:00:00Z')
+    writeActiveRuntime(home, third)
+    const manager = new VkRuntimeManager({ home, bundleDir: bundleDir() })
+
+    expect(manager.versions().versions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ version: 'v3', active: true, removable: false }),
+      expect.objectContaining({ version: 'v2', retainedForRollback: true, removable: false }),
+      expect.objectContaining({ version: 'v1', removable: true, sizeBytes: expect.any(Number) }),
+    ]))
+
+    const stoppedAfterSwitch = []
+    const rolledBack = await manager.rollback('v1', {
+      afterActivate: async () => { stoppedAfterSwitch.push(manager.status().version) },
+    })
+    expect(rolledBack.version).toBe('v1')
+    expect(stoppedAfterSwitch).toEqual(['v1'])
+
+    const cleaned = manager.cleanup()
+    expect(cleaned.removed).toEqual([expect.objectContaining({ version: 'v2' })])
+    expect(cleaned.reclaimedBytes).toBeGreaterThan(0)
+    expect(existsSync(join(home, 'runtime', 'versions', 'v1'))).toBe(true)
+    expect(existsSync(join(home, 'runtime', 'versions', 'v3'))).toBe(true)
+    expect(existsSync(join(home, 'runtime', 'versions', 'v2'))).toBe(false)
+    expect(first.version).toBe('v1')
+    expect(second.version).toBe('v2')
+  })
+
+  it('rejects rollback to an unknown or invalid runtime receipt', async () => {
+    const manager = new VkRuntimeManager({ home: tempDir('vk-home-'), bundleDir: bundleDir() })
+    const error = await manager.rollback('missing').catch((item) => item)
+    expect(error).toMatchObject({ statusCode: 404, reasonCode: 'runtime-version-not-found' })
+  })
+
+  it('uses the installed receipt size instead of rescanning a current runtime', () => {
+    const home = tempDir('vk-home-')
+    const original = ownedRuntime(home, 'sized', '2026-08-03T00:00:00Z')
+    const sized = writeRuntimeReceipt(home, { ...original, runtimeSizeBytes: 123_456 })
+    writeActiveRuntime(home, sized)
+    const manager = new VkRuntimeManager({ home, bundleDir: bundleDir() })
+
+    expect(manager.versions().versions).toEqual([
+      expect.objectContaining({ version: 'sized', sizeBytes: 123_456 }),
+    ])
   })
 })
