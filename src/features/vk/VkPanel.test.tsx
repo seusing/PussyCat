@@ -167,6 +167,33 @@ describe('VkPanel', () => {
     expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument()
   })
 
+  it('能力提示读取当前健康回执,不会继续显示旧候选快照的缺失能力', async () => {
+    const liveHealth = {
+      ...HEALTH,
+      capabilities: [
+        { capability: 'query_ready', runtime: 'ready', detail: null },
+        { capability: 'word_timestamps', runtime: 'ready', detail: null },
+        { capability: 'speaker_diarization', runtime: 'ready', detail: null },
+      ],
+    }
+    stubRoutes({
+      'GET /vk/v1/health': { body: liveHealth },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': {
+        body: { candidates: [candidate({ active: true, capabilities: [
+          { capability: 'word_timestamps', runtime: 'missing_dependency', detail: null },
+          { capability: 'speaker_diarization', runtime: 'missing_dependency', detail: null },
+        ] })], checkedAt: 'x' },
+      },
+      'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    expect(screen.queryByTestId('vk-verdict-note')).not.toBeInTheDocument()
+  })
+
   it('保存模型配置后自动收起并显示三秒绿色通知', async () => {
     const providerSettings = {
       channels: [{

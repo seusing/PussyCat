@@ -469,7 +469,7 @@ export function createHostServer({
       }
       if (url.pathname === '/vk/v1/runtime/versions' && request.method === 'GET') {
         if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
-        writeJson(response, 200, vkRuntime.versions())
+        writeJson(response, 200, await vkRuntime.versions())
         return
       }
       if (url.pathname === '/vk/v1/runtime/rollback' && request.method === 'POST') {
@@ -484,7 +484,7 @@ export function createHostServer({
       if (url.pathname === '/vk/v1/runtime/cleanup' && request.method === 'POST') {
         await readJson(request, maxBodyBytes)
         if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
-        writeJson(response, 200, vkRuntime.cleanup())
+        writeJson(response, 200, await vkRuntime.cleanup())
         return
       }
       if (url.pathname === '/vk/v1/runtime/install' && request.method === 'POST') {

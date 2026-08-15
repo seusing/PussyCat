@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { installVkRuntime } from './vk-runtime-install.mjs'
 import {
   listOwnedRuntimeReceipts,
-  ownedRuntimeSizeBytes,
+  ownedRuntimeSizeBytesAsync,
   removeOwnedRuntimeReceipt,
   resolveActiveRuntime,
   writeActiveRuntime,
@@ -41,6 +41,7 @@ export class VkRuntimeManager {
   #installingExtras = []
   #adopting = false
   #sizeCache = new Map()
+  #sizeFlights = new Map()
 
   constructor({
     home,
@@ -181,24 +182,35 @@ export class VkRuntimeManager {
     return { active, activePath, receipts, rollbackPath: pathKey(rollback?.receiptPath) }
   }
 
-  #runtimeSize(receipt) {
+  async #runtimeSize(receipt) {
     if (Number.isSafeInteger(receipt.runtimeSizeBytes) && receipt.runtimeSizeBytes >= 0) {
       return receipt.runtimeSizeBytes
     }
     const key = pathKey(receipt.receiptPath) ?? pathKey(receipt.pythonPath)
     if (key && this.#sizeCache.has(key)) return this.#sizeCache.get(key)
-    const size = ownedRuntimeSizeBytes({ home: this.home, runtime: receipt })
-    if (key) this.#sizeCache.set(key, size)
-    return size
+    if (!key) return ownedRuntimeSizeBytesAsync({ home: this.home, runtime: receipt })
+    let flight = this.#sizeFlights.get(key)
+    if (!flight) {
+      flight = ownedRuntimeSizeBytesAsync({ home: this.home, runtime: receipt })
+        .then((size) => {
+          this.#sizeCache.set(key, size)
+          return size
+        })
+        .finally(() => {
+          if (this.#sizeFlights.get(key) === flight) this.#sizeFlights.delete(key)
+        })
+      this.#sizeFlights.set(key, flight)
+    }
+    return flight
   }
 
-  versions() {
+  async versions() {
     const snapshot = this.#ownedSnapshot()
-    const versions = snapshot.receipts.map((receipt) => {
+    const versions = await Promise.all(snapshot.receipts.map(async (receipt) => {
       const receiptPath = pathKey(receipt.receiptPath)
       const active = receiptPath === snapshot.activePath
       const retainedForRollback = !active && receiptPath === snapshot.rollbackPath
-      const sizeBytes = this.#runtimeSize(receipt)
+      const sizeBytes = await this.#runtimeSize(receipt)
       return {
         version: String(receipt.version ?? 'unknown'),
         installedAt: receipt.installedAt ?? null,
@@ -210,7 +222,7 @@ export class VkRuntimeManager {
         removable: !active && !retainedForRollback,
         sizeBytes,
       }
-    })
+    }))
     return {
       versions,
       reclaimableBytes: versions
@@ -250,7 +262,7 @@ export class VkRuntimeManager {
     return this.status()
   }
 
-  cleanup() {
+  async cleanup() {
     if (this.#installing || this.#adopting) {
       throw new VkRuntimeError(409, 'runtime-busy', '解析环境正在变更，请完成后再清理')
     }
@@ -265,7 +277,7 @@ export class VkRuntimeManager {
         throw new VkRuntimeError(409, 'runtime-cleanup-failed', String(error?.message ?? error))
       }
     }
-    const remaining = this.versions()
+    const remaining = await this.versions()
     return {
       ...remaining,
       removed,

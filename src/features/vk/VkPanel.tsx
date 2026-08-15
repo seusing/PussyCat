@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { BorderBeam } from 'border-beam'
-import { Check, Copy, Download, RefreshCw, Upload, X } from 'lucide-react'
+import { Check, Copy, Download, LoaderCircle, RefreshCw, Upload, X } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { useAppStore } from '../../store/appStore'
 import { HostRequestError } from '../../host/errors'
@@ -279,7 +279,7 @@ function TaskBannerNotice({ banner, onDismiss }: {
       className={`vk-task-banner is-${banner.tone}`}
       role="status"
     >
-      <span>{banner.message}</span>
+      <span className="vk-task-banner-message" title={banner.message}>{banner.message}</span>
       <button
         type="button"
         aria-label="关闭任务提醒"
@@ -320,16 +320,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [health, setHealth] = useState<VkHealth | null>(null)
   const [healthChecking, setHealthChecking] = useState(false)
   const healthGen = useRef(0)
-  const checkHealth = useCallback(async () => {
+  const checkHealth = useCallback(async ({ manageBusy = true }: { manageBusy?: boolean } = {}) => {
     const gen = ++healthGen.current
-    setHealthChecking(true)
+    if (manageBusy) setHealthChecking(true)
     try {
       const result = await fetchVkHealth(base)
       if (gen === healthGen.current) setHealth(result)
     } catch {
       if (gen === healthGen.current) setHealth(null)
     } finally {
-      if (gen === healthGen.current) setHealthChecking(false)
+      if (manageBusy && gen === healthGen.current) setHealthChecking(false)
     }
   }, [base])
   useEffect(() => { void checkHealth() }, [checkHealth])
@@ -345,6 +345,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       setRuntime(await fetchVkRuntimeStatus(base))
     } catch {
       setRuntime(null)
+    }
+  }, [base])
+  const refreshRuntimeCandidates = useCallback(async () => {
+    try {
+      const result = await postVkRuntimeDetect(base)
+      setRuntimeCandidates(result.candidates)
+      return result
+    } catch {
+      return null
     }
   }, [base])
   useEffect(() => {
@@ -386,6 +395,20 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   }, [base])
   useEffect(() => { void refreshProviders() }, [refreshProviders])
 
+  const refreshEngineStatus = useCallback(async () => {
+    setHealthChecking(true)
+    try {
+      await Promise.all([
+        checkHealth({ manageBusy: false }),
+        refreshRuntime(),
+        refreshProviders(),
+        refreshRuntimeCandidates(),
+      ])
+    } finally {
+      setHealthChecking(false)
+    }
+  }, [checkHealth, refreshProviders, refreshRuntime, refreshRuntimeCandidates])
+
   const discoverTaskReasoningEfforts = async () => {
     setReasoningDiscovering(true)
     setReasoningDiscovery(null)
@@ -422,15 +445,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     autoPickedRef.current = true
     void (async () => {
       try {
-        const result = await postVkRuntimeDetect(base)
-        setRuntimeCandidates(result.candidates)
+        const result = await refreshRuntimeCandidates()
+        if (!result) return
         const target = runtimeToAdopt(result.candidates)
         if (target) await adoptRuntime(target)
       } catch {
         // 自动体检失败不打扰用户:界面照常按当前状态渲染,开发者信息里有手动入口。
       }
     })()
-  }, [runtime?.state, base])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [runtime?.state, refreshRuntimeCandidates])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const startInstall = async ({ rebuild = false }: { rebuild?: boolean } = {}) => {
     setInstallError(null)
@@ -901,6 +924,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
    * 「重建」那个死按钮就是前车之鉴。
    */
   const activeCandidate = runtimeCandidates?.find((c) => c.active) ?? null
+  // The live health/receipt is authoritative after a capability install.
+  // Candidates are only a discovery snapshot and can legitimately be stale.
+  const liveCapabilitySource = health?.capabilities?.length
+    ? { capabilities: health.capabilities }
+    : runtime?.capabilities?.length
+      ? { capabilities: runtime.capabilities }
+      : activeCandidate
   const verdict: { text: string; color: string; note?: string; action?: { label: string; run: () => void } } =
     runtime?.state === 'not-available'
       ? { text: '解析引擎不可用', color: 'var(--color-danger)', note: runtime.summary ?? '缺少随应用分发的安装件,请重新安装爪爪。' }
@@ -922,7 +952,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               ? {
                 text: '解析引擎没有响应', color: 'var(--color-warning)',
                 note: health?.summary ?? '暂时联系不上解析引擎。',
-                action: { label: '重新检测', run: () => { void checkHealth() } },
+                action: { label: '重新检测', run: () => { void refreshEngineStatus() } },
               }
               : providerConfigured === false
                 ? {
@@ -931,7 +961,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
                    text: '解析引擎缺少模型通道', color: 'var(--color-warning)',
                   action: { label: '去配置', run: () => setProviderFormOpen(true) },
                 }
-                : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(activeCandidate) ?? undefined }
+                : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(liveCapabilitySource) ?? undefined }
 
   return (
     <div className="mx-auto max-w-5xl p-3 sm:p-6" data-testid="vk-panel">
@@ -964,10 +994,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               type="button"
               data-testid="vk-verdict-action"
               onClick={verdict.action.run}
-              className="rounded-lg px-3 py-1 text-sm font-medium"
+              disabled={healthChecking && verdict.action.label === '重新检测'}
+              aria-busy={healthChecking && verdict.action.label === '重新检测'}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-sm font-medium disabled:opacity-50"
               style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
             >
-              {verdict.action.label}
+              {healthChecking && verdict.action.label === '重新检测' && <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />}
+              <span>{verdict.action.label}</span>
             </button>
           )}
         {/* 想重新看一眼状态时只有这一个键。原先「重新检测」藏在开发者信息里、和
@@ -975,14 +1008,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         <button
           type="button"
           data-testid="vk-refresh"
-          onClick={() => { void checkHealth(); void refreshRuntime(); void refreshProviders() }}
+          onClick={() => { void refreshEngineStatus() }}
           disabled={healthChecking}
+          aria-busy={healthChecking}
           aria-label="重新检测"
           title="重新检测解析引擎状态"
           className="rounded px-1.5 py-0.5 text-xs disabled:opacity-40"
           style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}
         >
-          ↻
+          <RefreshCw size={14} className={healthChecking ? 'animate-spin' : undefined} aria-hidden="true" />
         </button>
         </div>
       </div>
@@ -1040,7 +1074,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         {capabilityPacksOpen && (
           <VkCapabilityPacksPanel
             baseUrl={base}
-            onRuntimeChanged={() => { void refreshRuntime(); void checkHealth() }}
+            onRuntimeChanged={() => { void refreshEngineStatus() }}
           />
         )}
       </div>

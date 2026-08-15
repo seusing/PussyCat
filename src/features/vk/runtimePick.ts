@@ -56,7 +56,7 @@ export function runtimeToAdopt(candidates: readonly VkRuntimeCandidate[]): VkRun
  * 给用户看的一句话。**只在有话可说时才说** —— 一切正常就返回 null,由调用方
  * 渲染成单行「就绪」,不拿"你什么都不用管"的信息占据版面。
  */
-export function missingCapabilityNote(candidate: VkRuntimeCandidate | null): string | null {
+export function missingCapabilityNote(candidate: Pick<VkRuntimeCandidate, 'capabilities'> | null): string | null {
   if (!candidate) return null
   const missing = candidate.capabilities.filter((cap) => cap.runtime !== 'ready')
   if (missing.length === 0) return null

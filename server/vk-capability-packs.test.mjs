@@ -45,6 +45,17 @@ describe('video-knowledge capability pack projection', () => {
     expect(pack.detail).toContain('离线转写均已验证')
   })
 
+  it('shows existing packs as installing during a cumulative capability rebuild', () => {
+    const result = projectCapabilityPacks({
+      activeRuntime: activeRuntime(),
+      installing: true,
+      installingExtras: ['media-asr', 'alignment-whisperx', 'diarization-pyannote'],
+    })
+
+    expect(localAsr(result).state).toBe('installing')
+    expect(result.packs.find((pack) => pack.id === 'precision-transcript')?.state).toBe('installing')
+  })
+
   it('distinguishes a verified model from a missing smoke result', () => {
     const pack = localAsr(projectCapabilityPacks({
       activeRuntime: activeRuntime({ asrSmoke: null }),

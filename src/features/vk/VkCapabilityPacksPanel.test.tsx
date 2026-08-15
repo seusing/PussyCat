@@ -57,6 +57,35 @@ describe('VkCapabilityPacksPanel', () => {
     ))
   })
 
+  it('shows an indeterminate install bar and notifies the parent after the pack reaches a terminal state', async () => {
+    let installing = false
+    const changed = vi.fn()
+    const fetchMock = vi.fn((url: string) => {
+      if (url.endsWith('/capability-packs/install')) {
+        installing = true
+        return response({ state: 'installing' }, 202)
+      }
+      if (url.endsWith('/runtime/versions')) return response(runtimeVersions)
+      return response({
+        ...packs,
+        packs: packs.packs.map((pack) => pack.id === 'local-asr'
+          ? { ...pack, state: installing ? 'installing' : pack.state }
+          : pack),
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<VkCapabilityPacksPanel onRuntimeChanged={changed} />)
+    await screen.findByText('本地语音识别')
+    fireEvent.click(screen.getByRole('button', { name: '安装' }))
+
+    await waitFor(() => expect(screen.getByTestId('vk-pack-local-asr-progress')).toBeInTheDocument())
+    expect(screen.getByRole('progressbar', { name: '本地语音识别安装进度' })).toHaveAttribute('aria-valuetext', '安装中')
+
+    installing = false
+    await waitFor(() => expect(screen.queryByTestId('vk-pack-local-asr-progress')).not.toBeInTheDocument(), { timeout: 4_000 })
+    expect(changed).toHaveBeenCalled()
+  })
+
   it('offers verification and reuse when a complete local ASR cache is available', async () => {
     const availablePacks = {
       ...packs,

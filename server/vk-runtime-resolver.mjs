@@ -3,7 +3,7 @@
 // 且 receipt 仍由爪爪保存在 HOME/runtime/receipts，绝不写外部环境。
 import { createHash } from 'node:crypto'
 import {
-  existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
+  existsSync, mkdirSync, promises as fsPromises, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
@@ -74,6 +74,25 @@ function directorySizeBytes(path) {
     if (entry.isDirectory()) total += directorySizeBytes(child)
     else if (entry.isFile()) {
       try { total += statSync(child).size } catch { /* file changed during inspection */ }
+    }
+  }
+  return total
+}
+
+// Runtime version listings are requested while the app is still polling
+// /health.  Legacy receipts have no recorded size, so scan them with the
+// promise-based fs API to yield between directories instead of monopolizing
+// the Node event loop on multi-gigabyte environments.
+async function directorySizeBytesAsync(path) {
+  let entries
+  try { entries = await fsPromises.readdir(path, { withFileTypes: true }) } catch { return 0 }
+  let total = 0
+  for (const entry of entries) {
+    const child = join(path, entry.name)
+    if (entry.isSymbolicLink()) continue
+    if (entry.isDirectory()) total += await directorySizeBytesAsync(child)
+    else if (entry.isFile()) {
+      try { total += (await fsPromises.stat(child)).size } catch { /* file changed during inspection */ }
     }
   }
   return total
@@ -236,6 +255,12 @@ export function ownedRuntimeSizeBytes({ home, runtime } = {}) {
   if (!home || runtime?.source !== 'app-owned') return 0
   const versionDir = ownedVersionDir(home, runtime.pythonPath)
   return versionDir ? directorySizeBytes(versionDir) : 0
+}
+
+export async function ownedRuntimeSizeBytesAsync({ home, runtime } = {}) {
+  if (!home || runtime?.source !== 'app-owned') return 0
+  const versionDir = ownedVersionDir(home, runtime.pythonPath)
+  return versionDir ? directorySizeBytesAsync(versionDir) : 0
 }
 
 export function removeOwnedRuntimeReceipt({ home, runtime } = {}) {

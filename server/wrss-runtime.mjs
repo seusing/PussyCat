@@ -662,7 +662,10 @@ export class WrssRuntimeManager {
   }
 
   async #bootstrapLogin(uiUrl, sourceDir, secret) {
-    const response = await this.fetchImpl(`${uiUrl}/api/v1/auth/login`, {
+    // WeRSS exposes its auth router below API_BASE=/api/v1/wx.  Calling the
+    // shorter /api/v1/auth/login path returns 405 on v1.5.2 and prevents the
+    // embedded UI from ever receiving its bootstrap token.
+    const response = await this.fetchImpl(`${uiUrl}/api/v1/wx/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ username: 'pussycat', password: secret }).toString(),

@@ -139,9 +139,13 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   // —— 第一路:Host 自己。三态,首 ping 落定前显「检查中…」,消灭乐观默认的假「已连接」 ——
   const [host, setHost] = useState<HostState>('checking')
   const hostGenRef = useRef(0)
+  const hostFailuresRef = useRef(0)
+  const hostEverOnlineRef = useRef(false)
   useEffect(() => {
     if (mode !== 'connected') return
     setHost('checking')
+    hostFailuresRef.current = 0
+    hostEverOnlineRef.current = false
     let inflight: AbortController | undefined
     const ping = () => {
       const gen = ++hostGenRef.current
@@ -152,12 +156,22 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       fetch(`${base}/health`, { signal: ctrl.signal })
         .then((res) => {
           if (gen !== hostGenRef.current) return
-          setHost(res.ok ? 'online' : 'offline')
+          if (res.ok) {
+            hostFailuresRef.current = 0
+            hostEverOnlineRef.current = true
+            setHost('online')
+          } else {
+            hostFailuresRef.current += 1
+            if (!hostEverOnlineRef.current || hostFailuresRef.current >= 2) setHost('offline')
+          }
           setLastCheckedAt(Date.now())
         })
         .catch(() => {
           if (gen !== hostGenRef.current) return
-          setHost('offline')
+          hostFailuresRef.current += 1
+          // Installation can briefly delay Node's /health response. Keep a
+          // known-good host online until two consecutive probes fail.
+          if (!hostEverOnlineRef.current || hostFailuresRef.current >= 2) setHost('offline')
           setLastCheckedAt(Date.now())
         })   // 超时 abort 也判离线
         .finally(() => clearTimeout(timer))

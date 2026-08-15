@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CircleCheck, Download, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import {
   fetchVkCapabilityPacks,
@@ -59,20 +59,45 @@ export function VkCapabilityPacksPanel({
   const [packs, setPacks] = useState<VkCapabilityPack[]>([])
   const [runtimeVersions, setRuntimeVersions] = useState<VkRuntimeVersionsResponse | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const refreshFlightRef = useRef<Promise<void> | null>(null)
+  const runtimeChangedRef = useRef(onRuntimeChanged)
+  const installCompletionPendingRef = useRef(false)
+
+  useEffect(() => {
+    runtimeChangedRef.current = onRuntimeChanged
+  }, [onRuntimeChanged])
 
   const refresh = useCallback(async () => {
-    try {
-      const [packResult, versionResult] = await Promise.all([
-        fetchVkCapabilityPacks(baseUrl),
-        fetchVkRuntimeVersions(baseUrl),
-      ])
-      setPacks(packResult.packs)
-      setRuntimeVersions(versionResult)
-      setError(null)
-    } catch (cause) {
-      setError(errorText(cause, '能力状态获取失败'))
-    }
+    if (refreshFlightRef.current) return refreshFlightRef.current
+    const flight = (async () => {
+      setRefreshing(true)
+      try {
+        const [packResult, versionResult] = await Promise.all([
+          fetchVkCapabilityPacks(baseUrl),
+          fetchVkRuntimeVersions(baseUrl),
+        ])
+        setPacks(packResult.packs)
+        setRuntimeVersions(versionResult)
+        setError(null)
+        const installing = packResult.packs.some((pack) => pack.state === 'installing')
+        if (installCompletionPendingRef.current && !installing) {
+          installCompletionPendingRef.current = false
+          runtimeChangedRef.current?.()
+        }
+      } catch (cause) {
+        setError(errorText(cause, '能力状态获取失败'))
+      } finally {
+        setRefreshing(false)
+      }
+    })()
+    refreshFlightRef.current = flight
+    flight.then(
+      () => { if (refreshFlightRef.current === flight) refreshFlightRef.current = null },
+      () => { if (refreshFlightRef.current === flight) refreshFlightRef.current = null },
+    )
+    return flight
   }, [baseUrl])
 
   useEffect(() => { void refresh() }, [refresh])
@@ -85,11 +110,12 @@ export function VkCapabilityPacksPanel({
   const install = async (pack: VkCapabilityPack) => {
     setBusy(`install:${pack.id}`)
     setError(null)
+    installCompletionPendingRef.current = true
     try {
       await postVkCapabilityPackInstall(pack.id, baseUrl)
       await refresh()
-      onRuntimeChanged?.()
     } catch (cause) {
+      installCompletionPendingRef.current = false
       setError(errorText(cause, '能力包安装启动失败'))
     } finally {
       setBusy(null)
@@ -102,7 +128,7 @@ export function VkCapabilityPacksPanel({
     try {
       await postVkRuntimeRollback(version, baseUrl)
       await refresh()
-      onRuntimeChanged?.()
+      runtimeChangedRef.current?.()
     } catch (cause) {
       setError(errorText(cause, '解析引擎回滚失败'))
     } finally {
@@ -129,8 +155,17 @@ export function VkCapabilityPacksPanel({
           <h3 className="text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>能力中心</h3>
           <p className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>按需安装本地能力；大模型通道配置不会受影响。</p>
         </div>
-        <button type="button" aria-label="刷新能力状态" title="刷新能力状态" onClick={() => { void refresh() }} className="rounded p-1.5" style={fieldStyle}>
-          <RefreshCw size={14} aria-hidden="true" />
+        <button
+          type="button"
+          aria-label="刷新能力状态"
+          title="刷新能力状态"
+          aria-busy={refreshing}
+          disabled={refreshing}
+          onClick={() => { void refresh() }}
+          className="rounded p-1.5 disabled:opacity-50"
+          style={fieldStyle}
+        >
+          <RefreshCw size={14} className={refreshing ? 'animate-spin' : undefined} aria-hidden="true" />
         </button>
       </div>
 
@@ -146,6 +181,19 @@ export function VkCapabilityPacksPanel({
               </div>
               <span className="shrink-0 text-xs font-medium" style={{ color: packTone(pack.state) }}>{packLabel(pack.state)}</span>
             </div>
+            {pack.state === 'installing' && (
+              <div className="mt-3" data-testid={`vk-pack-${pack.id}-progress`}>
+                <div
+                  role="progressbar"
+                  aria-label={`${pack.name}安装进度`}
+                  aria-valuetext="安装中"
+                  className="h-1.5 overflow-hidden rounded-full"
+                  style={{ background: 'color-mix(in srgb, var(--color-fg) 12%, transparent)' }}
+                >
+                  <div className="h-full w-2/5 animate-pulse rounded-full" style={{ background: 'var(--color-accent)' }} />
+                </div>
+              </div>
+            )}
             <div className="mt-3 flex items-end justify-between gap-3">
               <div>
                 <div className="text-xs font-medium" style={{ color: 'var(--color-fg)' }}>{pack.size_label}</div>

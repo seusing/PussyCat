@@ -250,7 +250,7 @@ describe('WrssRuntimeManager', () => {
       if (url === WRSS_SOURCE_URL) {
         return { ok: true, status: 200, arrayBuffer: async () => weRssArchive() }
       }
-      if (url.endsWith('/api/v1/auth/login')) return ok({ data: { access_token: 'access-token' } })
+      if (url.endsWith('/api/v1/wx/auth/login')) return ok({ data: { access_token: 'access-token' } })
       return ok()
     }
     const manager = new WrssRuntimeManager({
@@ -303,7 +303,7 @@ describe('WrssRuntimeManager', () => {
       sha256FileImpl: (path) => path.endsWith('uv.exe') ? uvSha : WRSS_SOURCE_SHA256,
       fetchImpl: async (url) => {
         if (url === WRSS_SOURCE_URL) return { ok: true, status: 200, arrayBuffer: async () => weRssArchive({ configName: 'config-node.yaml' }) }
-        if (url.endsWith('/api/v1/auth/login')) return ok({ data: { access_token: 'token' } })
+        if (url.endsWith('/api/v1/wx/auth/login')) return ok({ data: { access_token: 'token' } })
         return ok()
       },
       runStepImpl,
@@ -338,8 +338,8 @@ describe('WrssRuntimeManager', () => {
       home: root, bundleDir: bundle, getPortImpl: async () => 4322,
       runStepImpl: async () => { installs += 1 },
       fetchImpl: async (url) => {
-        if (starts === 1 && !url.endsWith('/auth/login')) throw new Error('not ready')
-        return url.endsWith('/auth/login') ? ok({ data: { access_token: 'token' } }) : ok()
+        if (starts === 1 && !url.endsWith('/api/v1/wx/auth/login')) throw new Error('not ready')
+        return url.endsWith('/api/v1/wx/auth/login') ? ok({ data: { access_token: 'token' } }) : ok()
       },
       spawnImpl: (command, argv) => {
         starts += 1
@@ -410,7 +410,7 @@ describe('WrssRuntimeManager', () => {
         if (downloads === 1) throw new Error('proxy request failed')
         return { ok: true, status: 200, arrayBuffer: async () => weRssArchive() }
       }
-      if (url.endsWith('/api/v1/auth/login')) {
+      if (url.endsWith('/api/v1/wx/auth/login')) {
         expect(options.dispatcher).toBeUndefined()
         return ok({ data: { access_token: 'token' } })
       }

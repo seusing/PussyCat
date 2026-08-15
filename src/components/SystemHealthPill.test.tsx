@@ -114,6 +114,34 @@ test('ping 返回非 2xx(ok:false)→ 离线', async () => {
   await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('爪爪服务离线'))
 })
 
+test('已在线时单次探测失败保留在线,连续两次才标记离线', async () => {
+  vi.useFakeTimers()
+  try {
+    let healthCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/health') && !url.includes('bridge') && !url.includes('vk')) {
+        healthCalls += 1
+        return { ok: healthCalls === 1 }
+      }
+      if (url.includes('/browser-bridge/health')) return { ok: true, json: async () => bridge() }
+      if (url.includes('/vk/v1/health')) return { ok: true, json: async () => ({ status: 'ok' }) }
+      return { ok: true }
+    }))
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await act(async () => {})
+    expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常')
+
+    await act(async () => { vi.advanceTimersByTime(5_000); await Promise.resolve() })
+    expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常')
+
+    await act(async () => { vi.advanceTimersByTime(5_000); await Promise.resolve() })
+    expect(screen.getByTestId('health-label')).toHaveTextContent('爪爪服务离线')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('慢旧响应不倒灌(世代 latest-wins)', async () => {
   vi.useFakeTimers()
   try {

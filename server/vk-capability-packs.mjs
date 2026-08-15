@@ -249,7 +249,11 @@ export function projectCapabilityPacks({
     const installedCount = pack.extras.filter((extra) => installedExtras.includes(extra)).length
     const complete = installedCount === pack.extras.length
     const partial = installedCount > 0 && !complete
-    const isInstalling = installing && pack.extras.some((extra) => targetExtras.includes(extra)) && !complete
+    // A cumulative runtime rebuild revalidates every extra already present.
+    // Keep those packs visibly in the installing state too; otherwise a
+    // precision install can silently re-check local ASR while its card still
+    // claims to be ready.
+    const isInstalling = installing && pack.extras.some((extra) => targetExtras.includes(extra))
     const capabilityEntries = capabilityForPack(pack, capabilities)
     const runtimeMissing = capabilityEntries.some(
       (entry) => entry.runtime === 'missing_dependency' || entry.state === 'missing_dependency',

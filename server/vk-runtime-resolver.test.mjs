@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   RECEIPT_FILE,
+  ownedRuntimeSizeBytes,
+  ownedRuntimeSizeBytesAsync,
   removeOwnedRuntimeReceipt,
   resolveActiveRuntime,
   writeActiveRuntime,
@@ -172,5 +174,14 @@ describe('runtime resolver', () => {
       .toMatchObject({ version: 'stale', sizeBytes: expect.any(Number) })
     expect(existsSync(active.dir)).toBe(true)
     expect(existsSync(stale.dir)).toBe(false)
+  })
+
+  it('asynchronously scans legacy runtime sizes without changing the reported total', async () => {
+    const home = tempDir('vk-home-')
+    const candidate = owned(home, { version: 'legacy-size' })
+    writeFileSync(join(candidate.dir, 'payload.bin'), 'legacy-payload')
+
+    expect(await ownedRuntimeSizeBytesAsync({ home, runtime: candidate.receipt }))
+      .toBe(ownedRuntimeSizeBytes({ home, runtime: candidate.receipt }))
   })
 })

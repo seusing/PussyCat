@@ -244,7 +244,7 @@ describe('VkRuntimeManager', () => {
     writeActiveRuntime(home, third)
     const manager = new VkRuntimeManager({ home, bundleDir: bundleDir() })
 
-    expect(manager.versions().versions).toEqual(expect.arrayContaining([
+    expect((await manager.versions()).versions).toEqual(expect.arrayContaining([
       expect.objectContaining({ version: 'v3', active: true, removable: false }),
       expect.objectContaining({ version: 'v2', retainedForRollback: true, removable: false }),
       expect.objectContaining({ version: 'v1', removable: true, sizeBytes: expect.any(Number) }),
@@ -257,7 +257,7 @@ describe('VkRuntimeManager', () => {
     expect(rolledBack.version).toBe('v1')
     expect(stoppedAfterSwitch).toEqual(['v1'])
 
-    const cleaned = manager.cleanup()
+    const cleaned = await manager.cleanup()
     expect(cleaned.removed).toEqual([expect.objectContaining({ version: 'v2' })])
     expect(cleaned.reclaimedBytes).toBeGreaterThan(0)
     expect(existsSync(join(home, 'runtime', 'versions', 'v1'))).toBe(true)
@@ -273,14 +273,14 @@ describe('VkRuntimeManager', () => {
     expect(error).toMatchObject({ statusCode: 404, reasonCode: 'runtime-version-not-found' })
   })
 
-  it('uses the installed receipt size instead of rescanning a current runtime', () => {
+  it('uses the installed receipt size instead of rescanning a current runtime', async () => {
     const home = tempDir('vk-home-')
     const original = ownedRuntime(home, 'sized', '2026-08-03T00:00:00Z')
     const sized = writeRuntimeReceipt(home, { ...original, runtimeSizeBytes: 123_456 })
     writeActiveRuntime(home, sized)
     const manager = new VkRuntimeManager({ home, bundleDir: bundleDir() })
 
-    expect(manager.versions().versions).toEqual([
+    expect((await manager.versions()).versions).toEqual([
       expect.objectContaining({ version: 'sized', sizeBytes: 123_456 }),
     ])
   })
