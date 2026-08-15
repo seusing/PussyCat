@@ -10,7 +10,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  PawPrint,
   RadioTower,
   Rss,
 } from 'lucide-react'
@@ -165,7 +164,9 @@ export default function AppShell({
     >
       {!layout.moduleSidebarHidden && <aside data-testid="app-sidebar" className="app-sidebar">
         <div className="app-brand">
-          <span className="app-brand-mark"><PawPrint size={20} aria-hidden="true" /></span>
+          <span className="app-brand-mark">
+            <img data-testid="app-brand-icon" src="/app-icon.png" alt="" aria-hidden="true" className="h-full w-full rounded-[7px] object-cover" />
+          </span>
           <span className="sidebar-label"><strong>爪爪</strong><small>1.0</small></span>
         </div>
         <ModuleNavigation />

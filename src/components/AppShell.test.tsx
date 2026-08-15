@@ -20,6 +20,7 @@ test('侧栏模块导航 + 灵感来源工作区显示演示模式', () => {
   expect(screen.getByTestId('module-tabs')).toBeInTheDocument()
   expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
   expect(screen.getByTestId('health-pill')).toHaveTextContent('演示模式')
+  expect(screen.getByTestId('app-brand-icon')).toHaveAttribute('src', '/app-icon.png')
   expect(screen.getByTestId('app-header')).toHaveClass('flex-wrap')
   expect(screen.getByTestId('app-header-actions')).toHaveClass('app-header-actions')
 })
