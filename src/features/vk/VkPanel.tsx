@@ -1024,7 +1024,17 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         </button>
         {providerFormOpen && (
           <div className="mt-2">
-            <VkProviderForm baseUrl={base} onSaved={() => { void refreshProviders(); void checkHealth() }} />
+            <VkProviderForm baseUrl={base} onSaved={() => {
+              void refreshProviders()
+              void checkHealth()
+              setProviderFormOpen(false)
+              addTaskBanners([{
+                id: `provider-settings:${Date.now()}`,
+                message: '已保存配置',
+                tone: 'success',
+                createdAt: Date.now(),
+              }])
+            }} />
           </div>
         )}
         {capabilityPacksOpen && (

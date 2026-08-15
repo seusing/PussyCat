@@ -289,6 +289,7 @@ describe('WrssRuntimeManager', () => {
 
   it('normalizes an alternate config template into the installed source', async () => {
     const { root, bundle } = await fixture()
+    const unicodeHome = join(root, '爪爪-data')
     const runStepImpl = vi.fn(async ({ step, argv }) => {
       if (step === 'venv') {
         const python = join(argv.at(-1), 'Scripts')
@@ -297,7 +298,7 @@ describe('WrssRuntimeManager', () => {
       }
     })
     const manager = new WrssRuntimeManager({
-      home: root,
+      home: unicodeHome,
       bundleDir: bundle,
       sha256FileImpl: (path) => path.endsWith('uv.exe') ? uvSha : WRSS_SOURCE_SHA256,
       fetchImpl: async (url) => {
@@ -318,9 +319,12 @@ describe('WrssRuntimeManager', () => {
     })
 
     await expect(manager.enable()).resolves.toMatchObject({ state: 'running' })
-    const version = readdirSync(join(root, 'wrss', 'versions'))[0]
-    expect(readFileSync(join(root, 'wrss', 'versions', version, 'src', 'config.example.yaml'), 'utf8'))
+    expect(manager.status().progress_log).toContain('WeRSS 源码目录复制与必需文件复核通过')
+    const version = readdirSync(join(unicodeHome, 'wrss', 'versions'))[0]
+    expect(readFileSync(join(unicodeHome, 'wrss', 'versions', version, 'src', 'config.example.yaml'), 'utf8'))
       .toContain('port: 8001')
+    expect(readFileSync(join(unicodeHome, 'wrss', 'versions', version, 'src', 'static', 'index.html'), 'utf8'))
+      .toContain('pussycat-bootstrap.js')
     await manager.close()
   })
 

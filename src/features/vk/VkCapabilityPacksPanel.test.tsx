@@ -85,6 +85,22 @@ describe('VkCapabilityPacksPanel', () => {
     expect(await screen.findByRole('button', { name: '校验并补齐' })).toBeInTheDocument()
   })
 
+  it('shows verification instead of download when the app-owned ASR cache is already verified', async () => {
+    const verifiedPacks = {
+      ...packs,
+      packs: packs.packs.map((pack) => pack.id === 'local-asr'
+        ? { ...pack, state: 'partial', local_cache_state: 'verified', detail: '模型已校验，但离线转写 smoke 尚未通过' }
+        : pack),
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string) => (
+      url.endsWith('/runtime/versions') ? response(runtimeVersions) : response(verifiedPacks)
+    )))
+    render(<VkCapabilityPacksPanel />)
+
+    expect(await screen.findByRole('button', { name: '验证运行环境' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '安装' })).not.toBeInTheDocument()
+  })
+
   it('does not expose a WeRSS URL input or save/copy controls', async () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => readResponse(url)))
     render(<VkCapabilityPacksPanel />)

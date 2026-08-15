@@ -351,6 +351,34 @@ test('取消创建会丢弃草稿,取消编辑会恢复打开弹窗前的内容'
   expect(screen.getByTestId('vk-channel-name-cheap')).toHaveTextContent('GPT 5.6 Luna')
 })
 
+test('点击编辑弹窗外部会关闭且还原草稿,点击表单本身不会关闭', async () => {
+  const user = userEvent.setup()
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const dialog = await openChannelEditor()
+  await user.clear(screen.getByTestId('vk-modal-name'))
+  await user.type(screen.getByTestId('vk-modal-name'), '不应保存')
+  await user.click(dialog)
+  expect(screen.getByRole('dialog', { name: '编辑配置' })).toBeInTheDocument()
+
+  await user.click(screen.getByTestId('vk-provider-modal-backdrop'))
+  expect(screen.queryByRole('dialog', { name: '编辑配置' })).not.toBeInTheDocument()
+  expect(screen.getByTestId('vk-channel-name-cheap')).toHaveTextContent('GPT 5.6 Luna')
+})
+
+test('保存成功后通知父级收起配置', async () => {
+  const onSaved = vi.fn()
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  render(<VkProviderForm baseUrl={BASE} onSaved={onSaved} />)
+
+  await userEvent.click(await screen.findByTestId('vk-provider-save'))
+  await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+})
+
 test('启用与禁用按钮按状态反向播放 Play/Pause 动效', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   const user = userEvent.setup()

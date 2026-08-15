@@ -55,6 +55,18 @@ describe('video-knowledge capability pack projection', () => {
     expect(pack.detail).toContain('smoke 尚未通过')
   })
 
+  it('recognizes a verified app-owned cache even when the legacy active receipt predates model packs', () => {
+    const pack = localAsr(projectCapabilityPacks({
+      activeRuntime: activeRuntime({ modelPacks: undefined, asrSmoke: undefined, ffmpegVersion: undefined }),
+      localModelCache: { state: 'verified', reusableFiles: 16, totalFiles: 16 },
+    }))
+
+    expect(pack.state).toBe('partial')
+    expect(pack.model_downloaded).toBe(true)
+    expect(pack.local_cache_state).toBe('verified')
+    expect(pack.detail).toContain('smoke 尚未通过')
+  })
+
   it('keeps runtime dependency failures visible after all files are present', () => {
     const pack = localAsr(projectCapabilityPacks({
       activeRuntime: activeRuntime({

@@ -140,6 +140,37 @@ describe('VkRuntimeManager', () => {
     expect(status.log).toContain('trying')
   })
 
+  it('能力升级失败时保留旧 active 为可用状态', async () => {
+    const home = tempDir('vk-home-')
+    const python = join(home, 'runtime', 'versions', 'v1', 'Scripts', 'python.exe')
+    mkdirSync(join(home, 'runtime', 'versions', 'v1', 'Scripts'), { recursive: true })
+    writeFileSync(python, 'stub')
+    const receipt = writeRuntimeReceipt(home, {
+      schema: 'vk-runtime-receipt@1', source: 'app-owned', version: 'v1', pythonPath: python,
+      wheelSha256: 'a'.repeat(64), capabilities: [], extras: ['media-asr'],
+      installedAt: '2026-08-02T00:00:00Z',
+    })
+    writeActiveRuntime(home, receipt)
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      installImpl: async () => {
+        const error = new Error('ASR smoke 未通过')
+        error.reasonCode = 'smoke-asr'
+        throw error
+      },
+    })
+
+    await expect(manager.install({ rebuild: true })).rejects.toThrow('ASR smoke 未通过')
+    expect(manager.status()).toMatchObject({
+      state: 'installed',
+      version: 'v1',
+      reasonCode: null,
+      summary: expect.stringContaining('现有解析引擎仍可使用'),
+      lastInstallFailure: { reasonCode: 'smoke-asr', summary: 'ASR smoke 未通过' },
+    })
+  })
+
   it('安装进行中拒绝 adopt，防止两个流程竞写 active 指针', async () => {
     let release
     const gate = new Promise((resolveGate) => { release = resolveGate })

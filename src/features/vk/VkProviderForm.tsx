@@ -148,8 +148,7 @@ function ActionIconButton({
       onMouseEnter={() => { if (!disabled) onHoverChange?.(true) }}
       onMouseLeave={() => onHoverChange?.(false)}
       disabled={disabled}
-      whileHover={disabled ? undefined : { scale: 1.02 }}
-      whileTap={disabled ? undefined : { scale: 0.96 }}
+      whileTap={disabled ? undefined : { opacity: 0.78 }}
       className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
       style={{
         border: '1px solid var(--color-line)',
@@ -734,7 +733,14 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         const modalEfforts = reasoningEfforts[modalDraft.id]?.[modalDraft.model_id] ?? []
         const isNew = modalSession?.original === null
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="presentation">
+          <div
+            data-testid="vk-provider-modal-backdrop"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+            role="presentation"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) closeModal(false)
+            }}
+          >
             <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl p-5 shadow-2xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 id="vk-provider-modal-title" className="text-lg font-semibold">{isNew ? '创建配置' : '编辑配置'}</h3>

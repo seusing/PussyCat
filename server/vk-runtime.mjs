@@ -87,20 +87,24 @@ export class VkRuntimeManager {
         checkedAt: this.now(),
       }
     }
-    // During an upgrade the old active receipt remains valid. Report the
-    // failure while still projecting its version/extras for rollback callers.
-    if (this.#state === 'failed') {
+    // A capability upgrade never invalidates the old active receipt. Keep the
+    // application usable and expose the failed upgrade as secondary metadata.
+    if (this.#state === 'failed' && active) {
       return {
-        state: 'failed',
-        version: active ? String(active.version ?? 'unknown') : null,
-        source: active?.source ?? null,
-        pythonPath: active?.pythonPath ?? null,
-        capabilities: Array.isArray(active?.capabilities) ? active.capabilities : [],
-        extras: Array.isArray(active?.extras) ? active.extras : [],
-        current: active?.current === true,
-        legacyUnreproducible: active?.legacyUnreproducible === true,
-        reasonCode: this.#reasonCode,
-        summary: this.#summary ?? '安装失败',
+        state: 'installed',
+        version: String(active.version ?? 'unknown'),
+        source: active.source,
+        pythonPath: active.pythonPath,
+        capabilities: Array.isArray(active.capabilities) ? active.capabilities : [],
+        extras: Array.isArray(active.extras) ? active.extras : [],
+        current: active.current === true,
+        legacyUnreproducible: active.legacyUnreproducible === true,
+        reasonCode: null,
+        summary: `现有解析引擎仍可使用；新能力安装失败：${this.#summary ?? '安装失败'}`,
+        lastInstallFailure: {
+          reasonCode: this.#reasonCode,
+          summary: this.#summary ?? '安装失败',
+        },
         log: this.#log.slice(-LOG_TAIL_LINES),
         checkedAt: this.now(),
       }

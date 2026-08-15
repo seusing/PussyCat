@@ -206,7 +206,8 @@ describe('installVkRuntime', () => {
     const configuredCache = join(home, 'configured-modelscope-cache')
     mkdirSync(previousPackA, { recursive: true })
     mkdirSync(previousPackB, { recursive: true })
-    const modelCache = join(home, 'models', 'asr', 'fixture', 'models')
+    const modelManifestSha = sha256File(join(bundle, 'asr-model-pack.json'))
+    const modelCache = join(home, 'models', 'asr', modelManifestSha, 'models')
     const spawnImpl = (program, argv, options) => {
       calls.push([program, argv, options])
       const child = new FakeChild()
@@ -215,7 +216,9 @@ describe('installVkRuntime', () => {
         else {
           if (argv.includes('video_knowledge.runtime_models')) {
             child.stdout.write(`VK_MODEL_PACK_RESULT=${JSON.stringify({
-              ready: true, cache_root: modelCache, receipt: join(home, 'model-receipt.json'),
+              // Simulate a child process returning a path corrupted by a
+              // Windows code-page mismatch. The parent must use its own path.
+              ready: true, cache_root: 'C:\\wrong\\צצ-data\\models', receipt: join(home, 'model-receipt.json'),
               reused: false, linked: 2, copied: 3, downloaded: 1,
             })}\n`)
           }
@@ -264,5 +267,7 @@ describe('installVkRuntime', () => {
     expect(logs).toContain('models-asr: 校验完成 reused=5 downloaded=1')
     expect(smokeCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
     expect(guiCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
+    expect(modelCall[2].env).toMatchObject({ PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' })
+    expect(smokeCall[2].env).toMatchObject({ PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' })
   })
 })

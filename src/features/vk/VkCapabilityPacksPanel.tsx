@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Download, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
+import { CircleCheck, Download, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import {
   fetchVkCapabilityPacks,
   fetchVkRuntimeVersions,
@@ -43,6 +43,7 @@ function sizeLabel(bytes: number) {
 }
 
 function installLabel(pack: VkCapabilityPack) {
+  if (pack.id === 'local-asr' && pack.local_cache_state === 'verified') return '验证运行环境'
   if (pack.id === 'local-asr' && pack.local_cache_state === 'available') return '校验并复用'
   if (pack.id === 'local-asr' && pack.local_cache_state === 'partial') return '校验并补齐'
   return '安装'
@@ -158,7 +159,10 @@ export function VkCapabilityPacksPanel({
                   className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
                   style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
                 >
-                  <Download size={13} aria-hidden="true" /> {installLabel(pack)}
+                  {pack.id === 'local-asr' && pack.local_cache_state === 'verified'
+                    ? <CircleCheck size={13} aria-hidden="true" />
+                    : <Download size={13} aria-hidden="true" />}
+                  {installLabel(pack)}
                 </button>
               )}
             </div>

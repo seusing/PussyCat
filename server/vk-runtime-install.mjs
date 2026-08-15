@@ -239,7 +239,10 @@ export async function installVkRuntime({
     log(`${step}: ${command.split(/[\\/]/).pop()} ${argv.join(' ')}`)
     const child = spawnImpl(command, argv, {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...baseEnv, ...stepEnv },
+      // Python otherwise writes redirected stdout with the active Windows
+      // code page. Node decodes pipes as UTF-8, corrupting paths such as the
+      // app-owned Chinese data directory before they reach later smoke steps.
+      env: { ...baseEnv, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ...stepEnv },
     })
     let output = ''
     child.stdout?.on('data', (chunk) => {
@@ -317,7 +320,10 @@ export async function installVkRuntime({
       `models-asr: 校验完成 reused=${Number(modelResult.linked ?? 0) + Number(modelResult.copied ?? 0)} `
       + `downloaded=${Number(modelResult.downloaded ?? 0)}`,
     )
-    modelEnvironment = { MODELSCOPE_CACHE: modelResult.cache_root }
+    // The installer owns this content-addressed path. Do not round-trip it
+    // through child stdout when preparing the smoke environment.
+    const verifiedModelCache = join(packRoot, 'models')
+    modelEnvironment = { MODELSCOPE_CACHE: verifiedModelCache }
     const smokeOutput = await runStep('smoke-asr', pythonExe, [
       '-m', 'video_knowledge.runtime_smoke', '--audio', pack.smokePath,
     ], modelEnvironment)
@@ -329,7 +335,7 @@ export async function installVkRuntime({
       id: pack.id,
       manifest: pack.manifest,
       manifestSha256: pack.manifestSha256,
-      cacheRoot: modelResult.cache_root,
+      cacheRoot: verifiedModelCache,
       receipt: modelResult.receipt,
       reused: modelResult.reused === true,
       reusedFiles: Number(modelResult.linked ?? 0) + Number(modelResult.copied ?? 0),
@@ -347,7 +353,13 @@ export async function installVkRuntime({
     const token = 'runtime-smoke-token-0123456789abcdef'
     const gui = spawnImpl(pythonExe, ['-m', 'video_knowledge', 'gui', '--root', join(smokeRoot, 'data'), '--config-dir', join(smokeRoot, 'config'), '--port', '0', '--no-browser'], {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...baseEnv, ...modelEnvironment, VK_UI_TOKEN: token },
+      env: {
+        ...baseEnv,
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
+        ...modelEnvironment,
+        VK_UI_TOKEN: token,
+      },
     })
     try {
       const port = await new Promise((resolvePort, rejectPort) => {

@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
   chmodSync,
-  cpSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -220,6 +220,17 @@ const WRSS_CONFIG_TEMPLATE_NAMES = Object.freeze([
 
 function isRegularFile(path) {
   try { return statSync(path).isFile() } catch { return false }
+}
+
+function copyDirectoryTree(source, destination) {
+  mkdirSync(destination, { recursive: true })
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const sourcePath = join(source, entry.name)
+    const destinationPath = join(destination, entry.name)
+    if (entry.isDirectory()) copyDirectoryTree(sourcePath, destinationPath)
+    else if (entry.isFile()) copyFileSync(sourcePath, destinationPath)
+    else throw new WrssRuntimeError(500, 'archive-security', 'WeRSS 源码目录包含不允许的文件类型')
+  }
 }
 
 /**
@@ -563,20 +574,29 @@ export class WrssRuntimeManager {
       versionDir = join(this.home, 'versions', `v${WRSS_VERSION}-${Date.now()}`)
       mkdirSync(versionDir, { recursive: true })
       const finalSource = join(versionDir, 'src')
-      // Copying into a versioned directory leaves an already installed version
-      // untouched if any later step fails. This does not invoke a shell.
-      cpSync(sourceRoot, finalSource, { recursive: true })
+      // Node 25's recursive cp creates a mojibake sibling directory for some
+      // Windows Unicode destinations. Native single-file copies preserve the
+      // path, so walk the already validated archive tree explicitly.
+      copyDirectoryTree(sourceRoot, finalSource)
       const venvDir = join(versionDir, 'py')
       const pythonExe = join(venvDir, 'Scripts', 'python.exe')
       const copiedTemplate = join(finalSource, configTemplate.name)
       const configExample = join(finalSource, 'config.example.yaml')
-      if (!isRegularFile(copiedTemplate)) {
-        throw new WrssRuntimeError(500, 'archive-layout', 'WeRSS 配置模板复制失败')
+      const copiedPaths = [...requiredPaths, configTemplate.name]
+      const missingCopiedPaths = copiedPaths.filter((path) => !isRegularFile(join(finalSource, path)))
+      if (missingCopiedPaths.length > 0) {
+        throw new WrssRuntimeError(
+          500,
+          'archive-layout',
+          'WeRSS 配置模板复制失败',
+          `missing=${missingCopiedPaths.join(',')}`,
+        )
       }
-      if (configTemplate.name !== 'config.example.yaml') cpSync(copiedTemplate, configExample)
+      this.#pushLog('WeRSS 源码目录复制与必需文件复核通过')
+      if (configTemplate.name !== 'config.example.yaml') copyFileSync(copiedTemplate, configExample)
       if (!isRegularFile(configExample)) throw new WrssRuntimeError(500, 'archive-layout', 'WeRSS 配置模板不存在')
       const configPath = join(this.home, 'config.yaml')
-      if (!existsSync(configPath)) cpSync(configExample, configPath)
+      if (!existsSync(configPath)) copyFileSync(configExample, configPath)
       const uvEnv = {
         ...this.env,
         UV_PYTHON_INSTALL_DIR: join(this.home, 'python'),

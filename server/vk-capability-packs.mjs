@@ -232,7 +232,7 @@ export function projectCapabilityPacks({
   const installedExtras = [...new Set(activeExtras.filter((extra) => typeof extra === 'string'))]
   const targetExtras = normalizeRuntimeExtras(installingExtras)
   const capabilities = activeRuntime?.capabilities
-  const asrModelReady = Array.isArray(activeRuntime?.modelPacks)
+  const activeReceiptHasAsrModel = Array.isArray(activeRuntime?.modelPacks)
     && activeRuntime.modelPacks.some((item) => (
       item?.id === 'local-asr'
       && typeof item.cacheRoot === 'string'
@@ -240,6 +240,7 @@ export function projectCapabilityPacks({
       && typeof item.manifestSha256 === 'string'
       && item.manifestSha256.length > 0
     ))
+  const asrModelReady = activeReceiptHasAsrModel || localModelCache?.state === 'verified'
   const asrSmokeReady = activeRuntime?.asrSmoke?.ready === true
     && typeof activeRuntime?.ffmpegVersion === 'string'
     && activeRuntime.ffmpegVersion.length > 0

@@ -167,6 +167,47 @@ describe('VkPanel', () => {
     expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument()
   })
 
+  it('保存模型配置后自动收起并显示三秒绿色通知', async () => {
+    const providerSettings = {
+      channels: [{
+        id: 'luna1', name: 'luna1', base_url: 'https://relay.example/v1',
+        model_id: 'gpt-5.6-luna', key_env: 'VK_CHANNEL_LUNA1_KEY',
+        api_style: 'openai_responses', key_stored: true, key_from_environment: false,
+        key_masked: 'sk-test••••1234', reasoning_effort: 'max',
+        reasoning_effort_explicit: true, extra_headers: {}, enabled: true,
+      }],
+      roles: { deep_analysis: 'luna1', basic: 'luna1' },
+      role_assignments: {}, role_fallbacks: {},
+      role_routes: { deep_analysis: ['luna1'], basic: ['luna1'] },
+      role_route_warnings: {},
+      role_labels: { deep_analysis: '深度分析', basic: '基础处理' },
+      role_hints: { deep_analysis: '提炼观点', basic: '章节划分' },
+      unassigned_roles: [],
+      api_styles: [{ id: 'openai_responses', label: 'OpenAI Responses' }],
+      importable: [],
+      cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] },
+      configured: true,
+    }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: providerSettings },
+      'POST /vk/v1/providers': { body: { saved: true, normalization_notes: [], keys_written: [], configured: true } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await userEvent.click(await screen.findByTestId('vk-provider-toggle'))
+    await userEvent.click(await screen.findByTestId('vk-provider-save'))
+
+    await waitFor(() => expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument())
+    const banner = screen.getByTestId('vk-task-banner')
+    expect(banner).toHaveTextContent('已保存配置')
+    expect(banner).toHaveAttribute('data-tone', 'success')
+    expect(screen.getByTestId('vk-task-banner-progress')).toHaveClass('is-success')
+  })
+
   it('一切正常时只有一句结论,不给按钮 —— 没问题就没有要用户点的东西', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
