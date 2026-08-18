@@ -48,7 +48,6 @@ import './VkPanel.css'
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
 const CONTENT_TYPES = ['auto', 'course_lecture', 'interview_podcast', 'science_explainer', 'tutorial', 'other_knowledge', 'generic_knowledge']
 const MEDIA_POLICIES = ['subtitle_only', 'audio_transcript', 'low_res_visual', 'video_required']
-const PROCESSING_DEPTHS = ['quick', 'balanced', 'deep']
 const BUDGET_PROFILES = ['economy', 'standard', 'quality']
 const CAPABILITIES = ['word_timestamps', 'speaker_diarization', 'visual_evidence', 'query_ready']
 
@@ -66,11 +65,17 @@ const MEDIA_POLICY_LABELS: Record<string, string> = {
   subtitle_only: '仅使用平台字幕', audio_transcript: '字幕缺失时转写音频',
   low_res_visual: '加入低清视觉证据', video_required: '下载完整视频并分析画面',
 }
-const PROCESSING_DEPTH_LABELS: Record<string, string> = { quick: '快速', balanced: '均衡', deep: '深入' }
 const BUDGET_LABELS: Record<string, string> = { economy: '经济', standard: '标准', quality: '质量优先' }
 const CAPABILITY_LABELS: Record<string, string> = {
   word_timestamps: '词级时间定位', speaker_diarization: '区分说话人',
   visual_evidence: '提取视觉证据', query_ready: '加入知识库检索',
+}
+const AUTO_ROUTE_LABELS: Record<string, string> = {
+  text_fast: '快速文本整理',
+  visual_assisted: '画面辅助解析',
+  speaker_attribution: '说话人归属整理',
+  evidence_grounded: '证据核验整理',
+  generic_fallback: '通用整理',
 }
 const ACTIVE_STATUSES = new Set([
   'queued', 'running', 'cancel_requested', 'submitted', 'processing',
@@ -478,10 +483,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
 
   // —— 表单(组件本地;store 只承担跨模块 handoff)——
   const [source, setSource] = useState('')
+  const [userGoal, setUserGoal] = useState('')
   const [preset, setPreset] = useState('quick-summary')
   const [contentType, setContentType] = useState('')
   const [mediaPolicy, setMediaPolicy] = useState('')
-  const [processingDepth, setProcessingDepth] = useState('balanced')
   const [budgetProfile, setBudgetProfile] = useState('')
   const [caps, setCaps] = useState<string[]>([])
   const [audit, setAudit] = useState(false)
@@ -531,27 +536,33 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   }, [])
 
   // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
-  const buildProjection = (sourceValue = source.trim()): VkPreviewProjection => ({
-    source: sourceValue,
-    preset,
-    ...(contentType ? { content_type: contentType } : {}),
-    ...(mediaPolicy ? { media_policy: mediaPolicy } : {}),
-    processing_depth: processingDepth,
-    ...(budgetProfile ? { budget_profile: budgetProfile } : {}),
-    ...(caps.length ? { capabilities: caps } : {}),
-    ...(audit ? { audit: true } : {}),
-    ...(maxCost.trim() ? { max_cost_cny: Number(maxCost) } : {}),
-    ...(reasoningEffort.trim() ? { reasoning_effort: reasoningEffort.trim() } : {}),
-    ...(provenance
-      ? {
-          user_metadata: {
+  const buildProjection = (sourceValue = source.trim()): VkPreviewProjection => {
+    const userMetadata = {
+      processing_strategy: 'auto',
+      ...(userGoal.trim() ? { user_goal: userGoal.trim() } : {}),
+      ...(provenance
+        ? {
             origin: 'opencli-result',
             source_command: provenance.commandKey,
             collected_at: new Date(provenance.collectedAt).toISOString(),
-          },
-        }
-      : {}),
-  })
+          }
+        : {}),
+    }
+    return {
+      source: sourceValue,
+      preset,
+      ...(contentType ? { content_type: contentType } : {}),
+      ...(mediaPolicy ? { media_policy: mediaPolicy } : {}),
+      // The backend keeps the resolved depth internal. Omitting it here lets
+      // the future scout stage choose the cheapest sufficient route.
+      ...(budgetProfile ? { budget_profile: budgetProfile } : {}),
+      ...(caps.length ? { capabilities: caps } : {}),
+      ...(audit ? { audit: true } : {}),
+      ...(maxCost.trim() ? { max_cost_cny: Number(maxCost) } : {}),
+      ...(reasoningEffort.trim() ? { reasoning_effort: reasoningEffort.trim() } : {}),
+      ...(Object.keys(userMetadata).length ? { user_metadata: userMetadata } : {}),
+    }
+  }
 
   const requestSubmit = async () => {
     if (submitInFlight.current) return
@@ -1119,20 +1130,28 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           </div>
         </div>
         <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          处理目的
-          <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-            {PRESETS.map((value) => <option key={value} value={value}>{PRESET_LABELS[value]}</option>)}
-          </select>
-        </label>
-        <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          处理深度
-          <select data-testid="vk-processing-depth" value={processingDepth} onChange={(e) => setProcessingDepth(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-            {PROCESSING_DEPTHS.map((value) => <option key={value} value={value}>{PROCESSING_DEPTH_LABELS[value]}</option>)}
-          </select>
+          补充要求（选填）
+          <textarea
+            data-testid="vk-user-goal"
+            value={userGoal}
+            onChange={(event) => setUserGoal(event.target.value)}
+            placeholder="例如：重点比较价格、耗电和适用人群"
+            rows={2}
+            maxLength={1000}
+            className={`${fieldClass} mt-1 resize-y`}
+            style={fieldStyle}
+          />
+          <span className="mt-1 block text-[11px]">留空时自动判断内容并选择处理方式。</span>
         </label>
         <details data-testid="vk-advanced-settings" className="mb-3 rounded-lg p-2 text-xs" style={{ border: '1px solid var(--color-line)' }}>
           <summary className="cursor-pointer select-none" style={{ color: 'var(--color-fg-dim)' }}>高级设置</summary>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+              结果模板（可选）
+              <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                {PRESETS.map((value) => <option key={value} value={value}>{PRESET_LABELS[value]}</option>)}
+              </select>
+            </label>
             <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
               内容类型
               <select data-testid="vk-content-type" value={contentType} onChange={(e) => setContentType(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
@@ -1288,6 +1307,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           )}
           {selectedJob.request?.source && (
             <div className="mb-2 break-all" style={{ color: 'var(--color-fg-dim)' }}>来源:{String(selectedJob.request.source)}</div>
+          )}
+          {selectedJob.auto_route?.route && (
+            <div data-testid="vk-auto-route" className="mb-2" style={{ color: 'var(--color-fg-dim)' }}>
+              自动方案:{AUTO_ROUTE_LABELS[selectedJob.auto_route.route] ?? selectedJob.auto_route.route}
+              {typeof selectedJob.auto_route.confidence === 'number' && `（置信度 ${Math.round(selectedJob.auto_route.confidence * 100)}%）`}
+            </div>
           )}
           {selectedJob.capabilities && selectedJob.capabilities.length > 0 && (
             <div data-testid="vk-evidence-coverage" className="mb-2" style={{ color: 'var(--color-fg-dim)' }}>

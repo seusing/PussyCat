@@ -107,6 +107,15 @@ export interface VkBudgetStop {
   estimated_next_call_cny?: number | null
 }
 
+export interface VkAutoRoute {
+  route: string
+  confidence?: number
+  processing_depth?: 'quick' | 'balanced' | 'deep'
+  media_policy?: string
+  requested_capabilities?: string[]
+  reason_codes?: string[]
+}
+
 export interface VkJobView {
   job_id: string
   kind: string
@@ -126,6 +135,7 @@ export interface VkJobView {
     usage?: VkRunUsage | null
   } & Record<string, unknown>
   request_fingerprint?: string | null
+  auto_route?: VkAutoRoute | null
   budget_stop?: VkBudgetStop | null
   capabilities?: VkCapabilityResult[]
   request?: { source?: string; preset?: string } & Record<string, unknown>

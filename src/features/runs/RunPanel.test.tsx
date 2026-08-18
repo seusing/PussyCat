@@ -15,6 +15,7 @@ beforeEach(() => {
     commands: [cmd], selected: cmd, values: {}, currentRun: undefined,
     catalogStatus: 'ready', catalogError: undefined,   // 绕开真实 catalog 加载，直接进 ready 三栏
     runPanelCollapsed: false,   // collapsed 提升进 store 后不再随组件卸载自动重置，按现有惯例显式复位
+    activeModule: 'commands', vkHandoff: undefined,
     // T7 起运行按钮与 executeSelected 都按 Host 判决闸门放行。本文件测的是**运行面板行为**，
     // 不是准入——所以给夹具命令播一条最简 ready 判决，把闸门置于「已放行」状态，
     // 让下面的用例照旧测它们本来要测的东西。准入本身由 App.test.tsx 的两组对抗 fixture 守。
@@ -154,6 +155,34 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
     expect(screen.getByTestId('copy-run')).toHaveTextContent('复制结构化结果')
     expect(screen.getByTestId('rerun-button')).toHaveTextContent('再次执行')
+  })
+
+  test('成功结果按视频/图文分组，并把视频链接按换行交给视频解析', async () => {
+    const user = userEvent.setup()
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-links', command: { ...cmd, columns: ['type', 'url'] }, values: {}, state: 'succeeded',
+        startedAt: 123, endedAt: 456, lines: [],
+        result: [
+          { type: 'normal', url: 'https://example.com/image' },
+          { type: 'video', url: 'https://example.com/video-a' },
+          { type: 'video', url: 'https://example.com/video-b' },
+        ],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    await user.click(screen.getByText('表格结果'))
+    expect(screen.getByTestId('video-note-links')).toHaveTextContent('视频笔记（2）')
+    expect(screen.getByTestId('image-note-links')).toHaveTextContent('图文笔记（1）')
+    await user.click(screen.getByTestId('export-note-links'))
+    expect(useAppStore.getState().vkHandoff).toEqual({
+      url: 'https://example.com/video-a\nhttps://example.com/video-b',
+      commandKey: cmd.command,
+      collectedAt: 123,
+    })
+    expect(useAppStore.getState().activeModule).toBe('vk')
   })
 
   test('failed → 「复制日志」+「重试」;cancelled → 「重新执行」', () => {

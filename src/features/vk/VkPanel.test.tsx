@@ -331,8 +331,8 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
-    for (const id of ['vk-source', 'vk-preset', 'vk-content-type', 'vk-media-policy',
-      'vk-processing-depth', 'vk-budget-profile', 'vk-max-cost', 'vk-reasoning-effort', 'vk-audit',
+    for (const id of ['vk-source', 'vk-user-goal', 'vk-preset', 'vk-content-type', 'vk-media-policy',
+      'vk-budget-profile', 'vk-max-cost', 'vk-reasoning-effort', 'vk-audit',
       'vk-cap-word_timestamps', 'vk-cap-speaker_diarization', 'vk-cap-visual_evidence',
       'vk-cap-query_ready', 'vk-submit-button',
       'vk-query-input', 'vk-jobs-refresh', 'vk-capability-toggle']) {
@@ -341,11 +341,8 @@ describe('VkPanel', () => {
     expect(screen.queryByTestId('vk-preview-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
     expect(screen.getByTestId('vk-advanced-settings')).not.toHaveAttribute('open')
-    expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('处理目的')
-    expect(screen.getByTestId('vk-processing-depth')).toHaveAccessibleName('处理深度')
-    expect(screen.getByTestId('vk-advanced-settings')).not.toContainElement(
-      screen.getByTestId('vk-processing-depth'),
-    )
+    expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('结果模板（可选）')
+    expect(screen.queryByTestId('vk-processing-depth')).not.toBeInTheDocument()
     expect(screen.getByTestId('vk-advanced-settings')).toContainElement(
       screen.getByTestId('vk-reasoning-effort'),
     )
@@ -381,18 +378,20 @@ describe('VkPanel', () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
-      'POST /vk/v1/preview': { body: resolvedRequest({ reasoning_effort: 'max' }) },
+      'POST /vk/v1/preview': { body: resolvedRequest({ reasoning_effort: 'max', user_metadata: { processing_strategy: 'auto', user_goal: '重点比较价格和耗电' } }) },
       'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
     })
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), 'https://example.com/v')
+    await user.type(screen.getByTestId('vk-user-goal'), '重点比较价格和耗电')
     await user.type(screen.getByTestId('vk-max-cost'), '1.5')
     await user.type(screen.getByTestId('vk-reasoning-effort'), 'max')
     await user.click(screen.getByTestId('vk-submit-button'))
     const previewCall = calls.find((item) => item.key === 'POST /vk/v1/preview')
     expect(previewCall).toBeDefined()
     const projection = JSON.parse(String(previewCall!.init!.body))
-    expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', processing_depth: 'balanced', max_cost_cny: 1.5, reasoning_effort: 'max' })
+    expect(projection).toMatchObject({ source: 'https://example.com/v', preset: 'quick-summary', max_cost_cny: 1.5, reasoning_effort: 'max', user_metadata: { user_goal: '重点比较价格和耗电' } })
+    expect(projection).not.toHaveProperty('processing_depth')
     expect(projection).not.toHaveProperty('quality_profile')
     await waitFor(() => {
       expect(calls.some((item) => item.key === 'POST /vk/v1/jobs')).toBe(true)
@@ -400,7 +399,7 @@ describe('VkPanel', () => {
     const submit = calls.find((item) => item.key === 'POST /vk/v1/jobs')
     const payload = JSON.parse(String(submit!.init!.body))
     expect(payload).toMatchObject({
-      request: { source: 'https://example.com/v', preset: 'quick-summary', processing_depth: 'balanced', max_cost_cny: 1.5, reasoning_effort: 'max' },
+      request: { source: 'https://example.com/v', preset: 'quick-summary', processing_depth: 'balanced', max_cost_cny: 1.5, reasoning_effort: 'max', user_metadata: { processing_strategy: 'auto', user_goal: '重点比较价格和耗电' } },
     })
     expect(payload.idempotency_key).toMatch(/[0-9a-f-]{36}/)
     expect(payload.client_job_id).toMatch(/[0-9a-f-]{36}/)
@@ -417,17 +416,17 @@ describe('VkPanel', () => {
     expect(screen.queryByTestId('vk-task-banner')).not.toBeInTheDocument()
   })
 
-  it('sends the selected deep processing depth in the preview payload', async () => {
+  it('does not expose processing depth and sends the optional user goal', async () => {
     const user = userEvent.setup()
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
-      'POST /vk/v1/preview': { body: resolvedRequest({ processing_depth: 'deep' }) },
-      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-deep', kind: 'request' } },
+      'POST /vk/v1/preview': { body: resolvedRequest({ user_metadata: { user_goal: '整理操作步骤' } }) },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-auto', kind: 'request' } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await user.type(screen.getByTestId('vk-source'), 'https://example.com/deep')
-    await user.selectOptions(screen.getByTestId('vk-processing-depth'), 'deep')
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/auto')
+    await user.type(screen.getByTestId('vk-user-goal'), '整理操作步骤')
     await user.click(screen.getByTestId('vk-submit-button'))
 
     await waitFor(() => {
@@ -435,7 +434,11 @@ describe('VkPanel', () => {
     })
     const previewCall = calls.find((item) => item.key === 'POST /vk/v1/preview')!
     const projection = JSON.parse(String(previewCall.init?.body))
-    expect(projection.processing_depth).toBe('deep')
+    expect(projection).not.toHaveProperty('processing_depth')
+    expect(projection.user_metadata).toEqual({
+      processing_strategy: 'auto',
+      user_goal: '整理操作步骤',
+    })
     expect(projection).not.toHaveProperty('quality_profile')
   })
 
@@ -802,6 +805,7 @@ describe('VkPanel', () => {
           submitted_at: '2026-08-01T00:00:00+00:00', finished_at: '2026-08-01T00:10:00+00:00',
           parent_job_id: null, cache_bypass: false, run_id: 'run-1', cost_cny: 0,
           progress: { model_calls: 8 },
+          auto_route: { route: 'text_fast', confidence: 0.85 },
         },
       },
       'GET /vk/v1/providers': {
@@ -813,6 +817,7 @@ describe('VkPanel', () => {
     await user.click(await screen.findByTestId('vk-job-open-run:run-1'))
     const detail = await screen.findByTestId('vk-job-detail')
     expect(detail).toHaveTextContent('模型调用 8 次')
+    expect(screen.getByTestId('vk-auto-route')).toHaveTextContent('自动方案:快速文本整理（置信度 85%）')
     expect(detail).not.toHaveTextContent('费用未统计')
   })
 

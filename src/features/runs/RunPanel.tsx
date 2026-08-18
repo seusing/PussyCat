@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { useAppStore } from '../../store/appStore'
 import { StreamLog } from './StreamLog'
@@ -6,6 +6,8 @@ import { ResultsTable } from './ResultsTable'
 import { copyPayloadFor } from '../../data/copyPayload'
 import { CopyButton } from '../../components/CopyButton'
 import { validate } from '../config/validation'
+import { saveTextFileAs } from '../../lib/saveTextFile'
+import { collectNoteLinks } from './noteLinks'
 
 export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun: () => void }) {
   const run = useAppStore((s) => s.currentRun)
@@ -15,7 +17,12 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
   const collapsed = useAppStore((s) => s.runPanelCollapsed)
   const setCollapsed = useAppStore((s) => s.setRunPanelCollapsed)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [savingLinks, setSavingLinks] = useState(false)
   useEffect(() => { setDetailOpen(false) }, [run?.id])
+  const noteLinks = useMemo(
+    () => run?.state === 'succeeded' ? collectNoteLinks(run.result ?? []) : { video: [], imageText: [], all: [] },
+    [run?.result, run?.state],
+  )
   if (!run) return <div className="p-3 text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无任务</div>
 
   const active = run.state === 'starting' || run.state === 'running' || run.state === 'cancelling'
@@ -23,6 +30,15 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
   const showTable = run.state === 'succeeded' && columns.length > 0 && (run.result?.length ?? 0) > 0
   const terminal = run.state === 'succeeded' || run.state === 'failed' || run.state === 'cancelled'
   const payload = terminal ? copyPayloadFor(run) : null
+  const saveLinks = async () => {
+    if (savingLinks || noteLinks.all.length === 0) return
+    setSavingLinks(true)
+    try {
+      await saveTextFileAs('笔记链接.txt', `${noteLinks.all.join('\n')}\n`)
+    } finally {
+      setSavingLinks(false)
+    }
+  }
   const rerunVisible = terminal && selected?.command === run.command.command
   const rerunErrors = rerunVisible && selected ? validate(selected, values) : {}
   const rerunDisabled = Object.keys(rerunErrors).length > 0
@@ -43,6 +59,29 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
             </button>
           )}
           {payload && <CopyButton label={payload.label} getText={() => payload.text} testid="copy-run" />}
+          {noteLinks.video.length > 0 && (
+            <button
+              data-testid="export-note-links"
+              type="button"
+              onClick={() => useAppStore.getState().setVkHandoff({
+                url: noteLinks.video.join('\n'),
+                commandKey: run.command.command,
+                collectedAt: run.startedAt,
+              })}
+              className="rounded-lg px-3 py-1 text-sm"
+              style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+            >一键导出笔记链接</button>
+          )}
+          {noteLinks.all.length > 0 && (
+            <button
+              data-testid="save-note-links"
+              type="button"
+              onClick={() => { void saveLinks() }}
+              disabled={savingLinks}
+              className="rounded-lg px-3 py-1 text-sm disabled:opacity-50"
+              style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+            >{savingLinks ? '正在保存…' : '保存至本地'}</button>
+          )}
           {rerunVisible && (
             <button data-testid="rerun-button" disabled={rerunDisabled} onClick={onRerun}
               title={rerunDisabled ? '参数校验未通过，请回表单修正' : undefined}
@@ -85,24 +124,46 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
             </div>
           )}
 
-          {showTable && tab === 'result'
-            ? <ResultsTable
-                columns={columns}
-                rows={run.result ?? []}
-                onSendToVk={(url) => {
-                  // 跨模块交接:规范化 URL + 脱敏 provenance(命令键/采集时刻),
-                  // 严禁携带行数据,严禁另造第二种 manifest 格式。
-                  useAppStore.getState().setVkHandoff({
-                    url,
-                    commandKey: run.command.command,
-                    collectedAt: run.startedAt,
-                  })
-                }}
-              />
-            : <StreamLog lines={run.lines} />}
+          <div className="min-h-0 flex-1 overflow-auto">
+            {showTable && tab === 'result'
+              ? <>
+                  {(noteLinks.video.length > 0 || noteLinks.imageText.length > 0) && (
+                    <div data-testid="note-link-groups" className="mb-3 grid gap-2 sm:grid-cols-2">
+                      {noteLinks.video.length > 0 && <LinkGroup title="视频笔记" links={noteLinks.video} testid="video-note-links" />}
+                      {noteLinks.imageText.length > 0 && <LinkGroup title="图文笔记" links={noteLinks.imageText} testid="image-note-links" />}
+                    </div>
+                  )}
+                  <ResultsTable
+                    columns={columns}
+                    rows={run.result ?? []}
+                    onSendToVk={(url) => {
+                      // 跨模块交接:规范化 URL + 脱敏 provenance(命令键/采集时刻),
+                      // 严禁携带行数据,严禁另造第二种 manifest 格式。
+                      useAppStore.getState().setVkHandoff({
+                        url,
+                        commandKey: run.command.command,
+                        collectedAt: run.startedAt,
+                      })
+                    }}
+                  />
+                </>
+              : <StreamLog lines={run.lines} />}
+          </div>
         </>
       )}
     </div>
+  )
+}
+
+function LinkGroup({ title, links, testid }: { title: string; links: string[]; testid: string }) {
+  return (
+    <section data-testid={testid} className="min-w-0 rounded-lg p-2" style={{ border: '1px solid var(--color-line)', background: 'var(--color-canvas)' }}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium" style={{ color: 'var(--color-fg)' }}>{title}（{links.length}）</span>
+        <CopyButton label="复制链接" getText={() => `${links.join('\n')}\n`} testid={`${testid}-copy`} />
+      </div>
+      <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-all text-xs" style={{ color: 'var(--color-fg-dim)' }}>{links.join('\n')}</pre>
+    </section>
   )
 }
 
