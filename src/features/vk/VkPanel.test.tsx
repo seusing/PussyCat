@@ -233,6 +233,9 @@ describe('VkPanel', () => {
     expect(banner).toHaveTextContent('已保存配置')
     expect(banner).toHaveAttribute('data-tone', 'success')
     expect(screen.getByTestId('vk-task-banner-progress')).toHaveClass('is-success')
+    const bannerLayer = banner.closest('.vk-task-banners')
+    expect(bannerLayer).toBeInTheDocument()
+    expect(bannerLayer).toHaveClass('vk-task-banners')
   })
 
   it('一切正常时只有一句结论,不给按钮 —— 没问题就没有要用户点的东西', async () => {

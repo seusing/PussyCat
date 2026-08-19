@@ -92,22 +92,20 @@ test('已保存的 key 以打码值示人 —— 空输入框会被当成"没设
   await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-key-cheap')).toBeInTheDocument())
   const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
-  expect(input.value).toBe('sk-rela••••••••••6789')
-  expect(input.readOnly).toBe(true)          // 要改得先点「更换」
+  expect(input.value).toBe('••••••••••••••••')
+  expect(input.readOnly).toBe(true)
   expect(document.body.textContent).not.toContain(SECRET)
 })
 
-test('点「更换」才清空成可输入的密码框', async () => {
+test('点击已保存 key 输入框后进入编辑状态', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
   render(<VkProviderForm baseUrl={BASE} />)
   await openChannelEditor()
-  await waitFor(() => expect(screen.getByTestId('vk-channel-replace-cheap')).toBeInTheDocument())
-
-  await userEvent.click(screen.getByTestId('vk-channel-replace-cheap'))
   const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
+  await userEvent.click(input)
   expect(input.value).toBe('')
   expect(input.readOnly).toBe(false)
   expect(input.type).toBe('password')
@@ -160,7 +158,7 @@ test('再点一次隐藏,退回打码值', async () => {
   await waitFor(() => expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).value).toBe(SECRET))
   await userEvent.click(screen.getByTestId('vk-channel-reveal-cheap'))
 
-  expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).value).toBe('sk-rela••••••••••6789')
+  expect((screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement).value).toBe('••••••••••••••••')
 })
 
 
@@ -367,6 +365,43 @@ test('点击编辑弹窗外部会关闭且还原草稿,点击表单本身不会�
   expect(screen.getByTestId('vk-channel-name-cheap')).toHaveTextContent('GPT 5.6 Luna')
 })
 
+test('文本框有选中内容时点击遮罩不会关闭编辑弹窗', async () => {
+  const user = userEvent.setup()
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await openChannelEditor()
+  const name = screen.getByTestId('vk-modal-name') as HTMLInputElement
+  name.focus()
+  name.setSelectionRange(0, 2)
+  await user.click(screen.getByTestId('vk-provider-modal-backdrop'))
+
+  expect(screen.getByRole('dialog', { name: '编辑配置' })).toBeInTheDocument()
+})
+
+test('弹窗保存会校验必填项并保持弹窗打开', async () => {
+  const user = userEvent.setup()
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [], configured: false }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await user.click(await screen.findByTestId('vk-channel-add'))
+  await user.click(screen.getByTestId('vk-provider-modal-submit'))
+
+  expect(screen.getByRole('dialog', { name: '创建配置' })).toBeInTheDocument()
+  expect(screen.getByText('请输入接口地址')).toBeInTheDocument()
+  expect(screen.getByText('请输入模型 ID')).toBeInTheDocument()
+  expect(screen.getByText('请输入 API key')).toBeInTheDocument()
+})
+
+test('模型配置与角色选择是彼此独立的分区', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const channels = await screen.findByTestId('vk-provider-channels-section')
+  const routing = screen.getByTestId('vk-provider-routing-section')
+  expect(channels).not.toContainElement(routing)
+})
+
 test('保存成功后通知父级收起配置', async () => {
   const onSaved = vi.fn()
   stubRoutes({
@@ -379,23 +414,23 @@ test('保存成功后通知父级收起配置', async () => {
   await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
 })
 
-test('启用与禁用按钮按状态反向播放 Play/Pause 动效', async () => {
+test('启用与禁用按钮使用锁图标并保持状态图标', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   const user = userEvent.setup()
   render(<VkProviderForm baseUrl={BASE} />)
 
   const toggle = await screen.findByTestId('vk-channel-toggle-cheap')
   expect(toggle).toHaveAccessibleName('禁用')
-  expect(toggle).toHaveAttribute('data-icon', 'pause')
+  expect(toggle).toHaveAttribute('data-icon', 'lock')
   await user.hover(toggle)
-  expect(toggle).toHaveAttribute('data-icon', 'play')
+  expect(toggle).toHaveAttribute('data-icon', 'lock')
   await user.unhover(toggle)
   await user.click(toggle)
   expect(toggle).toHaveAccessibleName('启用')
   await user.unhover(toggle)
-  expect(toggle).toHaveAttribute('data-icon', 'play')
+  expect(toggle).toHaveAttribute('data-icon', 'lock-open')
   await user.hover(toggle)
-  expect(toggle).toHaveAttribute('data-icon', 'pause')
+  expect(toggle).toHaveAttribute('data-icon', 'lock-open')
 })
 
 test('复用保留上游和已存 key 引用,新模型可独立编辑且不提交明文 key', async () => {
@@ -413,7 +448,7 @@ test('复用保留上游和已存 key 引用,新模型可独立编辑且不提�
   const reusedKey = within(dialog).getByPlaceholderText('粘贴 API key') as HTMLInputElement
 
   expect(reusedUrl.value).toBe('https://api.example.com/v1')
-  expect(reusedKey.value).toBe('sk-rela••••••••••6789')
+  expect(reusedKey.value).toBe('••••••••••••••••')
   expect(reusedKey.readOnly).toBe(true)
   await user.clear(reusedModel)
   await user.type(reusedModel, 'gpt-5.6-sol')

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Pause, Pen, Play, Plus, RefreshCw, Trash2, X,
+  Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Lock, LockOpen, Pen, Plus, RefreshCw, Trash2, Wifi, X,
 } from 'lucide-react'
+import './VkProviderForm.css'
 import {
   fetchVkProviderSettings,
   importVkCcSwitchChannel,
@@ -49,8 +50,9 @@ function VisibilityButton({
       disabled={disabled}
       whileHover={disabled ? undefined : { scale: 1.02 }}
       whileTap={disabled ? undefined : { scale: 0.96 }}
-      className="relative flex h-9 shrink-0 cursor-pointer items-center justify-center rounded-[40px] border border-white/5 bg-white/[0.04] px-6 text-sm font-medium text-white transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+      className="relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[40px] border border-white/5 bg-white/[0.04] text-sm font-medium text-white transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
       aria-label={revealed ? '隐藏 API key' : '显示 API key'}
+      title={revealed ? '隐藏 API key' : '显示 API key'}
     >
       <span className="relative flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
         <AnimatePresence mode="popLayout" initial={false}>
@@ -66,7 +68,6 @@ function VisibilityButton({
           </motion.span>
         </AnimatePresence>
       </span>
-      <span className="ml-2.5 tracking-tight">{revealed ? '隐藏' : '显示'}</span>
     </motion.button>
   )
 }
@@ -110,6 +111,8 @@ type Draft = {
   enabled: boolean
   /** 点了「显示」之后取回的明文,只活在组件里 */
   revealed?: string
+  /** 已存 key 点击输入框后进入编辑,但不改变当前明文显隐状态。 */
+  key_editing?: boolean
 }
 
 const newId = () => `ch_${Math.random().toString(36).slice(2, 8)}`
@@ -133,7 +136,7 @@ function ActionIconButton({
   onClick: () => void
   disabled?: boolean
   children: ReactNode
-  tone?: 'default' | 'danger'
+  tone?: 'default' | 'danger' | 'warning'
   onHoverChange?: (hovered: boolean) => void
   iconState?: string
 }) {
@@ -149,13 +152,14 @@ function ActionIconButton({
       onMouseLeave={() => onHoverChange?.(false)}
       disabled={disabled}
       whileTap={disabled ? undefined : { opacity: 0.78 }}
-      className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+      data-tooltip={label}
+      className="vk-icon-action inline-flex h-8 w-8 items-center justify-center rounded-lg p-0 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
       style={{
         border: '1px solid var(--color-line)',
-        color: tone === 'danger' ? 'var(--color-danger)' : 'var(--color-fg)',
+        color: tone === 'danger' ? 'var(--color-danger)' : tone === 'warning' ? 'var(--color-warning)' : 'var(--color-fg)',
       }}
     >
-      {children}<span>{label}</span>
+      {children}
     </motion.button>
   )
 }
@@ -195,15 +199,14 @@ function EditActionButton({ testId, onClick, disabled = false }: { testId: strin
 
 function EnableActionButton({ testId, enabled, onClick, disabled = false }: { testId: string; enabled: boolean; onClick: () => void; disabled?: boolean }) {
   const [hovered, setHovered] = useState(false)
-  const icon = hovered ? (enabled ? 'play' : 'pause') : (enabled ? 'pause' : 'play')
+  const icon = enabled ? 'lock' : 'lock-open'
+  const Icon = enabled ? Lock : LockOpen
   return (
-    <ActionIconButton testId={testId} label={enabled ? '禁用' : '启用'} onClick={onClick} disabled={disabled} onHoverChange={setHovered} iconState={icon}>
+    <ActionIconButton testId={testId} label={enabled ? '禁用' : '启用'} onClick={onClick} disabled={disabled} tone={enabled ? 'warning' : 'default'} onHoverChange={setHovered} iconState={icon}>
       <span className="inline-flex h-4 w-4 items-center justify-center" aria-hidden="true">
-        <AnimatePresence mode="popLayout" initial={false}>
-          <motion.span key={icon} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.5, opacity: 0 }} transition={{ type: 'spring', stiffness: 600, damping: 25 }} className="inline-flex">
-            {icon === 'play' ? <Play size={14} /> : <Pause size={14} />}
-          </motion.span>
-        </AnimatePresence>
+        <motion.span animate={hovered ? { x: [0, -1.5, 1.5, -1, 1, 0], rotate: [0, -5, 5, -3, 3, 0] } : { x: 0, rotate: 0 }} transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} className="inline-flex">
+          <Icon size={14} />
+        </motion.span>
       </span>
     </ActionIconButton>
   )
@@ -231,6 +234,8 @@ type ChannelEditorProps = {
   onPatchModel: (draft: Draft, modelId: string) => void
   onReveal: (draft: Draft) => void
   onTest: (draft: Draft) => void
+  onClearError?: (field: string) => void
+  errors?: Partial<Record<'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>
 }
 
 function ChannelEditor({
@@ -245,42 +250,81 @@ function ChannelEditor({
   onPatchModel,
   onReveal,
   onTest,
+  onClearError,
+  errors = {},
 }: ChannelEditorProps) {
-  const showMasked = !draft.key_touched && !draft.revealed && draft.key_masked !== ''
+  const showMasked = !draft.key_touched && !draft.revealed && !draft.key_editing && draft.key_masked !== ''
   const channelIsBusy = Boolean(channelBusy)
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const maskedKey = draft.key_masked ? '••••••••••••••••' : ''
+  const field = (name: keyof typeof errors, label: string, child: ReactNode) => (
+    <div className={`vk-validation-field ${errors[name] ? 'is-error' : ''}`}>
+      <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{label}</div>
+      {child}
+      {errors[name] && <div className="vk-validation-message" role="alert">{errors[name]}</div>}
+    </div>
+  )
   return (
     <div className="space-y-2">
-      <input
+      {field('base_url', '接口地址（Base URL）', <input
         data-testid={`vk-channel-url-${draft.id}`}
         className={fieldClass} style={fieldStyle}
-        placeholder="接口地址，通常以 /v1 结尾"
+        placeholder="接口地址，例如 https://api.example.com/v1"
         value={draft.base_url}
-        onChange={(e) => onPatch(draft.id, { base_url: e.target.value })}
-      />
-      <input
-        data-testid={`vk-channel-model-${draft.id}`}
-        className={fieldClass} style={fieldStyle}
-        list={`vk-models-${draft.id}`}
-        placeholder="模型名称（测试连接后可从下拉里选）"
-        value={draft.model_id}
-        onChange={(e) => onPatchModel(draft, e.target.value)}
-      />
-      <datalist id={`vk-models-${draft.id}`}>
-        {models.map((model) => <option key={model} value={model} />)}
-      </datalist>
+        onChange={(e) => { onPatch(draft.id, { base_url: e.target.value }); onClearError?.('base_url') }}
+      />)}
+      {field('model_id', '模型 ID', <div className="relative flex items-start gap-2">
+        <input
+          data-testid={`vk-channel-model-${draft.id}`}
+          className={fieldClass}
+          style={{ ...fieldStyle, flex: 1, minWidth: 0 }}
+          list={models.length ? `vk-models-${draft.id}` : undefined}
+          placeholder="模型名称，例如 gpt-5.6-luna，可直接输入"
+          value={draft.model_id}
+          onChange={(e) => { onPatchModel(draft, e.target.value); onClearError?.('model_id') }}
+        />
+        <button
+          type="button"
+          data-testid={`vk-channel-models-fetch-${draft.id}`}
+          className={outlineButton}
+          style={{ ...outlineStyle, minHeight: '2.25rem', whiteSpace: 'nowrap' }}
+          onClick={() => onTest(draft)}
+          disabled={channelIsBusy}
+        >
+          <RefreshCw size={13} className={`mr-1 inline ${channelBusy === 'test' ? 'animate-spin' : ''}`} aria-hidden="true" />获取模型列表
+        </button>
+        {models.length > 0 && (
+          <div className="relative shrink-0">
+            <button type="button" data-testid={`vk-channel-models-menu-${draft.id}`} aria-label="选择模型" title="选择模型" className="vk-icon-action inline-flex h-9 w-9 items-center justify-center rounded-lg" style={outlineStyle} onClick={() => setModelMenuOpen((open) => !open)}>
+              <ChevronDown size={16} aria-hidden="true" />
+            </button>
+            {modelMenuOpen && <div role="listbox" className="absolute right-0 top-[calc(100%+0.35rem)] z-20 max-h-48 min-w-[14rem] overflow-auto rounded-lg p-1 shadow-xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+              {models.map((model) => <button key={model} type="button" role="option" aria-selected={model === draft.model_id} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-white/5" onClick={() => { onPatchModel(draft, model); setModelMenuOpen(false) }}>{model}</button>)}
+            </div>}
+          </div>
+        )}
+        <datalist id={`vk-models-${draft.id}`}>
+          {models.map((model) => <option key={model} value={model} />)}
+        </datalist>
+      </div>)}
 
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          data-testid={`vk-channel-key-${draft.id}`}
-          type={draft.revealed || showMasked ? 'text' : 'password'}
-          readOnly={showMasked}
-          autoComplete="off"
-          className={fieldClass}
-          style={{ ...fieldStyle, flex: 1, minWidth: '12rem', color: showMasked ? 'var(--color-fg-dim)' : 'var(--color-fg)' }}
-          placeholder="粘贴 API key"
-          value={draft.revealed ?? (showMasked ? draft.key_masked : draft.api_key)}
-          onChange={(e) => onPatch(draft.id, { api_key: e.target.value, key_touched: true, revealed: undefined })}
-        />
+        <div className={`vk-validation-field min-w-0 flex-1 ${errors.api_key ? 'is-error' : ''}`}>
+          <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>API key</div>
+          <input
+            data-testid={`vk-channel-key-${draft.id}`}
+            type={draft.revealed ? 'text' : 'password'}
+            readOnly={showMasked}
+            autoComplete="off"
+            className={fieldClass}
+            style={{ ...fieldStyle, color: showMasked ? 'var(--color-fg-dim)' : 'var(--color-fg)' }}
+            placeholder="粘贴 API key"
+            value={draft.revealed ?? (showMasked ? maskedKey : draft.api_key)}
+            onFocus={() => { if (showMasked) onPatch(draft.id, { key_editing: true, api_key: '', key_touched: true, revealed: undefined }); onClearError?.('api_key') }}
+            onChange={(e) => { onPatch(draft.id, { api_key: e.target.value, key_touched: true, key_editing: true, revealed: undefined }); onClearError?.('api_key') }}
+          />
+          {errors.api_key && <div className="vk-validation-message" role="alert">{errors.api_key}</div>}
+        </div>
         <VisibilityButton
           testId={`vk-channel-reveal-${draft.id}`}
           revealed={Boolean(draft.revealed)}
@@ -290,21 +334,18 @@ function ChannelEditor({
           }}
           disabled={channelIsBusy || (!saved?.key_stored && !draft.key_masked)}
         />
-        {showMasked && (
-          <button type="button" data-testid={`vk-channel-replace-${draft.id}`} onClick={() => onPatch(draft.id, { key_touched: true, api_key: '', revealed: undefined })} className={outlineButton} style={outlineStyle}>更换</button>
-        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        {field('api_style', '接口协议', <select
           data-testid={`vk-channel-style-${draft.id}`}
           className="rounded-lg px-2 py-1.5 text-xs outline-none"
           style={fieldStyle}
           value={draft.api_style}
-          onChange={(e) => onPatch(draft.id, { api_style: e.target.value, api_style_touched: true })}
+          onChange={(e) => { onPatch(draft.id, { api_style: e.target.value, api_style_touched: true }); onClearError?.('api_style') }}
         >
           {settings.api_styles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
-        </select>
+        </select>)}
         <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           <span>推理强度</span>
           <input
@@ -316,7 +357,7 @@ function ChannelEditor({
             disabled={channelIsBusy}
             placeholder="自动（跟随模型）"
             title={availableReasoningEfforts.length ? '下拉建议来自本次接口请求，也可以输入接口支持的其他值' : '接口未返回可枚举档位；可保持自动，或输入中转站支持的值'}
-            onChange={(e) => onPatch(draft.id, { reasoning_effort: e.target.value })}
+            onChange={(e) => { onPatch(draft.id, { reasoning_effort: e.target.value }); onClearError?.('reasoning_effort') }}
           />
           <datalist id={`vk-channel-reasoning-options-${draft.id}`}>
             {availableReasoningEfforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
@@ -326,7 +367,7 @@ function ChannelEditor({
           <span data-testid={`vk-channel-reasoning-note-${draft.id}`} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>中转站未返回可枚举档位；可保持自动，或输入其支持的值</span>
         )}
         <button type="button" data-testid={`vk-channel-test-${draft.id}`} onClick={() => onTest(draft)} disabled={channelIsBusy} className={outlineButton} style={outlineStyle}>
-          {channelBusy === 'test' ? '测试中…' : '测试连接'}
+          <Wifi size={14} className="mr-1 inline" aria-hidden="true" />{channelBusy === 'test' ? '测试中…' : '测试连接'}
         </button>
         {saved?.key_from_environment && (
           <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }} title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">key 来自系统环境变量，优先生效</span>
@@ -356,7 +397,7 @@ function ChannelEditor({
  * 也没有「默认通道」:通道本来就是按用途建的,两个角色各指一条,"默认"没有语义。
  *
  * 三条贯穿全组件的纪律:
- *  · key 存过就**看得见存在**(打码值),但改它要先点「更换」—— 不碰就不提交。
+ *  · key 存过就**看得见存在**(全点号),点击输入框即可替换——不碰就不提交。
  *    明文只在点「显示」时单独取,取回来也只活在组件状态里。
  *  · 接口风格按模型名先填上,用户改过就不再覆盖。
  *  · 失败给根因 + 下一步;能自动修的当场修**并把改了什么写出来**。
@@ -375,6 +416,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
+  const selectionGuard = useRef(false)
   const modalId = modalSession?.id ?? null
 
   const load = useCallback(async () => {
@@ -405,10 +448,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const openNewDraft = (draft: Draft) => {
     setDrafts((list) => [...list, draft])
+    setValidationErrors((current) => { const next = { ...current }; delete next[draft.id]; return next })
     setModalSession({ id: draft.id, original: null })
   }
 
   const openEditor = (draft: Draft) => {
+    setValidationErrors((current) => { const next = { ...current }; delete next[draft.id]; return next })
     setModalSession({ id: draft.id, original: cloneDraft(draft) })
   }
 
@@ -426,6 +471,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         })
       }
     }
+    setValidationErrors((current) => { const next = { ...current }; delete next[modalSession.id]; return next })
     setModalSession(null)
   }
 
@@ -578,7 +624,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     setSaving(true)
     setError(null)
     setNotice(null)
@@ -600,11 +646,41 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       ].filter(Boolean).join('；'))
       await load()
       onSaved?.()
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : '模型配置保存失败')
+      return false
     } finally {
       setSaving(false)
     }
+  }
+
+  const hasModalSelection = () => {
+    const selection = window.getSelection()
+    const modal = document.querySelector('[data-testid="vk-provider-modal"]')
+    if (!modal) return false
+    const focused = document.activeElement
+    if ((focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)
+      && modal.contains(focused)
+      && focused.selectionStart !== null
+      && focused.selectionEnd !== null
+      && focused.selectionStart !== focused.selectionEnd) return true
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return false
+    return modal.contains(selection.anchorNode) || modal.contains(selection.focusNode)
+  }
+
+  const saveModal = async (draft: Draft) => {
+    const errors: Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>> = {}
+    if (!draft.name.trim()) errors.name = '请输入配置名称'
+    if (!draft.base_url.trim()) errors.base_url = '请输入接口地址'
+    if (!draft.model_id.trim()) errors.model_id = '请输入模型 ID'
+    if (!draft.key_masked && !draft.api_key.trim()) errors.api_key = '请输入 API key'
+    if (Object.keys(errors).length) {
+      setValidationErrors((current) => ({ ...current, [draft.id]: errors }))
+      return
+    }
+    const ok = await save()
+    if (ok) closeModal(true)
   }
 
   if (!settings) {
@@ -616,8 +692,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const roleKeys = Object.keys(settings.role_labels)
 
   return (
-    <div data-testid="vk-provider-form" className="rounded-xl p-4"
-      style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+    <div data-testid="vk-provider-form" className="space-y-4">
+      <section data-testid="vk-provider-channels-section" className="rounded-xl p-4"
+        style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="text-sm font-medium">模型配置</div>
         <button type="button" data-testid="vk-channel-add" onClick={addChannel}
@@ -725,6 +802,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         </div>
       </div>
 
+      </section>
+
       {modalId && (() => {
         const modalDraft = drafts.find((draft) => draft.id === modalId)
         if (!modalDraft) return null
@@ -737,8 +816,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             data-testid="vk-provider-modal-backdrop"
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
             role="presentation"
+            onMouseDown={() => { selectionGuard.current = hasModalSelection() }}
             onClick={(event) => {
-              if (event.target === event.currentTarget) closeModal(false)
+              const blocked = selectionGuard.current || hasModalSelection()
+              selectionGuard.current = false
+              if (event.target === event.currentTarget && !blocked) closeModal(false)
             }}
           >
             <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl p-5 shadow-2xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
@@ -747,10 +829,13 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 <button type="button" aria-label="关闭模型配置弹窗" title="关闭" onClick={() => closeModal(false)} className="rounded-lg p-1.5" style={outlineStyle}><X size={18} /></button>
               </div>
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                <label className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                  名称
-                  <input data-testid="vk-modal-name" className={`${fieldClass} mt-1`} style={fieldStyle} value={modalDraft.name} onChange={(event) => patch(modalDraft.id, { name: event.target.value })} />
-                </label>
+                <div className={`vk-validation-field ${validationErrors[modalDraft.id]?.name ? 'is-error' : ''}`}>
+                  <label className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                    名称
+                    <input data-testid="vk-modal-name" className={`${fieldClass} mt-1`} style={fieldStyle} placeholder="例如：日常总结" value={modalDraft.name} onChange={(event) => { patch(modalDraft.id, { name: event.target.value }); setValidationErrors((current) => ({ ...current, [modalDraft.id]: { ...current[modalDraft.id], name: undefined } })) }} />
+                  </label>
+                  {validationErrors[modalDraft.id]?.name && <div className="vk-validation-message" role="alert">{validationErrors[modalDraft.id].name}</div>}
+                </div>
                 <label className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
                   分组 / 中转站
                   <input data-testid="vk-modal-group" className={`${fieldClass} mt-1`} style={fieldStyle} value={modalDraft.base_url ? (() => { try { return new URL(modalDraft.base_url).hostname } catch { return '' } })() : ''} readOnly placeholder="自动识别上游" />
@@ -768,10 +853,15 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 onPatchModel={patchModel}
                 onReveal={(item) => { void reveal(item) }}
                 onTest={(item) => { void runTest(item) }}
+                errors={validationErrors[modalDraft.id]}
+                onClearError={(field) => setValidationErrors((current) => ({
+                  ...current,
+                  [modalDraft.id]: { ...current[modalDraft.id], [field]: undefined },
+                }))}
               />
               <div className="mt-5 flex justify-end gap-2" style={{ borderTop: '1px solid var(--color-line)', paddingTop: '1rem' }}>
                 <button type="button" data-testid="vk-provider-modal-cancel" onClick={() => closeModal(false)} className={outlineButton} style={outlineStyle}>取消</button>
-                <button type="button" data-testid="vk-provider-modal-submit" onClick={() => closeModal(true)} className="rounded-lg px-4 py-1.5 text-sm font-medium" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>{isNew ? '创建' : '完成'}</button>
+                <button type="button" data-testid="vk-provider-modal-submit" onClick={() => { void saveModal(modalDraft) }} disabled={saving} className="rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-50" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>{saving ? '保存中…' : '保存'}</button>
               </div>
             </div>
           </div>
@@ -780,7 +870,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
       {/* —— 角色指派 —— */}
       {drafts.length > 0 && (
-        <div className="mt-4 space-y-2">
+        <section data-testid="vk-provider-routing-section" className="space-y-2 rounded-xl p-4" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          <div className="text-sm font-medium">选择模型配置</div>
           {roleKeys.map((role) => {
             const fallbacks = roleFallbacks[role] ?? []
             const primary = roles[role] ?? ''
@@ -849,7 +940,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           <div data-testid="vk-role-routing-note" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
             每个角色只使用这里明确列出的顺序；仅超时、429 或上游 5xx 才切到下一条。鉴权、参数或模型不支持会直接停止，不会换通道掩盖配置问题。
           </div>
-        </div>
+        </section>
       )}
 
       {/* —— 新增 / 导入 —— */}
@@ -898,8 +989,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           </span>
         )}
       </div>
-      {notice && <div data-testid="vk-provider-notice" role="status" className="mt-2 text-xs" style={{ color: 'var(--color-success)' }}>{notice}</div>}
-      {error && <div data-testid="vk-provider-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{error}</div>}
+      {notice && <div data-testid="vk-provider-notice" role="status" className="vk-provider-feedback vk-provider-feedback--success">{notice}</div>}
+      {error && <div data-testid="vk-provider-error" role="alert" className="vk-provider-feedback vk-provider-feedback--error">{error}</div>}
     </div>
   )
 }
