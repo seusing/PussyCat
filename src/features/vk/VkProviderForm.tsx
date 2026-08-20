@@ -460,6 +460,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const closeModal = (commit: boolean) => {
     if (!modalSession) return
     if (!commit) {
+      setNotice(null)
       setDrafts((list) => modalSession.original
         ? list.map((draft) => draft.id === modalSession.id ? cloneDraft(modalSession.original!) : draft)
         : list.filter((draft) => draft.id !== modalSession.id))
@@ -474,6 +475,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setValidationErrors((current) => { const next = { ...current }; delete next[modalSession.id]; return next })
     setModalSession(null)
   }
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   const addChannel = () => {
     const id = newId()
@@ -544,7 +551,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       revealed: undefined,
     }
     openNewDraft(reused)
-    setNotice(`已复用「${draft.name || '当前配置'}」的上游与 key 引用，可在弹窗中更换模型`)
   }
 
   const setChannelEnabled = (id: string, enabled: boolean) => {

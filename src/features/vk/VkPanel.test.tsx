@@ -147,11 +147,13 @@ describe('VkPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎缺少模型通道'))
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('去配置')
+    await userEvent.click(screen.getByTestId('vk-verdict-action'))
+    expect(useAppStore.getState().activeModule).toBe('providers')
     // 结论 + 动作,到此为止:按钮已经说清下一步,再补一段解释后果的话只是噪声。
     expect(screen.queryByTestId('vk-verdict-note')).not.toBeInTheDocument()
   })
 
-  it('配好之后回到一句就绪,配置入口仍在但收着', async () => {
+  it('配好之后回到一句就绪,视频页不再渲染模型配置入口或表单', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
@@ -162,8 +164,7 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
 
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
-    // key 会过期,配置入口必须一直够得着 —— 但平时不占版面。
-    expect(screen.getByTestId('vk-provider-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-provider-toggle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument()
   })
 
@@ -194,48 +195,19 @@ describe('VkPanel', () => {
     expect(screen.queryByTestId('vk-verdict-note')).not.toBeInTheDocument()
   })
 
-  it('保存模型配置后自动收起并显示三秒绿色通知', async () => {
-    const providerSettings = {
-      channels: [{
-        id: 'luna1', name: 'luna1', base_url: 'https://relay.example/v1',
-        model_id: 'gpt-5.6-luna', key_env: 'VK_CHANNEL_LUNA1_KEY',
-        api_style: 'openai_responses', key_stored: true, key_from_environment: false,
-        key_masked: 'sk-test••••1234', reasoning_effort: 'max',
-        reasoning_effort_explicit: true, extra_headers: {}, enabled: true,
-      }],
-      roles: { deep_analysis: 'luna1', basic: 'luna1' },
-      role_assignments: {}, role_fallbacks: {},
-      role_routes: { deep_analysis: ['luna1'], basic: ['luna1'] },
-      role_route_warnings: {},
-      role_labels: { deep_analysis: '深度分析', basic: '基础处理' },
-      role_hints: { deep_analysis: '提炼观点', basic: '章节划分' },
-      unassigned_roles: [],
-      api_styles: [{ id: 'openai_responses', label: 'OpenAI Responses' }],
-      importable: [],
-      cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] },
-      configured: true,
-    }
+  it('视频页保留能力中心,但模型配置独立于视频任务表单', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
       'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
       'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
-      'GET /vk/v1/providers': { body: providerSettings },
-      'POST /vk/v1/providers': { body: { saved: true, normalization_notes: [], keys_written: [], configured: true } },
+      'GET /vk/v1/providers': { body: { configured: true, channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] } } },
     })
     render(<VkPanel baseUrl={BASE} />)
-
-    await userEvent.click(await screen.findByTestId('vk-provider-toggle'))
-    await userEvent.click(await screen.findByTestId('vk-provider-save'))
-
-    await waitFor(() => expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument())
-    const banner = screen.getByTestId('vk-task-banner')
-    expect(banner).toHaveTextContent('已保存配置')
-    expect(banner).toHaveAttribute('data-tone', 'success')
-    expect(screen.getByTestId('vk-task-banner-progress')).toHaveClass('is-success')
-    const bannerLayer = banner.closest('.vk-task-banners')
-    expect(bannerLayer).toBeInTheDocument()
-    expect(bannerLayer).toHaveClass('vk-task-banners')
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    expect(screen.getByTestId('vk-capability-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-provider-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument()
   })
 
   it('一切正常时只有一句结论,不给按钮 —— 没问题就没有要用户点的东西', async () => {
@@ -411,6 +383,8 @@ describe('VkPanel', () => {
     expect(banner).toHaveTextContent('\u4efb\u52a1\u5df2\u63d0\u4ea4')
     expect(banner).toHaveAttribute('data-tone', 'info')
     expect(banner).toHaveClass('is-info')
+    expect(banner).toHaveClass('vk-task-banner')
+    expect(banner.closest('.vk-task-banners')).toHaveClass('vk-task-banners')
     const progress = screen.getByTestId('vk-task-banner-progress')
     expect(progress).toHaveClass('is-info')
     expect(Number(progress.getAttribute('aria-valuenow'))).toBeGreaterThan(90)

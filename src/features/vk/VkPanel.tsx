@@ -36,7 +36,6 @@ import type {
   VkRuntimeCandidate,
 } from '../../host/vkClient'
 import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
-import { VkProviderForm } from './VkProviderForm'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
@@ -383,7 +382,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   // 所以这件事必须在**提交之前**说出来,而不是等用户跑满 7 分半下载转写。
   const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null)
   const [costTracking, setCostTracking] = useState<boolean | null>(null)
-  const [providerFormOpen, setProviderFormOpen] = useState(false)
   const [capabilityPacksOpen, setCapabilityPacksOpen] = useState(false)
   const [taskReasoningEfforts, setTaskReasoningEfforts] = useState<string[]>([])
   const [reasoningDiscovery, setReasoningDiscovery] = useState<string | null>(null)
@@ -970,7 +968,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
                   // 通道不通要在**第 1 秒**说,不是第 7.5 分钟。按钮已经说清了下一步,
                   // 再补一段解释后果的话只是噪声 —— 结论 + 动作,到此为止。
                    text: '解析引擎缺少模型通道', color: 'var(--color-warning)',
-                  action: { label: '去配置', run: () => setProviderFormOpen(true) },
+                  action: { label: '去配置', run: () => useAppStore.getState().setActiveModule('providers') },
                 }
                 : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(liveCapabilitySource) ?? undefined }
 
@@ -1034,25 +1032,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       </InstallingBeam>
       {/* 开发者信息:默认折叠。路径、api/schema、逐项能力、环境列表与手动切换、
           重建、会话诊断、安装日志 —— 排障时全在这儿,平时一个字都不占版面。 */}
-      {/* 模型配置不算「开发者信息」:key 会过期,这是用户需要回来改的正经设置。
-          平时收着,没配好时由上面那个「去配置」按钮直接展开。 */}
       <div className="mb-4">
-        {/* 按钮要看得出是按钮:细边框 + xs 字号在这一屏里读起来像一行说明文字。
-            给它面板底色、实边框与正文字号,和上面那个主操作按钮同一档尺寸。 */}
-        <button
-          type="button"
-          data-testid="vk-provider-toggle"
-          aria-expanded={providerFormOpen}
-          onClick={() => setProviderFormOpen((open) => !open)}
-          className="rounded-lg px-3 py-1.5 text-sm font-medium"
-          style={{
-            background: 'var(--color-hover)',
-            border: '1px solid var(--color-line)',
-            color: 'var(--color-fg)',
-          }}
-        >
-          {providerFormOpen ? '收起模型配置' : '模型配置'}
-        </button>
         <button
           type="button"
           data-testid="vk-capability-toggle"
@@ -1067,21 +1047,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
         >
           {capabilityPacksOpen ? '收起能力中心' : '能力中心'}
         </button>
-        {providerFormOpen && (
-          <div className="mt-2">
-            <VkProviderForm baseUrl={base} onSaved={() => {
-              void refreshProviders()
-              void checkHealth()
-              setProviderFormOpen(false)
-              addTaskBanners([{
-                id: `provider-settings:${Date.now()}`,
-                message: '已保存配置',
-                tone: 'success',
-                createdAt: Date.now(),
-              }])
-            }} />
-          </div>
-        )}
         {capabilityPacksOpen && (
           <VkCapabilityPacksPanel
             baseUrl={base}

@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
   chmodSync,
@@ -316,6 +316,15 @@ export class WrssRuntimeManager {
     env = process.env,
     fetchImpl,
     spawnImpl = spawn,
+    probePythonImpl = (pythonExe) => {
+      const result = spawnSync(pythonExe, ['-c', 'print("pussycat-runtime-probe")'], {
+        shell: false,
+        windowsHide: true,
+        stdio: 'ignore',
+        timeout: 5_000,
+      })
+      return result.status === 0
+    },
     now = () => new Date().toISOString(),
     sha256FileImpl = sha256File,
     runStepImpl,
@@ -331,6 +340,7 @@ export class WrssRuntimeManager {
     this.proxyAgentFactory = proxyAgentFactory
     this.fetchImpl = fetchImpl ?? ((url, options = {}) => this.#fetchWithProxy(url, options))
     this.spawnImpl = spawnImpl
+    this.probePythonImpl = probePythonImpl
     this.now = now
     this.sha256FileImpl = sha256FileImpl
     this.runStepImpl = runStepImpl
@@ -646,6 +656,17 @@ export class WrssRuntimeManager {
     }
   }
 
+  #pythonProbePassed() {
+    try {
+      const receipt = this.#loadReceipt()
+      const pythonExe = join(resolve(receipt.venvDir), 'Scripts', 'python.exe')
+      if (!isInside(this.home, pythonExe) || !existsSync(pythonExe)) return false
+      return this.probePythonImpl(pythonExe) === true
+    } catch {
+      return false
+    }
+  }
+
   async #terminateChild(child) {
     if (!child || this.#child !== child) return
     await new Promise((resolveClose) => {
@@ -782,6 +803,7 @@ export class WrssRuntimeManager {
       if (this.#state === 'not-available') throw new WrssRuntimeError(503, 'bundle-missing', this.status().summary)
       if (this.#state === 'running') return this.status()
       try {
+        const hadExistingReceipt = this.#hasValidReceipt()
         if (this.#state === 'not-installed' || (this.#state === 'failed' && !this.#hasValidReceipt())) {
           this.#state = 'installing'
           this.#reasonCode = null
@@ -793,6 +815,13 @@ export class WrssRuntimeManager {
           this.#state = 'installed'
           this.#reasonCode = null
           this.#summary = null
+        }
+        if (hadExistingReceipt && this.#state === 'installed' && !this.#pythonProbePassed()) {
+          this.#pushLog('检测到已安装的 Python 启动器不可用，正在重建公众号运行环境')
+          this.#state = 'installing'
+          this.#reasonCode = null
+          this.#summary = null
+          await this.#install()
         }
         if (this.#state === 'installed') await this.#start()
         return this.status()

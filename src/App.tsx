@@ -12,6 +12,7 @@ import { snapshotCatalogSource, type CatalogSource } from './host'
 import { validate } from './features/config/validation'
 import { LoginStatusPanel } from './features/login/LoginStatusPanel'
 import { VkPanel } from './features/vk/VkPanel'
+import { VkProviderForm } from './features/vk/VkProviderForm'
 import { VkTaskDetailSidebar } from './features/vk/VkTaskDetailSidebar'
 import { RadarPanel } from './features/radar/RadarPanel'
 import WrssPanel from './features/wrss/WrssPanel'
@@ -318,18 +319,20 @@ export default function App({
             : activeModule === 'login'
               ? <LoginStatusPanel />
               : activeModule === 'vk'
-                  ? <VkPanel
-                    baseUrl={baseUrl}
-                    selectedJobId={selectedVkJobId}
-                    refreshToken={vkJobsRevision}
-                    onSelectJob={(jobId) => {
-                      setSelectedVkJobId(jobId)
-                      setVkRightPanelOpen(!!jobId)
-                    }}
-                  />
-                : activeModule === 'wrss'
-                  ? <WrssPanel baseUrl={baseUrl} />
-                  : <RadarPanel baseUrl={baseUrl} />
+                ? <VkPanel
+                  baseUrl={baseUrl}
+                  selectedJobId={selectedVkJobId}
+                  refreshToken={vkJobsRevision}
+                  onSelectJob={(jobId) => {
+                    setSelectedVkJobId(jobId)
+                    setVkRightPanelOpen(!!jobId)
+                  }}
+                />
+                : activeModule === 'providers'
+                  ? <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} /></div>
+                  : activeModule === 'wrss'
+                    ? <WrssPanel baseUrl={baseUrl} />
+                    : <RadarPanel baseUrl={baseUrl} />
         }
         rightPanel={activeModule === 'vk'
           ? <VkTaskDetailSidebar

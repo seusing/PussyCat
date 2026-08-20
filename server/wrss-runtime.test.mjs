@@ -328,6 +328,101 @@ describe('WrssRuntimeManager', () => {
     await manager.close()
   })
 
+  it('does not reinstall a valid receipt when the Python probe passes', async () => {
+    const { root, bundle } = await fixture()
+    writeInstalled(root)
+    const probePythonImpl = vi.fn(() => true)
+    const runStepImpl = vi.fn()
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    child.kill = () => child.emit('close', 0)
+    const manager = new WrssRuntimeManager({
+      home: root,
+      bundleDir: bundle,
+      probePythonImpl,
+      runStepImpl,
+      getPortImpl: async () => 4327,
+      fetchImpl: async (url) => url.endsWith('/api/v1/wx/auth/login')
+        ? ok({ data: { access_token: 'token' } })
+        : ok(),
+      spawnImpl: () => child,
+      readyTimeoutMs: 100,
+      readyPollMs: 1,
+    })
+
+    await expect(manager.enable()).resolves.toMatchObject({ state: 'running' })
+    expect(probePythonImpl).toHaveBeenCalledTimes(1)
+    expect(runStepImpl).not.toHaveBeenCalled()
+    await manager.close()
+  })
+
+  it('reinstalls when the Python probe fails and then starts the service', async () => {
+    const { root, bundle } = await fixture()
+    writeInstalled(root)
+    const probePythonImpl = vi.fn(() => false)
+    const steps = []
+    const runStepImpl = vi.fn(async ({ step, argv }) => {
+      steps.push(step)
+      if (step === 'venv') {
+        const scripts = join(argv.at(-1), 'Scripts')
+        mkdirSync(scripts, { recursive: true })
+        writeFileSync(join(scripts, 'python.exe'), 'python')
+      }
+    })
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    child.kill = () => child.emit('close', 0)
+    let downloads = 0
+    const manager = new WrssRuntimeManager({
+      home: root,
+      bundleDir: bundle,
+      probePythonImpl,
+      sha256FileImpl: (path) => path.endsWith('uv.exe') ? uvSha : WRSS_SOURCE_SHA256,
+      fetchImpl: async (url) => {
+        if (url === WRSS_SOURCE_URL) {
+          downloads += 1
+          return { ok: true, status: 200, arrayBuffer: async () => weRssArchive() }
+        }
+        if (url.endsWith('/api/v1/wx/auth/login')) return ok({ data: { access_token: 'token' } })
+        return ok()
+      },
+      runStepImpl,
+      getPortImpl: async () => 4328,
+      spawnImpl: () => child,
+      readyTimeoutMs: 100,
+      readyPollMs: 1,
+    })
+
+    await expect(manager.enable()).resolves.toMatchObject({ state: 'running' })
+    expect(probePythonImpl).toHaveBeenCalledTimes(1)
+    expect(downloads).toBe(1)
+    expect(steps).toEqual(expect.arrayContaining(['venv', 'install', 'playwright']))
+    expect(manager.status().progress_log.join('\n')).toContain('Python 启动器不可用')
+    await manager.close()
+  })
+
+  it('returns the typed install failure when probe recovery cannot reinstall', async () => {
+    const { root, bundle } = await fixture()
+    const installed = writeInstalled(root)
+    const receiptPath = join(root, 'wrss', 'receipt.json')
+    const fetchImpl = vi.fn(async () => { throw new Error('network unavailable') })
+    const manager = new WrssRuntimeManager({
+      home: root,
+      bundleDir: bundle,
+      probePythonImpl: () => false,
+      sha256FileImpl: () => uvSha,
+      fetchImpl,
+    })
+
+    await expect(manager.enable()).rejects.toMatchObject({
+      reasonCode: 'download-failed',
+      message: '公众号组件下载失败，请检查网络后重试',
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(readFileSync(receiptPath, 'utf8')).sourceDir).toBe(installed.sourceDir)
+    expect(manager.status().progress_log.join('\n')).toContain('Python 启动器不可用')
+  })
+
   it('retries a failed valid receipt by restarting without downloading or reinstalling', async () => {
     const { root, bundle } = await fixture()
     writeInstalled(root)
@@ -336,6 +431,7 @@ describe('WrssRuntimeManager', () => {
     let installs = 0
     const manager = new WrssRuntimeManager({
       home: root, bundleDir: bundle, getPortImpl: async () => 4322,
+      probePythonImpl: () => true,
       runStepImpl: async () => { installs += 1 },
       fetchImpl: async (url) => {
         if (starts === 1 && !url.endsWith('/api/v1/wx/auth/login')) throw new Error('not ready')
@@ -369,6 +465,7 @@ describe('WrssRuntimeManager', () => {
     let killed = 0
     const manager = new WrssRuntimeManager({
       home: root, bundleDir: bundle, getPortImpl: async () => 4323,
+      probePythonImpl: () => true,
       fetchImpl: async () => { throw new Error('not ready') },
       spawnImpl: () => {
         const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => { killed += 1; child.emit('close', 1) }
@@ -389,6 +486,7 @@ describe('WrssRuntimeManager', () => {
     let killed = 0
     const manager = new WrssRuntimeManager({
       home: root, bundleDir: bundle, getPortImpl: async () => 4324,
+      probePythonImpl: () => true,
       fetchImpl: async () => { throw new Error('not ready') },
       spawnImpl: () => {
         const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => { killed += 1; child.emit('close', 1) }
@@ -429,6 +527,7 @@ describe('WrssRuntimeManager', () => {
     let starts = 0
     const manager = new WrssRuntimeManager({
       home: root, bundleDir: bundle, env: { HTTPS_PROXY: 'https://user:pass@proxy.test' },
+      probePythonImpl: () => true,
       sha256FileImpl: (path) => path.endsWith('uv.exe') ? uvSha : WRSS_SOURCE_SHA256,
       runStepImpl: async (args) => {
         await runStepImpl(args)

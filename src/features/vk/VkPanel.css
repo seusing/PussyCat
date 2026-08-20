@@ -55,11 +55,12 @@
   position: fixed;
   z-index: 100;
   top: calc(62px + 12px);
-  right: max(12px, env(safe-area-inset-right) + 12px);
-  width: min(560px, calc(100vw - 24px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 24px));
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 7px;
   margin: 0;
   pointer-events: none;
@@ -70,15 +71,15 @@
   position: relative;
   display: flex;
   width: fit-content;
-  min-width: min(220px, 100%);
-  max-width: min(560px, 100%);
+  min-width: 0;
+  max-width: 100%;
   min-height: 64px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   overflow: hidden;
   border: 1px solid var(--color-line);
-  border-radius: 9px;
+  border-radius: 999px;
   background: #1d2026;
   padding: 14px 12px 18px 16px;
   color: var(--color-fg);
@@ -138,7 +139,7 @@
   right: 0;
   bottom: 0;
   left: 0;
-  height: 8px;
+  height: 4px;
   background: rgb(255 255 255 / 7%);
 }
 
@@ -151,9 +152,9 @@
 @media (max-width: 640px) {
   .vk-task-banners {
     top: calc(62px + 8px);
-    right: max(12px, env(safe-area-inset-right) + 12px);
-    left: max(12px, env(safe-area-inset-left) + 12px);
-    width: auto;
+    left: 12px;
+    transform: none;
+    width: calc(100vw - 24px);
   }
 
   .vk-task-banner {
