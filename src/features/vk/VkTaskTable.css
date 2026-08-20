@@ -237,9 +237,10 @@
   gap: 2px;
   border: 1px solid #343a45;
   border-radius: 7px;
-  background: #1b1e24;
+  background: color-mix(in srgb, var(--color-panel) 84%, transparent);
   padding: 5px;
-  box-shadow: 0 14px 32px rgb(0 0 0 / 42%);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 40%), inset 0 1px 0 rgb(255 255 255 / 4%);
+  backdrop-filter: blur(12px) saturate(1.08);
 }
 
 .vk-task-operation-menu button {
@@ -290,7 +291,8 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgb(0 0 0 / 56%);
+  background: rgb(0 0 0 / 50%);
+  backdrop-filter: blur(2px);
   padding: 20px;
 }
 
@@ -301,10 +303,11 @@
   gap: 13px;
   border: 1px solid #3a404b;
   border-radius: 8px;
-  background: #1a1d23;
+  background: color-mix(in srgb, var(--color-panel) 84%, transparent);
   color: var(--color-fg);
   padding: 18px;
-  box-shadow: 0 22px 60px rgb(0 0 0 / 52%);
+  box-shadow: 0 22px 60px rgb(0 0 0 / 50%), inset 0 1px 0 rgb(255 255 255 / 4%);
+  backdrop-filter: blur(12px) saturate(1.08);
 }
 
 .vk-task-alert-icon {

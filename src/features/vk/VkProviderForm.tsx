@@ -4,6 +4,7 @@ import {
   Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Lock, LockOpen, Pen, Plus, RefreshCw, Trash2, Wifi, X,
 } from 'lucide-react'
 import './VkProviderForm.css'
+import { OverflowTooltip } from '../../components/OverflowTooltip'
 import {
   fetchVkProviderSettings,
   importVkCcSwitchChannel,
@@ -21,6 +22,25 @@ const fieldStyle = {
 } as const
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
+
+function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean, dismiss: () => void) {
+  useEffect(() => {
+    if (!open) return
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target
+      if (target instanceof Node && !ref.current?.contains(target)) dismiss()
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss()
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [ref, open, dismiss])
+}
 
 function VisibilityButton({
   revealed,
@@ -256,6 +276,8 @@ function ChannelEditor({
   const showMasked = !draft.key_touched && !draft.revealed && !draft.key_editing && draft.key_masked !== ''
   const channelIsBusy = Boolean(channelBusy)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const modelMenuRef = useRef<HTMLDivElement>(null)
+  useDismissOnOutside(modelMenuRef, modelMenuOpen, () => setModelMenuOpen(false))
   const maskedKey = draft.key_masked ? '••••••••••••••••' : ''
   const field = (name: keyof typeof errors, label: string, child: ReactNode) => (
     <div className={`vk-validation-field ${errors[name] ? 'is-error' : ''}`}>
@@ -294,12 +316,14 @@ function ChannelEditor({
           <RefreshCw size={13} className={`mr-1 inline ${channelBusy === 'test' ? 'animate-spin' : ''}`} aria-hidden="true" />获取模型列表
         </button>
         {models.length > 0 && (
-          <div className="relative shrink-0">
+          <div ref={modelMenuRef} className="relative shrink-0">
             <button type="button" data-testid={`vk-channel-models-menu-${draft.id}`} aria-label="选择模型" title="选择模型" className="vk-icon-action inline-flex h-9 w-9 items-center justify-center rounded-lg" style={outlineStyle} onClick={() => setModelMenuOpen((open) => !open)}>
               <ChevronDown size={16} aria-hidden="true" />
             </button>
-            {modelMenuOpen && <div role="listbox" className="absolute right-0 top-[calc(100%+0.35rem)] z-20 max-h-48 min-w-[14rem] overflow-auto rounded-lg p-1 shadow-xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-              {models.map((model) => <button key={model} type="button" role="option" aria-selected={model === draft.model_id} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-white/5" onClick={() => { onPatchModel(draft, model); setModelMenuOpen(false) }}>{model}</button>)}
+            {modelMenuOpen && <div role="listbox" className="vk-glass-menu absolute right-0 top-[calc(100%+0.35rem)] z-20 max-h-48 min-w-[14rem] overflow-auto rounded-lg p-1">
+              {models.map((model) => <button key={model} type="button" role="option" aria-selected={model === draft.model_id} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-white/5" onClick={() => { onPatchModel(draft, model); setModelMenuOpen(false) }}>
+                <OverflowTooltip text={model} />
+              </button>)}
             </div>}
           </div>
         )}
@@ -414,11 +438,15 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [channelBusy, setChannelBusy] = useState<Record<string, string>>({})
   const [modalSession, setModalSession] = useState<{ id: string; original: Draft | null } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
+  const savingRef = useRef(false)
+  const ccSwitchPickerRef = useRef<HTMLDivElement>(null)
   const modalId = modalSession?.id ?? null
+  useDismissOnOutside(ccSwitchPickerRef, ccSwitchPickerOpen, () => setCcSwitchPickerOpen(false))
 
   const load = useCallback(async () => {
     try {
@@ -507,6 +535,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   /** 从 cc-switch 导一条:地址、模型、接口风格、请求头、key 一次到位。 */
   const importFromCcSwitch = async (candidate: VkProviderSettings['cc_switch']['candidates'][number]) => {
+    setCcSwitchPickerOpen(false)
     setBusy(`ccswitch:${candidate.ref}`)
     setError(null)
     try {
@@ -520,7 +549,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         api_key, key_touched: true, enabled: true,
       }
       openNewDraft(imported)
-      setNotice(`已从 cc-switch 导入「${channel.name}」，按「保存」后生效`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '从 cc-switch 导入失败')
     } finally {
@@ -528,13 +556,67 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }
 
+  const channelPayload = (items: Draft[]): VkChannelPayload[] => items.map((draft) => ({
+    id: draft.id, name: draft.name, base_url: draft.base_url, model_id: draft.model_id,
+    key_env: draft.key_env, api_style: draft.api_style,
+    reasoning_effort: draft.reasoning_effort || null,
+    extra_headers: draft.extra_headers,
+    enabled: draft.enabled,
+    // 没碰过就不传 api_key —— 表示「不动已存的那把」,而不是清空。
+    ...(draft.key_touched ? { api_key: draft.api_key } : {}),
+  }))
+
+  const persist = async (
+    nextDrafts: Draft[],
+    nextRoles: Record<string, string>,
+    nextRoleFallbacks: Record<string, string[]>,
+    showNotice = false,
+  ): Promise<boolean> => {
+    if (savingRef.current) return false
+    savingRef.current = true
+    setSaving(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await saveVkProviderSettings({
+        channels: channelPayload(nextDrafts), roles: nextRoles, role_fallbacks: nextRoleFallbacks,
+      }, baseUrl)
+      if (showNotice) {
+        setNotice([
+          '已保存并立即生效',
+          ...result.normalization_notes,
+          result.keys_written.length ? `已安全保存 ${result.keys_written.length} 把 key` : '',
+        ].filter(Boolean).join('；'))
+      }
+      // 角色选择、启停、删除和备用顺序采用乐观更新。服务端保存响应不含完整
+      // settings，立即重新读取会把尚未刷新的旧快照覆盖回页面。弹窗保存仍回读，
+      // 以接收服务端的规范化结果。
+      if (showNotice) await load()
+      onSaved?.()
+      return true
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '模型配置保存失败')
+      void load()
+      return false
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  const save = () => persist(drafts, roles, roleFallbacks, true)
+
   const removeChannel = (id: string) => {
-    setDrafts((list) => list.filter((d) => d.id !== id))
+    const nextDrafts = drafts.filter((draft) => draft.id !== id)
+    const nextRoles = Object.fromEntries(Object.entries(roles).filter(([, value]) => value !== id))
+    const nextRoleFallbacks = Object.fromEntries(
+      Object.entries(roleFallbacks).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
+    )
+    setDrafts(nextDrafts)
     setModalSession((current) => current?.id === id ? null : current)
-    setRoles((current) => Object.fromEntries(Object.entries(current).filter(([, v]) => v !== id)))
-    setRoleFallbacks((current) => Object.fromEntries(
-      Object.entries(current).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
-    ))
+    setRoles(nextRoles)
+    setRoleFallbacks(nextRoleFallbacks)
+    void persist(nextDrafts, nextRoles, nextRoleFallbacks)
   }
 
   const reuseChannel = (draft: Draft) => {
@@ -554,31 +636,48 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }
 
   const setChannelEnabled = (id: string, enabled: boolean) => {
-    patch(id, { enabled })
-    if (enabled) return
-    setRoles((current) => Object.fromEntries(Object.entries(current).filter(([, value]) => value !== id)))
-    setRoleFallbacks((current) => Object.fromEntries(
-      Object.entries(current).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
-    ))
+    const nextDrafts = drafts.map((draft) => draft.id === id ? { ...draft, enabled } : draft)
+    const nextRoles = enabled ? roles : Object.fromEntries(Object.entries(roles).filter(([, value]) => value !== id))
+    const nextRoleFallbacks = enabled ? roleFallbacks : Object.fromEntries(
+      Object.entries(roleFallbacks).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
+    )
+    setDrafts(nextDrafts)
+    setRoles(nextRoles)
+    setRoleFallbacks(nextRoleFallbacks)
+    void persist(nextDrafts, nextRoles, nextRoleFallbacks)
+  }
+
+  const setRole = (role: string, value: string) => {
+    const nextRoles = { ...roles }
+    if (value) nextRoles[role] = value
+    else delete nextRoles[role]
+    setRoles(nextRoles)
+    void persist(drafts, nextRoles, roleFallbacks)
   }
 
   const patchRoleFallback = (role: string, index: number, value: string) => {
-    setRoleFallbacks((current) => {
-      const next = [...(current[role] ?? [])]
-      if (value) next[index] = value
-      else next.splice(index, 1)
-      return { ...current, [role]: next }
-    })
+    const next = [...(roleFallbacks[role] ?? [])]
+    if (value) next[index] = value
+    else next.splice(index, 1)
+    const nextRoleFallbacks = { ...roleFallbacks, [role]: next }
+    setRoleFallbacks(nextRoleFallbacks)
+    void persist(drafts, roles, nextRoleFallbacks)
   }
 
   const moveRoleFallback = (role: string, index: number, offset: -1 | 1) => {
-    setRoleFallbacks((current) => {
-      const next = [...(current[role] ?? [])]
-      const target = index + offset
-      if (target < 0 || target >= next.length) return current
-      ;[next[index], next[target]] = [next[target], next[index]]
-      return { ...current, [role]: next }
-    })
+    const next = [...(roleFallbacks[role] ?? [])]
+    const target = index + offset
+    if (target < 0 || target >= next.length) return
+    ;[next[index], next[target]] = [next[target], next[index]]
+    const nextRoleFallbacks = { ...roleFallbacks, [role]: next }
+    setRoleFallbacks(nextRoleFallbacks)
+    void persist(drafts, roles, nextRoleFallbacks)
+  }
+
+  const addRoleFallback = (role: string, channelId: string) => {
+    const nextRoleFallbacks = { ...roleFallbacks, [role]: [...(roleFallbacks[role] ?? []), channelId] }
+    setRoleFallbacks(nextRoleFallbacks)
+    void persist(drafts, roles, nextRoleFallbacks)
   }
 
   const reveal = async (draft: Draft) => {
@@ -630,37 +729,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }
 
-  const save = async (): Promise<boolean> => {
-    setSaving(true)
-    setError(null)
-    setNotice(null)
-    try {
-      const payload: VkChannelPayload[] = drafts.map((d) => ({
-        id: d.id, name: d.name, base_url: d.base_url, model_id: d.model_id,
-        key_env: d.key_env, api_style: d.api_style,
-        reasoning_effort: d.reasoning_effort || null,
-        extra_headers: d.extra_headers,
-        enabled: d.enabled,
-        // 没碰过就不传 api_key —— 表示「不动已存的那把」,而不是清空。
-        ...(d.key_touched ? { api_key: d.api_key } : {}),
-      }))
-      const result = await saveVkProviderSettings({ channels: payload, roles, role_fallbacks: roleFallbacks }, baseUrl)
-      setNotice([
-        '已保存并立即生效',
-        ...result.normalization_notes,
-        result.keys_written.length ? `已安全保存 ${result.keys_written.length} 把 key` : '',
-      ].filter(Boolean).join('；'))
-      await load()
-      onSaved?.()
-      return true
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '模型配置保存失败')
-      return false
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const hasModalSelection = () => {
     const selection = window.getSelection()
     const modal = document.querySelector('[data-testid="vk-provider-modal"]')
@@ -703,11 +771,51 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="text-sm font-medium">模型配置</div>
-        <button type="button" data-testid="vk-channel-add" onClick={addChannel}
-          className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium"
-          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
-          <Plus size={14} aria-hidden="true" /> 创建配置
-        </button>
+        <div className="flex items-center gap-2">
+          {settings.cc_switch.available && (
+            <div ref={ccSwitchPickerRef} className="relative">
+              <ActionIconButton
+                testId="vk-ccswitch-import"
+                label="从 cc-switch 导入配置"
+                onClick={() => setCcSwitchPickerOpen((open) => !open)}
+                disabled={busy !== null || saving}
+              >
+                <img src="/cc-switch-icon.png" alt="" aria-hidden="true" className="h-4 w-4" />
+              </ActionIconButton>
+              {ccSwitchPickerOpen && (
+                <div data-testid="vk-ccswitch-picker" role="menu" className="vk-glass-menu absolute right-0 top-10 z-20 min-w-56 rounded-lg p-1">
+                  {settings.cc_switch.candidates.map((candidate) => (
+                    <button
+                      key={candidate.ref}
+                      type="button"
+                      role="menuitem"
+                      data-testid={`vk-ccswitch-${candidate.ref}`}
+                      disabled={busy !== null || saving}
+                      title={`从 cc-switch 导入：${candidate.base_url} · ${candidate.model_id || '未指定模型'} · ${candidate.masked_key}`}
+                      onClick={() => void importFromCcSwitch(candidate)}
+                      className="block w-full rounded-md px-2 py-1.5 text-left text-xs disabled:opacity-50"
+                      style={{ color: 'var(--color-fg)' }}
+                    >
+                      <OverflowTooltip text={candidate.name} labelClassName="text-xs" />
+                      <OverflowTooltip text={candidate.model_id || '未指定模型'} labelClassName="text-[0.7rem]" labelStyle={{ color: 'var(--color-fg-dim)' }} />
+                    </button>
+                  ))}
+                  {settings.cc_switch.skipped.map((note) => (
+                    <div key={note} data-testid="vk-ccswitch-skipped" className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{note}</div>
+                  ))}
+                  {settings.cc_switch.candidates.length === 0 && settings.cc_switch.skipped.length === 0 && (
+                    <div className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>未发现可导入配置</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          <button type="button" data-testid="vk-channel-add" onClick={addChannel}
+            className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium"
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
+            <Plus size={14} aria-hidden="true" /> 创建配置
+          </button>
+        </div>
       </div>
 
       {/* —— 通道清单 —— */}
@@ -728,30 +836,41 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             const showMasked = !draft.key_touched && !draft.revealed && draft.key_masked !== ''
             let upstream = draft.base_url || '未填写上游地址'
             try { upstream = draft.base_url ? new URL(draft.base_url).hostname : upstream } catch { /* show the raw draft */ }
-            const statusLabel = result
-              ? (result.ok ? '连接正常' : '连接失败')
-              : (draft.enabled ? '已启用' : '已禁用')
-            const statusColor = result
-              ? (result.ok ? 'var(--color-success)' : 'var(--color-danger)')
-              : (draft.enabled ? 'var(--color-success)' : 'var(--color-warning)')
+            const statusLabel = !draft.enabled
+              ? '已禁用'
+              : (result ? (result.ok ? '连接正常' : '连接失败') : '已启用')
+            const statusColor = !draft.enabled
+              ? 'var(--color-warning)'
+              : (result
+                ? (result.ok ? 'var(--color-success)' : 'var(--color-danger)')
+                : 'var(--color-success)')
             return (
               <div key={draft.id} data-testid={`vk-channel-${draft.id}`} className="min-w-[56rem] px-3 py-3"
                 style={{ background: 'var(--color-canvas)' }}>
                 <div className="grid grid-cols-[1fr_1.35fr_1fr_.7fr_minmax(22rem,auto)] items-center gap-3">
-                  <div data-testid={`vk-channel-name-${draft.id}`} className="truncate text-sm font-medium">
-                    {draft.name || '未命名配置'}
-                  </div>
+                  <OverflowTooltip
+                    testId={`vk-channel-name-${draft.id}`}
+                    text={draft.name || '未命名配置'}
+                    labelClassName="text-sm font-medium"
+                  />
                   <div className="min-w-0">
                     <div className="truncate text-xs" style={{ color: 'var(--color-fg)' }}>
                       {showMasked ? draft.key_masked : (draft.key_touched && draft.api_key ? '未保存 key' : '未设置 key')}
                     </div>
-                    <div className="mt-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>{upstream}</div>
+                    <OverflowTooltip
+                      text={upstream}
+                      className="mt-1"
+                      labelClassName="text-xs"
+                      labelStyle={{ color: 'var(--color-fg-dim)' }}
+                    >
+                      {upstream}
+                    </OverflowTooltip>
                     {saved?.key_from_environment && (
                       <div className="mt-1 truncate text-xs" style={{ color: 'var(--color-warning)' }}>key 来自系统环境变量，优先生效</div>
                     )}
                   </div>
                   <div className="min-w-0">
-                    <div className="truncate text-sm" style={{ color: 'var(--color-fg)' }}>{draft.model_id || '未指定模型'}</div>
+                    <OverflowTooltip text={draft.model_id || '未指定模型'} labelClassName="text-sm" labelStyle={{ color: 'var(--color-fg)' }} />
                     <div className="mt-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>{draft.api_style}</div>
                   </div>
                   <div className="flex items-center gap-2 text-xs" style={{ color: statusColor }}>
@@ -759,7 +878,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                     <span>{statusLabel}</span>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-1">
-                    <ActionIconButton testId={`vk-channel-reuse-${draft.id}`} label="复用" onClick={() => reuseChannel(draft)}>
+                    <ActionIconButton testId={`vk-channel-reuse-${draft.id}`} label="复用" onClick={() => reuseChannel(draft)} disabled={saving}>
                       <Copy size={14} aria-hidden="true" />
                     </ActionIconButton>
                     {modalId !== draft.id && (
@@ -767,22 +886,17 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                         testId={`vk-channel-test-${draft.id}`}
                         label={channelBusy[draft.id] === 'test' ? '测试中…' : '测试连接'}
                         onClick={() => { void runTest(draft) }}
-                        disabled={Boolean(channelBusy[draft.id])}
+                        disabled={Boolean(channelBusy[draft.id]) || saving}
                       >
                         <RefreshCw size={14} className={channelBusy[draft.id] === 'test' ? 'animate-spin' : ''} aria-hidden="true" />
                       </ActionIconButton>
                     )}
-                    <EditActionButton testId={`vk-channel-edit-${draft.id}`} onClick={() => openEditor(draft)} />
-                    <DeleteActionButton testId={`vk-channel-remove-${draft.id}`} onClick={() => removeChannel(draft.id)} />
-                    <EnableActionButton testId={`vk-channel-toggle-${draft.id}`} enabled={draft.enabled} onClick={() => setChannelEnabled(draft.id, !draft.enabled)} />
+                    <EditActionButton testId={`vk-channel-edit-${draft.id}`} onClick={() => openEditor(draft)} disabled={saving} />
+                    <DeleteActionButton testId={`vk-channel-remove-${draft.id}`} onClick={() => removeChannel(draft.id)} disabled={saving} />
+                    <EnableActionButton testId={`vk-channel-toggle-${draft.id}`} enabled={draft.enabled} onClick={() => setChannelEnabled(draft.id, !draft.enabled)} disabled={saving} />
                   </div>
                 </div>
 
-                {!draft.enabled && (
-                  <div data-testid={`vk-channel-disabled-${draft.id}`} className="mt-2 text-xs" style={{ color: 'var(--color-warning)' }}>
-                    已禁用，不会用于新任务；配置仍保留，可随时重新启用或删除。
-                  </div>
-                )}
                 {modalId !== draft.id && result && (
                   <div data-testid={`vk-channel-result-${draft.id}`} className="mt-2 text-xs"
                     style={{ color: result.ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
@@ -892,12 +1006,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 className="rounded-lg px-2 py-1.5 text-sm outline-none"
                 style={{ ...fieldStyle, minWidth: '12rem' }}
                 value={roles[role] ?? ''}
-                onChange={(e) => setRoles((r) => {
-                  const next = { ...r }
-                  if (e.target.value) next[role] = e.target.value
-                  else delete next[role]
-                  return next
-                })}
+                disabled={saving}
+                onChange={(event) => setRole(role, event.target.value)}
               >
                 {/* 没有"跟随默认"了 —— 没指就是没指,跑到那一步会失败,得说出来。 */}
                 <option value="">— 还没指定 —</option>
@@ -914,6 +1024,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                       className="rounded-lg px-2 py-1.5 text-xs outline-none"
                       style={{ ...fieldStyle, minWidth: '12rem' }}
                       value={channelId}
+                      disabled={saving}
                       onChange={(event) => patchRoleFallback(role, index, event.target.value)}
                     >
                       <option value="">— 删除这条备用 —</option>
@@ -921,19 +1032,19 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                         <option key={draft.id} value={draft.id} disabled={draft.id !== channelId && selected.has(draft.id)}>{draft.name}</option>
                       ))}
                     </select>
-                    <button type="button" aria-label={`上移${settings.role_labels[role]}备用 ${index + 1}`} disabled={index === 0}
+                    <button type="button" aria-label={`上移${settings.role_labels[role]}备用 ${index + 1}`} disabled={saving || index === 0}
                       onClick={() => moveRoleFallback(role, index, -1)} className={outlineButton} style={outlineStyle}><ChevronUp size={13} /></button>
-                    <button type="button" aria-label={`下移${settings.role_labels[role]}备用 ${index + 1}`} disabled={index === fallbacks.length - 1}
+                    <button type="button" aria-label={`下移${settings.role_labels[role]}备用 ${index + 1}`} disabled={saving || index === fallbacks.length - 1}
                       onClick={() => moveRoleFallback(role, index, 1)} className={outlineButton} style={outlineStyle}><ChevronDown size={13} /></button>
-                    <button type="button" aria-label={`删除${settings.role_labels[role]}备用 ${index + 1}`}
+                    <button type="button" aria-label={`删除${settings.role_labels[role]}备用 ${index + 1}`} disabled={saving}
                       onClick={() => patchRoleFallback(role, index, '')} className={outlineButton} style={outlineStyle}><Trash2 size={13} /></button>
                   </div>
                 ))}
                 <button type="button" data-testid={`vk-role-fallback-add-${role}`}
-                  disabled={!primary || !available.some((draft) => !selected.has(draft.id))}
+                  disabled={saving || !primary || !available.some((draft) => !selected.has(draft.id))}
                   onClick={() => {
                     const next = available.find((draft) => !selected.has(draft.id))
-                    if (next) setRoleFallbacks((current) => ({ ...current, [role]: [...fallbacks, next.id] }))
+                    if (next) addRoleFallback(role, next.id)
                   }} className={outlineButton} style={outlineStyle}>
                   <Plus size={13} className="mr-1 inline" />添加备用通道
                 </button>
@@ -959,41 +1070,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             ↓ 导入 {item.name}
           </button>
         ))}
-        {settings.cc_switch.available && settings.cc_switch.candidates.map((candidate) => (
-          <button key={candidate.ref} type="button"
-            data-testid={`vk-ccswitch-${candidate.ref}`}
-            disabled={busy !== null}
-            title={`从 cc-switch 导入：${candidate.base_url} · ${candidate.model_id || '未指定模型'} · ${candidate.masked_key}`}
-            onClick={() => void importFromCcSwitch(candidate)}
-            className={outlineButton} style={{ ...outlineStyle, color: 'var(--color-accent)' }}>
-            ↓ {candidate.name}
-          </button>
-        ))}
-      </div>
-      {/* 认得出但导不了的,说清楚为什么 —— 比让它凭空消失强。 */}
-      <div data-testid="vk-ccswitch">
-        {settings.cc_switch.skipped.map((note) => (
-          <div key={note} className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>· {note}</div>
-        ))}
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          data-testid="vk-provider-save"
-          onClick={() => { void save() }}
-          disabled={saving}
-          className="rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-50"
-          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-        >
-          {saving ? '保存中…' : '保存'}
-        </button>
-        {/* 没指到通道的角色点名说 —— 跑到那一步才失败更糟。 */}
-        {settings.unassigned_roles.length > 0 && (
-          <span data-testid="vk-unassigned" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            还没指定：{settings.unassigned_roles.map((r) => settings.role_labels[r]).join('、')}
-          </span>
-        )}
       </div>
       {notice && <div data-testid="vk-provider-notice" role="status" className="vk-provider-feedback vk-provider-feedback--success">{notice}</div>}
       {error && <div data-testid="vk-provider-error" role="alert" className="vk-provider-feedback vk-provider-feedback--error">{error}</div>}

@@ -105,6 +105,10 @@ function ok(value = {}) {
   return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
+function occurrences(text, needle) {
+  return text.split(needle).length - 1
+}
+
 afterEach(() => {
   proxyFetch.mockReset()
   proxyAgents.splice(0)
@@ -280,9 +284,13 @@ describe('WrssRuntimeManager', () => {
     expect(manager.status().progress_log.join('\n')).not.toContain('access-token')
     const receipt = JSON.parse(readFileSync(join(root, 'wrss', 'receipt.json'), 'utf8'))
     const patchedMain = readFileSync(join(receipt.sourceDir, 'main.py'), 'utf8')
+    const patchedIndex = readFileSync(join(receipt.sourceDir, 'static', 'index.html'), 'utf8')
     expect(patchedMain.match(/host="127\.0\.0\.1"/g)).toHaveLength(2)
     expect(patchedMain).not.toContain('host="0.0.0.0"')
     expect(patchedMain).not.toContain('os.environ.items()')
+    expect(patchedIndex).toContain('/static/pussycat-theme.css')
+    expect(patchedIndex).toContain('/static/pussycat-bootstrap.js')
+    expect(existsSync(join(receipt.sourceDir, 'static', 'pussycat-theme.css'))).toBe(true)
     expect(readFileSync(join(receipt.sourceDir, 'static', 'pussycat-bootstrap.js'), 'utf8')).toContain('localStorage.setItem')
     await manager.close()
   })
@@ -325,6 +333,8 @@ describe('WrssRuntimeManager', () => {
       .toContain('port: 8001')
     expect(readFileSync(join(unicodeHome, 'wrss', 'versions', version, 'src', 'static', 'index.html'), 'utf8'))
       .toContain('pussycat-bootstrap.js')
+    expect(readFileSync(join(unicodeHome, 'wrss', 'versions', version, 'src', 'static', 'index.html'), 'utf8'))
+      .toContain('pussycat-theme.css')
     await manager.close()
   })
 
@@ -354,6 +364,40 @@ describe('WrssRuntimeManager', () => {
     expect(probePythonImpl).toHaveBeenCalledTimes(1)
     expect(runStepImpl).not.toHaveBeenCalled()
     await manager.close()
+  })
+
+  it('patches an existing installed UI theme idempotently before each start', async () => {
+    const { root, bundle } = await fixture()
+    const installed = writeInstalled(root)
+    let starts = 0
+    const manager = new WrssRuntimeManager({
+      home: root,
+      bundleDir: bundle,
+      probePythonImpl: () => true,
+      getPortImpl: async () => 4330 + starts,
+      fetchImpl: async (url) => url.endsWith('/api/v1/wx/auth/login')
+        ? ok({ data: { access_token: `token-${starts}` } })
+        : ok(),
+      spawnImpl: () => {
+        starts += 1
+        const child = new EventEmitter()
+        child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+        child.kill = () => child.emit('close', 0)
+        return child
+      },
+      readyTimeoutMs: 100,
+      readyPollMs: 1,
+    })
+
+    await expect(manager.enable()).resolves.toMatchObject({ state: 'running' })
+    await manager.close()
+    await expect(manager.enable()).resolves.toMatchObject({ state: 'running' })
+    await manager.close()
+
+    const index = readFileSync(join(installed.sourceDir, 'static', 'index.html'), 'utf8')
+    expect(occurrences(index, '/static/pussycat-theme.css')).toBe(1)
+    expect(occurrences(index, '/static/pussycat-bootstrap.js')).toBe(1)
+    expect(existsSync(join(installed.sourceDir, 'static', 'pussycat-theme.css'))).toBe(true)
   })
 
   it('reinstalls when the Python probe fails and then starts the service', async () => {

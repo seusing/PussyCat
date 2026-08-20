@@ -95,7 +95,7 @@ describe('VkPanel', () => {
     ...over,
   })
 
-  it('想再查一次状态只有一个键 —— 原先「重新检测」和会话诊断/重建/检测已有环境挤在一起', async () => {
+  it('引擎和模型通道都就绪时不渲染健康状态条', async () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
@@ -104,20 +104,14 @@ describe('VkPanel', () => {
       'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
-
-    const before = calls.filter((c) => c.key === 'GET /vk/v1/health').length
-    await userEvent.click(screen.getByTestId('vk-refresh'))
-
-    // 一下点三路:健康、runtime、模型通道 —— 用户要的是"再查一次",不是查哪一路。
     await waitFor(() => {
-      expect(calls.filter((c) => c.key === 'GET /vk/v1/health').length).toBeGreaterThan(before)
+      expect(calls.some((c) => c.key === 'GET /vk/v1/providers')).toBe(true)
     })
-    await waitFor(() => expect(calls.some((c) => c.key === 'GET /vk/v1/runtime/status')).toBe(true))
-    await waitFor(() => expect(calls.some((c) => c.key === 'GET /vk/v1/providers')).toBe(true))
+    expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-refresh')).not.toBeInTheDocument()
   })
 
-  it('正常时版面上没有第二个同义的检测按钮', async () => {
+  it('正常时版面上没有健康状态动作', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
@@ -126,17 +120,16 @@ describe('VkPanel', () => {
       'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
 
-    expect(screen.queryByTestId('vk-health-recheck')).not.toBeInTheDocument()
-    // 开发者信息里也不再套第二层「环境与能力管理」。
+    expect(screen.queryByTestId('vk-refresh')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-runtime-details-toggle')).not.toBeInTheDocument()
   })
 
-  it('模型通道没配时,在提交之前就说出来 —— 不让用户跑满 7 分半才发现', async () => {
+  it('模型通道没配时阻止提交并显示顶部提醒', async () => {
     // 真机上的原始症状:下载 + 转写成功耗时 7m33s,最后一步 401。通道不通必须在
     // 第 1 秒可见,而不是第 7.5 分钟。
-    stubRoutes({
+    const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
       'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
@@ -145,12 +138,17 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
 
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎缺少模型通道'))
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('请完成模型配置选择'))
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('去配置')
-    await userEvent.click(screen.getByTestId('vk-verdict-action'))
-    expect(useAppStore.getState().activeModule).toBe('providers')
-    // 结论 + 动作,到此为止:按钮已经说清下一步,再补一段解释后果的话只是噪声。
-    expect(screen.queryByTestId('vk-verdict-note')).not.toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('vk-source'), 'https://example.com/blocked')
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+
+    expect(calls.some((call) => call.key === 'POST /vk/v1/preview')).toBe(false)
+    expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(false)
+    expect(screen.getByTestId('vk-task-banner')).toHaveTextContent('请先完成模型配置选择')
+    expect(screen.getByTestId('vk-task-banner')).toHaveAttribute('data-tone', 'warning')
+    expect(useAppStore.getState().activeModule).not.toBe('providers')
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('请选择基础处理和深度分析使用的模型配置。')
   })
 
   it('配好之后回到一句就绪,视频页不再渲染模型配置入口或表单', async () => {
@@ -163,7 +161,7 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
 
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
     expect(screen.queryByTestId('vk-provider-toggle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument()
   })
@@ -191,7 +189,7 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
 
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
     expect(screen.queryByTestId('vk-verdict-note')).not.toBeInTheDocument()
   })
 
@@ -204,13 +202,13 @@ describe('VkPanel', () => {
       'GET /vk/v1/providers': { body: { configured: true, channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] } } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
     expect(screen.getByTestId('vk-capability-toggle')).toBeInTheDocument()
     expect(screen.queryByTestId('vk-provider-toggle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-provider-form')).not.toBeInTheDocument()
   })
 
-  it('一切正常时只有一句结论,不给按钮 —— 没问题就没有要用户点的东西', async () => {
+  it('一切正常时不渲染引擎状态条', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
@@ -219,7 +217,7 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
 
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
     expect(screen.queryByTestId('vk-verdict-action')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
   })
@@ -305,7 +303,7 @@ describe('VkPanel', () => {
       'GET /vk/v1/jobs': { body: [] },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
     for (const id of ['vk-source', 'vk-user-goal', 'vk-preset', 'vk-content-type', 'vk-media-policy',
       'vk-budget-profile', 'vk-max-cost', 'vk-reasoning-effort', 'vk-audit',
       'vk-cap-word_timestamps', 'vk-cap-speaker_diarization', 'vk-cap-visual_evidence',
@@ -322,6 +320,13 @@ describe('VkPanel', () => {
       screen.getByTestId('vk-reasoning-effort'),
     )
     expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
+    expect(screen.queryByText('新解析任务')).not.toBeInTheDocument()
+    expect(screen.queryByText('视频链接')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vk-source')).toHaveAttribute('rows', '6')
+    expect(screen.getByRole('button', { name: '导入链接文件' })).toHaveAttribute('title', '导入链接文件')
+    expect(screen.getByRole('button', { name: '导入链接文件' })).toHaveAttribute('data-tooltip', '导入链接文件')
+    expect(screen.getByRole('button', { name: '导入链接文件' })).toHaveClass('vk-source-file-input')
+    expect(screen.getByTestId('vk-source-file')).toHaveAttribute('accept', '.txt,.csv,.md,text/plain,text/csv')
   })
 
   it('imports a newline-delimited text file, removes duplicates, and identifies each source', async () => {
@@ -1022,7 +1027,7 @@ describe('VkPanel', () => {
       },
     })
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎就绪'))
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
     expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
     await new Promise((resolve) => setTimeout(resolve, 80))
     expect(calls.filter((item) => item.key === 'GET /vk/v1/health').length).toBeLessThanOrEqual(2)

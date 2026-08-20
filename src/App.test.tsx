@@ -99,6 +99,44 @@ test('登录和视频模块不显示命令列表操作', async () => {
   expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
 })
 
+test('公众号首次访问后常驻复用 iframe，切走再回来不重新拉状态', async () => {
+  const wrssStatusCalls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (String(url).includes('/vk/v1/integrations/wrss')) {
+      wrssStatusCalls.push(String(url))
+      return new Response(JSON.stringify({
+        state: 'running',
+        summary: '公众号界面已就绪',
+        reason_code: null,
+        progress_log: [],
+        version: '1.5.2',
+        size_label: '约 356 MB（按需下载）',
+        checked_at: '2026-08-11T00:00:00Z',
+        ui_url: 'http://127.0.0.1:4567',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }))
+  useAppStore.setState({ catalogStatus: 'ready', activeModule: 'login' })
+  render(<App catalogSource={sourceOf([async () => ({ snapshot: SNAP() })])} baseUrl="http://127.0.0.1:9999" />)
+
+  expect(screen.queryByTestId('wrss-iframe')).not.toBeInTheDocument()
+  expect(wrssStatusCalls).toHaveLength(0)
+  await userEvent.click(screen.getByTestId('module-tab-wrss'))
+  const frame = await screen.findByTestId('wrss-iframe')
+  fireEvent.load(frame)
+  await waitFor(() => expect(frame).toHaveClass('is-ready'))
+  await waitFor(() => expect(screen.queryByTestId('wrss-skeleton')).not.toBeInTheDocument())
+  expect(wrssStatusCalls).toHaveLength(1)
+
+  await userEvent.click(screen.getByTestId('module-tab-login'))
+  expect(screen.getByTestId('wrss-iframe')).toBe(frame)
+  await userEvent.click(screen.getByTestId('module-tab-wrss'))
+  expect(screen.getByTestId('wrss-iframe')).toBe(frame)
+  expect(screen.queryByTestId('wrss-skeleton')).not.toBeInTheDocument()
+  expect(wrssStatusCalls).toHaveLength(1)
+})
+
 test('刷新失败 → 目录保持 ready(不出错误屏),按钮旁提示', async () => {
   const source = sourceOf([
     async () => ({ snapshot: SNAP() }),

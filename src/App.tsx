@@ -62,6 +62,7 @@ export default function App({
   const catalogStatus = useAppStore((s) => s.catalogStatus)
   const catalogError = useAppStore((s) => s.catalogError)
   const activeModule = useAppStore((s) => s.activeModule)
+  const [wrssVisited, setWrssVisited] = useState(() => activeModule === 'wrss')
   const [selectedVkJobId, setSelectedVkJobId] = useState<string | null>(null)
   const [vkRightPanelOpen, setVkRightPanelOpen] = useState(false)
   const [vkJobsRevision, setVkJobsRevision] = useState(0)
@@ -115,6 +116,10 @@ export default function App({
   }, [host, catalogSource, mode, setCommands, setCatalogStatus, setMode])
 
   useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
+
+  useEffect(() => {
+    if (activeModule === 'wrss') setWrssVisited(true)
+  }, [activeModule])
 
   // 登录检查的**并发驱动**。
   //
@@ -304,36 +309,49 @@ export default function App({
 
   const pendingAcknowledgement = useAppStore((s) => s.pendingAcknowledgement)
 
+  const activeFullPage = activeModule === 'commands'
+    ? <InspirationPanel
+        onRun={executeSelected}
+        onCancel={onCancel}
+        onRerun={executeSelected}
+        registerSubmit={registerSubmit}
+        searchRef={searchInputRef}
+      />
+    : activeModule === 'login'
+      ? <LoginStatusPanel />
+      : activeModule === 'vk'
+        ? <VkPanel
+          baseUrl={baseUrl}
+          selectedJobId={selectedVkJobId}
+          refreshToken={vkJobsRevision}
+          onSelectJob={(jobId) => {
+            setSelectedVkJobId(jobId)
+            setVkRightPanelOpen(!!jobId)
+          }}
+        />
+        : activeModule === 'providers'
+          ? <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} /></div>
+          : activeModule === 'radar'
+            ? <RadarPanel baseUrl={baseUrl} />
+            : null
+
+  const fullPage = (wrssVisited || activeModule === 'wrss')
+    ? (
+      <div className="app-page-stack">
+        <div className="app-page-stack-panel" hidden={activeModule === 'wrss'}>
+          {activeModule !== 'wrss' ? activeFullPage : null}
+        </div>
+        <div className="app-page-stack-panel" hidden={activeModule !== 'wrss'}>
+          <WrssPanel baseUrl={baseUrl} />
+        </div>
+      </div>
+    )
+    : activeFullPage
+
   return (
     <div data-testid="app-root" className="h-full">
       <AppShell
-        fullPage={
-          activeModule === 'commands'
-            ? <InspirationPanel
-                onRun={executeSelected}
-                onCancel={onCancel}
-                onRerun={executeSelected}
-                registerSubmit={registerSubmit}
-                searchRef={searchInputRef}
-              />
-            : activeModule === 'login'
-              ? <LoginStatusPanel />
-              : activeModule === 'vk'
-                ? <VkPanel
-                  baseUrl={baseUrl}
-                  selectedJobId={selectedVkJobId}
-                  refreshToken={vkJobsRevision}
-                  onSelectJob={(jobId) => {
-                    setSelectedVkJobId(jobId)
-                    setVkRightPanelOpen(!!jobId)
-                  }}
-                />
-                : activeModule === 'providers'
-                  ? <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} /></div>
-                  : activeModule === 'wrss'
-                    ? <WrssPanel baseUrl={baseUrl} />
-                    : <RadarPanel baseUrl={baseUrl} />
-        }
+        fullPage={fullPage}
         rightPanel={activeModule === 'vk'
           ? <VkTaskDetailSidebar
               jobId={selectedVkJobId}

@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { InlineLoader } from 'generative-loaders'
-import 'generative-loaders/styles.css'
 import {
   fetchVkWrssManagedStatus,
   postVkWrssEnable,
@@ -27,6 +25,8 @@ function isLoopbackUrl(value: unknown): value is string {
 export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
   const [status, setStatus] = useState<WrssManagedStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadedFrameUrl, setLoadedFrameUrl] = useState<string | null>(null)
+  const [exitedSkeletonUrl, setExitedSkeletonUrl] = useState<string | null>(null)
   const autoEnabled = useRef(false)
 
   const refresh = useCallback(async () => {
@@ -71,16 +71,32 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
 
   const state = status?.state ?? 'not-available'
   const logs = status?.progress_log ?? []
+  const runningUrl = state === 'running' && isLoopbackUrl(status?.ui_url) ? status.ui_url : null
+  const frameReady = !!runningUrl && loadedFrameUrl === runningUrl
+  const showSkeleton = !error && (
+    !status
+    || state === 'installed'
+    || state === 'installing'
+    || state === 'starting'
+    || (!!runningUrl && exitedSkeletonUrl !== runningUrl)
+  )
+
+  useEffect(() => {
+    if (!frameReady || !runningUrl) return
+    const timer = window.setTimeout(() => setExitedSkeletonUrl(runningUrl), 420)
+    return () => window.clearTimeout(timer)
+  }, [frameReady, runningUrl])
 
   return (
     <section className="wrss-panel" data-testid="wrss-panel" aria-label="公众号">
-      {state === 'running' && isLoopbackUrl(status?.ui_url) ? (
+      {runningUrl ? (
         <iframe
-          className="wrss-iframe"
+          className={`wrss-iframe${frameReady ? ' is-ready' : ''}`}
           data-testid="wrss-iframe"
           title="公众号 WeRSS"
-          src={status.ui_url}
+          src={runningUrl}
           sandbox="allow-same-origin allow-scripts allow-forms allow-downloads allow-popups"
+          onLoad={() => setLoadedFrameUrl(runningUrl)}
         />
       ) : (
         <div className="wrss-card">
@@ -93,24 +109,10 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
 
           {error && <div role="alert" className="wrss-error">{error}</div>}
 
-          {(!status || state === 'installed') && (
-            <div className="wrss-loading" role="status">
-              <InlineLoader variant="spark" size={34} label="正在准备公众号" />
-              <strong>{state === 'installed' ? '正在启动公众号…' : '正在准备公众号…'}</strong>
-            </div>
-          )}
-
           {state === 'not-installed' && (
             <div className="wrss-ready">
               <p>首次启用会按需下载 WeRSS 运行环境，安装包大小 {SIZE_LABEL}。</p>
               <button type="button" className="wrss-primary" onClick={() => { void enable() }}>启用公众号</button>
-            </div>
-          )}
-
-          {(state === 'installing' || state === 'starting') && (
-            <div className="wrss-loading" role="status">
-              <InlineLoader variant="spark" size={34} label={state === 'installing' ? '正在安装公众号' : '正在启动公众号'} />
-              <strong>{state === 'installing' ? '正在安装公众号…' : '正在启动公众号…'}</strong>
             </div>
           )}
 
@@ -131,6 +133,22 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
           )}
 
           {state === 'not-available' && !error && <p className="wrss-muted">公众号运行环境暂不可用。</p>}
+        </div>
+      )}
+      {showSkeleton && (
+        <div className={`wrss-skeleton${frameReady ? ' is-revealed' : ''}`} data-testid="wrss-skeleton" role="status" aria-label={
+          state === 'installing' ? '正在安装公众号' : state === 'starting' || state === 'installed' ? '正在启动公众号' : '正在准备公众号'
+        }>
+          <div className="wrss-skeleton-topbar" />
+          <div className="wrss-skeleton-body">
+            <div className="wrss-skeleton-sidebar">
+              {Array.from({ length: 7 }, (_, index) => <span key={index} />)}
+            </div>
+            <div className="wrss-skeleton-content">
+              <span className="wrss-skeleton-title" />
+              {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
+            </div>
+          </div>
         </div>
       )}
     </section>

@@ -22,8 +22,9 @@ export function UndoToast() {
   return (
     <div
       data-testid="undo-toast"
-      className="fixed bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-lg px-4 py-2 text-sm shadow-lg"
-      style={{ background: 'var(--color-panel)', color: 'var(--color-fg)', border: '1px solid var(--color-line)' }}
+      role="status"
+      aria-live="polite"
+      className="undo-toast fixed bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-lg px-4 py-2 text-sm"
     >
       <span>{label}</span>
       <button data-testid="undo-button" onClick={undo} style={{ color: 'var(--color-accent)' }}>撤销</button>

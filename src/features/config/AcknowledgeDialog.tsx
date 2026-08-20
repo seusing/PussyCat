@@ -94,9 +94,8 @@ export function AcknowledgeDialog({ pending, onConfirmed, onCancel }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)' }}>
-      <div data-testid="acknowledge-dialog" className="w-full max-w-md rounded-lg p-4 text-sm shadow-lg"
-        style={{ background: 'var(--color-panel)', color: 'var(--color-fg)', border: '1px solid var(--color-line)' }}>
+    <div className="app-glass-dialog-backdrop fixed inset-0 z-50 flex items-center justify-center">
+      <div data-testid="acknowledge-dialog" className="app-glass-dialog w-full max-w-md rounded-lg p-4 text-sm">
         <h3 className="mb-2 text-base font-semibold">确认执行「{command.name}」</h3>
         {/* 走 zhCopy 覆盖表,和命令详情页同一个来源。此前这里直接读 manifest 的
             description,于是同一条命令在左边配置区是中文、在确认框里是英文 —— 而确认框

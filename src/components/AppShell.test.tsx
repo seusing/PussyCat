@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import App from '../App'
 import AppShell from './AppShell'
 import type { HostBridge } from '../host/types'
@@ -75,6 +75,16 @@ test('默认两栏都显示:grid 列模板含五段,两条分隔条都在,两个
   expect(gridTemplate()).toBe(`${NAV_DEFAULT}px auto minmax(${CONFIG_MIN}px, 1fr) auto ${RUNS_DEFAULT}px`)
   expect(screen.getByTestId('toggle-nav')).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByTestId('toggle-runs')).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('header shows the active module title without the duplicated brand label', () => {
+  useAppStore.setState({ activeModule: 'providers' })
+  renderShell()
+
+  const header = screen.getByTestId('app-header')
+  expect(within(header).getByText('模型配置')).toBeInTheDocument()
+  expect(within(header).queryByText('爪爪')).not.toBeInTheDocument()
+  expect(screen.getByTestId('app-sidebar')).toHaveTextContent('爪爪')
 })
 
 test('只隐藏左栏:col-nav 与 separator-nav 一并从 DOM 消失,列模板收缩为三段,右栏不受影响', () => {

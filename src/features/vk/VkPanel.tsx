@@ -35,7 +35,7 @@ import type {
   VkRuntimeStatus,
   VkRuntimeCandidate,
 } from '../../host/vkClient'
-import { missingCapabilityNote, runtimeToAdopt } from './runtimePick'
+import { runtimeToAdopt } from './runtimePick'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
@@ -322,6 +322,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const base = baseUrl
   // —— 健康(BrowserBridgeStatus 姿势:进入时查一次 + 手动重检;前端只渲染不解释)——
   const [health, setHealth] = useState<VkHealth | null>(null)
+  const [healthChecked, setHealthChecked] = useState(false)
   const [healthChecking, setHealthChecking] = useState(false)
   const healthGen = useRef(0)
   const checkHealth = useCallback(async ({ manageBusy = true }: { manageBusy?: boolean } = {}) => {
@@ -329,9 +330,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     if (manageBusy) setHealthChecking(true)
     try {
       const result = await fetchVkHealth(base)
-      if (gen === healthGen.current) setHealth(result)
+      if (gen === healthGen.current) {
+        setHealth(result)
+        setHealthChecked(true)
+      }
     } catch {
-      if (gen === healthGen.current) setHealth(null)
+      if (gen === healthGen.current) {
+        setHealth(null)
+        setHealthChecked(true)
+      }
     } finally {
       if (manageBusy && gen === healthGen.current) setHealthChecking(false)
     }
@@ -342,7 +349,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   //    installing 期间 2s 轮询真实安装输出(不造百分比)——
   const [runtime, setRuntime] = useState<VkRuntimeStatus | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
-  const [runtimeCandidates, setRuntimeCandidates] = useState<VkRuntimeCandidate[] | null>(null)
   const previousRuntimeState = useRef<string | null>(null)
   const refreshRuntime = useCallback(async () => {
     try {
@@ -353,9 +359,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   }, [base])
   const refreshRuntimeCandidates = useCallback(async () => {
     try {
-      const result = await postVkRuntimeDetect(base)
-      setRuntimeCandidates(result.candidates)
-      return result
+      return await postVkRuntimeDetect(base)
     } catch {
       return null
     }
@@ -471,10 +475,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     try {
       const adopted = await postVkRuntimeAdopt(candidate.pythonPath, base)
       setRuntime(adopted)
-      setRuntimeCandidates((items) => items?.map((item) => ({
-        ...item,
-        active: item.pythonPath === candidate.pythonPath,
-      })) ?? null)
       await checkHealth()
     } catch { /* 自动接入失败时保留当前环境，由健康结论显示真实可用状态。 */ }
   }
@@ -491,6 +491,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [maxCost, setMaxCost] = useState('')
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
+  const sourceFileInputRef = useRef<HTMLInputElement>(null)
 
   const handoff = useAppStore((s) => s.vkHandoff)
   useEffect(() => {
@@ -566,6 +567,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     if (submitInFlight.current) return
     const sources = sourceLines(source)
     if (sources.length === 0) return
+    if (providerConfigured === false) {
+      addTaskBanners([{
+        id: `provider-required:${crypto.randomUUID()}`,
+        message: '请先完成模型配置选择',
+        tone: 'warning',
+        createdAt: Date.now(),
+      }])
+      return
+    }
     submitInFlight.current = true
     setSubmitError(null)
     setPreviewing(true)
@@ -925,22 +935,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     visibleJobs.map((row) => [row.job_id, notifications[row.job_id] ?? true]),
   )
 
-  /**
-   * 整块面板的**唯一结论** —— 一行字,外加只在真出问题时才出现的一个按钮。
-   *
-   * 每一档都回答同两个问题:现在能不能用、不能用的话我该点什么。没有可点的
-   * (比如捆绑件缺失、正在安装中)就不放按钮 —— 一个点了没用的按钮比没有按钮更糟,
-   * 「重建」那个死按钮就是前车之鉴。
-   */
-  const activeCandidate = runtimeCandidates?.find((c) => c.active) ?? null
-  // The live health/receipt is authoritative after a capability install.
-  // Candidates are only a discovery snapshot and can legitimately be stale.
-  const liveCapabilitySource = health?.capabilities?.length
-    ? { capabilities: health.capabilities }
-    : runtime?.capabilities?.length
-      ? { capabilities: runtime.capabilities }
-      : activeCandidate
-  const verdict: { text: string; color: string; note?: string; action?: { label: string; run: () => void } } =
+  const verdict: { text: string; color: string; note?: string; action?: { label: string; run: () => void } } | null =
     runtime?.state === 'not-available'
       ? { text: '解析引擎不可用', color: 'var(--color-danger)', note: runtime.summary ?? '缺少随应用分发的安装件,请重新安装爪爪。' }
       : runtime?.state === 'installing'
@@ -957,20 +952,21 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               note: installError ?? '缺少本机解析运行环境，需要先完成一次准备。',
               action: { label: '一键准备', run: () => { void startInstall({ rebuild: false }) } },
             }
-            : !health || !['ok', 'ready'].includes(health.status)
+          : healthChecked && (!health || !['ok', 'ready'].includes(health.status))
               ? {
                 text: '解析引擎没有响应', color: 'var(--color-warning)',
                 note: health?.summary ?? '暂时联系不上解析引擎。',
                 action: { label: '重新检测', run: () => { void refreshEngineStatus() } },
               }
-              : providerConfigured === false
+              : healthChecked && providerConfigured === false
                 ? {
                   // 通道不通要在**第 1 秒**说,不是第 7.5 分钟。按钮已经说清了下一步,
                   // 再补一段解释后果的话只是噪声 —— 结论 + 动作,到此为止。
-                   text: '解析引擎缺少模型通道', color: 'var(--color-warning)',
+                   text: '请完成模型配置选择', color: 'var(--color-warning)',
+                  note: '请选择基础处理和深度分析使用的模型配置。',
                   action: { label: '去配置', run: () => useAppStore.getState().setActiveModule('providers') },
                 }
-                : { text: '解析引擎就绪', color: 'var(--color-success)', note: missingCapabilityNote(liveCapabilitySource) ?? undefined }
+                : null
 
   return (
     <div className="mx-auto max-w-5xl p-3 sm:p-6" data-testid="vk-panel">
@@ -981,55 +977,51 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           ))}
         </div>
       )}
-      {/* 健康条 */}
-      <InstallingBeam on={runtime?.state === 'installing'}>
-      <div className="mb-4 flex flex-col gap-2 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-        {/* 一句结论。正常时**只有这一行**,没有按钮 —— 路径、版本、能力清单、
-            环境列表全部收进下面默认折叠的开发者信息。用户关心的只有能不能用、
-            不能用怎么办;其余是给开发者的,不该占据版面。 */}
-        <div className="min-w-0 flex-1">
-          <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
-            {verdict.text}
-          </span>
-          {verdict.note && (
-            <span data-testid="vk-verdict-note" className="ml-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-              {verdict.note}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center justify-end gap-2">
-          {verdict.action && (
-            <button
-              type="button"
-              data-testid="vk-verdict-action"
-              onClick={verdict.action.run}
-              disabled={healthChecking && verdict.action.label === '重新检测'}
-              aria-busy={healthChecking && verdict.action.label === '重新检测'}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-sm font-medium disabled:opacity-50"
-              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-            >
-              {healthChecking && verdict.action.label === '重新检测' && <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />}
-              <span>{verdict.action.label}</span>
-            </button>
-          )}
-        {/* 想重新看一眼状态时只有这一个键。原先「重新检测」藏在开发者信息里、和
-            会话诊断/重建/检测已有环境挤成一排 —— 用户要的其实只是"再查一次"。 */}
-        <button
-          type="button"
-          data-testid="vk-refresh"
-          onClick={() => { void refreshEngineStatus() }}
-          disabled={healthChecking}
-          aria-busy={healthChecking}
-          aria-label="重新检测"
-          title="重新检测解析引擎状态"
-          className="rounded px-1.5 py-0.5 text-xs disabled:opacity-40"
-          style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}
-        >
-          <RefreshCw size={14} className={healthChecking ? 'animate-spin' : undefined} aria-hidden="true" />
-        </button>
-        </div>
-      </div>
-      </InstallingBeam>
+      {verdict && (
+        <InstallingBeam on={runtime?.state === 'installing'}>
+          <div className="mb-4 flex flex-col gap-2 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+            <div className="min-w-0 flex-1">
+              <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
+                {verdict.text}
+              </span>
+              {verdict.note && (
+                <span data-testid="vk-verdict-note" className="ml-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                  {verdict.note}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              {verdict.action && (
+                <button
+                  type="button"
+                  data-testid="vk-verdict-action"
+                  onClick={verdict.action.run}
+                  disabled={healthChecking && verdict.action.label === '重新检测'}
+                  aria-busy={healthChecking && verdict.action.label === '重新检测'}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-sm font-medium disabled:opacity-50"
+                  style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+                >
+                  {healthChecking && verdict.action.label === '重新检测' && <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />}
+                  <span>{verdict.action.label}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                data-testid="vk-refresh"
+                onClick={() => { void refreshEngineStatus() }}
+                disabled={healthChecking}
+                aria-busy={healthChecking}
+                aria-label="重新检测"
+                title="重新检测解析引擎状态"
+                className="rounded px-1.5 py-0.5 text-xs disabled:opacity-40"
+                style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}
+              >
+                <RefreshCw size={14} className={healthChecking ? 'animate-spin' : undefined} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </InstallingBeam>
+      )}
       {/* 开发者信息:默认折叠。路径、api/schema、逐项能力、环境列表与手动切换、
           重建、会话诊断、安装日志 —— 排障时全在这儿,平时一个字都不占版面。 */}
       <div className="mb-4">
@@ -1057,29 +1049,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
 
       {/* 提交表单 */}
       <div className="mb-4 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-        <div className="mb-2 text-sm font-medium">新解析任务</div>
         {provenance && (
           <div data-testid="vk-provenance" className="mb-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
             来自采集结果:{provenance.commandKey}
           </div>
         )}
         <div className="mb-2">
-          <div className="mb-1 flex items-center justify-between gap-3 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            <label htmlFor="vk-source-input">视频链接</label>
-            <label className="vk-source-file-input" title="从文本文件导入链接">
-              <Upload size={14} aria-hidden="true" />
-              <span>导入链接文件</span>
-              <input
-                data-testid="vk-source-file"
-                type="file"
-                accept=".txt,.csv,.md,text/plain,text/csv"
-                onChange={(event) => {
-                  void importSourceFile(event.target.files?.[0])
-                  event.currentTarget.value = ''
-                }}
-              />
-            </label>
-          </div>
           <div className="vk-source-input-shell">
             <textarea
               id="vk-source-input"
@@ -1087,11 +1062,32 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               value={source}
               onChange={(event) => setSource(event.target.value)}
               placeholder={'每行一个视频链接\nhttps://…'}
-              rows={3}
+              rows={6}
               className={fieldClass}
               style={fieldStyle}
             />
             <VideoSourceCoverFlow source={source} />
+            <button
+              type="button"
+              className="vk-source-file-input"
+              title="导入链接文件"
+              data-tooltip="导入链接文件"
+              aria-label="导入链接文件"
+              onClick={() => sourceFileInputRef.current?.click()}
+            >
+              <Upload size={16} aria-hidden="true" />
+            </button>
+            <input
+              ref={sourceFileInputRef}
+              data-testid="vk-source-file"
+              className="vk-source-file-picker"
+              type="file"
+              accept=".txt,.csv,.md,text/plain,text/csv"
+              onChange={(event) => {
+                void importSourceFile(event.target.files?.[0])
+                event.currentTarget.value = ''
+              }}
+            />
           </div>
         </div>
         <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>

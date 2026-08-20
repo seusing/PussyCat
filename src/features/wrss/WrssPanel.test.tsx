@@ -27,19 +27,32 @@ describe('WrssPanel', () => {
     expect(screen.getByText(/356 MB/)).toBeInTheDocument()
   })
 
-  it('shows spark loading while installing', async () => {
+  it('shows a dark skeleton while installing without exposing logs', async () => {
     vi.stubGlobal('fetch', vi.fn(() => response({ ...base, state: 'installing', progress_log: ['venv: internal path'] })))
     render(<WrssPanel />)
-    expect(await screen.findByText('正在安装公众号…')).toBeInTheDocument()
+    expect(await screen.findByTestId('wrss-skeleton')).toHaveAccessibleName('正在安装公众号')
     expect(screen.queryByText('venv: internal path')).not.toBeInTheDocument()
   })
 
-  it('embeds only loopback running UI', async () => {
+  it('embeds only loopback running UI and reveals it after iframe load', async () => {
     vi.stubGlobal('fetch', vi.fn(() => response({ ...base, state: 'running', ui_url: 'http://127.0.0.1:4567' })))
     render(<WrssPanel />)
     const frame = await screen.findByTestId('wrss-iframe')
     expect(frame).toHaveAttribute('src', 'http://127.0.0.1:4567')
     expect(frame).toHaveAttribute('sandbox', expect.stringContaining('allow-popups'))
+    expect(screen.getByTestId('wrss-skeleton')).toBeInTheDocument()
+    fireEvent.load(frame)
+    await waitFor(() => expect(frame).toHaveClass('is-ready'))
+    expect(screen.getByTestId('wrss-skeleton')).toHaveClass('is-revealed')
+    await waitFor(() => expect(screen.queryByTestId('wrss-skeleton')).not.toBeInTheDocument())
+  })
+
+  it('shows a status error instead of leaving the skeleton over it', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => response({ error: 'host offline' }, 503)))
+    render(<WrssPanel />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('host offline')
+    expect(screen.queryByTestId('wrss-skeleton')).not.toBeInTheDocument()
   })
 
   it('offers retry for failed runtime without exposing reason in primary copy', async () => {

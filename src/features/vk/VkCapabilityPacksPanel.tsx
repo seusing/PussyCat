@@ -197,7 +197,9 @@ export function VkCapabilityPacksPanel({
             <div className="mt-3 flex items-end justify-between gap-3">
               <div>
                 <div className="text-xs font-medium" style={{ color: 'var(--color-fg)' }}>{pack.size_label}</div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{pack.detail}</div>
+                {pack.state !== 'installed' && (
+                  <div className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{pack.detail}</div>
+                )}
               </div>
               {pack.state !== 'installed' && pack.state !== 'installing' && (
                 <button

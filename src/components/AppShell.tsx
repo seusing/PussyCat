@@ -215,7 +215,7 @@ export default function AppShell({
                 {layout.navHidden ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
               </button>
             )}
-            <div><span>爪爪</span><strong>{activeLabel}</strong></div>
+            <div><strong>{activeLabel}</strong></div>
           </div>
           <div data-testid="app-header-actions" className="app-header-actions">
             {headerActions}

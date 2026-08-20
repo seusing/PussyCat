@@ -112,7 +112,6 @@ test('点击已保存 key 输入框后进入编辑状态', async () => {
 
   await userEvent.type(input, 'sk-brand-new')
   await commitChannelEditor()
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { api_key: string }[] }
   expect(body.channels[0].api_key).toBe('sk-brand-new')
@@ -168,9 +167,8 @@ test('没碰过的 key 不提交 —— 表示"别动已存的那把"', async ()
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
   render(<VkProviderForm baseUrl={BASE} />)
-  await waitFor(() => expect(screen.getByTestId('vk-provider-save')).toBeInTheDocument())
-
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
+  await openChannelEditor()
+  await commitChannelEditor()
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: Record<string, unknown>[] }
@@ -202,7 +200,6 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
     .toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   await userEvent.type(effort, 'max')
   await commitChannelEditor()
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string }[] }
@@ -240,7 +237,6 @@ test('接口未返回推理档位时仍允许按中转站文档手填', async ()
   expect(effort).toBeEnabled()
   await userEvent.type(effort, 'max')
   await commitChannelEditor()
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string | null }[] }
@@ -271,13 +267,14 @@ test('新增配置 —— 没有"默认"这回事了', async () => {
   expect(screen.queryByText('设为默认')).not.toBeInTheDocument()
 })
 
-test('没指到通道的角色被点名 —— 跑到那一步才失败更糟', async () => {
+test('角色选择不再依赖页面底部的全局保存按钮', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({
     configured: false, unassigned_roles: ['basic'],
   }) } })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  await waitFor(() => expect(screen.getByTestId('vk-unassigned')).toHaveTextContent('基础处理'))
+  await waitFor(() => expect(screen.getByTestId('vk-provider-routing-section')).toBeInTheDocument())
+  expect(screen.queryByTestId('vk-provider-save')).not.toBeInTheDocument()
 })
 
 
@@ -295,7 +292,6 @@ test('删掉一条通道,指到它的角色一并解绑', async () => {
   await userEvent.click(screen.getByTestId('vk-channel-remove-cheap'))
   expect(screen.queryByTestId('vk-channel-cheap')).not.toBeInTheDocument()
 
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string> }
   expect(body.roles).toEqual({ basic: 'smart' })
@@ -402,7 +398,7 @@ test('模型配置与角色选择是彼此独立的分区', async () => {
   expect(channels).not.toContainElement(routing)
 })
 
-test('保存成功后通知父级收起配置', async () => {
+test('弹窗保存成功后通知父级收起配置', async () => {
   const onSaved = vi.fn()
   stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
@@ -410,12 +406,16 @@ test('保存成功后通知父级收起配置', async () => {
   })
   render(<VkProviderForm baseUrl={BASE} onSaved={onSaved} />)
 
-  await userEvent.click(await screen.findByTestId('vk-provider-save'))
+  await openChannelEditor()
+  await commitChannelEditor()
   await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
 })
 
 test('启用与禁用按钮使用锁图标并保持状态图标', async () => {
-  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
   const user = userEvent.setup()
   render(<VkProviderForm baseUrl={BASE} />)
 
@@ -455,7 +455,6 @@ test('复用保留上游和已存 key 引用,新模型可独立编辑且不提�
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('gpt-5.6-luna')
 
   await user.click(within(dialog).getByTestId('vk-provider-modal-submit'))
-  await user.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
 
   const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
@@ -527,7 +526,7 @@ test('两个角色各有主通道下拉,未指派时明确为空', async () => {
   expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('不会换通道掩盖配置问题')
 })
 
-test('指派的角色随保存一起提交', async () => {
+test('指派角色后立即提交，不再要求页面底部保存', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings({
       channels: [channel(), channel({ id: 'smart', name: 'Sol', is_default: false })],
@@ -538,7 +537,6 @@ test('指派的角色随保存一起提交', async () => {
   await waitFor(() => expect(screen.getByTestId('vk-role-deep_analysis')).toBeInTheDocument())
 
   await userEvent.selectOptions(screen.getByTestId('vk-role-deep_analysis'), 'smart')
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string> }
@@ -567,7 +565,6 @@ test('备用通道按用户排序保存,并明确只在临时上游错误时切�
   expect(screen.getByTestId('vk-role-fallback-basic-1')).toHaveValue('backup-b')
   await user.click(screen.getByRole('button', { name: '下移基础处理备用 1' }))
   expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup-b')
-  await user.click(screen.getByTestId('vk-provider-save'))
 
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
@@ -577,17 +574,20 @@ test('备用通道按用户排序保存,并明确只在临时上游错误时切�
   expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('仅超时、429 或上游 5xx')
 })
 
-test('添加备用不会提供主通道或已经选过的通道', async () => {
-  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
-    channels: [channel(), channel({ id: 'backup', name: '备用' })],
-    role_assignments: { basic: 'cheap' },
-  }) } })
+test('添加备用不会提供主通道或已经选过的通道，并立即提交', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
+      channels: [channel(), channel({ id: 'backup', name: '备用' })],
+      role_assignments: { basic: 'cheap' },
+    }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
   const user = userEvent.setup()
   render(<VkProviderForm baseUrl={BASE} />)
 
   await user.click(await screen.findByTestId('vk-role-fallback-add-basic'))
   expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup')
-  expect(screen.getByTestId('vk-role-fallback-add-basic')).toBeDisabled()
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
 })
 
 test('同一上游的主备只提醒不替用户改配置', async () => {
@@ -618,9 +618,9 @@ test('连接确认永久失效后可禁用且不会自动删除', async () => {
   await user.click(await screen.findByTestId('vk-channel-test-cheap'))
   expect(await screen.findByTestId('vk-channel-invalid-cheap')).toHaveTextContent('不会自动删除')
   await user.click(screen.getByTestId('vk-channel-toggle-cheap'))
-  expect(screen.getByTestId('vk-channel-disabled-cheap')).toBeInTheDocument()
+  expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已禁用')
+  expect(screen.queryByTestId('vk-channel-disabled-cheap')).not.toBeInTheDocument()
   expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
-  await user.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
     channels: Array<{ id: string; enabled: boolean }>
@@ -757,7 +757,6 @@ test('接口风格可选并随保存/测试一起提交 —— 漏掉它,respons
   expect(test.api_style).toBe('openai_responses')
 
   await commitChannelEditor()
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { api_style: string }[] }
   expect(saved.channels[0].api_style).toBe('openai_responses')
@@ -784,17 +783,70 @@ test('没装 cc-switch 时不摆一个点不动的空按钮 —— 干脆不出�
   render(<VkProviderForm baseUrl={BASE} />)
 
   await waitFor(() => expect(screen.getByTestId('vk-channel-add')).toBeInTheDocument())
+  expect(screen.queryByTestId('vk-ccswitch-import')).not.toBeInTheDocument()
   expect(screen.queryByTestId('vk-ccswitch-codex:242d3850')).not.toBeInTheDocument()
   expect(screen.getByTestId('vk-provider-form')).not.toHaveTextContent('cc-switch')
 })
 
-test('列出的候选只带打码 key —— 浏览这一步不该摊开所有中转站的明文', async () => {
+test('cc-switch 使用带可访问名称的图标入口，候选仅在菜单中展示', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({ cc_switch: CC_AVAILABLE }) } })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  const button = await screen.findByTestId('vk-ccswitch-codex:242d3850')
+  const trigger = await screen.findByTestId('vk-ccswitch-import')
+  expect(trigger).toHaveAccessibleName('从 cc-switch 导入配置')
+  expect(trigger).toHaveAttribute('title', '从 cc-switch 导入配置')
+  expect(trigger.querySelector('img')).toHaveAttribute('src', '/cc-switch-icon.png')
+  expect(screen.queryByTestId('vk-ccswitch-codex:242d3850')).not.toBeInTheDocument()
+  await userEvent.click(trigger)
+  const button = screen.getByTestId('vk-ccswitch-codex:242d3850')
   expect(button).toHaveTextContent('hhcoding sol')
   expect(button.getAttribute('title')).toContain('sk-1dbc65…862c')
+  expect(document.body.textContent).not.toContain(SECRET)
+})
+
+test('cc-switch 候选菜单点击内部保留，点击外部自动收起', async () => {
+  const user = userEvent.setup()
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({ cc_switch: CC_AVAILABLE }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await user.click(await screen.findByTestId('vk-ccswitch-import'))
+  const menu = screen.getByTestId('vk-ccswitch-picker')
+  await user.click(menu)
+  expect(screen.getByTestId('vk-ccswitch-picker')).toBeInTheDocument()
+
+  await user.click(document.body)
+  expect(screen.queryByTestId('vk-ccswitch-picker')).not.toBeInTheDocument()
+})
+
+test('模型列表菜单点击内部保留，点击外部自动收起', async () => {
+  const user = userEvent.setup()
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers/test': { body: {
+      ok: true, reason_code: 'ok', message: 'ok',
+      models: ['gpt-5.6-luna', 'openai/gpt-5.6-sol-long-name'],
+      reasoning_efforts: {}, normalization_notes: [],
+    } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await openChannelEditor()
+  await user.click(screen.getByTestId('vk-channel-test-cheap'))
+  await user.click(await screen.findByTestId('vk-channel-models-menu-cheap'))
+  const listbox = screen.getByRole('listbox')
+  await user.click(listbox)
+  expect(screen.getByRole('listbox')).toBeInTheDocument()
+
+  await user.click(document.body)
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+})
+
+test('配置清单截断文本接入 OverflowTooltip，且不暴露完整 API key', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const name = await screen.findByTestId('vk-channel-name-cheap')
+  expect(name.querySelector('.overflow-tooltip__label')).toHaveTextContent('GPT 5.6 Luna')
   expect(document.body.textContent).not.toContain(SECRET)
 })
 
@@ -806,13 +858,13 @@ test('点某一条才拉明文,并把地址/模型/接口风格/请求头一起�
   })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  await userEvent.click(await screen.findByTestId('vk-ccswitch-codex:242d3850'))
+  await userEvent.click(await screen.findByTestId('vk-ccswitch-import'))
+  await userEvent.click(screen.getByTestId('vk-ccswitch-codex:242d3850'))
   await waitFor(() => expect(screen.getByTestId('vk-channel-hhcoding-sol')).toBeInTheDocument())
   expect(screen.getByTestId('vk-channel-url-hhcoding-sol')).toHaveValue('https://hhcoding.fun')
   expect(screen.getByTestId('vk-channel-style-hhcoding-sol')).toHaveValue('openai_responses')
 
   await commitChannelEditor()
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as {
     channels: { api_key: string; api_style: string; extra_headers: Record<string, string> }[]
@@ -833,7 +885,8 @@ test('已存在的通道保存时不丢 extra_headers', async () => {
   render(<VkProviderForm baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument())
 
-  await userEvent.click(screen.getByTestId('vk-provider-save'))
+  await openChannelEditor()
+  await commitChannelEditor()
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const saved = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as {
     channels: { extra_headers: Record<string, string> }[]
@@ -841,7 +894,7 @@ test('已存在的通道保存时不丢 extra_headers', async () => {
   expect(saved.channels[0].extra_headers).toEqual({ 'x-relay-tag': 'vk' })
 })
 
-test('导不了的那些附原因列出来 —— 比让它凭空消失强', async () => {
+test('不可导入原因收进 cc-switch 候选菜单', async () => {
   stubRoutes({
     'GET /vk/v1/providers': {
       body: settings({ cc_switch: {
@@ -852,5 +905,6 @@ test('导不了的那些附原因列出来 —— 比让它凭空消失强', asy
   })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  await waitFor(() => expect(screen.getByTestId('vk-ccswitch')).toHaveTextContent('AUTH_TOKEN'))
+  await userEvent.click(await screen.findByTestId('vk-ccswitch-import'))
+  expect(screen.getByTestId('vk-ccswitch-skipped')).toHaveTextContent('AUTH_TOKEN')
 })

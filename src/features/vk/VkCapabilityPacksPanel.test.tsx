@@ -42,6 +42,27 @@ describe('VkCapabilityPacksPanel', () => {
     expect(screen.queryByTestId('vk-pack-wrss')).not.toBeInTheDocument()
   })
 
+  it('hides redundant details for installed capability packs', async () => {
+    const installedPacks = {
+      ...packs,
+      packs: packs.packs.map((pack) => pack.id === 'local-asr'
+        ? {
+            ...pack,
+            state: 'installed',
+            detail: '依赖、模型、FFmpeg 与离线转写均已验证',
+          }
+        : pack),
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string) => (
+      url.endsWith('/runtime/versions') ? response(runtimeVersions) : response(installedPacks)
+    )))
+    render(<VkCapabilityPacksPanel />)
+
+    await screen.findByText('本地语音识别')
+    expect(screen.queryByText('依赖、模型、FFmpeg 与离线转写均已验证')).not.toBeInTheDocument()
+    expect(screen.queryByText('依赖已安装')).not.toBeInTheDocument()
+  })
+
   it('uses only the fixed pack id when installing', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url.endsWith('/capability-packs/install')) return response({ state: 'installing' }, 202)

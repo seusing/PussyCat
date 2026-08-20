@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { fetchRadarRatings, type RadarModel, type RadarRatings } from '../../host/radarClient'
+import { OverflowTooltip } from '../../components/OverflowTooltip'
 
 /** 档位从高到低 —— 界面按它对齐成列,同一档位在同一竖排上才好横向比。 */
 const TIERS = ['ultra', 'max', 'xhigh', 'high', 'medium', 'low']
@@ -40,11 +41,11 @@ function RefreshButton({ onClick, busy, testId }: { onClick: () => void; busy: b
 /** 一格模型:左边名字+IQ,右边费用/耗时,右上角是 24 小时运行次数。 */
 function ModelCard({ model }: { model: RadarModel }) {
   return (
-    <div data-testid={`radar-model-${model.id}`} className="flex overflow-hidden rounded-lg"
-      style={{ border: `1px solid ${model.color}55`, background: `${model.color}0f` }}>
+    <div data-testid={`radar-model-${model.id}`} className="radar-model-card flex overflow-hidden rounded-lg"
+      style={{ '--radar-model-color': model.color } as CSSProperties}>
       <div className="min-w-0 flex-1 px-2 py-1">
         <div className="flex items-center gap-1">
-          <span className="truncate text-xs" style={{ color: 'var(--color-fg)' }}>{model.label}</span>
+          <OverflowTooltip text={model.label} className="min-w-0 flex-1" labelClassName="text-xs" labelStyle={{ color: 'var(--color-fg)' }} />
           <span className="ml-auto shrink-0 rounded px-1 text-[10px] tabular-nums"
             style={{ border: `1px solid ${model.color}66`, color: model.color }}
             title={`24 小时内 ${model.runs24} 次运行`}>
@@ -169,8 +170,7 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
   return (
     <div data-testid="radar-panel" className="h-full space-y-4 overflow-auto p-4">
       {/* —— Station Picks —— */}
-      <section data-testid="radar-picks" className="rounded-lg p-3"
-        style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+      <section data-testid="radar-picks" className="radar-glass-section rounded-lg p-3">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <h2 className="text-sm font-medium">◎ 电台精选</h2>
           <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
@@ -188,15 +188,14 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
         </div>
         <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
           {(data?.picks ?? []).map((pick) => (
-            <div key={pick.key} data-testid={`radar-pick-${pick.key}`} className="rounded-lg"
-              style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)' }}>
+            <div key={pick.key} data-testid={`radar-pick-${pick.key}`} className="radar-glass-card rounded-lg">
               <div className="px-2 py-1 text-xs font-medium"
                 style={{ borderBottom: '1px solid var(--color-line)' }} title={pick.rule}>
                 {pick.title} <span style={{ color: 'var(--color-fg-dim)' }}>ⓘ</span>
               </div>
               {pick.items.map((item) => (
                 <div key={item.id} className="flex items-baseline gap-2 px-2 py-1 text-xs tabular-nums">
-                  <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--color-fg)' }}>{item.label}</span>
+                  <OverflowTooltip text={item.label} className="min-w-0 flex-1" labelClassName="text-xs" labelStyle={{ color: 'var(--color-fg)' }} />
                   <span className="w-12 text-right" style={{ color: 'var(--color-success)' }}>
                     {item.iq == null ? '—' : item.iq.toFixed(1)}
                   </span>
@@ -210,8 +209,7 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
       </section>
 
       {/* —— Intelligence Efficiency —— */}
-      <section data-testid="radar-efficiency" className="rounded-lg p-3"
-        style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+      <section data-testid="radar-efficiency" className="radar-glass-section rounded-lg p-3">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <h2 className="text-sm font-medium">🧠 智能效率</h2>
           {data && (
@@ -250,8 +248,7 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
 
       {/* —— Combined cost × IQ —— */}
       {data && data.models.length > 0 && (
-        <section data-testid="radar-chart-section" className="rounded-lg p-3"
-          style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+        <section data-testid="radar-chart-section" className="radar-glass-section rounded-lg p-3">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <h2 className="text-sm font-medium">综合成本 × IQ</h2>
             <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>更新于 {clock(data.updatedAt)}</span>

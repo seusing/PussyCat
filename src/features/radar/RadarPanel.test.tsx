@@ -88,6 +88,14 @@ test('每格给 IQ、费用、耗时和 24 小时运行次数', async () => {
   expect(cell).toHaveTextContent('24')
 })
 
+test('截断的模型名接入 OverflowTooltip', async () => {
+  stubFetch([{ body: ratings() }])
+  render(<RadarPanel baseUrl={BASE} />)
+
+  const cell = await screen.findByTestId('radar-model-sol|ultra')
+  expect(cell.querySelector('.overflow-tooltip__label')).toHaveTextContent('Sol ultra')
+})
+
 test('同一档位对齐到同一列 —— 横着看才比得了', async () => {
   stubFetch([{ body: ratings() }])
   render(<RadarPanel baseUrl={BASE} />)

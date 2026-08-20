@@ -33,6 +33,106 @@ const READY_TIMEOUT_MS = 30_000
 const READY_POLL_MS = 250
 const TAR_BLOCK_SIZE = 512
 const MAX_EXTRACTED_ARCHIVE_BYTES = 256 * 1024 * 1024
+const WRSS_BOOTSTRAP_SCRIPT = '<script src="/static/pussycat-bootstrap.js"></script>'
+const WRSS_THEME_LINK = '<link rel="stylesheet" href="/static/pussycat-theme.css">'
+const WRSS_THEME_CSS = `:root,
+html {
+  color-scheme: dark;
+  --color-bg-1: #0f1115 !important;
+  --color-bg-2: #171a21 !important;
+  --color-fill-1: rgb(23 26 33 / 72%) !important;
+  --color-fill-2: rgb(38 44 56 / 72%) !important;
+  --color-border: rgb(38 44 56 / 88%) !important;
+  --color-text-1: #e6e9ef !important;
+  --color-text-2: #9aa4b2 !important;
+  --color-primary-6: #4f8cff !important;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  background: #0f1115 !important;
+  color: #e6e9ef !important;
+}
+
+.app-container,
+.app-header,
+.arco-layout,
+.arco-layout-content,
+.arco-card,
+.arco-table,
+.arco-table-container,
+.arco-form,
+.arco-modal,
+.arco-modal-content,
+.arco-drawer,
+.arco-drawer-content,
+.arco-dropdown,
+.arco-trigger-popup,
+.arco-select-popup,
+.arco-popover {
+  border-color: rgb(38 44 56 / 82%) !important;
+  background: rgb(23 26 33 / 78%) !important;
+  color: #e6e9ef !important;
+  backdrop-filter: blur(12px) saturate(1.08);
+}
+
+.arco-card,
+.arco-modal,
+.arco-drawer,
+.arco-dropdown,
+.arco-trigger-popup,
+.arco-select-popup,
+.arco-popover {
+  box-shadow: 0 18px 48px rgb(0 0 0 / 32%), inset 0 1px 0 rgb(255 255 255 / 4%) !important;
+}
+
+.arco-table-th,
+.arco-table-td,
+.arco-menu,
+.arco-list,
+.arco-list-item {
+  border-color: rgb(38 44 56 / 78%) !important;
+  background: transparent !important;
+  color: #e6e9ef !important;
+}
+
+.arco-input,
+.arco-input-inner-wrapper,
+.arco-textarea,
+.arco-select-view,
+.arco-picker,
+.arco-input-tag,
+.arco-radio-button,
+.arco-checkbox,
+.arco-btn {
+  border-color: rgb(38 44 56 / 88%) !important;
+  background: rgb(15 17 21 / 72%) !important;
+  color: #e6e9ef !important;
+}
+
+.arco-btn-primary,
+.arco-switch-checked {
+  border-color: #4f8cff !important;
+  background: #4f8cff !important;
+  color: #fff !important;
+}
+
+.arco-input::placeholder,
+.arco-textarea::placeholder,
+.arco-select-view-placeholder,
+.arco-empty,
+.arco-typography-secondary {
+  color: #9aa4b2 !important;
+}
+
+a,
+.arco-link,
+.arco-menu-selected {
+  color: #8bb5ff !important;
+}
+`
 
 export class WrssRuntimeError extends Error {
   constructor(statusCode, reasonCode, message, detail) {
@@ -42,6 +142,20 @@ export class WrssRuntimeError extends Error {
     this.reasonCode = reasonCode
     if (detail) this.detail = detail
   }
+}
+
+export function ensureWrssStaticAssets(sourceDir) {
+  const staticDir = join(sourceDir, 'static')
+  const indexPath = join(staticDir, 'index.html')
+  if (!isRegularFile(indexPath)) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不存在')
+  const indexHtml = readFileSync(indexPath, 'utf8')
+  const headMatches = indexHtml.match(/<\/head>/gi) ?? []
+  if (headMatches.length !== 1) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不符合预期')
+  const withoutManagedAssets = indexHtml
+    .replace(/\s*<script\s+src=["']\/static\/pussycat-bootstrap\.js["']><\/script>/gi, '')
+    .replace(/\s*<link\s+rel=["']stylesheet["']\s+href=["']\/static\/pussycat-theme\.css["']\s*\/?>/gi, '')
+  atomicText(indexPath, withoutManagedAssets.replace(/<\/head>/i, `${WRSS_THEME_LINK}\n${WRSS_BOOTSTRAP_SCRIPT}\n</head>`))
+  atomicText(join(staticDir, 'pussycat-theme.css'), WRSS_THEME_CSS)
 }
 
 function tarText(buffer, start, length) {
@@ -573,12 +687,7 @@ export class WrssRuntimeManager {
       patched = patched.replace(envBlock, '\n')
       if (/os\.environ\.items\(\)/.test(patched)) throw new WrssRuntimeError(500, 'security-patch-mismatch', '环境变量启动块未完全移除')
       writeFileSync(join(sourceRoot, 'main.py'), patched, 'utf8')
-      const indexPath = join(sourceRoot, 'static', 'index.html')
-      if (!existsSync(indexPath)) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不存在')
-      const indexHtml = readFileSync(indexPath, 'utf8')
-      const headMatches = indexHtml.match(/<\/head>/gi) ?? []
-      if (headMatches.length !== 1) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不符合预期')
-      writeFileSync(indexPath, indexHtml.replace(/<\/head>/i, '<script src="/static/pussycat-bootstrap.js"></script>\n</head>'), 'utf8')
+      ensureWrssStaticAssets(sourceRoot)
       this.#pushLog('主程序 loopback 与环境变量日志安全补丁已应用')
 
       versionDir = join(this.home, 'versions', `v${WRSS_VERSION}-${Date.now()}`)
@@ -709,6 +818,7 @@ export class WrssRuntimeManager {
     if (!isInside(this.home, sourceDir) || !isInside(this.home, pythonExe) || !existsSync(sourceDir) || !existsSync(pythonExe)) {
       throw new WrssRuntimeError(500, 'receipt-invalid', 'WeRSS 安装回执无效')
     }
+    ensureWrssStaticAssets(sourceDir)
     this.#state = 'starting'
     this.#reasonCode = null
     this.#summary = null
