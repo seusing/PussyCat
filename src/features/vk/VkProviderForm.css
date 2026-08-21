@@ -123,18 +123,22 @@
   font-size: 0.75rem;
 }
 
-.vk-provider-feedback::after {
+.vk-provider-feedback-progress {
+  display: block;
   position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
   height: 3px;
-  content: '';
   background: currentColor;
   opacity: 0.8;
   transform: scaleX(1);
   transform-origin: left;
   animation: vk-provider-feedback-countdown 3s linear forwards;
+}
+
+.vk-test-icon--busy {
+  animation: vk-test-icon-pulse 850ms ease-in-out infinite;
 }
 
 .vk-provider-feedback--success { color: var(--color-success); }
@@ -158,9 +162,15 @@
   80% { transform: translateX(3px); }
 }
 
+@keyframes vk-test-icon-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .5; transform: scale(.88); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vk-icon-action::after { transition: none; }
-  .vk-provider-feedback::after { animation: none; }
+  .vk-provider-feedback-progress,
+  .vk-test-icon--busy { animation: none; }
   .vk-validation-field.is-error > input,
   .vk-validation-field.is-error > select,
   .vk-validation-field.is-error .vk-key-input { animation: none; }

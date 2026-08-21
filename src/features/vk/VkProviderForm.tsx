@@ -452,7 +452,7 @@ function ChannelEditor({
           disabled={channelIsBusy}
           size="md"
         >
-          <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy === 'test' ? 'animate-spin' : ''} />
+          <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy === 'test' ? 'vk-test-icon--busy' : ''} />
         </ActionIconButton>
         {saved?.key_from_environment && (
           <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }} title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">key 来自系统环境变量，优先生效</span>
@@ -897,7 +897,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           )}
           {drafts.map((draft) => {
             const saved = settings.channels.find((channel) => channel.id === draft.id)
-            const showSavedMask = !draft.key_loaded && !draft.key_touched && draft.key_masked !== ''
+            const showSavedMask = !draft.key_touched && draft.key_masked !== ''
             let upstream = draft.base_url || '未填写上游地址'
             try { upstream = draft.base_url ? new URL(draft.base_url).hostname : upstream } catch { /* show the raw draft */ }
             const statusLabel = draft.enabled ? '已启用' : '已禁用'
@@ -946,7 +946,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                         onClick={() => { void runTest(draft) }}
                         disabled={Boolean(channelBusy[draft.id]) || saving}
                       >
-                        <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy[draft.id] === 'test' ? 'animate-spin' : ''} />
+                        <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy[draft.id] === 'test' ? 'vk-test-icon--busy' : ''} />
                       </ActionIconButton>
                     )}
                     <EditActionButton testId={`vk-channel-edit-${draft.id}`} onClick={() => openEditor(draft)} disabled={saving} />
@@ -1113,7 +1113,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           </button>
         ))}
       </div>
-      {notice && <div data-testid="vk-provider-notice" role="status" className={`vk-provider-feedback vk-provider-feedback--${notice.tone}`}>{notice.message}</div>}
+      {notice && (
+        <div data-testid="vk-provider-notice" role="status" className={`vk-provider-feedback vk-provider-feedback--${notice.tone}`}>
+          {notice.message}
+          <span className="vk-provider-feedback-progress" role="progressbar" aria-label="通知剩余时间" />
+        </div>
+      )}
       {error && <div data-testid="vk-provider-error" role="alert" className="vk-provider-feedback vk-provider-feedback--error">{error}</div>}
     </div>
   )

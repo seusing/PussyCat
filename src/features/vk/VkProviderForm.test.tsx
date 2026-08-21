@@ -114,6 +114,7 @@ test('点击已保存 key 输入框会先取回明文,未修改保存不提交 a
   expect(input.readOnly).toBe(false)
   expect(input.type).toBe('text')
   expect(calls.filter((c) => c.key.includes('reveal'))).toHaveLength(1)
+  expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('sk-rela••••••••••6789')
 
   await commitChannelEditor()
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
@@ -664,6 +665,7 @@ test('连接确认永久失效后可禁用且不会自动删除', async () => {
   expect(notice).toHaveTextContent('API key 已过期')
   expect(notice).toHaveTextContent('下一步：更换 key')
   expect(notice).toHaveClass('vk-provider-feedback--error')
+  expect(within(notice).getByRole('progressbar', { name: '通知剩余时间' })).toBeInTheDocument()
   expect(screen.queryByTestId('vk-channel-invalid-cheap')).not.toBeInTheDocument()
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
   await user.click(screen.getByTestId('vk-channel-toggle-cheap'))
