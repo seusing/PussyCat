@@ -236,7 +236,7 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
   expect(body.channels[0].reasoning_effort).toBe('max')
 })
 
-test('中转站未返回推理档位时明确说明原因并保持自动', async () => {
+test('中转站未返回推理档位时保持自动且不显示旧说明', async () => {
   stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
     'POST /vk/v1/providers/test': { body: {
@@ -249,10 +249,12 @@ test('中转站未返回推理档位时明确说明原因并保持自动', async
   const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
 
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
-  await screen.findByTestId('vk-channel-reasoning-note-cheap')
+  await screen.findByTestId('vk-provider-notice')
   expect(effort).toBeEnabled()
   expect(effort.value).toBe('')
-  expect(screen.getByTestId('vk-channel-reasoning-note-cheap')).toHaveTextContent('中转站未返回可枚举档位')
+  expect(screen.getByTestId('vk-channel-protocol-row-cheap')).toBeInTheDocument()
+  expect(screen.queryByTestId('vk-channel-reasoning-note-cheap')).not.toBeInTheDocument()
+  expect(screen.queryByText('中转站未返回可枚举档位；可保持自动，或输入其支持的值')).not.toBeInTheDocument()
 })
 
 test('接口未返回推理档位时仍允许按中转站文档手填', async () => {
@@ -354,6 +356,7 @@ test('配置清单移除旧说明,创建弹窗与关键操作都有可访问名�
 
   const rowTest = screen.getByTestId('vk-channel-test-cheap')
   expect(rowTest).toHaveAccessibleName('测试连接')
+  expect(rowTest).toHaveAttribute('data-icon', 'activity')
   expect(rowTest).toHaveTextContent('')
   expect(rowTest.querySelector('svg')).not.toBeNull()
 
@@ -365,8 +368,13 @@ test('配置清单移除旧说明,创建弹窗与关键操作都有可访问名�
   const dialog = screen.getByRole('dialog', { name: '创建配置' })
   expect(dialog).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '关闭模型配置弹窗' })).toBeInTheDocument()
-  expect(within(dialog).getByRole('button', { name: '获取模型列表' })).toHaveTextContent('')
-  expect(within(dialog).getByRole('button', { name: '测试连接' })).toHaveTextContent('')
+  const fetchModels = within(dialog).getByRole('button', { name: '获取模型列表' })
+  expect(fetchModels).toHaveTextContent('')
+  expect(fetchModels).toHaveAttribute('data-icon', 'download')
+  const modalTest = within(dialog).getByRole('button', { name: '测试连接' })
+  expect(modalTest).toHaveTextContent('')
+  expect(modalTest).toHaveAttribute('data-icon', 'activity')
+  expect(dialog.querySelector('.vk-provider-protocol-row')).not.toBeNull()
 })
 
 test('取消创建会丢弃草稿,取消编辑会恢复打开弹窗前的内容', async () => {
@@ -664,7 +672,8 @@ test('连接确认永久失效后可禁用且不会自动删除', async () => {
   const notice = await screen.findByTestId('vk-provider-notice')
   expect(notice).toHaveTextContent('API key 已过期')
   expect(notice).toHaveTextContent('下一步：更换 key')
-  expect(notice).toHaveClass('vk-provider-feedback--error')
+  expect(notice).toHaveClass('app-alert')
+  expect(notice).toHaveAttribute('data-tone', 'error')
   expect(within(notice).getByRole('progressbar', { name: '通知剩余时间' })).toBeInTheDocument()
   expect(screen.queryByTestId('vk-channel-invalid-cheap')).not.toBeInTheDocument()
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
@@ -744,7 +753,8 @@ test('测试失败时给根因和下一步,不是一段原始日志', async () =
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
 
   const notice = await screen.findByTestId('vk-provider-notice')
-  expect(notice).toHaveClass('vk-provider-feedback--error')
+  expect(notice).toHaveClass('app-alert')
+  expect(notice).toHaveAttribute('data-tone', 'error')
   expect(notice).toHaveTextContent('已过期')
   expect(notice).toHaveTextContent('下一步：到中转站控制台重新签发一把 key')
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
@@ -768,7 +778,8 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
 
   await waitFor(() => expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('api.example.com'))
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
-  expect(screen.getByTestId('vk-provider-notice')).toHaveClass('vk-provider-feedback--success')
+  expect(screen.getByTestId('vk-provider-notice')).toHaveClass('app-alert')
+  expect(screen.getByTestId('vk-provider-notice')).toHaveAttribute('data-tone', 'success')
   expect(screen.queryByTestId('vk-channel-result-cheap')).not.toBeInTheDocument()
   await openChannelEditor()
   await waitFor(() => expect((screen.getByTestId('vk-channel-url-cheap') as HTMLInputElement).value)

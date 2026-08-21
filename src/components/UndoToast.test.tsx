@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { UndoToast } from './UndoToast'
 import { useAppStore } from '../store/appStore'
@@ -16,6 +16,7 @@ test('取消站点收藏后显示 toast,点撤销回滚', async () => {
   useAppStore.getState().toggleSiteFavorite('x')   // 取消 → lastUndo
   render(<UndoToast />)
   expect(screen.getByTestId('undo-toast')).toBeInTheDocument()
+  expect(within(screen.getByTestId('undo-toast')).getByRole('progressbar', { name: '通知剩余时间' })).toHaveClass('is-duration')
   await userEvent.click(screen.getByTestId('undo-button'))
   expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])
   expect(screen.queryByTestId('undo-toast')).not.toBeInTheDocument()

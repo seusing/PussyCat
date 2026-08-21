@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { MorphIcon } from 'morphicons/react'
-import { Plus as MorphPlus, RefreshCw as MorphRefreshCw, Wifi as MorphWifi, type IconNode } from 'lucide'
+import { Activity as MorphActivity, Download as MorphDownload, Plus as MorphPlus, type IconNode } from 'lucide'
 import {
   Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Lock, LockOpen, Pen, Trash2, X,
 } from 'lucide-react'
 import './VkProviderForm.css'
+import { AppAlert } from '../../components/AppAlert'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
 import {
   fetchVkProviderSettings,
@@ -26,6 +27,7 @@ const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
 
 type Notice = {
+  id: number
   message: string
   tone: 'success' | 'error'
 }
@@ -354,9 +356,10 @@ function ChannelEditor({
           label="获取模型列表"
           onClick={() => onTest(draft)}
           disabled={channelIsBusy}
+          iconState="download"
           size="md"
         >
-          <MorphActionGlyph icon={MorphRefreshCw} size={15} className={channelBusy === 'test' ? 'animate-spin' : ''} />
+          <MorphActionGlyph icon={MorphDownload} size={15} className={channelBusy === 'test' ? 'vk-provider-icon--busy' : ''} />
         </ActionIconButton>
         {models.length > 0 && (
           <div ref={modelMenuRef} className="relative shrink-0">
@@ -415,47 +418,48 @@ function ChannelEditor({
         {errors.api_key && <div className="vk-validation-message" role="alert">{errors.api_key}</div>}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="vk-provider-protocol-row" data-testid={`vk-channel-protocol-row-${draft.id}`}>
         {field('api_style', '接口协议', <select
           data-testid={`vk-channel-style-${draft.id}`}
-          className="rounded-lg px-2 py-1.5 text-xs outline-none"
+          className="vk-provider-protocol-control rounded-lg px-2 py-1.5 text-xs outline-none"
           style={fieldStyle}
           value={draft.api_style}
           onChange={(e) => { onPatch(draft.id, { api_style: e.target.value, api_style_touched: true }); onClearError?.('api_style') }}
         >
           {settings.api_styles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
         </select>)}
-        <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          <span>推理强度</span>
+        <div className={`vk-validation-field ${errors.reasoning_effort ? 'is-error' : ''}`}>
+          <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>推理强度</div>
           <input
             data-testid={`vk-channel-reasoning-${draft.id}`}
             list={`vk-channel-reasoning-options-${draft.id}`}
-            className="rounded-lg px-2 py-1.5 text-xs outline-none"
+            className="vk-provider-protocol-control rounded-lg px-2 py-1.5 text-xs outline-none"
             style={fieldStyle}
             value={draft.reasoning_effort}
             disabled={channelIsBusy}
             placeholder="自动（跟随模型）"
-            title={availableReasoningEfforts.length ? '下拉建议来自本次接口请求，也可以输入接口支持的其他值' : '接口未返回可枚举档位；可保持自动，或输入中转站支持的值'}
+            title={availableReasoningEfforts.length ? '下拉建议来自本次接口请求，也可以输入接口支持的其他值' : '可保持自动，或输入中转站支持的值'}
             onChange={(e) => { onPatch(draft.id, { reasoning_effort: e.target.value }); onClearError?.('reasoning_effort') }}
           />
           <datalist id={`vk-channel-reasoning-options-${draft.id}`}>
             {availableReasoningEfforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
           </datalist>
-        </label>
-        {result?.ok && availableReasoningEfforts.length === 0 && (
-          <span data-testid={`vk-channel-reasoning-note-${draft.id}`} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>中转站未返回可枚举档位；可保持自动，或输入其支持的值</span>
-        )}
-        <ActionIconButton
-          testId={`vk-channel-test-${draft.id}`}
-          label="测试连接"
-          onClick={() => onTest(draft)}
-          disabled={channelIsBusy}
-          size="md"
-        >
-          <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy === 'test' ? 'vk-test-icon--busy' : ''} />
-        </ActionIconButton>
+          {errors.reasoning_effort && <div className="vk-validation-message" role="alert">{errors.reasoning_effort}</div>}
+        </div>
+        <div className="vk-provider-protocol-action">
+          <ActionIconButton
+            testId={`vk-channel-test-${draft.id}`}
+            label="测试连接"
+            onClick={() => onTest(draft)}
+            disabled={channelIsBusy}
+            iconState="activity"
+            size="md"
+          >
+            <MorphActionGlyph icon={MorphActivity} size={15} className={channelBusy === 'test' ? 'vk-provider-icon--busy' : ''} />
+          </ActionIconButton>
+        </div>
         {saved?.key_from_environment && (
-          <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }} title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">key 来自系统环境变量，优先生效</span>
+          <span className="vk-provider-protocol-note text-xs" style={{ color: 'var(--color-fg-dim)' }} title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">key 来自系统环境变量，优先生效</span>
         )}
       </div>
 
@@ -494,9 +498,15 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
   const savingRef = useRef(false)
+  const noticeSeq = useRef(0)
   const ccSwitchPickerRef = useRef<HTMLDivElement>(null)
   const modalId = modalSession?.id ?? null
   useDismissOnOutside(ccSwitchPickerRef, ccSwitchPickerOpen, () => setCcSwitchPickerOpen(false))
+
+  const showNotice = useCallback((tone: Notice['tone'], message: string) => {
+    noticeSeq.current += 1
+    setNotice({ id: noticeSeq.current, tone, message })
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -558,7 +568,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(null), 3000)
     return () => window.clearTimeout(timer)
-  }, [notice])
+  }, [notice?.id])
 
   const addChannel = () => {
     const id = newId()
@@ -620,7 +630,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     nextDrafts: Draft[],
     nextRoles: Record<string, string>,
     nextRoleFallbacks: Record<string, string[]>,
-    showNotice = false,
+    withNotice = false,
   ): Promise<boolean> => {
     if (savingRef.current) return false
     savingRef.current = true
@@ -631,20 +641,20 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       const result = await saveVkProviderSettings({
         channels: channelPayload(nextDrafts), roles: nextRoles, role_fallbacks: nextRoleFallbacks,
       }, baseUrl)
-      if (showNotice) {
-        setNotice({
-          tone: 'success',
-          message: [
+      if (withNotice) {
+        showNotice(
+          'success',
+          [
             '已保存并立即生效',
             ...result.normalization_notes,
             result.keys_written.length ? `已安全保存 ${result.keys_written.length} 把 key` : '',
           ].filter(Boolean).join('；'),
-        })
+        )
       }
       // 角色选择、启停、删除和备用顺序采用乐观更新。服务端保存响应不含完整
       // settings，立即重新读取会把尚未刷新的旧快照覆盖回页面。弹窗保存仍回读，
       // 以接收服务端的规范化结果。
-      if (showNotice) await load()
+      if (withNotice) await load()
       onSaved?.()
       return true
     } catch (err) {
@@ -767,7 +777,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         ...(draft.key_touched ? { api_key: draft.api_key } : {}),
       }, baseUrl)
       setResults((prev) => ({ ...prev, [draft.id]: result }))
-      setNotice({ tone: result.ok ? 'success' : 'error', message: formatTestNotice(result) })
+      showNotice(result.ok ? 'success' : 'error', formatTestNotice(result))
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
       if (result.base_url && result.base_url !== draft.base_url) patch(draft.id, { base_url: result.base_url })
       // Every click replaces the previous discovery result, including an empty
@@ -779,7 +789,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         [draft.id]: result.reasoning_efforts ?? {},
       }))
     } catch (err) {
-      setNotice({ tone: 'error', message: err instanceof Error ? err.message : '连接测试失败' })
+      showNotice('error', err instanceof Error ? err.message : '连接测试失败')
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
@@ -945,8 +955,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                         label="测试连接"
                         onClick={() => { void runTest(draft) }}
                         disabled={Boolean(channelBusy[draft.id]) || saving}
+                        iconState="activity"
                       >
-                        <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy[draft.id] === 'test' ? 'vk-test-icon--busy' : ''} />
+                        <MorphActionGlyph icon={MorphActivity} size={15} className={channelBusy[draft.id] === 'test' ? 'vk-provider-icon--busy' : ''} />
                       </ActionIconButton>
                     )}
                     <EditActionButton testId={`vk-channel-edit-${draft.id}`} onClick={() => openEditor(draft)} disabled={saving} />
@@ -1114,12 +1125,26 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         ))}
       </div>
       {notice && (
-        <div data-testid="vk-provider-notice" role="status" className={`vk-provider-feedback vk-provider-feedback--${notice.tone}`}>
-          {notice.message}
-          <span className="vk-provider-feedback-progress" role="progressbar" aria-label="通知剩余时间" />
-        </div>
+        <AppAlert
+          key={notice.id}
+          testId="vk-provider-notice"
+          tone={notice.tone}
+          title={notice.message}
+          role="status"
+          className={`vk-provider-alert vk-provider-alert--${notice.tone}`}
+          durationMs={3000}
+          progressTestId="vk-provider-notice-progress"
+        />
       )}
-      {error && <div data-testid="vk-provider-error" role="alert" className="vk-provider-feedback vk-provider-feedback--error">{error}</div>}
+      {error && (
+        <AppAlert
+          testId="vk-provider-error"
+          tone="error"
+          title={error}
+          className="vk-provider-alert vk-provider-alert--error"
+          onClose={() => setError(null)}
+        />
+      )}
     </div>
   )
 }

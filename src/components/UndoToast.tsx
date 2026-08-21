@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../store/appStore'
+import { AppAlert } from './AppAlert'
 
 const AUTO_DISMISS_MS = 3000
 
@@ -18,16 +19,21 @@ export function UndoToast() {
   const label = lastUndo.kind === 'site'
     ? `已取消收藏站点 ${lastUndo.item.site}`
     : `已取消收藏命令 ${lastUndo.item.command}`
+  const toastKey = lastUndo.kind === 'site'
+    ? `site:${lastUndo.item.site}`
+    : `command:${lastUndo.item.command}`
 
   return (
-    <div
-      data-testid="undo-toast"
+    <AppAlert
+      key={toastKey}
+      testId="undo-toast"
+      tone="neutral"
+      title={label}
       role="status"
-      aria-live="polite"
-      className="undo-toast fixed bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-lg px-4 py-2 text-sm"
-    >
-      <span>{label}</span>
-      <button data-testid="undo-button" onClick={undo} style={{ color: 'var(--color-accent)' }}>撤销</button>
-    </div>
+      ariaLive="polite"
+      durationMs={AUTO_DISMISS_MS}
+      className="undo-toast fixed bottom-4 left-1/2 -translate-x-1/2"
+      action={<button data-testid="undo-button" onClick={undo} style={{ color: 'var(--color-accent)' }}>撤销</button>}
+    />
   )
 }

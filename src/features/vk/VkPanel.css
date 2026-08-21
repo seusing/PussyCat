@@ -99,95 +99,13 @@
   pointer-events: none;
 }
 
-.vk-task-banner {
-  --vk-task-banner-tone: var(--color-accent);
-  position: relative;
-  display: flex;
-  width: fit-content;
-  min-width: 0;
+.vk-task-banner.app-alert {
   max-width: 100%;
   min-height: 64px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  overflow: hidden;
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-panel) 82%, transparent);
-  padding: 14px 12px 18px 16px;
-  color: var(--color-fg);
-  box-shadow: 0 16px 42px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 4%);
-  backdrop-filter: blur(12px) saturate(1.08);
-  font-size: 15px;
-  pointer-events: auto;
-}
-
-.vk-task-banner-message {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vk-task-banner.is-info {
-  --vk-task-banner-tone: var(--color-accent);
-  border-color: color-mix(in srgb, var(--color-accent) 52%, var(--color-line));
-}
-
-.vk-task-banner.is-success {
-  --vk-task-banner-tone: var(--color-success);
-  border-color: color-mix(in srgb, var(--color-success) 52%, var(--color-line));
-}
-
-.vk-task-banner.is-danger {
-  --vk-task-banner-tone: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 52%, var(--color-line));
-}
-
-.vk-task-banner.is-warning {
-  --vk-task-banner-tone: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 52%, var(--color-line));
-}
-
-.vk-task-banner.is-rerun {
-  --vk-task-banner-tone: #cdb8ff;
-  border-color: rgb(139 92 246 / 46%);
-}
-
-.vk-task-banner button {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  place-items: center;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--color-fg-dim);
-}
-
-.vk-task-banner button:hover { background: rgb(255 255 255 / 7%); color: var(--color-fg); }
-
-.vk-task-banner-progress-track {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 4px;
-  background: rgb(255 255 255 / 7%);
-}
-
-.vk-task-banner-progress {
-  height: 100%;
-  background: var(--vk-task-banner-tone);
-  transition: width 50ms linear;
 }
 
 @media (max-width: 640px) {
-  .vk-task-banner {
-    width: 100%;
-    min-width: 0;
-  }
+  .vk-task-banner.app-alert { width: 100%; min-width: 0; }
 }
 
 .vk-jobs-refresh-button.is-refreshing svg {
@@ -303,6 +221,5 @@
   .vk-source-file-input { transition: none; }
   .vk-source-file-input::after { transition: none; }
   .vk-jobs-refresh-button.is-refreshing svg { animation: none; }
-  .vk-task-banner-progress { transition: none; }
   .vk-output-download-progress { transition: none; }
 }

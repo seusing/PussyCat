@@ -6,9 +6,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { BorderBeam } from 'border-beam'
-import { Check, Copy, Download, LoaderCircle, RefreshCw, Upload, X } from 'lucide-react'
+import { Check, Copy, Download, LoaderCircle, RefreshCw, Upload } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { useAppStore } from '../../store/appStore'
+import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
 import { HostRequestError } from '../../host/errors'
 import {
   fetchVkHealth,
@@ -258,6 +259,7 @@ function TaskBannerNotice({ banner, onDismiss }: {
   onDismiss: (id: string) => void
 }) {
   const [modelValue, setModelValue] = useState(100)
+  const alertTone: AppAlertTone = banner.tone === 'danger' ? 'error' : banner.tone
 
   useEffect(() => {
     const updateProgress = () => {
@@ -277,34 +279,20 @@ function TaskBannerNotice({ banner, onDismiss }: {
   }, [banner.createdAt, banner.id, onDismiss])
 
   return (
-    <div
-      data-testid="vk-task-banner"
-      data-tone={banner.tone}
+    <AppAlert
+      testId="vk-task-banner"
+      dataTone={banner.tone}
+      tone={alertTone}
+      title={banner.message}
       className={`vk-task-banner is-${banner.tone}`}
       role="status"
-    >
-      <span className="vk-task-banner-message" title={banner.message}>{banner.message}</span>
-      <button
-        type="button"
-        aria-label="关闭任务提醒"
-        title="关闭"
-        onClick={() => onDismiss(banner.id)}
-      >
-        <X size={17} aria-hidden="true" />
-      </button>
-      <div className="vk-task-banner-progress-track">
-        <div
-          data-testid="vk-task-banner-progress"
-          className={`vk-task-banner-progress is-${banner.tone}`}
-          role="progressbar"
-          aria-label="提醒剩余时间"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(modelValue)}
-          style={{ width: `${modelValue}%` }}
-        />
-      </div>
-    </div>
+      onClose={() => onDismiss(banner.id)}
+      closeLabel="关闭任务提醒"
+      progress={modelValue}
+      progressTestId="vk-task-banner-progress"
+      progressLabel="提醒剩余时间"
+      progressClassName={`is-${banner.tone}`}
+    />
   )
 }
 

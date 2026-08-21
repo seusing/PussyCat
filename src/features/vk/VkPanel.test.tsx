@@ -639,6 +639,7 @@ describe('VkPanel', () => {
     expect(notices).toHaveLength(1)
     expect(notices[0]).toHaveTextContent('\u4efb\u52a1\u5df2\u91cd\u65b0\u63d0\u4ea4\uff0c\u6b63\u5728\u91cd\u8dd1')
     expect(notices[0]).toHaveAttribute('data-tone', 'rerun')
+    expect(notices[0]).toHaveClass('app-alert')
     expect(screen.getByTestId('vk-task-banner-progress')).toHaveClass('is-rerun')
   })
 
@@ -1013,9 +1014,11 @@ describe('VkPanel', () => {
     expect(completed.closest('[data-testid="vk-task-banner"]')).toHaveAttribute('data-tone', 'success')
     expect(interrupted.closest('[data-testid="vk-task-banner"]')).toHaveAttribute('data-tone', 'warning')
     expect(failed.closest('[data-testid="vk-task-banner"]')).toHaveAttribute('data-tone', 'danger')
-    expect(screen.getAllByTestId('vk-task-banner-progress').map((item) => item.className)).toEqual(
-      expect.arrayContaining(['vk-task-banner-progress is-success', 'vk-task-banner-progress is-warning', 'vk-task-banner-progress is-danger']),
-    )
+    expect(screen.getAllByTestId('vk-task-banner-progress').map((item) => item.className)).toEqual(expect.arrayContaining([
+      expect.stringContaining('is-success'),
+      expect.stringContaining('is-warning'),
+      expect.stringContaining('is-danger'),
+    ]))
   })
 
   it('does not poll-loop when an installed runtime is displayed', async () => {

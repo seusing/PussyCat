@@ -729,7 +729,6 @@ select:focus-visible {
   backdrop-filter: blur(8px) saturate(1.05);
 }
 
-.undo-toast,
 .app-glass-dialog {
   border: 1px solid color-mix(in srgb, var(--color-line) 84%, transparent);
   background: color-mix(in srgb, var(--color-panel) 82%, transparent);
