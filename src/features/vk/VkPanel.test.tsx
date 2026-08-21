@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkPanel } from './VkPanel'
 import { useAppStore } from '../../store/appStore'
@@ -322,11 +322,45 @@ describe('VkPanel', () => {
     expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
     expect(screen.queryByText('新解析任务')).not.toBeInTheDocument()
     expect(screen.queryByText('视频链接')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vk-source-border-glow')).toBeInTheDocument()
     expect(screen.getByTestId('vk-source')).toHaveAttribute('rows', '6')
     expect(screen.getByRole('button', { name: '导入链接文件' })).toHaveAttribute('title', '导入链接文件')
     expect(screen.getByRole('button', { name: '导入链接文件' })).toHaveAttribute('data-tooltip', '导入链接文件')
     expect(screen.getByRole('button', { name: '导入链接文件' })).toHaveClass('vk-source-file-input')
     expect(screen.getByTestId('vk-source-file')).toHaveAttribute('accept', '.txt,.csv,.md,text/plain,text/csv')
+  })
+
+  it('updates the source input border glow from pointer position', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
+    const glow = screen.getByTestId('vk-source-border-glow')
+    vi.spyOn(glow, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 200,
+      bottom: 100,
+      width: 200,
+      height: 100,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    const event = new Event('pointermove', { bubbles: true }) as PointerEvent
+    Object.defineProperties(event, {
+      clientX: { value: 4 },
+      clientY: { value: 50 },
+    })
+    fireEvent(glow, event)
+
+    expect(glow.style.getPropertyValue('--border-glow-x')).toBe('2%')
+    expect(glow.style.getPropertyValue('--border-glow-y')).toBe('50%')
+    expect(Number(glow.style.getPropertyValue('--border-glow-intensity'))).toBeGreaterThan(0.9)
+    expect(glow.style.getPropertyValue('--border-glow-angle')).toBe('180deg')
   })
 
   it('imports a newline-delimited text file, removes duplicates, and identifies each source', async () => {

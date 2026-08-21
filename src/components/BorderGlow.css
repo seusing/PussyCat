@@ -1,0 +1,82 @@
+.border-glow {
+  --border-glow-x: 50%;
+  --border-glow-y: 50%;
+  --border-glow-edge: 0;
+  --border-glow-angle: 0deg;
+  --border-glow-intensity: 0;
+  --border-glow-radius: 96px;
+  position: relative;
+  border-radius: 10px;
+  isolation: isolate;
+}
+
+.border-glow::before,
+.border-glow::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: var(--border-glow-intensity);
+  transition: opacity 160ms ease;
+}
+
+.border-glow::before {
+  inset: -2px;
+  z-index: -1;
+  padding: 2px;
+  background:
+    radial-gradient(
+      var(--border-glow-radius) circle at var(--border-glow-x) var(--border-glow-y),
+      rgb(79 140 255 / calc(var(--border-glow-intensity) * 0.95)),
+      rgb(88 203 255 / calc(var(--border-glow-intensity) * 0.45)) 34%,
+      transparent 68%
+    ),
+    conic-gradient(
+      from var(--border-glow-angle),
+      transparent,
+      rgb(88 203 255 / calc(var(--border-glow-edge) * 0.7)),
+      rgb(79 140 255 / calc(var(--border-glow-edge) * 0.9)),
+      transparent 42%
+    );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+
+.border-glow::after {
+  inset: -10px;
+  z-index: -2;
+  background: radial-gradient(
+    260px circle at var(--border-glow-x) var(--border-glow-y),
+    rgb(79 140 255 / calc(var(--border-glow-intensity) * 0.28)),
+    rgb(88 203 255 / calc(var(--border-glow-intensity) * 0.1)) 36%,
+    transparent 70%
+  );
+  filter: blur(12px);
+}
+
+.border-glow:focus-within::before {
+  opacity: max(var(--border-glow-intensity), 0.55);
+}
+
+.border-glow:focus-within::after {
+  opacity: max(var(--border-glow-intensity), 0.22);
+}
+
+.border-glow-content {
+  position: relative;
+  z-index: 1;
+  border-radius: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .border-glow::before,
+  .border-glow::after {
+    transition: none;
+  }
+}

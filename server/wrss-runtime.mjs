@@ -35,6 +35,7 @@ const TAR_BLOCK_SIZE = 512
 const MAX_EXTRACTED_ARCHIVE_BYTES = 256 * 1024 * 1024
 const WRSS_BOOTSTRAP_SCRIPT = '<script src="/static/pussycat-bootstrap.js"></script>'
 const WRSS_THEME_LINK = '<link rel="stylesheet" href="/static/pussycat-theme.css">'
+const WRSS_UI_SCRIPT = '<script src="/static/pussycat-ui.js"></script>'
 const WRSS_THEME_CSS = `:root,
 html {
   color-scheme: dark;
@@ -132,6 +133,407 @@ a,
 .arco-menu-selected {
   color: #8bb5ff !important;
 }
+
+.pussycat-hidden-link {
+  display: none !important;
+}
+
+#main > .arco-layout-header {
+  display: flex !important;
+  align-items: center !important;
+  min-height: 54px !important;
+  height: auto !important;
+  padding: 9px 24px !important;
+  border-bottom: 1px solid rgb(38 44 56 / 72%) !important;
+  background: rgb(15 17 21 / 74%) !important;
+}
+
+#main > .arco-layout-header > .arco-menu,
+#main > .arco-layout-header .arco-menu-horizontal {
+  flex: 0 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 3px !important;
+  border: 1px solid rgb(79 140 255 / 24%) !important;
+  border-radius: 999px !important;
+  background: rgb(15 17 21 / 52%) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%) !important;
+}
+
+#main > .arco-layout-header .arco-menu-inner {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  width: auto !important;
+  overflow: visible !important;
+  flex: 0 0 auto !important;
+}
+
+#main > .arco-layout-header .arco-menu-overflow-wrap {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  width: auto !important;
+  min-width: max-content !important;
+  height: 34px !important;
+  flex: 0 0 auto !important;
+}
+
+#main > .arco-layout-header .arco-menu-overflow-sub-menu,
+#main > .arco-layout-header .arco-menu-overflow-sub-menu-mirror {
+  display: none !important;
+}
+
+#main > .arco-layout-header .arco-menu-item {
+  height: 34px !important;
+  line-height: 34px !important;
+  margin: 0 !important;
+  padding: 0 14px !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: #b9c5d8 !important;
+}
+
+#main > .arco-layout-header .arco-menu-selected,
+#main > .arco-layout-header .arco-menu-item.arco-menu-selected {
+  background: rgb(79 140 255 / 18%) !important;
+  color: #f6f9ff !important;
+  box-shadow: inset 0 0 0 1px rgb(79 140 255 / 34%) !important;
+}
+
+#main > .arco-layout-header .arco-menu-item:hover {
+  background: rgb(255 255 255 / 6%) !important;
+  color: #f6f9ff !important;
+}
+
+#main > .arco-layout-header .pussycat-low-nav {
+  display: none !important;
+}
+
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/tags"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/message-tasks"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/filter-rules"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/task-queue"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/cascade/feed-status"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/cascade"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/access-keys"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/env-exception"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/configs"],
+#main > .arco-layout-header .arco-menu-item[data-pussycat-path="/sys-info"] {
+  display: none !important;
+}
+
+#main > .arco-layout-header .pussycat-primary-nav,
+#main > .arco-layout-header .pussycat-primary-nav.arco-menu-overflow-hidden-menu-item {
+  position: static !important;
+  inset: auto !important;
+  left: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  display: inline-flex !important;
+  visibility: visible !important;
+}
+
+#main > .arco-layout-header .pussycat-primary-nav[data-pussycat-path="/"] {
+  order: 1;
+}
+
+#main > .arco-layout-header .pussycat-primary-nav[data-pussycat-path="/export/records"] {
+  order: 2;
+}
+
+#main > .arco-layout-header .pussycat-primary-nav[data-pussycat-path="/wechat-status"] {
+  order: 3;
+}
+
+.pussycat-more-wrap {
+  position: relative;
+  margin-left: 8px;
+  flex: 0 0 auto;
+}
+
+.pussycat-more-button {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgb(79 140 255 / 24%);
+  border-radius: 999px;
+  background: rgb(15 17 21 / 58%);
+  color: #c7d2e5;
+  cursor: pointer;
+}
+
+.pussycat-more-button:hover,
+.pussycat-more-wrap.is-open .pussycat-more-button {
+  border-color: rgb(79 140 255 / 42%);
+  background: rgb(79 140 255 / 14%);
+  color: #f6f9ff;
+}
+
+.pussycat-more-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  z-index: 50;
+  display: none;
+  min-width: 184px;
+  padding: 6px;
+  border: 1px solid rgb(38 44 56 / 88%);
+  border-radius: 10px;
+  background: rgb(23 26 33 / 92%);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 4%);
+  backdrop-filter: blur(14px) saturate(1.08);
+}
+
+.pussycat-more-wrap.is-open .pussycat-more-menu {
+  display: grid;
+  gap: 3px;
+}
+
+.pussycat-more-item {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #b9c5d8;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pussycat-more-item:hover,
+.pussycat-more-item.is-active {
+  background: rgb(79 140 255 / 14%);
+  color: #f6f9ff;
+}
+
+.article-list > .arco-layout-sider,
+.article-list .arco-layout-sider {
+  border-right: 1px solid rgb(38 44 56 / 72%) !important;
+  background: rgb(15 17 21 / 58%) !important;
+}
+
+.article-list .arco-layout-sider .arco-card,
+.article-list .arco-layout-sider .arco-card-header,
+.article-list .arco-layout-sider .arco-card-body {
+  border-color: rgb(38 44 56 / 72%) !important;
+  background: transparent !important;
+}
+
+.article-list .arco-layout-sider .arco-card-body {
+  position: relative;
+  padding: 12px !important;
+}
+
+.article-list .arco-layout-sider .arco-list {
+  max-height: calc(100vh - 310px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.article-list .arco-layout-sider .arco-list-item {
+  min-height: 58px;
+  margin: 4px 0;
+  border: 1px solid transparent !important;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 3%) !important;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.article-list .arco-layout-sider .arco-list-item:hover {
+  border-color: rgb(79 140 255 / 24%) !important;
+  background: rgb(79 140 255 / 10%) !important;
+}
+
+.article-list .arco-layout-sider .arco-list-item.active-mp {
+  border-color: rgb(79 140 255 / 40%) !important;
+  background: rgb(79 140 255 / 16%) !important;
+  box-shadow: inset 3px 0 0 #4f8cff;
+}
+`
+const WRSS_UI_JS = `(() => {
+  const VERSION = 'pussycat-wrss-ui-v1'
+  const previous = window.__PUSSYCAT_WRSS_UI__
+  if (previous && previous.version === VERSION) return
+  if (previous && typeof previous.destroy === 'function') previous.destroy()
+
+  const state = {
+    version: VERSION,
+    raf: 0,
+    observer: null,
+    cleanup: [],
+    moreWrap: null,
+  }
+  window.__PUSSYCAT_WRSS_UI__ = state
+
+  const primaryNav = [
+    { from: '订阅管理', label: '订阅与文章', path: '/', order: '1' },
+    { from: '导出记录', label: '导出记录', path: '/export/records', order: '2' },
+    { from: '授权管理', label: '授权', path: '/wechat-status', order: '3' },
+  ]
+  const moreNav = [
+    { from: '标签管理', label: '标签管理', path: '/tags' },
+    { from: '消息任务', label: '消息任务', path: '/message-tasks' },
+    { from: '过滤规则', label: '过滤规则', path: '/filter-rules' },
+    { from: '任务队列', label: '任务队列', path: '/task-queue' },
+    { from: '公众号状态', label: '公众号状态', path: '/cascade/feed-status' },
+    { from: '级联管理', label: '级联管理', path: '/cascade' },
+    { from: 'Access Key', label: 'Access Key', path: '/access-keys' },
+    { from: '异常统计', label: '异常统计', path: '/env-exception' },
+    { from: '配置信息', label: '配置信息', path: '/configs' },
+    { from: '系统信息', label: '系统信息', path: '/sys-info' },
+  ]
+  const headerLinks = new Set(['Views', 'Docs', 'Gitee', 'GitHub', 'ClawCloud', '云部署', '支持', '赞助'])
+
+  function normalize(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim()
+  }
+
+  function setLastTextNode(element, label) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        return normalize(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+      },
+    })
+    let node = null
+    let last = null
+    while ((node = walker.nextNode())) last = node
+    if (last && normalize(last.nodeValue) !== label) last.nodeValue = label
+  }
+
+  function entryFor(item) {
+    const text = normalize(item.textContent)
+    const storedPath = item.dataset.pussycatPath
+    return [...primaryNav, ...moreNav].find((entry) => storedPath === entry.path || text.includes(entry.from) || text === entry.label)
+  }
+
+  function closeMore() {
+    if (!state.moreWrap) return
+    state.moreWrap.classList.remove('is-open')
+    const button = state.moreWrap.querySelector('.pussycat-more-button')
+    if (button) button.setAttribute('aria-expanded', 'false')
+  }
+
+  function attrValue(value) {
+    return String(value).replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"')
+  }
+
+  function navigate(path) {
+    closeMore()
+    const selector = '.arco-menu-item[data-pussycat-path="' + attrValue(path) + '"]'
+    const menuItem = document.querySelector(selector)
+    if (menuItem instanceof HTMLElement) {
+      menuItem.click()
+      return
+    }
+    window.location.assign(path)
+  }
+
+  function ensureMoreMenu(menu) {
+    const host = menu.parentElement
+    if (!host) return
+    let wrap = Array.from(host.children).find((child) => child.classList && child.classList.contains('pussycat-more-wrap'))
+    if (!wrap) {
+      wrap = document.createElement('div')
+      wrap.className = 'pussycat-more-wrap'
+      wrap.innerHTML = '<button type="button" class="pussycat-more-button" aria-haspopup="menu" aria-expanded="false">更多</button><div class="pussycat-more-menu" role="menu"></div>'
+      host.appendChild(wrap)
+      const button = wrap.querySelector('.pussycat-more-button')
+      button.addEventListener('click', (event) => {
+        event.stopPropagation()
+        const open = !wrap.classList.contains('is-open')
+        wrap.classList.toggle('is-open', open)
+        button.setAttribute('aria-expanded', open ? 'true' : 'false')
+      })
+    }
+    state.moreWrap = wrap
+
+    const panel = wrap.querySelector('.pussycat-more-menu')
+    if (!panel) return
+    const activePath = window.location.pathname
+    const signature = activePath + '|' + moreNav.map((entry) => entry.path + ':' + entry.label).join(',')
+    if (panel.dataset.pussycatSignature === signature) return
+    panel.dataset.pussycatSignature = signature
+    panel.replaceChildren(...moreNav.map((entry) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'pussycat-more-item' + (activePath === entry.path ? ' is-active' : '')
+      button.setAttribute('role', 'menuitem')
+      button.textContent = entry.label
+      button.addEventListener('click', () => navigate(entry.path))
+      return button
+    }))
+  }
+
+  function enhanceNav() {
+    const menu = document.querySelector('#main > .arco-layout-header .arco-menu-horizontal, #main > .arco-layout-header .arco-menu')
+    if (!menu) return
+
+    menu.querySelectorAll('.arco-menu-item').forEach((item) => {
+      const entry = entryFor(item)
+      if (!entry) return
+      item.dataset.pussycatPath = entry.path
+      item.classList.toggle('pussycat-primary-nav', primaryNav.some((nav) => nav.path === entry.path))
+      item.classList.toggle('pussycat-low-nav', moreNav.some((nav) => nav.path === entry.path))
+      if (entry.order) item.style.order = entry.order
+      setLastTextNode(item, entry.label)
+    })
+
+    ensureMoreMenu(menu)
+  }
+
+  function enhanceHeaderLinks() {
+    document.querySelectorAll('.app-header .header-right a').forEach((link) => {
+      if (headerLinks.has(normalize(link.textContent))) link.classList.add('pussycat-hidden-link')
+    })
+  }
+
+  function apply() {
+    state.raf = 0
+    enhanceHeaderLinks()
+    enhanceNav()
+  }
+
+  function schedule() {
+    if (state.raf) return
+    state.raf = window.requestAnimationFrame(apply)
+  }
+
+  const onDocumentClick = (event) => {
+    if (state.moreWrap && !state.moreWrap.contains(event.target)) closeMore()
+  }
+  const onKeyDown = (event) => {
+    if (event.key === 'Escape') closeMore()
+  }
+
+  document.addEventListener('click', onDocumentClick)
+  document.addEventListener('keydown', onKeyDown)
+  state.cleanup.push(() => document.removeEventListener('click', onDocumentClick))
+  state.cleanup.push(() => document.removeEventListener('keydown', onKeyDown))
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', schedule, { once: true })
+  } else {
+    schedule()
+  }
+
+  state.observer = new MutationObserver(schedule)
+  state.observer.observe(document.documentElement, { childList: true, subtree: true })
+  state.destroy = () => {
+    if (state.raf) window.cancelAnimationFrame(state.raf)
+    if (state.observer) state.observer.disconnect()
+    state.cleanup.forEach((cleanup) => cleanup())
+    if (window.__PUSSYCAT_WRSS_UI__ === state) delete window.__PUSSYCAT_WRSS_UI__
+  }
+})()
 `
 
 export class WrssRuntimeError extends Error {
@@ -152,10 +554,12 @@ export function ensureWrssStaticAssets(sourceDir) {
   const headMatches = indexHtml.match(/<\/head>/gi) ?? []
   if (headMatches.length !== 1) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不符合预期')
   const withoutManagedAssets = indexHtml
+    .replace(/\s*<script\s+src=["']\/static\/pussycat-ui\.js["']><\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-bootstrap\.js["']><\/script>/gi, '')
     .replace(/\s*<link\s+rel=["']stylesheet["']\s+href=["']\/static\/pussycat-theme\.css["']\s*\/?>/gi, '')
-  atomicText(indexPath, withoutManagedAssets.replace(/<\/head>/i, `${WRSS_THEME_LINK}\n${WRSS_BOOTSTRAP_SCRIPT}\n</head>`))
+  atomicText(indexPath, withoutManagedAssets.replace(/<\/head>/i, `${WRSS_THEME_LINK}\n${WRSS_BOOTSTRAP_SCRIPT}\n${WRSS_UI_SCRIPT}\n</head>`))
   atomicText(join(staticDir, 'pussycat-theme.css'), WRSS_THEME_CSS)
+  atomicText(join(staticDir, 'pussycat-ui.js'), WRSS_UI_JS)
 }
 
 function tarText(buffer, start, length) {

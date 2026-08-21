@@ -36,6 +36,7 @@ import type {
   VkRuntimeStatus,
   VkRuntimeCandidate,
 } from '../../host/vkClient'
+import { BorderGlow } from '../../components/BorderGlow'
 import { runtimeToAdopt } from './runtimePick'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
@@ -1043,40 +1044,42 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           </div>
         )}
         <div className="mb-2">
-          <div className="vk-source-input-shell">
-            <textarea
-              id="vk-source-input"
-              data-testid="vk-source"
-              value={source}
-              onChange={(event) => setSource(event.target.value)}
-              placeholder={'每行一个视频链接\nhttps://…'}
-              rows={6}
-              className={fieldClass}
-              style={fieldStyle}
-            />
-            <VideoSourceCoverFlow source={source} />
-            <button
-              type="button"
-              className="vk-source-file-input"
-              title="导入链接文件"
-              data-tooltip="导入链接文件"
-              aria-label="导入链接文件"
-              onClick={() => sourceFileInputRef.current?.click()}
-            >
-              <Upload size={16} aria-hidden="true" />
-            </button>
-            <input
-              ref={sourceFileInputRef}
-              data-testid="vk-source-file"
-              className="vk-source-file-picker"
-              type="file"
-              accept=".txt,.csv,.md,text/plain,text/csv"
-              onChange={(event) => {
-                void importSourceFile(event.target.files?.[0])
-                event.currentTarget.value = ''
-              }}
-            />
-          </div>
+          <BorderGlow className="vk-source-border-glow" testId="vk-source-border-glow">
+            <div className="vk-source-input-shell">
+              <textarea
+                id="vk-source-input"
+                data-testid="vk-source"
+                value={source}
+                onChange={(event) => setSource(event.target.value)}
+                placeholder={'每行一个视频链接\nhttps://…'}
+                rows={6}
+                className={fieldClass}
+                style={fieldStyle}
+              />
+              <VideoSourceCoverFlow source={source} />
+              <button
+                type="button"
+                className="vk-source-file-input"
+                title="导入链接文件"
+                data-tooltip="导入链接文件"
+                aria-label="导入链接文件"
+                onClick={() => sourceFileInputRef.current?.click()}
+              >
+                <Upload size={16} aria-hidden="true" />
+              </button>
+              <input
+                ref={sourceFileInputRef}
+                data-testid="vk-source-file"
+                className="vk-source-file-picker"
+                type="file"
+                accept=".txt,.csv,.md,text/plain,text/csv"
+                onChange={(event) => {
+                  void importSourceFile(event.target.files?.[0])
+                  event.currentTarget.value = ''
+                }}
+              />
+            </div>
+          </BorderGlow>
         </div>
         <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           补充要求（选填）

@@ -3,6 +3,10 @@
   min-width: 0;
 }
 
+.vk-source-border-glow {
+  width: 100%;
+}
+
 .vk-source-input-shell textarea {
   min-height: 168px;
   resize: vertical;
