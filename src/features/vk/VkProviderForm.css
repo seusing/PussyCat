@@ -1,38 +1,78 @@
 .vk-icon-action {
   position: relative;
+  background: rgb(255 255 255 / 3%);
+}
+
+.vk-icon-action:hover,
+.vk-icon-action:focus-visible {
+  background: rgb(255 255 255 / 6%);
+  outline: none;
+}
+
+.vk-icon-action--primary,
+.vk-icon-action--primary:hover,
+.vk-icon-action--primary:focus-visible {
+  background: var(--color-accent);
 }
 
 .vk-icon-action::after {
   content: attr(data-tooltip);
   position: absolute;
-  right: 50%;
+  left: 50%;
   bottom: calc(100% + 8px);
   z-index: 90;
+  width: max-content;
   max-width: min(18rem, calc(100vw - 2rem));
   padding: 0.35rem 0.55rem;
   border: 1px solid var(--color-line);
   border-radius: 0.45rem;
-  background: var(--color-panel);
+  background: color-mix(in srgb, var(--color-panel) 92%, transparent);
   color: var(--color-fg);
   font-size: 0.75rem;
   line-height: 1.25;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   pointer-events: none;
   opacity: 0;
-  transform: translate(50%, 0) scale(0.98);
+  transform: translate(-50%, 0) scale(0.98);
+  transform-origin: 50% 100%;
   transition: opacity 50ms ease-out, transform 50ms ease-out;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 6%),
+    0 2px 6px rgb(0 0 0 / 5%),
+    0 4px 42px rgb(0 0 0 / 6%);
+  backdrop-filter: blur(10px) saturate(1.08);
 }
 
 .vk-icon-action:hover::after,
 .vk-icon-action:focus-visible::after {
   opacity: 1;
-  transform: translate(50%, 0) scale(1);
+  transform: translate(-50%, 0) scale(1);
   transition-delay: 80ms;
   transition-duration: 150ms;
 }
 
 .vk-validation-field {
   min-width: 0;
+}
+
+.vk-key-field {
+  min-width: 0;
+}
+
+.vk-key-control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.vk-key-input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.vk-key-eye-button {
+  flex: 0 0 2.25rem;
 }
 
 .vk-glass-menu {
@@ -49,7 +89,8 @@
 }
 
 .vk-validation-field.is-error > input,
-.vk-validation-field.is-error > select {
+.vk-validation-field.is-error > select,
+.vk-validation-field.is-error .vk-key-input {
   border-color: var(--color-danger) !important;
   animation: vk-input-shake 280ms ease-in-out;
 }
@@ -121,5 +162,6 @@
   .vk-icon-action::after { transition: none; }
   .vk-provider-feedback::after { animation: none; }
   .vk-validation-field.is-error > input,
-  .vk-validation-field.is-error > select { animation: none; }
+  .vk-validation-field.is-error > select,
+  .vk-validation-field.is-error .vk-key-input { animation: none; }
 }

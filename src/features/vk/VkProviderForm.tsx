@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
+import { MorphIcon } from 'morphicons/react'
+import { Plus as MorphPlus, RefreshCw as MorphRefreshCw, Wifi as MorphWifi, type IconNode } from 'lucide'
 import {
-  Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Lock, LockOpen, Pen, Plus, RefreshCw, Trash2, Wifi, X,
+  Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Lock, LockOpen, Pen, Trash2, X,
 } from 'lucide-react'
 import './VkProviderForm.css'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
@@ -23,6 +25,11 @@ const fieldStyle = {
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
 
+type Notice = {
+  message: string
+  tone: 'success' | 'error'
+}
+
 function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean, dismiss: () => void) {
   useEffect(() => {
     if (!open) return
@@ -43,36 +50,38 @@ function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean
 }
 
 function VisibilityButton({
-  revealed,
+  visible,
   disabled,
   onClick,
   testId,
 }: {
-  revealed: boolean
+  visible: boolean
   disabled: boolean
   onClick: () => void
   testId: string
 }) {
   const [hovered, setHovered] = useState(false)
-  const iconState = revealed
+  const iconState = visible
     ? (hovered ? 'eye' : 'eye-off')
     : (hovered ? 'eye-off' : 'eye')
   const Icon = iconState === 'eye' ? Eye : EyeOff
+  const label = visible ? '隐藏 API key' : '显示 API key'
 
   return (
     <motion.button
       type="button"
       data-testid={testId}
       data-icon={iconState}
+      data-tooltip={label}
       onClick={onClick}
       onMouseEnter={() => { if (!disabled) setHovered(true) }}
       onMouseLeave={() => setHovered(false)}
       disabled={disabled}
       whileHover={disabled ? undefined : { scale: 1.02 }}
       whileTap={disabled ? undefined : { scale: 0.96 }}
-      className="relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[40px] border border-white/5 bg-white/[0.04] text-sm font-medium text-white transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
-      aria-label={revealed ? '隐藏 API key' : '显示 API key'}
-      title={revealed ? '隐藏 API key' : '显示 API key'}
+      className="vk-icon-action vk-key-eye-button relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[40px] border border-white/5 bg-white/[0.04] text-sm font-medium text-white transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+      aria-label={label}
+      title={label}
     >
       <span className="relative flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
         <AnimatePresence mode="popLayout" initial={false}>
@@ -89,6 +98,19 @@ function VisibilityButton({
         </AnimatePresence>
       </span>
     </motion.button>
+  )
+}
+
+function MorphActionGlyph({ icon, size = 14, className }: { icon: IconNode; size?: number; className?: string }) {
+  return (
+    <MorphIcon
+      icon={icon}
+      size={size}
+      strokeWidth={2}
+      reducedMotion="user"
+      className={className}
+      aria-hidden="true"
+    />
   )
 }
 
@@ -128,11 +150,11 @@ type Draft = {
   /** 用户这次输入的 key(未保存);未 touched 时不提交,表示"不改动已存的那把"。 */
   api_key: string
   key_touched: boolean
+  /** 组件内存里是否已持有真实明文。 */
+  key_loaded: boolean
+  /** 当前输入框是否按明文显示。隐藏时仍保留完整 api_key,由 password input 负责打点。 */
+  key_visible: boolean
   enabled: boolean
-  /** 点了「显示」之后取回的明文,只活在组件里 */
-  revealed?: string
-  /** 已存 key 点击输入框后进入编辑,但不改变当前明文显隐状态。 */
-  key_editing?: boolean
 }
 
 const newId = () => `ch_${Math.random().toString(36).slice(2, 8)}`
@@ -150,6 +172,8 @@ function ActionIconButton({
   tone = 'default',
   onHoverChange,
   iconState,
+  appearance = 'default',
+  size = 'sm',
 }: {
   testId: string
   label: string
@@ -159,7 +183,16 @@ function ActionIconButton({
   tone?: 'default' | 'danger' | 'warning'
   onHoverChange?: (hovered: boolean) => void
   iconState?: string
+  appearance?: 'default' | 'primary'
+  size?: 'sm' | 'md'
 }) {
+  const color = appearance === 'primary'
+    ? 'var(--color-on-accent)'
+    : tone === 'danger'
+      ? 'var(--color-danger)'
+      : tone === 'warning'
+        ? 'var(--color-warning)'
+        : 'var(--color-fg)'
   return (
     <motion.button
       type="button"
@@ -173,10 +206,11 @@ function ActionIconButton({
       disabled={disabled}
       whileTap={disabled ? undefined : { opacity: 0.78 }}
       data-tooltip={label}
-      className="vk-icon-action inline-flex h-8 w-8 items-center justify-center rounded-lg p-0 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+      className={`vk-icon-action inline-flex ${size === 'md' ? 'h-9 w-9' : 'h-8 w-8'} items-center justify-center rounded-lg p-0 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${appearance === 'primary' ? 'vk-icon-action--primary' : ''}`}
       style={{
-        border: '1px solid var(--color-line)',
-        color: tone === 'danger' ? 'var(--color-danger)' : tone === 'warning' ? 'var(--color-warning)' : 'var(--color-fg)',
+        border: appearance === 'primary' ? '1px solid transparent' : '1px solid var(--color-line)',
+        color,
+        ...(appearance === 'primary' ? { background: 'var(--color-accent)' } : {}),
       }}
     >
       {children}
@@ -238,8 +272,16 @@ function toDraft(channel: VkProviderSettings['channels'][number]): Draft {
     key_env: channel.key_env, api_style: channel.api_style, api_style_touched: true,
     reasoning_effort: channel.reasoning_effort_explicit ? channel.reasoning_effort : '',
     key_masked: channel.key_masked, extra_headers: { ...channel.extra_headers },
-    api_key: '', key_touched: false, enabled: channel.enabled !== false,
+    api_key: '', key_touched: false, key_loaded: false, key_visible: false, enabled: channel.enabled !== false,
   }
+}
+
+function formatTestNotice(result: VkProviderTestResult): string {
+  return [
+    result.message,
+    !result.ok && result.fix_hint ? `下一步：${result.fix_hint}` : '',
+    ...(result.normalization_notes ?? []),
+  ].filter(Boolean).join('；')
 }
 
 type ChannelEditorProps = {
@@ -273,12 +315,14 @@ function ChannelEditor({
   onClearError,
   errors = {},
 }: ChannelEditorProps) {
-  const showMasked = !draft.key_touched && !draft.revealed && !draft.key_editing && draft.key_masked !== ''
+  const showSavedMask = !draft.key_loaded && !draft.key_touched && draft.key_masked !== ''
+  const canRevealOrToggle = draft.key_loaded || Boolean(saved?.key_stored || draft.key_masked)
+  const keyValue = showSavedMask ? draft.key_masked : draft.api_key
+  const keyType = showSavedMask || draft.key_visible ? 'text' : 'password'
   const channelIsBusy = Boolean(channelBusy)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   useDismissOnOutside(modelMenuRef, modelMenuOpen, () => setModelMenuOpen(false))
-  const maskedKey = draft.key_masked ? '••••••••••••••••' : ''
   const field = (name: keyof typeof errors, label: string, child: ReactNode) => (
     <div className={`vk-validation-field ${errors[name] ? 'is-error' : ''}`}>
       <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{label}</div>
@@ -305,16 +349,15 @@ function ChannelEditor({
           value={draft.model_id}
           onChange={(e) => { onPatchModel(draft, e.target.value); onClearError?.('model_id') }}
         />
-        <button
-          type="button"
-          data-testid={`vk-channel-models-fetch-${draft.id}`}
-          className={outlineButton}
-          style={{ ...outlineStyle, minHeight: '2.25rem', whiteSpace: 'nowrap' }}
+        <ActionIconButton
+          testId={`vk-channel-models-fetch-${draft.id}`}
+          label="获取模型列表"
           onClick={() => onTest(draft)}
           disabled={channelIsBusy}
+          size="md"
         >
-          <RefreshCw size={13} className={`mr-1 inline ${channelBusy === 'test' ? 'animate-spin' : ''}`} aria-hidden="true" />获取模型列表
-        </button>
+          <MorphActionGlyph icon={MorphRefreshCw} size={15} className={channelBusy === 'test' ? 'animate-spin' : ''} />
+        </ActionIconButton>
         {models.length > 0 && (
           <div ref={modelMenuRef} className="relative shrink-0">
             <button type="button" data-testid={`vk-channel-models-menu-${draft.id}`} aria-label="选择模型" title="选择模型" className="vk-icon-action inline-flex h-9 w-9 items-center justify-center rounded-lg" style={outlineStyle} onClick={() => setModelMenuOpen((open) => !open)}>
@@ -332,32 +375,44 @@ function ChannelEditor({
         </datalist>
       </div>)}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className={`vk-validation-field min-w-0 flex-1 ${errors.api_key ? 'is-error' : ''}`}>
-          <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>API key</div>
+      <div className={`vk-validation-field vk-key-field ${errors.api_key ? 'is-error' : ''}`}>
+        <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>API key</div>
+        <div className="vk-key-control-row">
           <input
             data-testid={`vk-channel-key-${draft.id}`}
-            type={draft.revealed ? 'text' : 'password'}
-            readOnly={showMasked}
+            type={keyType}
+            readOnly={showSavedMask}
             autoComplete="off"
-            className={fieldClass}
-            style={{ ...fieldStyle, color: showMasked ? 'var(--color-fg-dim)' : 'var(--color-fg)' }}
+            className={`${fieldClass} vk-key-input`}
+            style={{ ...fieldStyle, color: showSavedMask ? 'var(--color-fg-dim)' : 'var(--color-fg)' }}
             placeholder="粘贴 API key"
-            value={draft.revealed ?? (showMasked ? maskedKey : draft.api_key)}
-            onFocus={() => { if (showMasked) onPatch(draft.id, { key_editing: true, api_key: '', key_touched: true, revealed: undefined }); onClearError?.('api_key') }}
-            onChange={(e) => { onPatch(draft.id, { api_key: e.target.value, key_touched: true, key_editing: true, revealed: undefined }); onClearError?.('api_key') }}
+            value={keyValue}
+            onFocus={() => {
+              onClearError?.('api_key')
+              if (showSavedMask) onReveal(draft)
+              else if (draft.key_loaded && !draft.key_visible) onPatch(draft.id, { key_visible: true })
+            }}
+            onChange={(e) => {
+              onPatch(draft.id, {
+                api_key: e.target.value,
+                key_touched: true,
+                key_loaded: true,
+                key_visible: true,
+              })
+              onClearError?.('api_key')
+            }}
           />
-          {errors.api_key && <div className="vk-validation-message" role="alert">{errors.api_key}</div>}
+          <VisibilityButton
+            testId={`vk-channel-reveal-${draft.id}`}
+            visible={draft.key_loaded && draft.key_visible}
+            onClick={() => {
+              if (draft.key_loaded) onPatch(draft.id, { key_visible: !draft.key_visible })
+              else onReveal(draft)
+            }}
+            disabled={channelIsBusy || !canRevealOrToggle}
+          />
         </div>
-        <VisibilityButton
-          testId={`vk-channel-reveal-${draft.id}`}
-          revealed={Boolean(draft.revealed)}
-          onClick={() => {
-            if (draft.revealed) onPatch(draft.id, { revealed: undefined })
-            else onReveal(draft)
-          }}
-          disabled={channelIsBusy || (!saved?.key_stored && !draft.key_masked)}
-        />
+        {errors.api_key && <div className="vk-validation-message" role="alert">{errors.api_key}</div>}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -390,25 +445,20 @@ function ChannelEditor({
         {result?.ok && availableReasoningEfforts.length === 0 && (
           <span data-testid={`vk-channel-reasoning-note-${draft.id}`} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>中转站未返回可枚举档位；可保持自动，或输入其支持的值</span>
         )}
-        <button type="button" data-testid={`vk-channel-test-${draft.id}`} onClick={() => onTest(draft)} disabled={channelIsBusy} className={outlineButton} style={outlineStyle}>
-          <Wifi size={14} className="mr-1 inline" aria-hidden="true" />{channelBusy === 'test' ? '测试中…' : '测试连接'}
-        </button>
+        <ActionIconButton
+          testId={`vk-channel-test-${draft.id}`}
+          label="测试连接"
+          onClick={() => onTest(draft)}
+          disabled={channelIsBusy}
+          size="md"
+        >
+          <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy === 'test' ? 'animate-spin' : ''} />
+        </ActionIconButton>
         {saved?.key_from_environment && (
           <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }} title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">key 来自系统环境变量，优先生效</span>
         )}
       </div>
 
-      {result && (
-        <div data-testid={`vk-channel-result-${draft.id}`} className="mt-2 text-xs" style={{ color: result.ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
-          {result.ok ? '✓ ' : '✗ '}{result.message}
-        </div>
-      )}
-      {result && !result.ok && result.fix_hint && (
-        <div data-testid={`vk-channel-fix-${draft.id}`} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>下一步：{result.fix_hint}</div>
-      )}
-      {result && !result.ok && !result.retryable && draft.enabled && (
-        <div data-testid={`vk-channel-invalid-${draft.id}`} className="mt-1 text-xs" style={{ color: 'var(--color-danger)' }}>此配置当前不可用。可修正后重试连接，或选择禁用/删除；爪爪不会自动删除。</div>
-      )}
       {result?.normalization_notes?.map((note) => <div key={note} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{note}</div>)}
     </div>
   )
@@ -421,8 +471,8 @@ function ChannelEditor({
  * 也没有「默认通道」:通道本来就是按用途建的,两个角色各指一条,"默认"没有语义。
  *
  * 三条贯穿全组件的纪律:
- *  · key 存过就**看得见存在**(全点号),点击输入框即可替换——不碰就不提交。
- *    明文只在点「显示」时单独取,取回来也只活在组件状态里。
+ *  · key 存过就**看得见存在**(打码值),点击输入框或「显示」才取明文——不碰就不提交。
+ *    明文只活在组件状态里。
  *  · 接口风格按模型名先填上,用户改过就不再覆盖。
  *  · 失败给根因 + 下一步;能自动修的当场修**并把改了什么写出来**。
  */
@@ -440,7 +490,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [saving, setSaving] = useState(false)
   const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
   const savingRef = useRef(false)
@@ -516,7 +566,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       id, name: '新配置', base_url: '', model_id: '',
       key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
       api_style_touched: false, reasoning_effort: '', key_masked: '', extra_headers: {},
-      api_key: '', key_touched: false, enabled: true,
+      api_key: '', key_touched: false, key_loaded: true, key_visible: false, enabled: true,
     }
     openNewDraft(draft)
   }
@@ -526,7 +576,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       id: item.id, name: item.name, base_url: item.base_url, model_id: item.model_id,
       key_env: item.key_env, api_style: inferApiStyle(item.model_id), api_style_touched: false,
       reasoning_effort: '', key_masked: '', extra_headers: {}, api_key: '', key_touched: false,
-      enabled: true,
+      key_loaded: false, key_visible: false, enabled: true,
     }
     const current = drafts.find((draft) => draft.id === item.id)
     if (current) openEditor(current)
@@ -546,7 +596,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         id: channel.id, name: channel.name, base_url: channel.base_url,
         model_id: channel.model_id, key_env: channel.key_env, api_style: channel.api_style,
         api_style_touched: true, reasoning_effort: '', key_masked: '', extra_headers: channel.extra_headers,
-        api_key, key_touched: true, enabled: true,
+        api_key, key_touched: true, key_loaded: true, key_visible: false, enabled: true,
       }
       openNewDraft(imported)
     } catch (err) {
@@ -582,11 +632,14 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         channels: channelPayload(nextDrafts), roles: nextRoles, role_fallbacks: nextRoleFallbacks,
       }, baseUrl)
       if (showNotice) {
-        setNotice([
-          '已保存并立即生效',
-          ...result.normalization_notes,
-          result.keys_written.length ? `已安全保存 ${result.keys_written.length} 把 key` : '',
-        ].filter(Boolean).join('；'))
+        setNotice({
+          tone: 'success',
+          message: [
+            '已保存并立即生效',
+            ...result.normalization_notes,
+            result.keys_written.length ? `已安全保存 ${result.keys_written.length} 把 key` : '',
+          ].filter(Boolean).join('；'),
+        })
       }
       // 角色选择、启停、删除和备用顺序采用乐观更新。服务端保存响应不含完整
       // settings，立即重新读取会把尚未刷新的旧快照覆盖回页面。弹窗保存仍回读，
@@ -630,7 +683,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       // plaintext key again. Unsaved text remains local to this draft.
       api_key: draft.key_touched ? draft.api_key : '',
       key_touched: draft.key_touched,
-      revealed: undefined,
+      key_loaded: draft.key_touched && draft.key_loaded,
+      key_visible: false,
     }
     openNewDraft(reused)
   }
@@ -685,7 +739,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setError(null)
     try {
       const result = await revealVkProviderKey(draft.key_env, baseUrl)
-      patch(draft.id, { revealed: result.found ? (result.api_key ?? '') : '(尚未保存)' })
+      patch(draft.id, {
+        api_key: result.found ? (result.api_key ?? '') : '',
+        key_loaded: true,
+        key_visible: true,
+        key_touched: false,
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取 key 失败')
     } finally {
@@ -705,9 +764,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         base_url: draft.base_url,
         key_env: draft.key_env,
         api_style: draft.api_style,
-        ...(draft.key_touched && draft.api_key ? { api_key: draft.api_key } : {}),
+        ...(draft.key_touched ? { api_key: draft.api_key } : {}),
       }, baseUrl)
       setResults((prev) => ({ ...prev, [draft.id]: result }))
+      setNotice({ tone: result.ok ? 'success' : 'error', message: formatTestNotice(result) })
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
       if (result.base_url && result.base_url !== draft.base_url) patch(draft.id, { base_url: result.base_url })
       // Every click replaces the previous discovery result, including an empty
@@ -719,7 +779,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         [draft.id]: result.reasoning_efforts ?? {},
       }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : '连接测试失败')
+      setNotice({ tone: 'error', message: err instanceof Error ? err.message : '连接测试失败' })
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
@@ -810,11 +870,16 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               )}
             </div>
           )}
-          <button type="button" data-testid="vk-channel-add" onClick={addChannel}
-            className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium"
-            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
-            <Plus size={14} aria-hidden="true" /> 创建配置
-          </button>
+          <ActionIconButton
+            testId="vk-channel-add"
+            label="创建配置"
+            onClick={addChannel}
+            disabled={busy !== null || saving}
+            appearance="primary"
+            size="md"
+          >
+            <MorphActionGlyph icon={MorphPlus} size={16} />
+          </ActionIconButton>
         </div>
       </div>
 
@@ -831,19 +896,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             <div className="px-3 py-8 text-center text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无模型配置</div>
           )}
           {drafts.map((draft) => {
-            const result = results[draft.id]
             const saved = settings.channels.find((channel) => channel.id === draft.id)
-            const showMasked = !draft.key_touched && !draft.revealed && draft.key_masked !== ''
+            const showSavedMask = !draft.key_loaded && !draft.key_touched && draft.key_masked !== ''
             let upstream = draft.base_url || '未填写上游地址'
             try { upstream = draft.base_url ? new URL(draft.base_url).hostname : upstream } catch { /* show the raw draft */ }
-            const statusLabel = !draft.enabled
-              ? '已禁用'
-              : (result ? (result.ok ? '连接正常' : '连接失败') : '已启用')
-            const statusColor = !draft.enabled
-              ? 'var(--color-warning)'
-              : (result
-                ? (result.ok ? 'var(--color-success)' : 'var(--color-danger)')
-                : 'var(--color-success)')
+            const statusLabel = draft.enabled ? '已启用' : '已禁用'
+            const statusColor = draft.enabled ? 'var(--color-success)' : 'var(--color-warning)'
             return (
               <div key={draft.id} data-testid={`vk-channel-${draft.id}`} className="min-w-[56rem] px-3 py-3"
                 style={{ background: 'var(--color-canvas)' }}>
@@ -855,7 +913,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   />
                   <div className="min-w-0">
                     <div className="truncate text-xs" style={{ color: 'var(--color-fg)' }}>
-                      {showMasked ? draft.key_masked : (draft.key_touched && draft.api_key ? '未保存 key' : '未设置 key')}
+                      {showSavedMask ? draft.key_masked : (draft.key_touched && draft.api_key ? '未保存 key' : '未设置 key')}
                     </div>
                     <OverflowTooltip
                       text={upstream}
@@ -884,11 +942,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                     {modalId !== draft.id && (
                       <ActionIconButton
                         testId={`vk-channel-test-${draft.id}`}
-                        label={channelBusy[draft.id] === 'test' ? '测试中…' : '测试连接'}
+                        label="测试连接"
                         onClick={() => { void runTest(draft) }}
                         disabled={Boolean(channelBusy[draft.id]) || saving}
                       >
-                        <RefreshCw size={14} className={channelBusy[draft.id] === 'test' ? 'animate-spin' : ''} aria-hidden="true" />
+                        <MorphActionGlyph icon={MorphWifi} size={15} className={channelBusy[draft.id] === 'test' ? 'animate-spin' : ''} />
                       </ActionIconButton>
                     )}
                     <EditActionButton testId={`vk-channel-edit-${draft.id}`} onClick={() => openEditor(draft)} disabled={saving} />
@@ -897,25 +955,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   </div>
                 </div>
 
-                {modalId !== draft.id && result && (
-                  <div data-testid={`vk-channel-result-${draft.id}`} className="mt-2 text-xs"
-                    style={{ color: result.ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
-                    {result.ok ? '✓ ' : '✗ '}{result.message}
-                  </div>
-                )}
-                {modalId !== draft.id && result && !result.ok && result.fix_hint && (
-                  <div data-testid={`vk-channel-fix-${draft.id}`} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                    下一步：{result.fix_hint}
-                  </div>
-                )}
-                {modalId !== draft.id && result && !result.ok && !result.retryable && draft.enabled && (
-                  <div data-testid={`vk-channel-invalid-${draft.id}`} className="mt-1 text-xs" style={{ color: 'var(--color-danger)' }}>
-                    此配置当前不可用。可修正后重试连接，或选择禁用/删除；爪爪不会自动删除。
-                  </div>
-                )}
-                {modalId !== draft.id && result?.normalization_notes?.map((note) => (
-                  <div key={note} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{note}</div>
-                ))}
               </div>
             )
           })}
@@ -1040,14 +1079,17 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                       onClick={() => patchRoleFallback(role, index, '')} className={outlineButton} style={outlineStyle}><Trash2 size={13} /></button>
                   </div>
                 ))}
-                <button type="button" data-testid={`vk-role-fallback-add-${role}`}
+                <ActionIconButton
+                  testId={`vk-role-fallback-add-${role}`}
+                  label={`添加${settings.role_labels[role]}备用通道`}
                   disabled={saving || !primary || !available.some((draft) => !selected.has(draft.id))}
                   onClick={() => {
                     const next = available.find((draft) => !selected.has(draft.id))
                     if (next) addRoleFallback(role, next.id)
-                  }} className={outlineButton} style={outlineStyle}>
-                  <Plus size={13} className="mr-1 inline" />添加备用通道
-                </button>
+                  }}
+                >
+                  <MorphActionGlyph icon={MorphPlus} size={14} />
+                </ActionIconButton>
                 {(settings.role_route_warnings?.[role] ?? []).map((warning) => (
                   <div key={warning} data-testid={`vk-role-warning-${role}`} className="text-xs" style={{ color: 'var(--color-warning)' }}>{warning}</div>
                 ))}
@@ -1071,7 +1113,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           </button>
         ))}
       </div>
-      {notice && <div data-testid="vk-provider-notice" role="status" className="vk-provider-feedback vk-provider-feedback--success">{notice}</div>}
+      {notice && <div data-testid="vk-provider-notice" role="status" className={`vk-provider-feedback vk-provider-feedback--${notice.tone}`}>{notice.message}</div>}
       {error && <div data-testid="vk-provider-error" role="alert" className="vk-provider-feedback vk-provider-feedback--error">{error}</div>}
     </div>
   )
