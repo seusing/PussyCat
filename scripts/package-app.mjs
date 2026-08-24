@@ -92,6 +92,12 @@ export function areStampArtifactsCurrent(stampValue, currentArtifactPaths) {
   })
 }
 
+export function isVkBundleManifestCurrent(stampValue, vkManifestPath = VK_MANIFEST) {
+  return existsSync(vkManifestPath)
+    && typeof stampValue?.vkBundleManifestSha256 === 'string'
+    && stampValue.vkBundleManifestSha256 === sha256(vkManifestPath)
+}
+
 export function createPackageStamp({
   name,
   source,
@@ -192,6 +198,7 @@ const upToDate = !!stamp
   && stamp.productName === name
   && artifacts.length > 0
   && areStampArtifactsCurrent(stamp, artifacts)
+  && isVkBundleManifestCurrent(stamp)
 
 if (CHECK_ONLY) {
   // 供钩子/脚本调用:0 = 已是最新无需打包,1 = 需要打包。**不做任何构建。**

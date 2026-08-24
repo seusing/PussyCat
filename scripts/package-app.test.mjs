@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   areStampArtifactsCurrent,
   createPackageStamp,
+  isVkBundleManifestCurrent,
   stampArtifactPaths,
 } from './package-app.mjs'
 
@@ -81,5 +82,25 @@ describe('package stamp provenance', () => {
   it('keeps legacy string artifacts compatible by checking their path only', () => {
     expect(areStampArtifactsCurrent({ artifacts: ['legacy.exe'] }, ['legacy.exe'])).toBe(true)
     expect(areStampArtifactsCurrent({ artifacts: ['legacy.exe'] }, [])).toBe(false)
+  })
+
+  it('accepts the VK bundle manifest only while its bytes match the package stamp', () => {
+    temporaryDirectory = mkdtempSync(join(tmpdir(), 'package-manifest-check-'))
+    const manifestPath = join(temporaryDirectory, 'runtime-manifest.json')
+    writeFileSync(manifestPath, 'original-manifest')
+    const stamp = { vkBundleManifestSha256: sha256('original-manifest') }
+
+    expect(isVkBundleManifestCurrent(stamp, manifestPath)).toBe(true)
+
+    writeFileSync(manifestPath, 'updated-manifest')
+    expect(isVkBundleManifestCurrent(stamp, manifestPath)).toBe(false)
+  })
+
+  it('treats a legacy stamp without a VK bundle manifest hash as stale', () => {
+    temporaryDirectory = mkdtempSync(join(tmpdir(), 'package-manifest-legacy-'))
+    const manifestPath = join(temporaryDirectory, 'runtime-manifest.json')
+    writeFileSync(manifestPath, 'manifest')
+
+    expect(isVkBundleManifestCurrent({}, manifestPath)).toBe(false)
   })
 })
