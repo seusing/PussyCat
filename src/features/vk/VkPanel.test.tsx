@@ -297,13 +297,31 @@ describe('VkPanel', () => {
     expect(calls.some((c) => c.key === 'POST /vk/v1/runtime/adopt')).toBe(false)
   })
 
-  it('renders every submission control without the removed developer and preview sections', async () => {
+  it('progressively discloses smart, manual and developer submission settings', async () => {
+    const user = userEvent.setup()
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
     })
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
+
+    expect(screen.getByText('你想重点了解什么（选填）')).toBeInTheDocument()
+    expect(screen.getByText('不用填写也可以，爪爪会自动判断内容和最快可靠的处理方式。')).toBeInTheDocument()
+    expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent('智能处理已开启')
+    expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent('一般无需修改设置')
+    expect(screen.getByTestId('vk-advanced-settings')).not.toHaveAttribute('open')
+
+    await user.click(screen.getByText('手动调整（一般无需修改）'))
+    expect(screen.getByTestId('vk-advanced-settings')).toHaveAttribute('open')
+    expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('你想得到什么')
+    expect(screen.getByTestId('vk-preset-description')).toHaveTextContent('先看重点，通常最快')
+    expect(screen.getByTestId('vk-developer-settings')).not.toHaveAttribute('open')
+    expect(screen.getByText('开发者选项（原始参数）')).toBeInTheDocument()
+
+    await user.click(screen.getByText('开发者选项（原始参数）'))
+    expect(screen.getByTestId('vk-developer-settings')).toHaveAttribute('open')
+    expect(screen.getByText('这些参数会覆盖智能判断，仅在调试或明确知道后果时修改。')).toBeInTheDocument()
     for (const id of ['vk-source', 'vk-user-goal', 'vk-preset', 'vk-content-type', 'vk-media-policy',
       'vk-budget-profile', 'vk-max-cost', 'vk-reasoning-effort', 'vk-audit',
       'vk-cap-word_timestamps', 'vk-cap-speaker_diarization', 'vk-cap-visual_evidence',
@@ -313,10 +331,8 @@ describe('VkPanel', () => {
     }
     expect(screen.queryByTestId('vk-preview-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-developer-details')).not.toBeInTheDocument()
-    expect(screen.getByTestId('vk-advanced-settings')).not.toHaveAttribute('open')
-    expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('结果模板（可选）')
     expect(screen.queryByTestId('vk-processing-depth')).not.toBeInTheDocument()
-    expect(screen.getByTestId('vk-advanced-settings')).toContainElement(
+    expect(screen.getByTestId('vk-developer-settings')).toContainElement(
       screen.getByTestId('vk-reasoning-effort'),
     )
     expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
@@ -361,6 +377,51 @@ describe('VkPanel', () => {
     expect(glow.style.getPropertyValue('--border-glow-y')).toBe('50%')
     expect(Number(glow.style.getPropertyValue('--border-glow-intensity'))).toBeGreaterThan(0.9)
     expect(glow.style.getPropertyValue('--border-glow-angle')).toBe('180deg')
+  })
+
+  it('restores every manual override to the smart defaults before building the request', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-reset', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await user.click(screen.getByText('手动调整（一般无需修改）'))
+    await user.click(screen.getByText('开发者选项（原始参数）'))
+    await user.selectOptions(screen.getByTestId('vk-preset'), 'course-learning')
+    await user.selectOptions(screen.getByTestId('vk-content-type'), 'course_lecture')
+    await user.selectOptions(screen.getByTestId('vk-media-policy'), 'video_required')
+    await user.selectOptions(screen.getByTestId('vk-budget-profile'), 'quality')
+    await user.type(screen.getByTestId('vk-max-cost'), '2')
+    await user.type(screen.getByTestId('vk-reasoning-effort'), 'max')
+    await user.click(screen.getByTestId('vk-cap-visual_evidence'))
+    await user.click(screen.getByTestId('vk-audit'))
+
+    expect(screen.getByTestId('vk-preset-description')).toHaveTextContent('整理概念、步骤、例子和复习问题')
+    await user.click(screen.getByTestId('vk-reset-smart-defaults'))
+
+    expect(screen.getByTestId('vk-preset')).toHaveValue('quick-summary')
+    expect(screen.getByTestId('vk-content-type')).toHaveValue('')
+    expect(screen.getByTestId('vk-media-policy')).toHaveValue('')
+    expect(screen.getByTestId('vk-budget-profile')).toHaveValue('')
+    expect(screen.getByTestId('vk-max-cost')).toHaveValue('')
+    expect(screen.getByTestId('vk-reasoning-effort')).toHaveValue('')
+    expect(screen.getByTestId('vk-cap-visual_evidence')).not.toBeChecked()
+    expect(screen.getByTestId('vk-audit')).not.toBeChecked()
+    expect(screen.queryByTestId('vk-reset-smart-defaults')).not.toBeInTheDocument()
+
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/defaults')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/preview')).toBe(true))
+    const projection = JSON.parse(String(calls.find((call) => call.key === 'POST /vk/v1/preview')!.init!.body))
+    expect(projection).toEqual({
+      source: 'https://example.com/defaults',
+      preset: 'quick-summary',
+      user_metadata: { processing_strategy: 'auto' },
+    })
   })
 
   it('imports a newline-delimited text file, removes duplicates, and identifies each source', async () => {
@@ -822,7 +883,10 @@ describe('VkPanel', () => {
           submitted_at: '2026-08-01T00:00:00+00:00', finished_at: '2026-08-01T00:10:00+00:00',
           parent_job_id: null, cache_bypass: false, run_id: 'run-1', cost_cny: 0,
           progress: { model_calls: 8 },
-          auto_route: { route: 'text_fast', confidence: 0.85 },
+          auto_route: {
+            route: 'text_fast', confidence: 0.85,
+            reason_codes: ['asr_quality_passed', 'text_first', 'asr_quality_passed', 'internal_magic'],
+          },
         },
       },
       'GET /vk/v1/providers': {
@@ -835,6 +899,8 @@ describe('VkPanel', () => {
     const detail = await screen.findByTestId('vk-job-detail')
     expect(detail).toHaveTextContent('模型调用 8 次')
     expect(screen.getByTestId('vk-auto-route')).toHaveTextContent('自动方案:快速文本整理（置信度 85%）')
+    expect(screen.getByTestId('vk-auto-route')).toHaveTextContent('语音转写质量良好 · 采用文本优先路径')
+    expect(screen.getByTestId('vk-auto-route')).not.toHaveTextContent('internal_magic')
     expect(detail).not.toHaveTextContent('费用未统计')
   })
 
@@ -850,7 +916,8 @@ describe('VkPanel', () => {
 
     expect(await screen.findByTestId('vk-third-party-data-notice')).toHaveTextContent('字幕或语音转写')
     expect(screen.getByTestId('vk-third-party-data-notice')).toHaveTextContent('第三方模型服务')
-    await userEvent.click(screen.getByText('高级设置'))
+    await userEvent.click(screen.getByText('手动调整（一般无需修改）'))
+    await userEvent.click(screen.getByText('开发者选项（原始参数）'))
     expect(screen.getByTestId('vk-max-cost')).toBeDisabled()
     expect(screen.getByText('当前通道未配置可靠单价，不能使用人民币费用上限')).toBeInTheDocument()
   })

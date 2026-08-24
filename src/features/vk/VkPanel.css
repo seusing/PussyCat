@@ -88,6 +88,89 @@
   outline-offset: 2px;
 }
 
+.vk-smart-mode {
+  margin: 4px 0 8px;
+  border-left: 2px solid var(--color-accent);
+  padding: 7px 0 7px 12px;
+  color: var(--color-fg-dim);
+}
+
+.vk-smart-mode-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.vk-smart-mode-heading strong { color: var(--color-fg); font-weight: 600; }
+.vk-smart-mode-heading span { color: var(--color-accent); font-size: 11px; }
+.vk-smart-mode p { margin-top: 3px; line-height: 1.5; }
+
+.vk-manual-settings {
+  border-top: 1px solid var(--color-line);
+}
+
+.vk-settings-summary {
+  min-height: 44px;
+  padding: 0 4px;
+  color: var(--color-fg-dim);
+  cursor: pointer;
+  line-height: 44px;
+  user-select: none;
+}
+
+.vk-settings-summary:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 75%, white);
+  outline-offset: 2px;
+}
+
+.vk-manual-settings-body {
+  padding: 4px 4px 0;
+}
+
+.vk-manual-settings select,
+.vk-manual-settings input:not([type="checkbox"]),
+.vk-manual-settings button {
+  min-height: 44px;
+}
+
+.vk-preset-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 16rem) minmax(0, 1fr);
+  align-items: end;
+  gap: 12px;
+}
+
+.vk-preset-description {
+  min-height: 40px;
+  padding: 8px 0;
+  color: var(--color-fg-dim);
+  line-height: 1.5;
+}
+
+.vk-reset-smart-defaults {
+  min-height: 44px;
+  margin-top: 8px;
+  border-radius: 8px;
+  padding: 0 12px;
+}
+
+.vk-developer-settings {
+  margin-top: 8px;
+  border-top: 1px solid var(--color-line);
+}
+
+.vk-developer-settings-note {
+  margin: 0 4px 10px;
+  color: var(--color-fg-dim);
+  line-height: 1.5;
+}
+
+.vk-developer-settings fieldset label {
+  min-height: 44px;
+  align-items: center;
+}
+
 .vk-task-banners {
   position: fixed;
   z-index: 1000;
@@ -219,6 +302,9 @@
 @media (max-width: 640px) {
   .vk-source-input-shell textarea { padding-right: 68px; }
   .vk-source-input-shell > .video-source-coverflow { right: 5px; transform: translateY(-50%) scale(.82); transform-origin: right center; }
+  .vk-smart-mode-heading { display: block; }
+  .vk-smart-mode-heading span { display: block; margin-top: 2px; }
+  .vk-preset-settings { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -58,6 +58,12 @@ const PRESET_LABELS: Record<string, string> = {
   'interview-analysis': '访谈观点分析',
   'science-explainer': '科普知识梳理',
 }
+const PRESET_DESCRIPTIONS: Record<string, string> = {
+  'quick-summary': '先看重点，通常最快',
+  'course-learning': '整理概念、步骤、例子和复习问题',
+  'interview-analysis': '区分观点、共识、分歧和关键引语',
+  'science-explainer': '解释原理、因果、适用边界和常见误区',
+}
 const CONTENT_TYPE_LABELS: Record<string, string> = {
   auto: '自动判断', course_lecture: '课程/讲座', interview_podcast: '访谈/播客',
   science_explainer: '科普讲解', tutorial: '教程', other_knowledge: '其他知识内容', generic_knowledge: '通用知识内容',
@@ -68,8 +74,8 @@ const MEDIA_POLICY_LABELS: Record<string, string> = {
 }
 const BUDGET_LABELS: Record<string, string> = { economy: '经济', standard: '标准', quality: '质量优先' }
 const CAPABILITY_LABELS: Record<string, string> = {
-  word_timestamps: '词级时间定位', speaker_diarization: '区分说话人',
-  visual_evidence: '提取视觉证据', query_ready: '加入知识库检索',
+  word_timestamps: '精确到词的时间点', speaker_diarization: '区分不同说话人',
+  visual_evidence: '结合画面理解', query_ready: '保存到知识库并可检索',
 }
 const AUTO_ROUTE_LABELS: Record<string, string> = {
   text_fast: '快速文本整理',
@@ -77,6 +83,19 @@ const AUTO_ROUTE_LABELS: Record<string, string> = {
   speaker_attribution: '说话人归属整理',
   evidence_grounded: '证据核验整理',
   generic_fallback: '通用整理',
+}
+const AUTO_ROUTE_REASON_LABELS: Record<string, string> = {
+  asr_quality_passed: '语音转写质量良好',
+  captions_available: '已找到可用字幕',
+  text_first: '采用文本优先路径',
+  visual_required: '内容依赖画面',
+  speaker_required: '需要区分说话人',
+  precision_risk: '采用更严格的核对路径',
+  low_confidence: '信息不足，使用稳妥方案',
+}
+
+function autoRouteReasonText(reasonCodes: string[] | undefined) {
+  return [...new Set((reasonCodes ?? []).map((code) => AUTO_ROUTE_REASON_LABELS[code]).filter(Boolean))].join(' · ')
 }
 const ACTIVE_STATUSES = new Set([
   'queued', 'running', 'cancel_requested', 'submitted', 'processing',
@@ -481,6 +500,24 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
   const sourceFileInputRef = useRef<HTMLInputElement>(null)
+  const hasManualOverrides = preset !== 'quick-summary'
+    || contentType !== ''
+    || mediaPolicy !== ''
+    || budgetProfile !== ''
+    || caps.length > 0
+    || audit
+    || maxCost !== ''
+    || reasoningEffort !== ''
+  const resetSmartDefaults = () => {
+    setPreset('quick-summary')
+    setContentType('')
+    setMediaPolicy('')
+    setBudgetProfile('')
+    setCaps([])
+    setAudit(false)
+    setMaxCost('')
+    setReasoningEffort('')
+  }
 
   const handoff = useAppStore((s) => s.vkHandoff)
   useEffect(() => {
@@ -923,6 +960,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const tableNotifications = Object.fromEntries(
     visibleJobs.map((row) => [row.job_id, notifications[row.job_id] ?? true]),
   )
+  const selectedAutoRouteReason = autoRouteReasonText(selectedJob?.auto_route?.reason_codes)
 
   const verdict: { text: string; color: string; note?: string; action?: { label: string; run: () => void } } | null =
     runtime?.state === 'not-available'
@@ -1082,7 +1120,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           </BorderGlow>
         </div>
         <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          补充要求（选填）
+          你想重点了解什么（选填）
           <textarea
             data-testid="vk-user-goal"
             value={userGoal}
@@ -1093,99 +1131,120 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             className={`${fieldClass} mt-1 resize-y`}
             style={fieldStyle}
           />
-          <span className="mt-1 block text-[11px]">留空时自动判断内容并选择处理方式。</span>
+          <span className="mt-1 block text-[11px]">不用填写也可以，爪爪会自动判断内容和最快可靠的处理方式。</span>
         </label>
-        <details data-testid="vk-advanced-settings" className="mb-3 rounded-lg p-2 text-xs" style={{ border: '1px solid var(--color-line)' }}>
-          <summary className="cursor-pointer select-none" style={{ color: 'var(--color-fg-dim)' }}>高级设置</summary>
-          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
-              结果模板（可选）
-              <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                {PRESETS.map((value) => <option key={value} value={value}>{PRESET_LABELS[value]}</option>)}
-              </select>
-            </label>
-            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
-              内容类型
-              <select data-testid="vk-content-type" value={contentType} onChange={(e) => setContentType(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                <option value="">跟随处理目的</option>
-                {CONTENT_TYPES.map((value) => <option key={value} value={value}>{CONTENT_TYPE_LABELS[value]}</option>)}
-              </select>
-            </label>
-            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
-              媒体处理方式
-              <select data-testid="vk-media-policy" value={mediaPolicy} onChange={(e) => setMediaPolicy(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                <option value="">跟随处理目的</option>
-                {MEDIA_POLICIES.map((value) => <option key={value} value={value}>{MEDIA_POLICY_LABELS[value]}</option>)}
-              </select>
-            </label>
-            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
-              成本偏好
-              <select data-testid="vk-budget-profile" value={budgetProfile} onChange={(e) => setBudgetProfile(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                <option value="">跟随处理目的</option>
-                {BUDGET_PROFILES.map((value) => <option key={value} value={value}>{BUDGET_LABELS[value]}</option>)}
-              </select>
-            </label>
-            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
-              最高费用（¥）
-              <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder={costTracking === false ? '当前通道无可信价格' : '不设置上限'} disabled={costTracking === false} className={`${fieldClass} mt-1 disabled:cursor-not-allowed disabled:opacity-55`} style={fieldStyle} />
-              {costTracking === false && (
-                <span className="mt-1 block text-[11px]">当前通道未配置可靠单价，不能使用人民币费用上限</span>
-              )}
-            </label>
-            <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
-              统一推理强度
-              <div className="mt-1 flex gap-1.5">
-                <input
-                  data-testid="vk-reasoning-effort"
-                  list="vk-task-reasoning-options"
-                  value={reasoningEffort}
-                  onChange={(event) => setReasoningEffort(event.target.value)}
-                  placeholder="自动（跟随通道）"
-                  className={fieldClass}
-                  style={fieldStyle}
-                />
-                <datalist id="vk-task-reasoning-options">
-                  {taskReasoningEfforts.map((effort) => <option key={effort} value={effort} />)}
-                </datalist>
-                <button
-                  type="button"
-                  data-testid="vk-reasoning-refresh"
-                  onClick={() => { void discoverTaskReasoningEfforts() }}
-                  disabled={reasoningDiscovering}
-                  className="shrink-0 rounded-lg px-2 text-xs disabled:opacity-50"
-                  style={outlineStyle}
-                >
-                  {reasoningDiscovering ? '读取中…' : '读取档位'}
-                </button>
-              </div>
-              <span className="mt-1 block text-[11px]" style={{ color: 'var(--color-fg-dim)' }}>
-                单条与批量任务共用这一档；留空时沿用模型通道设置。
-                {reasoningDiscovery ? ` ${reasoningDiscovery}` : ''}
-              </span>
-            </label>
+        <div data-testid="vk-smart-mode" className="vk-smart-mode text-xs">
+          <div className="vk-smart-mode-heading">
+            <strong>智能处理已开启</strong>
+            <span>一般无需修改设置</span>
           </div>
-          <fieldset className="mt-3 rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
-            <legend style={{ color: 'var(--color-fg-dim)' }}>附加能力</legend>
-            <div className="flex flex-wrap gap-3">
-              {CAPABILITIES.map((value) => (
-                <label key={value} className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
-                    data-testid={`vk-cap-${value}`}
-                    checked={caps.includes(value)}
-                    onChange={(e) => setCaps((current) => (
-                      e.target.checked ? [...current, value] : current.filter((item) => item !== value)
-                    ))}
-                  />
-                  {CAPABILITY_LABELS[value]}
-                </label>
-              ))}
-              <label className="flex items-center gap-1">
-                <input type="checkbox" data-testid="vk-audit" checked={audit} onChange={(e) => setAudit(e.target.checked)} />
-                生成证据审计报告
+          <p>自动判断内容类型、字幕或语音质量、是否需要画面，以及处理深度。</p>
+        </div>
+        <details data-testid="vk-advanced-settings" className="vk-manual-settings mb-3 text-xs">
+          <summary className="vk-settings-summary">手动调整（一般无需修改）</summary>
+          <div className="vk-manual-settings-body">
+            <div className="vk-preset-settings">
+              <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+                <span>你想得到什么</span>
+                <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                  {PRESETS.map((value) => <option key={value} value={value}>{PRESET_LABELS[value]}</option>)}
+                </select>
               </label>
+              <p data-testid="vk-preset-description" className="vk-preset-description">{PRESET_DESCRIPTIONS[preset]}</p>
             </div>
-          </fieldset>
+            {hasManualOverrides && (
+              <button type="button" data-testid="vk-reset-smart-defaults" onClick={resetSmartDefaults} className="vk-reset-smart-defaults" style={outlineStyle}>
+                恢复智能默认
+              </button>
+            )}
+            <details data-testid="vk-developer-settings" className="vk-developer-settings">
+              <summary className="vk-settings-summary">开发者选项（原始参数）</summary>
+              <p className="vk-developer-settings-note">这些参数会覆盖智能判断，仅在调试或明确知道后果时修改。</p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+                  强制内容类型
+                  <select data-testid="vk-content-type" value={contentType} onChange={(e) => setContentType(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                    <option value="">跟随处理目的</option>
+                    {CONTENT_TYPES.map((value) => <option key={value} value={value}>{CONTENT_TYPE_LABELS[value]}</option>)}
+                  </select>
+                </label>
+                <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+                  强制媒体路径
+                  <select data-testid="vk-media-policy" value={mediaPolicy} onChange={(e) => setMediaPolicy(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                    <option value="">跟随处理目的</option>
+                    {MEDIA_POLICIES.map((value) => <option key={value} value={value}>{MEDIA_POLICY_LABELS[value]}</option>)}
+                  </select>
+                </label>
+                <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+                  模型成本倾向
+                  <select data-testid="vk-budget-profile" value={budgetProfile} onChange={(e) => setBudgetProfile(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
+                    <option value="">跟随处理目的</option>
+                    {BUDGET_PROFILES.map((value) => <option key={value} value={value}>{BUDGET_LABELS[value]}</option>)}
+                  </select>
+                </label>
+                <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+                  最高费用（¥）
+                  <input data-testid="vk-max-cost" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} inputMode="decimal" placeholder={costTracking === false ? '当前通道无可信价格' : '不设置上限'} disabled={costTracking === false} className={`${fieldClass} mt-1 disabled:cursor-not-allowed disabled:opacity-55`} style={fieldStyle} />
+                  {costTracking === false && (
+                    <span className="mt-1 block text-[11px]">当前通道未配置可靠单价，不能使用人民币费用上限</span>
+                  )}
+                </label>
+                <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
+                  覆盖模型推理强度
+                  <div className="mt-1 flex gap-1.5">
+                    <input
+                      data-testid="vk-reasoning-effort"
+                      list="vk-task-reasoning-options"
+                      value={reasoningEffort}
+                      onChange={(event) => setReasoningEffort(event.target.value)}
+                      placeholder="自动（跟随通道）"
+                      className={fieldClass}
+                      style={fieldStyle}
+                    />
+                    <datalist id="vk-task-reasoning-options">
+                      {taskReasoningEfforts.map((effort) => <option key={effort} value={effort} />)}
+                    </datalist>
+                    <button
+                      type="button"
+                      data-testid="vk-reasoning-refresh"
+                      onClick={() => { void discoverTaskReasoningEfforts() }}
+                      disabled={reasoningDiscovering}
+                      className="shrink-0 rounded-lg px-2 text-xs disabled:opacity-50"
+                      style={outlineStyle}
+                    >
+                      {reasoningDiscovering ? '读取中…' : '读取档位'}
+                    </button>
+                  </div>
+                  <span className="mt-1 block text-[11px]" style={{ color: 'var(--color-fg-dim)' }}>
+                    单条与批量任务共用这一档；留空时沿用模型通道设置。
+                    {reasoningDiscovery ? ` ${reasoningDiscovery}` : ''}
+                  </span>
+                </label>
+              </div>
+              <fieldset className="mt-3 rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
+                <legend style={{ color: 'var(--color-fg-dim)' }}>强制附加能力</legend>
+                <div className="flex flex-wrap gap-3">
+                  {CAPABILITIES.map((value) => (
+                    <label key={value} className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        data-testid={`vk-cap-${value}`}
+                        checked={caps.includes(value)}
+                        onChange={(e) => setCaps((current) => (
+                          e.target.checked ? [...current, value] : current.filter((item) => item !== value)
+                        ))}
+                      />
+                      {CAPABILITY_LABELS[value]}
+                    </label>
+                  ))}
+                  <label className="flex items-center gap-1">
+                    <input type="checkbox" data-testid="vk-audit" checked={audit} onChange={(e) => setAudit(e.target.checked)} />
+                    生成可核查报告
+                  </label>
+                </div>
+              </fieldset>
+            </details>
+          </div>
         </details>
         <div data-testid="vk-third-party-data-notice" className="mb-3 rounded-lg px-3 py-2 text-[11px] leading-relaxed" style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}>
           为完成解析，视频中提取的字幕或语音转写会发送到你在“模型配置”中选择的第三方模型服务；爪爪不会替该服务改变其数据处理规则。
@@ -1264,6 +1323,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             <div data-testid="vk-auto-route" className="mb-2" style={{ color: 'var(--color-fg-dim)' }}>
               自动方案:{AUTO_ROUTE_LABELS[selectedJob.auto_route.route] ?? selectedJob.auto_route.route}
               {typeof selectedJob.auto_route.confidence === 'number' && `（置信度 ${Math.round(selectedJob.auto_route.confidence * 100)}%）`}
+              {selectedAutoRouteReason && (
+                <div className="mt-1">{selectedAutoRouteReason}</div>
+              )}
             </div>
           )}
           {selectedJob.capabilities && selectedJob.capabilities.length > 0 && (
