@@ -298,7 +298,7 @@ type ChannelEditorProps = {
   onPatch: (id: string, next: Partial<Draft>) => void
   onPatchModel: (draft: Draft, modelId: string) => void
   onReveal: (draft: Draft) => void
-  onTest: (draft: Draft) => void
+  onTest: (draft: Draft, probeGeneration: boolean) => void
   onClearError?: (field: string) => void
   errors?: Partial<Record<'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>
 }
@@ -355,7 +355,7 @@ function ChannelEditor({
         <ActionIconButton
           testId={`vk-channel-models-fetch-${draft.id}`}
           label="获取模型列表"
-          onClick={() => onTest(draft)}
+          onClick={() => onTest(draft, false)}
           disabled={channelIsBusy}
           iconState="download"
           size="md"
@@ -451,7 +451,7 @@ function ChannelEditor({
           <ActionIconButton
             testId={`vk-channel-test-${draft.id}`}
             label="测试连接"
-            onClick={() => onTest(draft)}
+            onClick={() => onTest(draft, true)}
             disabled={channelIsBusy}
             iconState="activity"
             size="md"
@@ -769,7 +769,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }
 
-  const runTest = async (draft: Draft) => {
+  const runTest = async (draft: Draft, probeGeneration = true) => {
     setChannelBusy((current) => ({ ...current, [draft.id]: 'test' }))
     setError(null)
     try {
@@ -778,11 +778,25 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         base_url: draft.base_url,
         key_env: draft.key_env,
         api_style: draft.api_style,
+        probe_generation: probeGeneration,
+        ...(probeGeneration ? {
+          model_id: draft.model_id,
+          reasoning_effort: draft.reasoning_effort.trim() || 'medium',
+          extra_headers: draft.extra_headers,
+        } : {}),
         ...(draft.key_touched ? { api_key: draft.api_key } : {}),
       }, baseUrl)
       const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt))
       setResults((prev) => ({ ...prev, [draft.id]: result }))
-      showNotice(result.ok ? 'success' : 'error', result.ok ? `连接成功 · ${elapsedMs} ms` : formatTestNotice(result))
+      const probe = result.generation_probe
+      const successNotice = !probeGeneration
+        ? `连接成功 · ${elapsedMs} ms`
+        : probe?.first_text_ms != null
+          ? `连接成功 · 首字 ${probe.first_text_ms} ms · 总耗时 ${probe.total_ms} ms`
+          : probe?.ok
+            ? `连接成功 · 同步 · 总耗时 ${probe.total_ms} ms`
+            : result.message
+      showNotice(result.ok ? 'success' : 'error', result.ok ? successNotice : formatTestNotice(result))
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
       if (result.base_url && result.base_url !== draft.base_url) patch(draft.id, { base_url: result.base_url })
       // Every click replaces the previous discovery result, including an empty
@@ -984,7 +998,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                       <ActionIconButton
                         testId={`vk-channel-test-${draft.id}`}
                         label="测试连接"
-                        onClick={() => { void runTest(draft) }}
+                        onClick={() => { void runTest(draft, true) }}
                         disabled={Boolean(channelBusy[draft.id]) || saving}
                         iconState="activity"
                       >
@@ -1052,7 +1066,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 onPatch={patch}
                 onPatchModel={patchModel}
                 onReveal={(item) => { void reveal(item) }}
-                onTest={(item) => { void runTest(item) }}
+                onTest={(item, probeGeneration) => { void runTest(item, probeGeneration) }}
                 errors={validationErrors[modalDraft.id]}
                 onClearError={(field) => setValidationErrors((current) => ({
                   ...current,

@@ -145,6 +145,17 @@ const MODEL_ATTEMPT_STATUS: Record<string, string> = {
   transient_error: '临时故障',
   permanent_error: '配置或请求错误',
   schema_error: '响应格式错误',
+  abandoned: '已停止等待',
+}
+
+function transportLabel(mode: string | undefined): string {
+  if (mode === 'sse') return '流式'
+  if (mode === 'sync_fallback') return '同步回退'
+  return '同步'
+}
+
+function telemetryMs(label: string, value: number | null | undefined): string {
+  return value == null ? `${label}不可测` : `${label} ${Math.max(0, value)} ms`
 }
 
 function modelAttemptName(route: string, settings: VkProviderSettings | null): string {
@@ -385,7 +396,21 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                       <strong>第 {attempt.attempt_number} 次 · {modelAttemptName(attempt.provider_route, providers)}</strong>
                       <span className={`is-${attempt.status}`}>{MODEL_ATTEMPT_STATUS[attempt.status] ?? attempt.status}</span>
                     </div>
-                    <p>{stageLabel(attempt.stage)} · {attempt.model_reported || attempt.model_requested} · {Math.max(0, attempt.latency_ms)} ms</p>
+                    <p>{stageLabel(attempt.stage)} · {attempt.model_reported || attempt.model_requested}</p>
+                    <p>
+                      {transportLabel(attempt.transport_mode)} · {telemetryMs('响应头', attempt.response_headers_ms)} · {' '}
+                      {telemetryMs('首事件', attempt.first_event_ms)} · {telemetryMs('首字', attempt.first_text_ms)} · {' '}
+                      总耗时 {Math.max(0, attempt.latency_ms)} ms
+                    </p>
+                    <p>
+                      推理强度 {attempt.reasoning_effort || '未记录'} · {' '}
+                      输出上限 {attempt.max_output_tokens == null ? '未记录' : attempt.max_output_tokens.toLocaleString('zh-CN')}
+                    </p>
+                    {attempt.request_may_still_run && (
+                      <p role="alert" style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
+                        上游可能仍在运行和计费；系统没有自动重试
+                      </p>
+                    )}
                     {attempt.switch_reason === 'previous_route_transient_error' && (
                       <p className="vk-model-switch-reason">上一通道发生临时故障，已按你的备用顺序切换</p>
                     )}

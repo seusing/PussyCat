@@ -154,6 +154,15 @@ export interface VkModelAttempt {
   status: 'ok' | 'transient_error' | 'permanent_error' | 'schema_error' | string
   created_at: string
   switch_reason: 'previous_route_transient_error' | string | null
+  transport_mode?: 'sse' | 'sync_fallback' | 'sync' | string
+  response_headers_ms?: number | null
+  first_event_ms?: number | null
+  first_text_ms?: number | null
+  stream_event_count?: number
+  max_output_tokens?: number | null
+  reasoning_effort?: string | null
+  upstream_response_id?: string | null
+  request_may_still_run?: boolean
 }
 
 export interface VkStageMetric {
@@ -595,6 +604,20 @@ export interface VkProviderTestResult {
   base_url?: string
   normalization_notes?: string[]
   key_stored?: boolean
+  generation_probe?: {
+    ok: boolean
+    reason_code: string
+    message: string
+    model_reported: string
+    transport_mode: 'sse' | 'sync_fallback' | 'sync' | string
+    response_headers_ms: number | null
+    first_event_ms: number | null
+    first_text_ms: number | null
+    total_ms: number
+    stream_event_count: number
+    upstream_response_id: string | null
+    request_may_still_run: boolean
+  }
 }
 
 export interface VkProviderSaveResult {
@@ -644,7 +667,16 @@ export async function saveVkProviderSettings(
 }
 
 export async function testVkProvider(
-  payload: { base_url: string; key_env?: string; api_key?: string; api_style?: string },
+  payload: {
+    base_url: string
+    key_env?: string
+    api_key?: string
+    api_style?: string
+    probe_generation?: boolean
+    model_id?: string
+    reasoning_effort?: string
+    extra_headers?: Record<string, string>
+  },
   baseUrl = DEFAULT_BASE_URL,
 ): Promise<VkProviderTestResult> {
   const response = await fetch(`${baseUrl}/vk/v1/providers/test`, jsonInit(payload))

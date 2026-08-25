@@ -152,8 +152,53 @@ describe('VkTaskDetailSidebar', () => {
     expect(attempts).toHaveTextContent('临时故障')
     expect(attempts).toHaveTextContent('第 2 次 · 备用站')
     expect(attempts).toHaveTextContent('已按你的备用顺序切换')
+    expect(attempts).toHaveTextContent('同步')
+    expect(attempts).toHaveTextContent('首字不可测')
+    expect(attempts).toHaveTextContent('推理强度 未记录')
+    expect(attempts).toHaveTextContent('输出上限 未记录')
     expect(screen.getByText('主站 → 备用站')).toBeInTheDocument()
     expect(attempts).not.toHaveTextContent('https://')
+  })
+
+  it('shows streaming telemetry and an abandoned billing warning', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/job-abandoned')) return new Response(JSON.stringify({
+        job_id: 'job-abandoned', kind: 'run', status: 'failed',
+        submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:00:31Z',
+        parent_job_id: null, cache_bypass: false,
+        request: { source: 'https://example.com/v', preset: 'quick-summary' },
+        progress: { completed_stages: ['acquire', 'normalize'], model_attempts: [{
+          attempt_number: 1, stage: 'chapter', provider_route: 'primary:default',
+          model_requested: 'gpt-5.6-luna', model_reported: '', api_style: 'openai_responses',
+          retry_index: 0, latency_ms: 30_500, status: 'abandoned',
+          created_at: '2026-08-07T10:00:01Z', switch_reason: null,
+          transport_mode: 'sse', response_headers_ms: 42, first_event_ms: 61,
+          first_text_ms: 93, stream_event_count: 5, max_output_tokens: 2048,
+          reasoning_effort: 'medium', upstream_response_id: 'resp_1',
+          request_may_still_run: true,
+        }] },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({
+        channels: [{ id: 'primary', name: '主站' }], roles: {},
+      }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="job-abandoned" baseUrl={BASE} onClose={() => {}} />)
+
+    const attempts = await screen.findByTestId('vk-model-attempts')
+    expect(attempts).toHaveTextContent('已停止等待')
+    expect(attempts).toHaveTextContent('流式')
+    expect(attempts).toHaveTextContent('响应头 42 ms')
+    expect(attempts).toHaveTextContent('首事件 61 ms')
+    expect(attempts).toHaveTextContent('首字 93 ms')
+    expect(attempts).toHaveTextContent('总耗时 30500 ms')
+    expect(attempts).toHaveTextContent('推理强度 medium')
+    expect(attempts).toHaveTextContent('输出上限 2,048')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '上游可能仍在运行和计费；系统没有自动重试',
+    )
   })
 
   it('活跃任务在详情轮询返回终态后立即切换为失败界面', async () => {

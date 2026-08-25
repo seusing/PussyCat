@@ -813,10 +813,8 @@ test('不同配置的连接测试各自忙碌,一条 pending 不会锁住另一�
   ])
 })
 
-test('弹窗连接成功显示端到端延迟且通知局限在弹窗内', async () => {
+test('弹窗生成连接成功显示后端真实首字与总耗时且通知局限在弹窗内', async () => {
   const pending = deferred<unknown>()
-  let clock = 100
-  vi.spyOn(performance, 'now').mockImplementation(() => clock)
   const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
   vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
     const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
@@ -829,18 +827,84 @@ test('弹窗连接成功显示端到端延迟且通知局限在弹窗内', async
 
   const dialog = await openChannelEditor()
   await user.click(within(dialog).getByRole('button', { name: '测试连接' }))
-  clock = 223
   pending.resolve({
     ok: true, reason_code: 'ok', message: '连接正常，可用模型 2 个',
     models: ['m-a', 'm-b'], normalization_notes: [],
+    generation_probe: {
+      ok: true, reason_code: 'ok', message: '生成连接正常', model_reported: 'gpt-5.6-luna',
+      transport_mode: 'sse', response_headers_ms: 20, first_event_ms: 30,
+      first_text_ms: 47, total_ms: 123, stream_event_count: 4,
+      upstream_response_id: 'resp_1', request_may_still_run: false,
+    },
   })
 
   const notice = await screen.findByTestId('vk-provider-notice')
-  expect(notice).toHaveTextContent('连接成功 · 123 ms')
+  expect(notice).toHaveTextContent('连接成功 · 首字 47 ms · 总耗时 123 ms')
   expect(notice).not.toHaveTextContent('连接正常，可用模型 2 个')
   expect(dialog).toContainElement(notice)
   expect(notice).not.toHaveClass('fixed')
   expect(getComputedStyle(notice).position).not.toBe('fixed')
+})
+
+test('获取模型列表与测试连接发送不同payload且都刷新模型与档位', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') return response(settings({
+      channels: [channel({ extra_headers: { 'x-actor': 'desktop' } })],
+    }))
+    if (key === 'POST /vk/v1/providers/test') {
+      bodies.push(JSON.parse(String(init?.body)))
+      const generation = bodies.at(-1)?.probe_generation === true
+      return response({
+        ok: true, reason_code: 'ok', message: '连接正常',
+        models: generation ? ['generated-model'] : ['listed-model'],
+        reasoning_efforts: generation
+          ? { 'generated-model': ['medium', 'high'] }
+          : { 'listed-model': ['low'] },
+        normalization_notes: [],
+        ...(generation ? { generation_probe: {
+          ok: true, reason_code: 'ok', message: '生成连接正常', model_reported: 'gpt-5.6-luna',
+          transport_mode: 'sync_fallback', response_headers_ms: 10, first_event_ms: null,
+          first_text_ms: null, total_ms: 88, stream_event_count: 0,
+          upstream_response_id: null, request_may_still_run: false,
+        } } : {}),
+      })
+    }
+    return { ok: false, status: 404, json: async () => ({ error: key }) }
+  }))
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  const dialog = await openChannelEditor()
+
+  await user.click(within(dialog).getByRole('button', { name: '获取模型列表' }))
+  await waitFor(() => expect(bodies).toHaveLength(1))
+  await waitFor(() => expect(within(dialog).getByRole('button', { name: '获取模型列表' })).toBeEnabled())
+  expect(bodies[0]).toEqual({
+    base_url: 'https://api.example.com/v1',
+    key_env: 'VK_CHANNEL_CHEAP_KEY',
+    api_style: 'openai_completions',
+    probe_generation: false,
+  })
+  expect(document.querySelectorAll('#vk-models-cheap option')).toHaveLength(1)
+
+  await user.click(within(dialog).getByRole('button', { name: '测试连接' }))
+  await waitFor(() => expect(bodies).toHaveLength(2))
+  expect(bodies[1]).toEqual({
+    base_url: 'https://api.example.com/v1',
+    key_env: 'VK_CHANNEL_CHEAP_KEY',
+    api_style: 'openai_completions',
+    probe_generation: true,
+    model_id: 'gpt-5.6-luna',
+    reasoning_effort: 'medium',
+    extra_headers: { 'x-actor': 'desktop' },
+  })
+  expect(await screen.findByTestId('vk-provider-notice')).toHaveTextContent(
+    '连接成功 · 同步 · 总耗时 88 ms',
+  )
+  await waitFor(() => expect(document.querySelector('#vk-models-cheap option')?.getAttribute('value'))
+    .toBe('generated-model'))
 })
 
 test('测试失败时给根因和下一步,不是一段原始日志', async () => {
