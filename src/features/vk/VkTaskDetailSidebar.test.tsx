@@ -37,6 +37,7 @@ describe('VkTaskDetailSidebar', () => {
             preset: 'quick-summary',
             provider_profile: 'channel-a',
           },
+          auto_route: { route: 'text_fast', processing_depth: 'quick' },
           progress: { completed_stages: ['acquire', 'normalize'], current_stage: 'chapter' },
         }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }
@@ -62,6 +63,29 @@ describe('VkTaskDetailSidebar', () => {
     await waitFor(() => expect(screen.getByLabelText('任务正在执行')).toBeInTheDocument())
   })
 
+  it('uses five phases when a historical quick preset actually reaches claim', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/job-legacy-claim')) return new Response(JSON.stringify({
+        job_id: 'job-legacy-claim', kind: 'run', status: 'running',
+        submitted_at: '2026-08-07T10:00:00Z', finished_at: null,
+        parent_job_id: null, cache_bypass: false,
+        request: { source: 'https://example.com/v', preset: 'quick-summary' },
+        progress: {
+          completed_stages: ['acquire', 'normalize', 'chapter'], current_stage: 'claim',
+          model_attempts: [{ attempt_number: 1, stage: 'claim', provider_route: 'primary:default', model_requested: 'm1', model_reported: '', api_style: 'openai_responses', retry_index: 0, latency_ms: 100, status: 'ok', created_at: '2026-08-07T10:00:01Z', switch_reason: null }],
+        },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="job-legacy-claim" baseUrl={BASE} onClose={() => {}} />)
+
+    expect(await screen.findByText('阶段 3 / 5')).toBeInTheDocument()
+    expect(screen.getByText('核对关键信息')).toBeInTheDocument()
+  })
+
   it('shows real stage timing and token usage while keeping unknown cost honest', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -76,6 +100,7 @@ describe('VkTaskDetailSidebar', () => {
           stage_metrics: [
             { stage: 'acquire', status: 'done', elapsed_s: 2.5, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0 },
             { stage: 'chapter', status: 'done', elapsed_s: 7.25, input_tokens: 1234, output_tokens: 321, cached_tokens: 100, model_calls: 1 },
+            { stage: 'custom-stage', status: 'done', elapsed_s: 0.5, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0 },
           ],
         },
       }), { status: 200 })
@@ -90,10 +115,11 @@ describe('VkTaskDetailSidebar', () => {
     expect(metrics).toHaveTextContent('输出 321')
     expect(metrics).toHaveTextContent('费用未统计')
     const stages = screen.getByTestId('vk-stage-metrics')
-    expect(stages).toHaveTextContent('acquire')
+    expect(stages).toHaveTextContent('采集与转写')
     expect(stages).toHaveTextContent('2.50 秒')
-    expect(stages).toHaveTextContent('chapter')
+    expect(stages).toHaveTextContent('理解视频')
     expect(stages).toHaveTextContent('7.25 秒')
+    expect(stages).toHaveTextContent('custom-stage')
   })
 
   it('shows every actual model attempt and explains a configured fallback switch', async () => {

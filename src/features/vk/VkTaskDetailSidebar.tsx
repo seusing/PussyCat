@@ -65,15 +65,36 @@ const FULL_ANALYSIS_PHASES: readonly TaskPhase[] = [
   { label: '生成解析结果', stages: ['product'] },
 ]
 
+const STAGE_LABELS: Record<string, string> = {
+  acquire: '采集与转写',
+  normalize: '整理字幕',
+  chapter: '理解视频',
+  claim: '提取关键信息',
+  qc: '核对关键信息',
+  note: '整理知识笔记',
+  product: '生成解析结果',
+}
+
+function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage
+}
+
 function stageProgress(job: VkJobView, successful: boolean): {
   completed: number
   total: number
   percent: number
   currentLabel: string
 } {
-  const phases = job.request?.preset === 'quick-summary' ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES
   const rawCompleted = Array.isArray(job.progress?.completed_stages) ? job.progress.completed_stages : []
   const completedStages = new Set(rawCompleted.filter((stage): stage is string => typeof stage === 'string'))
+  const observedStages = new Set(completedStages)
+  const currentStage = typeof job.progress?.current_stage === 'string' ? job.progress.current_stage : undefined
+  if (currentStage) observedStages.add(currentStage)
+  for (const metric of job.progress?.stage_metrics ?? []) observedStages.add(metric.stage)
+  for (const attempt of job.progress?.model_attempts ?? []) observedStages.add(attempt.stage)
+  const sawFullAnalysis = observedStages.has('claim') || observedStages.has('qc')
+  const quickRequested = job.auto_route?.processing_depth === 'quick' || job.request?.preset === 'quick-summary'
+  const phases = !sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES
   let completed = 0
   if (successful) completed = phases.length
   else {
@@ -82,7 +103,13 @@ function stageProgress(job: VkJobView, successful: boolean): {
       completed += 1
     }
   }
-  const current = phases[Math.min(completed, phases.length - 1)]
+  const latestAttemptStage = job.progress?.model_attempts?.at(-1)?.stage
+  const activeStage = currentStage ?? latestAttemptStage
+  const activePhaseIndex = activeStage
+    ? phases.findIndex((phase) => phase.stages.includes(activeStage))
+    : -1
+  if (!successful && activePhaseIndex >= 0) completed = Math.max(completed, activePhaseIndex)
+  const current = phases[activePhaseIndex >= 0 ? activePhaseIndex : Math.min(completed, phases.length - 1)]
   return {
     completed,
     total: phases.length,
@@ -340,7 +367,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               <ol className="vk-stage-metric-list">
                 {job.progress!.stage_metrics!.map((metric, index) => (
                   <li key={`${metric.stage}-${index}`}>
-                    <div><strong>{metric.stage}</strong><span>{secondsLabel(metric.elapsed_s)}</span></div>
+                    <div><strong>{stageLabel(metric.stage)}</strong><span>{secondsLabel(metric.elapsed_s)}</span></div>
                     <p>{metric.model_calls} 次模型调用 · 输入 {metric.input_tokens.toLocaleString('zh-CN')} · 输出 {metric.output_tokens.toLocaleString('zh-CN')}</p>
                   </li>
                 ))}
@@ -358,7 +385,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                       <strong>第 {attempt.attempt_number} 次 · {modelAttemptName(attempt.provider_route, providers)}</strong>
                       <span className={`is-${attempt.status}`}>{MODEL_ATTEMPT_STATUS[attempt.status] ?? attempt.status}</span>
                     </div>
-                    <p>{attempt.stage} · {attempt.model_reported || attempt.model_requested} · {Math.max(0, attempt.latency_ms)} ms</p>
+                    <p>{stageLabel(attempt.stage)} · {attempt.model_reported || attempt.model_requested} · {Math.max(0, attempt.latency_ms)} ms</p>
                     {attempt.switch_reason === 'previous_route_transient_error' && (
                       <p className="vk-model-switch-reason">上一通道发生临时故障，已按你的备用顺序切换</p>
                     )}

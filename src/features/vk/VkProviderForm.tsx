@@ -1047,6 +1047,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             const primary = roles[role] ?? ''
             const selected = new Set([primary, ...fallbacks].filter(Boolean))
             const available = drafts.filter((draft) => draft.enabled)
+            const routeWarnings = [...new Set([
+              ...(primary && fallbacks.length === 0
+                ? ['未设置备用上游；当前通道超时后任务会失败。请添加一个 Base URL 不同的备用配置。']
+                : []),
+              ...(settings.role_route_warnings?.[role] ?? []),
+            ])]
             return (
             <div key={role} data-testid={`vk-role-routing-${role}`} className="rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
               <div className="flex flex-wrap items-center gap-2">
@@ -1101,7 +1107,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 >
                   <MorphActionGlyph icon={MorphPlus} size={14} />
                 </ActionIconButton>
-                {(settings.role_route_warnings?.[role] ?? []).map((warning) => (
+                {routeWarnings.map((warning) => (
                   <div key={warning} data-testid={`vk-role-warning-${role}`} className="text-xs" style={{ color: 'var(--color-warning)' }}>{warning}</div>
                 ))}
               </div>

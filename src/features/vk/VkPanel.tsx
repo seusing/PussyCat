@@ -979,6 +979,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               note: installError ?? '缺少本机解析运行环境，需要先完成一次准备。',
               action: { label: '一键准备', run: () => { void startInstall({ rebuild: false }) } },
             }
+            : runtime?.state === 'installed' && runtime.current === false
+              ? {
+                text: '解析引擎有更新', color: 'var(--color-warning)',
+                note: '更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移。',
+                action: { label: '立即更新', run: () => { void startInstall({ rebuild: false }) } },
+              }
           : healthChecked && (!health || !['ok', 'ready'].includes(health.status))
               ? {
                 text: '解析引擎没有响应', color: 'var(--color-warning)',

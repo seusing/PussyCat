@@ -126,6 +126,41 @@ describe('VkPanel', () => {
     expect(screen.queryByTestId('vk-runtime-details-toggle')).not.toBeInTheDocument()
   })
 
+  it('已安装运行时过期时提示更新并发送非重建安装请求', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { ...RUNTIME_INSTALLED, current: false } },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: false } },
+      'POST /vk/v1/runtime/install': { status: 202, body: { ...RUNTIME_INSTALLED, state: 'installing' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎有更新'))
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移')
+    await user.click(screen.getByRole('button', { name: '立即更新' }))
+
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/runtime/install')).toBe(true))
+    const install = calls.find((call) => call.key === 'POST /vk/v1/runtime/install')!
+    expect(JSON.parse(String(install.init?.body))).toEqual({ rebuild: false })
+  })
+
+  it('已安装运行时为当前版本时不显示更新提示', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { ...RUNTIME_INSTALLED, current: true } },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
+    expect(screen.queryByText('解析引擎有更新')).not.toBeInTheDocument()
+  })
+
   it('模型通道没配时阻止提交并显示顶部提醒', async () => {
     // 真机上的原始症状:下载 + 转写成功耗时 7m33s,最后一步 401。通道不通必须在
     // 第 1 秒可见,而不是第 7.5 分钟。

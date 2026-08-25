@@ -643,6 +643,31 @@ test('添加备用不会提供主通道或已经选过的通道，并立即提�
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
 })
 
+test('有主通道但没有备用时显示本地失败风险警告', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+    channels: [channel()],
+    role_assignments: { basic: 'cheap' },
+    role_fallbacks: { basic: [] },
+  }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(
+    '未设置备用上游；当前通道超时后任务会失败。请添加一个 Base URL 不同的备用配置。',
+  )
+})
+
+test('已有备用通道时不显示缺失备用警告', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+    channels: [channel(), channel({ id: 'backup', name: '备用', base_url: 'https://backup.example/v1' })],
+    role_assignments: { basic: 'cheap' },
+    role_fallbacks: { basic: ['backup'] },
+  }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await screen.findByTestId('vk-role-fallback-basic-0')
+  expect(screen.queryByText('未设置备用上游；当前通道超时后任务会失败。请添加一个 Base URL 不同的备用配置。')).not.toBeInTheDocument()
+})
+
 test('同一上游的主备只提醒不替用户改配置', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({
     channels: [channel(), channel({ id: 'backup', name: '备用' })],
