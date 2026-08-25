@@ -789,7 +789,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt))
       setResults((prev) => ({ ...prev, [draft.id]: result }))
       const probe = result.generation_probe
-      const successNotice = !probeGeneration
+      const successNotice = !probeGeneration || !probe
         ? `连接成功 · ${elapsedMs} ms`
         : probe?.first_text_ms != null
           ? `连接成功 · 首字 ${probe.first_text_ms} ms · 总耗时 ${probe.total_ms} ms`
@@ -880,7 +880,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   ) : null
 
   return (
-    <div data-testid="vk-provider-form" className="space-y-4">
+    <div data-testid="vk-provider-form" className="relative space-y-4">
       {!modalId && alertSlot('form')}
       <section data-testid="vk-provider-channels-section" className="rounded-xl p-4"
         style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
@@ -1038,7 +1038,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               if (event.target === event.currentTarget && !blocked) closeModal(false)
             }}
           >
-            <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl p-5 shadow-2xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+            <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl p-5 shadow-2xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 id="vk-provider-modal-title" className="text-lg font-semibold">{isNew ? '创建配置' : '编辑配置'}</h3>
                 <button type="button" aria-label="关闭模型配置弹窗" title="关闭" onClick={() => closeModal(false)} className="rounded-lg p-1.5" style={outlineStyle}><X size={18} /></button>

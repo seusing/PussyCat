@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkProviderForm } from './VkProviderForm'
+
+const providerCss = readFileSync(resolve(process.cwd(), 'src/features/vk/VkProviderForm.css'), 'utf8')
 
 const BASE = 'http://127.0.0.1:9999'
 const SECRET = 'sk-relay-DO-NOT-LEAK-0123456789'
@@ -844,6 +848,67 @@ test('弹窗生成连接成功显示后端真实首字与总耗时且通知局�
   expect(dialog).toContainElement(notice)
   expect(notice).not.toHaveClass('fixed')
   expect(getComputedStyle(notice).position).not.toBe('fixed')
+})
+
+test('局部通知绝对定位于表单或弹窗且不改变内容流', async () => {
+  const pending = deferred<unknown>()
+  const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') return Promise.resolve(response(settings()))
+    if (key === 'POST /vk/v1/providers/test') return pending.promise.then(response)
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: key }) })
+  }))
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const form = await screen.findByTestId('vk-provider-form')
+  const section = screen.getByTestId('vk-provider-channels-section')
+  expect(form).toHaveClass('relative')
+  await user.click(screen.getByTestId('vk-channel-test-cheap'))
+  pending.resolve({ ok: true, reason_code: 'ok', message: 'ok', models: [], normalization_notes: [] })
+
+  const formSlot = (await screen.findByTestId('vk-provider-notice')).parentElement!
+  expect(form).toContainElement(formSlot)
+  expect(providerCss).toMatch(/\.vk-provider-alert-slot\s*\{[^}]*position:\s*absolute;/s)
+  expect(providerCss).not.toMatch(/\.vk-provider-alert-slot\s*\{[^}]*position:\s*fixed;/s)
+  expect(providerCss).toMatch(/\.vk-provider-alert-slot\s*\{[^}]*pointer-events:\s*none;/s)
+  expect(providerCss).toMatch(/\.vk-provider-alert-slot \.app-alert\s*\{[^}]*pointer-events:\s*auto;/s)
+  expect(section).toBe(screen.getByTestId('vk-provider-channels-section'))
+  expect(section.compareDocumentPosition(screen.getByTestId('vk-provider-routing-section')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+  await user.click(screen.getByTestId('vk-channel-edit-cheap'))
+  const dialog = await screen.findByRole('dialog')
+  expect(dialog).toHaveClass('relative')
+})
+
+test('旧后端无 generation probe 时使用前端实测耗时且不回显模型数', async () => {
+  const pending = deferred<unknown>()
+  const now = vi.spyOn(performance, 'now')
+    .mockReturnValue(1000)
+  const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') return Promise.resolve(response(settings()))
+    if (key === 'POST /vk/v1/providers/test') return pending.promise.then(response)
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: key }) })
+  }))
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const testButton = await screen.findByTestId('vk-channel-test-cheap')
+  await user.click(testButton)
+  await waitFor(() => expect(testButton).toBeDisabled())
+  now.mockReturnValue(1123)
+  pending.resolve({
+    ok: true, reason_code: 'ok', message: '连接正常，可用模型 2 个',
+    models: ['m-a', 'm-b'], normalization_notes: [],
+  })
+
+  const notice = await screen.findByTestId('vk-provider-notice')
+  expect(notice).toHaveTextContent('连接成功 · 123 ms')
+  expect(notice).not.toHaveTextContent('可用模型')
+  now.mockRestore()
 })
 
 test('获取模型列表与测试连接发送不同payload且都刷新模型与档位', async () => {
