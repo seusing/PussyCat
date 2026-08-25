@@ -418,7 +418,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 disabled={actionPending !== null}
                 onClick={() => { void runAction('retry') }}
                 whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.96 }}
               >
                 <motion.span whileHover={{ rotate: 180 }} transition={{ type: 'spring', stiffness: 400, damping: 25 }}>
                   <RefreshCw size={15} aria-hidden="true" />
@@ -435,7 +434,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 onMouseLeave={() => setSubmitHovered(false)}
                 onClick={() => { void runAction('resubmit') }}
                 whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.96 }}
               >
                 <span className="vk-task-action-icon">
                   <AnimatePresence mode="popLayout" initial={false}>

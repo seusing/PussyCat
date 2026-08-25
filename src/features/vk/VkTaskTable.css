@@ -191,7 +191,6 @@
 }
 
 .vk-jobs-refresh-button:hover svg { transform: rotate(180deg); }
-.vk-jobs-refresh-button:active { transform: scale(.96); }
 
 .vk-task-operation-split {
   height: 30px;
@@ -224,9 +223,6 @@
 .vk-task-open-button:hover,
 .vk-task-menu-trigger:hover,
 .vk-task-menu-trigger[aria-expanded='true'] { background: rgb(255 255 255 / 7%); }
-
-.vk-task-open-button:active,
-.vk-task-menu-trigger:active { transform: scale(.96); }
 
 .vk-task-operation-menu {
   position: fixed;

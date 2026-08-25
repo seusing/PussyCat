@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  AnimatePresence,
   motion,
   useMotionValue,
   useReducedMotion,
@@ -16,8 +15,6 @@ import { BookDemoButton } from '../../components/BookDemoButton'
 const RANGE = 110
 const MAX_SCALE = 1.12
 const TRACK_SPRING = { stiffness: 260, damping: 26, mass: 0.6 } as const
-const OPEN_SPRING = { type: 'spring', visualDuration: 0.42, bounce: 0.2 } as const
-const CLOSE_SPRING = { type: 'spring', visualDuration: 0.4, bounce: 0 } as const
 const ICON_SPRING = { type: 'spring', visualDuration: 0.3, bounce: 0.25 } as const
 
 function CommandRow({
@@ -54,7 +51,7 @@ function CommandRow({
     <motion.div
       ref={register}
       data-testid={`command-row-${command.command}`}
-      onMouseEnter={onActivate}
+      onMouseMove={onActivate}
       style={{ scale: reduce ? 1 : scale, transformOrigin: 'center', zIndex: active ? 2 : 1 }}
       className="fisheye-command-row"
     >
@@ -74,29 +71,26 @@ function CommandRow({
         </motion.span>
       </button>
 
-      <AnimatePresence initial={false}>
-        {active && (
-          <motion.div
-            key="description"
-            initial={{ height: 0, opacity: 0, filter: reduce ? 'none' : 'blur(8px)' }}
-            animate={{ height: 'auto', opacity: 1, filter: 'blur(0px)', transition: OPEN_SPRING }}
-            exit={{ height: 0, opacity: 0, transition: CLOSE_SPRING }}
-            className="fisheye-command-detail-clip"
-          >
-            <div className="fisheye-command-detail">
-              <p>{commandDescription(command.command, command.description)}</p>
-              <BookDemoButton
-                data-testid={`open-command-${command.command}`}
-                aria-label="运行任务：进入命令详情"
-                disabled={!canSubmit}
-                onClick={onSubmit}
-              >
-                进入命令详情
-              </BookDemoButton>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div
+        data-active={active}
+        aria-hidden={!active}
+        className="fisheye-command-detail-clip"
+      >
+        <div className="fisheye-command-detail-shell">
+          <div className="fisheye-command-detail">
+            <p>{commandDescription(command.command, command.description)}</p>
+            <BookDemoButton
+              data-testid={`open-command-${command.command}`}
+              aria-label="运行任务：进入命令详情"
+              disabled={!canSubmit}
+              tabIndex={active ? undefined : -1}
+              onClick={onSubmit}
+            >
+              进入命令详情
+            </BookDemoButton>
+          </div>
+        </div>
+      </div>
     </motion.div>
   )
 }

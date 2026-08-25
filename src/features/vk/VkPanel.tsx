@@ -1283,7 +1283,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
             className={`${outlineButton} vk-jobs-refresh-button${jobsRefreshing ? ' is-refreshing' : ''}`}
             style={outlineStyle}
             whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.96 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
           >
             <RefreshCw size={14} aria-hidden="true" />
@@ -1439,7 +1438,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
                 aria-busy={outputDownloadProgress !== null}
                 className="vk-output-download-button"
                 whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.96 }}
                 transition={{ type: 'spring', stiffness: 600, damping: 25 }}
               >
                 {outputDownloadProgress !== null && (

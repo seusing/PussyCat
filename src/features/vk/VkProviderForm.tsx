@@ -80,7 +80,6 @@ function VisibilityButton({
       onMouseLeave={() => setHovered(false)}
       disabled={disabled}
       whileHover={disabled ? undefined : { scale: 1.02 }}
-      whileTap={disabled ? undefined : { scale: 0.96 }}
       className="vk-icon-action vk-key-eye-button relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[40px] border border-white/5 bg-white/[0.04] text-sm font-medium text-white transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
       aria-label={label}
       title={label}

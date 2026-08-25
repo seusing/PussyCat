@@ -16,6 +16,16 @@ const sites: SupportedSite[] = ['a', 'b', 'c', 'd', 'e'].map((id) => ({
   description: id,
 }))
 
+const commands: CommandManifest[] = ['read', 'write'].map((name) => ({
+  command: `site/${name}`,
+  site: 'site',
+  name,
+  description: `${name} one item`,
+  access: name === 'write' ? 'write' : 'read',
+  browser: true,
+  args: [],
+}))
+
 describe('inspiration selectors', () => {
   it('requires a second click after a non-center carousel card is centered', () => {
     const onSelect = vi.fn()
@@ -66,7 +76,48 @@ describe('inspiration selectors', () => {
     const { container } = render(<FisheyeCommandList commands={[command]} onSubmit={vi.fn()} />)
 
     const clip = container.querySelector('.fisheye-command-detail-clip')
-    expect(clip?.firstElementChild).toHaveClass('fisheye-command-detail')
+    expect(clip?.firstElementChild).toHaveClass('fisheye-command-detail-shell')
+    expect(clip?.firstElementChild?.firstElementChild).toHaveClass('fisheye-command-detail')
+    expect(clip).toHaveAttribute('data-active', 'true')
     expect(screen.getByRole('button', { name: '运行任务：进入命令详情' })).toHaveTextContent('进入命令详情')
+  })
+
+  it('keeps command detail nodes mounted while pointer movement changes the active row', () => {
+    render(<FisheyeCommandList commands={commands} onSubmit={vi.fn()} />)
+
+    const rowA = screen.getByTestId('command-row-site/read')
+    const rowB = screen.getByTestId('command-row-site/write')
+    const headerA = rowA.querySelector('.fisheye-command-header')
+    const headerB = rowB.querySelector('.fisheye-command-header')
+    const clipA = rowA.querySelector('.fisheye-command-detail-clip')
+    const clipB = rowB.querySelector('.fisheye-command-detail-clip')
+    const buttonA = screen.getByTestId('open-command-site/read')
+    const buttonB = screen.getByTestId('open-command-site/write')
+
+    fireEvent.mouseMove(rowA)
+    expect(rowB.querySelector('.fisheye-command-detail-clip')).toBe(clipB)
+    fireEvent.mouseMove(rowB)
+    expect(rowB.querySelector('.fisheye-command-detail-clip')).toBe(clipB)
+    fireEvent.mouseMove(rowA)
+    expect(rowB.querySelector('.fisheye-command-detail-clip')).toBe(clipB)
+    fireEvent.mouseMove(rowB)
+
+    expect(rowB.querySelector('.fisheye-command-detail-clip')).toBe(clipB)
+    expect(headerB).toHaveAttribute('aria-expanded', 'true')
+    expect(headerA).toHaveAttribute('aria-expanded', 'false')
+    expect(clipB).toHaveAttribute('data-active', 'true')
+    expect(clipB).toHaveAttribute('aria-hidden', 'false')
+    expect(buttonB).not.toHaveAttribute('tabindex')
+    expect(clipA).toHaveAttribute('data-active', 'false')
+    expect(clipA).toHaveAttribute('aria-hidden', 'true')
+    expect(buttonA).toHaveAttribute('tabindex', '-1')
+
+    fireEvent.mouseEnter(rowA)
+    expect(headerB).toHaveAttribute('aria-expanded', 'true')
+    expect(headerA).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.mouseMove(rowA)
+    expect(headerA).toHaveAttribute('aria-expanded', 'true')
+    expect(headerB).toHaveAttribute('aria-expanded', 'false')
   })
 })
