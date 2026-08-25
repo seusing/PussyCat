@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { buildVkBundle, collectBundleSource } from './build-vk-bundle.mjs'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { buildVkBundle, buildWheel, collectBundleSource } from './build-vk-bundle.mjs'
 
 const temporaryDirectories = []
 
@@ -34,12 +34,35 @@ function commit(repo) {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   while (temporaryDirectories.length > 0) {
     rmSync(temporaryDirectories.pop(), { recursive: true, force: true })
   }
 })
 
 describe('build-vk-bundle provenance', () => {
+  it('runs uv build with the configured source and wheel output directory', () => {
+    const calls = []
+    buildWheel({
+      uvPath: 'fixture-uv',
+      pythonSourceDir: 'fixture-python-source',
+      wheelOutDir: 'fixture-dist',
+      spawnSyncImpl: (command, args, options) => {
+        calls.push({ command, args, options })
+        return { status: 0, stdout: '', stderr: '' }
+      },
+    })
+    expect(calls).toEqual([{
+      command: 'fixture-uv',
+      args: ['build', '--wheel', '--out-dir', 'fixture-dist'],
+      options: expect.objectContaining({
+        cwd: 'fixture-python-source',
+        shell: false,
+        windowsHide: true,
+      }),
+    }])
+  })
+
   it('rejects tracked or untracked changes in the Python source', () => {
     const pythonRepo = makeRepo('vk-python-dirty-', { 'uv.lock': 'python-lock\n' })
     const pussyCatRepo = makeRepo('vk-pussycat-clean-', { 'package-lock.json': 'app-lock\n' })
@@ -86,6 +109,7 @@ describe('build-vk-bundle provenance', () => {
       wheelPath,
       uvPath: process.execPath,
       outDir,
+      wheelBuilder: () => { throw new Error('explicit wheelPath must skip build') },
       requirementsExporter: ({ extras }) => `profile=${extras.join('+') || 'base'}\n`,
     })
     const fromDisk = JSON.parse(readFileSync(join(outDir, 'runtime-manifest.json'), 'utf8'))
@@ -123,5 +147,86 @@ describe('build-vk-bundle provenance', () => {
       smoke: 'runtime-asr-smoke.wav',
       smokeSha256: sha256(smokeAudio),
     }])
+  })
+
+  it('builds the default wheel before replacing the bundle and records its hash', () => {
+    vi.stubEnv('VK_WHEEL_PATH', '')
+    const wheelContent = 'fresh-wheel-from-source'
+    const pythonRepo = makeRepo('vk-python-default-wheel-', {
+      'uv.lock': 'python-lock\n',
+      'src/video_knowledge/resources/asr-model-pack.json': '{"schema":"fixture"}\n',
+      'src/video_knowledge/resources/runtime-asr-smoke.wav': 'fixture-wave',
+    })
+    const pussyCatRepo = makeRepo('vk-pussycat-default-wheel-', {
+      'package-lock.json': 'app-lock\n',
+    })
+    const bundleFiles = mkdtempSync(join(tmpdir(), 'vk-default-wheel-output-'))
+    temporaryDirectories.push(bundleFiles)
+    const outDir = join(bundleFiles, 'bundle')
+    const calls = []
+
+    const manifest = buildVkBundle({
+      root: pussyCatRepo,
+      pythonSourceDir: pythonRepo,
+      uvPath: process.execPath,
+      outDir,
+      wheelBuilder: (options) => {
+        calls.push(options)
+        mkdirSync(options.wheelOutDir, { recursive: true })
+        writeFileSync(
+          join(options.wheelOutDir, 'video_knowledge-0.1.0-py3-none-any.whl'),
+          wheelContent,
+        )
+      },
+      requirementsExporter: ({ extras }) => `profile=${extras.join('+') || 'base'}\n`,
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      uvPath: process.execPath,
+      pythonSourceDir: pythonRepo,
+      wheelOutDir: join(pythonRepo, 'dist'),
+    })
+    expect(existsSync(join(
+      pussyCatRepo,
+      'video_knowledge-0.1.0-py3-none-any.whl',
+    ))).toBe(false)
+    expect(manifest.source.pythonCommit).toBe(commit(pythonRepo))
+    expect(manifest.source.pythonDirty).toBe(false)
+    expect(manifest.wheel.sha256).toBe(sha256(wheelContent))
+  })
+
+  it('preserves the previous bundle when the default wheel build fails', () => {
+    vi.stubEnv('VK_WHEEL_PATH', '')
+    const pythonRepo = makeRepo('vk-python-failed-wheel-', {
+      'uv.lock': 'python-lock\n',
+      'src/video_knowledge/resources/asr-model-pack.json': '{"schema":"fixture"}\n',
+      'src/video_knowledge/resources/runtime-asr-smoke.wav': 'fixture-wave',
+    })
+    const pussyCatRepo = makeRepo('vk-pussycat-failed-wheel-', {
+      'package-lock.json': 'app-lock\n',
+    })
+    const bundleFiles = mkdtempSync(join(tmpdir(), 'vk-failed-wheel-output-'))
+    temporaryDirectories.push(bundleFiles)
+    const outDir = join(bundleFiles, 'bundle')
+    mkdirSync(outDir, { recursive: true })
+    const marker = join(outDir, 'known-good.txt')
+    writeFileSync(marker, 'keep-me')
+    let buildCalls = 0
+
+    expect(() => buildVkBundle({
+      root: pussyCatRepo,
+      pythonSourceDir: pythonRepo,
+      uvPath: process.execPath,
+      outDir,
+      wheelBuilder: () => {
+        buildCalls += 1
+        throw new Error('fixture build failed')
+      },
+      requirementsExporter: ({ extras }) => `profile=${extras.join('+') || 'base'}\n`,
+    })).toThrow(/fixture build failed/)
+
+    expect(buildCalls).toBe(1)
+    expect(readFileSync(marker, 'utf8')).toBe('keep-me')
   })
 })

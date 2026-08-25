@@ -3,7 +3,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   RUNTIME_CONTRACT_SCHEMA,
@@ -15,6 +15,7 @@ import {
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const DEFAULT_PYTHON_SOURCE_DIR = 'C:\\Users\\Lauseusing\\Developer\\video-knowledge-m1-productization'
+const DEFAULT_WHEEL_NAME = 'video_knowledge-0.1.0-py3-none-any.whl'
 
 export function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
@@ -89,20 +90,55 @@ export function exportLockedRequirements({
   return normalized.endsWith('\n') ? normalized : `${normalized}\n`
 }
 
-export function buildVkBundle({
-  root = projectRoot,
-  wheelPath = process.env.VK_WHEEL_PATH
-    ?? 'C:\\Users\\Lauseusing\\Developer\\video-knowledge-m1-productization\\dist\\video_knowledge-0.1.0-py3-none-any.whl',
-  uvPath = process.env.VK_UV_PATH ?? 'C:\\Users\\Lauseusing\\.local\\bin\\uv.exe',
-  pythonSourceDir = process.env.VK_PYTHON_SOURCE_DIR ?? DEFAULT_PYTHON_SOURCE_DIR,
-  modelManifestPath = join(pythonSourceDir, 'src', 'video_knowledge', 'resources', 'asr-model-pack.json'),
-  modelSmokePath = join(pythonSourceDir, 'src', 'video_knowledge', 'resources', 'runtime-asr-smoke.wav'),
-  outDir = join(root, 'src-tauri', 'resources', 'vk'),
-  requirementsExporter = exportLockedRequirements,
-} = {}) {
+export function buildWheel({
+  uvPath,
+  pythonSourceDir,
+  wheelOutDir,
+  spawnSyncImpl = spawnSync,
+}) {
+  const result = spawnSyncImpl(
+    uvPath,
+    ['build', '--wheel', '--out-dir', wheelOutDir],
+    {
+      cwd: pythonSourceDir,
+      shell: false,
+      windowsHide: true,
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  )
+  if (result.status !== 0) {
+    throw new Error(
+      `[vk-bundle] wheel build failed: ${String(result.stderr ?? '').trim()}`,
+    )
+  }
+}
+
+export function buildVkBundle(options = {}) {
+  const root = options.root ?? projectRoot
+  const uvPath = options.uvPath
+    ?? process.env.VK_UV_PATH
+    ?? 'C:\\Users\\Lauseusing\\.local\\bin\\uv.exe'
+  const pythonSourceDir = options.pythonSourceDir
+    ?? process.env.VK_PYTHON_SOURCE_DIR
+    ?? DEFAULT_PYTHON_SOURCE_DIR
+  const environmentWheelPath = process.env.VK_WHEEL_PATH?.trim() || undefined
+  const explicitWheelPath = options.wheelPath !== undefined
+    || Boolean(environmentWheelPath)
+  const wheelPath = (options.wheelPath ?? environmentWheelPath)
+    || join(pythonSourceDir, 'dist', DEFAULT_WHEEL_NAME)
+  const modelManifestPath = options.modelManifestPath
+    ?? join(pythonSourceDir, 'src', 'video_knowledge', 'resources', 'asr-model-pack.json')
+  const modelSmokePath = options.modelSmokePath
+    ?? join(pythonSourceDir, 'src', 'video_knowledge', 'resources', 'runtime-asr-smoke.wav')
+  const outDir = options.outDir ?? join(root, 'src-tauri', 'resources', 'vk')
+  const requirementsExporter = options.requirementsExporter ?? exportLockedRequirements
+  const wheelBuilder = options.wheelBuilder ?? buildWheel
+  const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync
+
   // Validate provenance before deleting the previous known-good bundle.
   const source = collectBundleSource({ pythonSourceDir, pussyCatRoot: root })
-  const uvVersion = spawnSync(uvPath, ['--version'], {
+  const uvVersion = spawnSyncImpl(uvPath, ['--version'], {
     shell: false,
     windowsHide: true,
     encoding: 'utf8',
@@ -118,8 +154,20 @@ export function buildVkBundle({
     key: runtimeRequirementsKey(extras),
     extras,
     name: runtimeRequirementsFilename(extras),
-    content: requirementsExporter({ uvPath, pythonSourceDir, extras }),
+    content: requirementsExporter({ uvPath, pythonSourceDir, extras, spawnSyncImpl }),
   }))
+
+  if (!explicitWheelPath) {
+    wheelBuilder({
+      uvPath,
+      pythonSourceDir,
+      wheelOutDir: dirname(wheelPath),
+      spawnSyncImpl,
+    })
+  }
+  if (!existsSync(wheelPath)) {
+    throw new Error(`[vk-bundle] wheel is missing after build: ${wheelPath}`)
+  }
 
   rmSync(outDir, { recursive: true, force: true })
   mkdirSync(outDir, { recursive: true })
