@@ -142,7 +142,7 @@ type Draft = {
   api_style: string
   /** 用户手动选过风格 —— 之后改模型名不再覆盖他的选择。 */
   api_style_touched: boolean
-  /** 空值表示跟随模型自动推断；其余值直接传给已有 provider 配置。 */
+  /** 默认为 medium；用户输入的其他值直接传给已有 provider 配置。 */
   reasoning_effort: string
   /** 已存 key 的打码值。**空输入框会被当成"没设过"**,所以存过就得看得见。 */
   key_masked: string
@@ -272,7 +272,9 @@ function toDraft(channel: VkProviderSettings['channels'][number]): Draft {
   return {
     id: channel.id, name: channel.name, base_url: channel.base_url, model_id: channel.model_id,
     key_env: channel.key_env, api_style: channel.api_style, api_style_touched: true,
-    reasoning_effort: channel.reasoning_effort_explicit ? channel.reasoning_effort : '',
+    reasoning_effort: channel.reasoning_effort_explicit && channel.reasoning_effort?.trim()
+      ? channel.reasoning_effort
+      : 'medium',
     key_masked: channel.key_masked, extra_headers: { ...channel.extra_headers },
     api_key: '', key_touched: false, key_loaded: false, key_visible: false, enabled: channel.enabled !== false,
   }
@@ -437,8 +439,8 @@ function ChannelEditor({
             style={fieldStyle}
             value={draft.reasoning_effort}
             disabled={channelIsBusy}
-            placeholder="自动（跟随模型）"
-            title={availableReasoningEfforts.length ? '下拉建议来自本次接口请求，也可以输入接口支持的其他值' : '可保持自动，或输入中转站支持的值'}
+            placeholder="默认 medium"
+            title={availableReasoningEfforts.length ? '默认 medium；下拉建议来自本次接口请求，也可以输入接口支持的其他值' : '默认 medium，也可输入中转站支持的值'}
             onChange={(e) => { onPatch(draft.id, { reasoning_effort: e.target.value }); onClearError?.('reasoning_effort') }}
           />
           <datalist id={`vk-channel-reasoning-options-${draft.id}`}>
@@ -530,7 +532,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const patchModel = (draft: Draft, model_id: string) =>
     patch(draft.id, {
       model_id,
-      ...(model_id === draft.model_id ? {} : { reasoning_effort: '' }),
+      ...(model_id === draft.model_id || draft.reasoning_effort.trim()
+        ? {}
+        : { reasoning_effort: 'medium' }),
       ...(draft.api_style_touched ? {} : { api_style: inferApiStyle(model_id) }),
     })
 
@@ -575,7 +579,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     const draft: Draft = {
       id, name: '新配置', base_url: '', model_id: '',
       key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
-      api_style_touched: false, reasoning_effort: '', key_masked: '', extra_headers: {},
+      api_style_touched: false, reasoning_effort: 'medium', key_masked: '', extra_headers: {},
       api_key: '', key_touched: false, key_loaded: true, key_visible: false, enabled: true,
     }
     openNewDraft(draft)
@@ -585,7 +589,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     const imported: Draft = {
       id: item.id, name: item.name, base_url: item.base_url, model_id: item.model_id,
       key_env: item.key_env, api_style: inferApiStyle(item.model_id), api_style_touched: false,
-      reasoning_effort: '', key_masked: '', extra_headers: {}, api_key: '', key_touched: false,
+      reasoning_effort: 'medium', key_masked: '', extra_headers: {}, api_key: '', key_touched: false,
       key_loaded: false, key_visible: false, enabled: true,
     }
     const current = drafts.find((draft) => draft.id === item.id)
@@ -605,7 +609,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       const imported: Draft = {
         id: channel.id, name: channel.name, base_url: channel.base_url,
         model_id: channel.model_id, key_env: channel.key_env, api_style: channel.api_style,
-        api_style_touched: true, reasoning_effort: '', key_masked: '', extra_headers: channel.extra_headers,
+        api_style_touched: true, reasoning_effort: 'medium', key_masked: '', extra_headers: channel.extra_headers,
         api_key, key_touched: true, key_loaded: true, key_visible: false, enabled: true,
       }
       openNewDraft(imported)
@@ -619,7 +623,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const channelPayload = (items: Draft[]): VkChannelPayload[] => items.map((draft) => ({
     id: draft.id, name: draft.name, base_url: draft.base_url, model_id: draft.model_id,
     key_env: draft.key_env, api_style: draft.api_style,
-    reasoning_effort: draft.reasoning_effort || null,
+    reasoning_effort: draft.reasoning_effort.trim() || 'medium',
     extra_headers: draft.extra_headers,
     enabled: draft.enabled,
     // 没碰过就不传 api_key —— 表示「不动已存的那把」,而不是清空。
@@ -770,14 +774,16 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setChannelBusy((current) => ({ ...current, [draft.id]: 'test' }))
     setError(null)
     try {
+      const startedAt = performance.now()
       const result = await testVkProvider({
         base_url: draft.base_url,
         key_env: draft.key_env,
         api_style: draft.api_style,
         ...(draft.key_touched ? { api_key: draft.api_key } : {}),
       }, baseUrl)
+      const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt))
       setResults((prev) => ({ ...prev, [draft.id]: result }))
-      showNotice(result.ok ? 'success' : 'error', formatTestNotice(result))
+      showNotice(result.ok ? 'success' : 'error', result.ok ? `连接成功 · ${elapsedMs} ms` : formatTestNotice(result))
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
       if (result.base_url && result.base_url !== draft.base_url) patch(draft.id, { base_url: result.base_url })
       // Every click replaces the previous discovery result, including an empty
@@ -834,9 +840,35 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }
 
   const roleKeys = Object.keys(settings.role_labels)
+  const alertSlot = (location: 'form' | 'modal') => (notice || error) ? (
+    <div className={`vk-provider-alert-slot vk-provider-alert-slot--${location}`}>
+      {notice && (
+        <AppAlert
+          key={notice.id}
+          testId="vk-provider-notice"
+          tone={notice.tone}
+          title={notice.message}
+          role="status"
+          className={`vk-provider-alert vk-provider-alert--${notice.tone}`}
+          durationMs={3000}
+          progressTestId="vk-provider-notice-progress"
+        />
+      )}
+      {error && (
+        <AppAlert
+          testId="vk-provider-error"
+          tone="error"
+          title={error}
+          className="vk-provider-alert vk-provider-alert--error"
+          onClose={() => setError(null)}
+        />
+      )}
+    </div>
+  ) : null
 
   return (
     <div data-testid="vk-provider-form" className="space-y-4">
+      {!modalId && alertSlot('form')}
       <section data-testid="vk-provider-channels-section" className="rounded-xl p-4"
         style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -998,18 +1030,17 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 <h3 id="vk-provider-modal-title" className="text-lg font-semibold">{isNew ? '创建配置' : '编辑配置'}</h3>
                 <button type="button" aria-label="关闭模型配置弹窗" title="关闭" onClick={() => closeModal(false)} className="rounded-lg p-1.5" style={outlineStyle}><X size={18} /></button>
               </div>
+              {alertSlot('modal')}
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <div className={`vk-validation-field ${validationErrors[modalDraft.id]?.name ? 'is-error' : ''}`}>
-                  <label className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                    名称
-                    <input data-testid="vk-modal-name" className={`${fieldClass} mt-1`} style={fieldStyle} placeholder="例如：日常总结" value={modalDraft.name} onChange={(event) => { patch(modalDraft.id, { name: event.target.value }); setValidationErrors((current) => ({ ...current, [modalDraft.id]: { ...current[modalDraft.id], name: undefined } })) }} />
-                  </label>
+                  <label htmlFor="vk-modal-name-input" className="mb-1 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>名称</label>
+                  <input id="vk-modal-name-input" data-testid="vk-modal-name" className={fieldClass} style={fieldStyle} placeholder="例如：日常总结" value={modalDraft.name} onChange={(event) => { patch(modalDraft.id, { name: event.target.value }); setValidationErrors((current) => ({ ...current, [modalDraft.id]: { ...current[modalDraft.id], name: undefined } })) }} />
                   {validationErrors[modalDraft.id]?.name && <div className="vk-validation-message" role="alert">{validationErrors[modalDraft.id].name}</div>}
                 </div>
-                <label className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                  分组 / 中转站
-                  <input data-testid="vk-modal-group" className={`${fieldClass} mt-1`} style={fieldStyle} value={modalDraft.base_url ? (() => { try { return new URL(modalDraft.base_url).hostname } catch { return '' } })() : ''} readOnly placeholder="自动识别上游" />
-                </label>
+                <div className="vk-validation-field">
+                  <label htmlFor="vk-modal-group-input" className="mb-1 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>上游站点</label>
+                  <input id="vk-modal-group-input" data-testid="vk-modal-group" className={fieldClass} style={fieldStyle} value={modalDraft.base_url ? (() => { try { return new URL(modalDraft.base_url).hostname } catch { return '' } })() : ''} readOnly placeholder="自动识别上游" />
+                </div>
               </div>
               <ChannelEditor
                 draft={modalDraft}
@@ -1130,27 +1161,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           </button>
         ))}
       </div>
-      {notice && (
-        <AppAlert
-          key={notice.id}
-          testId="vk-provider-notice"
-          tone={notice.tone}
-          title={notice.message}
-          role="status"
-          className={`vk-provider-alert vk-provider-alert--${notice.tone}`}
-          durationMs={3000}
-          progressTestId="vk-provider-notice-progress"
-        />
-      )}
-      {error && (
-        <AppAlert
-          testId="vk-provider-error"
-          tone="error"
-          title={error}
-          className="vk-provider-alert vk-provider-alert--error"
-          onClose={() => setError(null)}
-        />
-      )}
     </div>
   )
 }

@@ -72,7 +72,10 @@ function deferred<T>() {
 
 const SAVE_OK = { saved: true, normalization_notes: [], keys_written: [], keys_injected: [], configured: true }
 
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 async function openChannelEditor(id = 'cheap') {
   await userEvent.click(await screen.findByTestId(`vk-channel-edit-${id}`))
@@ -221,13 +224,14 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
   await waitFor(() => expect(screen.getByTestId('vk-channel-reasoning-cheap')).toBeInTheDocument())
 
   const effort = screen.getByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
-  expect(effort.value).toBe('')
+  expect(effort.value).toBe('medium')
   expect(effort).toBeEnabled()
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
   await waitFor(() => expect(effort).toBeEnabled())
   const options = document.querySelectorAll('#vk-channel-reasoning-options-cheap option')
   expect([...options].map((option) => (option as HTMLOptionElement).value))
     .toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+  await userEvent.clear(effort)
   await userEvent.type(effort, 'max')
   await commitChannelEditor()
 
@@ -236,7 +240,7 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
   expect(body.channels[0].reasoning_effort).toBe('max')
 })
 
-test('中转站未返回推理档位时保持自动且不显示旧说明', async () => {
+test('中转站未返回推理档位时保持 medium 默认值且不显示旧说明', async () => {
   stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
     'POST /vk/v1/providers/test': { body: {
@@ -251,7 +255,7 @@ test('中转站未返回推理档位时保持自动且不显示旧说明', async
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
   await screen.findByTestId('vk-provider-notice')
   expect(effort).toBeEnabled()
-  expect(effort.value).toBe('')
+  expect(effort.value).toBe('medium')
   expect(screen.getByTestId('vk-channel-protocol-row-cheap')).toBeInTheDocument()
   expect(screen.queryByTestId('vk-channel-reasoning-note-cheap')).not.toBeInTheDocument()
   expect(screen.queryByText('中转站未返回可枚举档位；可保持自动，或输入其支持的值')).not.toBeInTheDocument()
@@ -267,12 +271,46 @@ test('接口未返回推理档位时仍允许按中转站文档手填', async ()
   const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
 
   expect(effort).toBeEnabled()
+  await userEvent.clear(effort)
   await userEvent.type(effort, 'max')
   await commitChannelEditor()
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string | null }[] }
   expect(body.channels[0].reasoning_effort).toBe('max')
+})
+
+test('推理强度清空后保存仍提交 medium', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
+
+  await userEvent.clear(await screen.findByTestId('vk-channel-reasoning-cheap'))
+  await commitChannelEditor()
+
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { channels: { reasoning_effort: string }[] }
+  expect(body.channels[0].reasoning_effort).toBe('medium')
+})
+
+test('服务端显式推理强度优先于 medium 默认值', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
+      channels: [channel({ reasoning_effort: 'high', reasoning_effort_explicit: true })],
+    }) },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
+
+  const effort = await screen.findByTestId('vk-channel-reasoning-cheap')
+  expect(effort).toHaveValue('high')
+  const model = screen.getByTestId('vk-channel-model-cheap')
+  await userEvent.clear(model)
+  await userEvent.type(model, 'gpt-5.6-sol')
+  expect(effort).toHaveValue('high')
 })
 
 
@@ -375,6 +413,16 @@ test('配置清单移除旧说明,创建弹窗与关键操作都有可访问名�
   expect(modalTest).toHaveTextContent('')
   expect(modalTest).toHaveAttribute('data-icon', 'activity')
   expect(dialog.querySelector('.vk-provider-protocol-row')).not.toBeNull()
+  const name = within(dialog).getByTestId('vk-modal-name')
+  const upstream = within(dialog).getByTestId('vk-modal-group')
+  expect(within(dialog).getByText('上游站点')).toBeInTheDocument()
+  expect(name.className).toBe(upstream.className)
+  expect(name.parentElement).toHaveClass('vk-validation-field')
+  expect(upstream.parentElement).toHaveClass('vk-validation-field')
+  expect(name).toHaveAccessibleName('名称')
+  expect(upstream).toHaveAccessibleName('上游站点')
+  expect(upstream).toHaveAttribute('readonly')
+  expect(dialog.querySelector('[data-testid^="vk-channel-reasoning-"]')).toHaveValue('medium')
 })
 
 test('取消创建会丢弃草稿,取消编辑会恢复打开弹窗前的内容', async () => {
@@ -562,6 +610,7 @@ test('从本机既有配置一键导入_地址与模型名现成', async () => {
 
   expect((screen.getByTestId('vk-channel-url-luna') as HTMLInputElement).value).toBe('https://relay.example.com/v1')
   expect((screen.getByTestId('vk-channel-model-luna') as HTMLInputElement).value).toBe('gpt-5.6-luna')
+  expect(screen.getByTestId('vk-channel-reasoning-luna')).toHaveValue('medium')
 })
 
 // ── 角色指派 ────────────────────────────────────────────────────────────
@@ -764,6 +813,36 @@ test('不同配置的连接测试各自忙碌,一条 pending 不会锁住另一�
   ])
 })
 
+test('弹窗连接成功显示端到端延迟且通知局限在弹窗内', async () => {
+  const pending = deferred<unknown>()
+  let clock = 100
+  vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') return Promise.resolve(response(settings()))
+    if (key === 'POST /vk/v1/providers/test') return pending.promise.then(response)
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) })
+  }))
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const dialog = await openChannelEditor()
+  await user.click(within(dialog).getByRole('button', { name: '测试连接' }))
+  clock = 223
+  pending.resolve({
+    ok: true, reason_code: 'ok', message: '连接正常，可用模型 2 个',
+    models: ['m-a', 'm-b'], normalization_notes: [],
+  })
+
+  const notice = await screen.findByTestId('vk-provider-notice')
+  expect(notice).toHaveTextContent('连接成功 · 123 ms')
+  expect(notice).not.toHaveTextContent('连接正常，可用模型 2 个')
+  expect(dialog).toContainElement(notice)
+  expect(notice).not.toHaveClass('fixed')
+  expect(getComputedStyle(notice).position).not.toBe('fixed')
+})
+
 test('测试失败时给根因和下一步,不是一段原始日志', async () => {
   stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
@@ -805,6 +884,8 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
   expect(screen.getByTestId('vk-provider-notice')).toHaveClass('app-alert')
   expect(screen.getByTestId('vk-provider-notice')).toHaveAttribute('data-tone', 'success')
+  expect(screen.getByTestId('vk-provider-form')).toContainElement(screen.getByTestId('vk-provider-notice'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(screen.queryByTestId('vk-channel-result-cheap')).not.toBeInTheDocument()
   await openChannelEditor()
   await waitFor(() => expect((screen.getByTestId('vk-channel-url-cheap') as HTMLInputElement).value)
