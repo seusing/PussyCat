@@ -237,7 +237,7 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
   const effort = screen.getByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
   expect(effort.value).toBe('medium')
   expect(effort).toBeEnabled()
-  await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
+  await userEvent.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
   await waitFor(() => expect(effort).toBeEnabled())
   const options = document.querySelectorAll('#vk-channel-reasoning-options-cheap option')
   expect([...options].map((option) => (option as HTMLOptionElement).value))
@@ -263,7 +263,7 @@ test('中转站未返回推理档位时保持 medium 默认值且不显示旧说
   await openChannelEditor()
   const effort = await screen.findByTestId('vk-channel-reasoning-cheap') as HTMLInputElement
 
-  await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
+  await userEvent.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
   await screen.findByTestId('vk-provider-notice')
   expect(effort).toBeEnabled()
   expect(effort.value).toBe('medium')
@@ -538,6 +538,7 @@ test('弹窗保存失败只在弹窗内显示错误', async () => {
   await commitChannelEditor()
 
   const alert = await screen.findByTestId('vk-provider-error')
+  expect(screen.getByTestId('vk-provider-modal-shell')).toContainElement(alert)
   expect(dialog).toContainElement(alert)
   expect(screen.getByTestId('app-notification-layer')).not.toContainElement(alert)
   expect(screen.getAllByTestId('vk-provider-error')).toHaveLength(1)
@@ -794,7 +795,8 @@ test('连接确认永久失效后可禁用且不会自动删除', async () => {
   expect(notice).toHaveTextContent('下一步：更换 key')
   expect(notice).toHaveClass('app-alert')
   expect(notice).toHaveAttribute('data-tone', 'error')
-  expect(within(notice).getByRole('progressbar', { name: '通知剩余时间' })).toBeInTheDocument()
+  expect(within(notice).getByRole('progressbar', { name: '通知剩余时间' }))
+    .toHaveAttribute('aria-valuetext', '2 秒后自动关闭')
   expect(screen.queryByTestId('vk-channel-invalid-cheap')).not.toBeInTheDocument()
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
   await user.click(screen.getByTestId('vk-channel-toggle-cheap'))
@@ -888,6 +890,7 @@ test('弹窗生成连接成功显示后端真实首字与总耗时且通知局�
   expect(notice).toHaveTextContent('连接成功 · 首字 47 ms · 总耗时 123 ms')
   expect(notice).not.toHaveTextContent('连接正常，可用模型 2 个')
   expect(dialog).toContainElement(notice)
+  expect(screen.getByTestId('vk-provider-modal-shell')).toContainElement(notice)
   expect(screen.getByTestId('app-notification-layer')).not.toContainElement(notice)
   expect(notice).not.toHaveClass('fixed')
   expect(getComputedStyle(notice).position).not.toBe('fixed')
@@ -918,12 +921,15 @@ test('页面通知挂到共享悬浮层，弹窗通知仍以弹窗为锚点', as
   expect(form).not.toContainElement(formSlot)
   expect(dialog).not.toContainElement(screen.getByTestId('vk-provider-notice'))
   expect(providerCss).toMatch(/\.vk-provider-alert-slot--modal\s*\{[^}]*position:\s*absolute;/s)
+  expect(providerCss).toMatch(/\.vk-provider-alert-slot--modal\s*\{[^}]*top:\s*0;/s)
+  expect(providerCss).toMatch(/\.vk-provider-alert-slot--modal\s*\{[^}]*transform:\s*translateX\(-50%\);/s)
   expect(providerCss).toMatch(/\.vk-provider-alert-slot\s*\{[^}]*pointer-events:\s*none;/s)
   expect(providerCss).toMatch(/\.vk-provider-alert-slot \.app-alert\s*\{[^}]*pointer-events:\s*auto;/s)
   expect(section).toBe(screen.getByTestId('vk-provider-channels-section'))
   expect(section.compareDocumentPosition(screen.getByTestId('vk-provider-routing-section')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
   expect(dialog).toHaveClass('relative')
+  expect(screen.getByTestId('vk-provider-modal-shell')).toHaveClass('relative')
 })
 
 test('弹窗连接测试关闭后完成时不迁移到页面通知层', async () => {
@@ -982,7 +988,7 @@ test('旧后端无 generation probe 时使用前端实测耗时且不回显模�
   now.mockRestore()
 })
 
-test('获取模型列表与测试连接发送不同payload且都刷新模型与档位', async () => {
+test('获取模型列表与测试连接独立发送请求，连接测试不覆盖模型列表', async () => {
   const bodies: Array<Record<string, unknown>> = []
   const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1017,6 +1023,7 @@ test('获取模型列表与测试连接发送不同payload且都刷新模型与�
   await user.click(within(dialog).getByRole('button', { name: '获取模型列表' }))
   await waitFor(() => expect(bodies).toHaveLength(1))
   await waitFor(() => expect(within(dialog).getByRole('button', { name: '获取模型列表' })).toBeEnabled())
+  expect(await screen.findByTestId('vk-provider-notice')).toHaveTextContent('获取到 1 个模型')
   expect(bodies[0]).toEqual({
     base_url: 'https://api.example.com/v1',
     key_env: 'VK_CHANNEL_CHEAP_KEY',
@@ -1040,7 +1047,56 @@ test('获取模型列表与测试连接发送不同payload且都刷新模型与�
     '连接成功 · 同步 · 总耗时 88 ms',
   )
   await waitFor(() => expect(document.querySelector('#vk-models-cheap option')?.getAttribute('value'))
-    .toBe('generated-model'))
+    .toBe('listed-model'))
+})
+
+test('同一配置获取模型时仍可测试连接，两个按钮各自结束', async () => {
+  const listed = deferred<unknown>()
+  const tested = deferred<unknown>()
+  let requestCount = 0
+  const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') return Promise.resolve(response(settings()))
+    if (key === 'POST /vk/v1/providers/test') {
+      requestCount += 1
+      return (requestCount === 1 ? listed : tested).promise.then(response)
+    }
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: key }) })
+  }))
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  const dialog = await openChannelEditor()
+  const fetchModels = within(dialog).getByRole('button', { name: '获取模型列表' })
+  const testConnection = within(dialog).getByRole('button', { name: '测试连接' })
+
+  await user.click(fetchModels)
+  await waitFor(() => expect(fetchModels).toBeDisabled())
+  expect(testConnection).toBeEnabled()
+
+  await user.click(testConnection)
+  await waitFor(() => expect(testConnection).toBeDisabled())
+  expect(fetchModels).toBeDisabled()
+
+  listed.resolve({
+    ok: true, reason_code: 'ok', message: '列表已获取', models: ['listed-model'],
+    reasoning_efforts: { 'listed-model': ['low'] }, normalization_notes: [],
+  })
+  await waitFor(() => expect(fetchModels).toBeEnabled())
+  expect(testConnection).toBeDisabled()
+  expect(document.querySelector('#vk-models-cheap option')).toHaveValue('listed-model')
+
+  tested.resolve({
+    ok: true, reason_code: 'ok', message: '连接正常', models: ['test-only-model'], normalization_notes: [],
+    generation_probe: {
+      ok: true, reason_code: 'ok', message: '生成连接正常', model_reported: 'gpt-5.6-luna',
+      transport_mode: 'sync_fallback', response_headers_ms: 10, first_event_ms: null,
+      first_text_ms: null, total_ms: 88, stream_event_count: 0,
+      upstream_response_id: null, request_may_still_run: false,
+    },
+  })
+  await waitFor(() => expect(testConnection).toBeEnabled())
+  expect(document.querySelector('#vk-models-cheap option')).toHaveValue('listed-model')
 })
 
 test('测试失败时给根因和下一步,不是一段原始日志', async () => {
@@ -1092,7 +1148,9 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
   await waitFor(() => expect((screen.getByTestId('vk-channel-url-cheap') as HTMLInputElement).value)
     .toBe('https://api.example.com/v1'))
   expect(screen.getByText('已自动补上 https://')).toBeInTheDocument()
-  // 测出来的模型名做成下拉,省掉手抄
+  await userEvent.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
+  await screen.findByText('获取到 2 个模型')
+  // 获取模型列表的结果做成下拉,省掉手抄。
   expect(document.querySelectorAll('#vk-models-cheap option')).toHaveLength(2)
 })
 
@@ -1208,7 +1266,7 @@ test('模型列表菜单点击内部保留，点击外部自动收起', async ()
   render(<VkProviderForm baseUrl={BASE} />)
 
   await openChannelEditor()
-  await user.click(screen.getByTestId('vk-channel-test-cheap'))
+  await user.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
   await user.click(await screen.findByTestId('vk-channel-models-menu-cheap'))
   const listbox = screen.getByRole('listbox')
   await user.click(listbox)

@@ -168,6 +168,30 @@ describe('VkPanel', () => {
     expect(screen.queryByText('解析引擎有更新')).not.toBeInTheDocument()
   })
 
+  it('重新检测先按需拉起 sidecar 再读取健康状态', async () => {
+    let armed = false
+    let startedAfterClick = false
+    const stopped = { ...HEALTH, status: 'stopped', reasonCode: 'stopped', summary: 'sidecar 未启动' }
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: () => (armed && startedAfterClick ? HEALTH : stopped) },
+      'GET /vk/v1/jobs': { body: () => { if (armed) startedAfterClick = true; return [] } },
+      'GET /vk/v1/runtime/status': { body: { ...RUNTIME_INSTALLED, current: true } },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎尚未启动'))
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('重新检测会自动启动解析引擎')
+    armed = true
+    const callStart = calls.length
+    await userEvent.click(screen.getByTestId('vk-verdict-action'))
+
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
+    const retryCalls = calls.slice(callStart).map((call) => call.key)
+    expect(retryCalls.indexOf('GET /vk/v1/jobs')).toBeLessThan(retryCalls.indexOf('GET /vk/v1/health'))
+  })
+
   it('模型通道没配时阻止提交并显示顶部提醒', async () => {
     // 真机上的原始症状:下载 + 转写成功耗时 7m33s,最后一步 401。通道不通必须在
     // 第 1 秒可见,而不是第 7.5 分钟。
@@ -1049,6 +1073,12 @@ describe('VkPanel', () => {
     await waitFor(() => expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/install')).toBe(true))
     expect(screen.getByTestId('vk-verdict')).toHaveTextContent('正在准备解析环境')
     expect(calls.some((item) => item.key === 'POST /vk/v1/runtime/install')).toBe(true)
+    const verdict = screen.getByTestId('vk-verdict')
+    const card = verdict.closest('.vk-verdict-card')
+    const beam = verdict.closest('.vk-installing-beam')
+    expect(card).not.toHaveClass('mb-4')
+    expect(beam).toContainElement(card as HTMLElement)
+    expect(beam?.parentElement).toHaveClass('vk-verdict-spacing')
   })
 
   it('first-run: failed install shows typed reason with retry', async () => {

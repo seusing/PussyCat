@@ -36,8 +36,16 @@ type Notice = {
   location: AlertLocation
 }
 
+type ChannelBusyState = {
+  models?: boolean
+  test?: boolean
+  reveal?: boolean
+}
+
 type ScopedError = { message: string; location: AlertLocation }
 type PersistResult = { ok: boolean; noticeMessage?: string }
+
+const NOTICE_DURATION_MS = 2000
 
 function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean, dismiss: () => void) {
   useEffect(() => {
@@ -301,7 +309,7 @@ type ChannelEditorProps = {
   result?: VkProviderTestResult
   models: string[]
   availableReasoningEfforts: string[]
-  channelBusy?: string
+  channelBusy?: ChannelBusyState
   onPatch: (id: string, next: Partial<Draft>) => void
   onPatchModel: (draft: Draft, modelId: string) => void
   onReveal: (draft: Draft) => void
@@ -329,7 +337,9 @@ function ChannelEditor({
   const canRevealOrToggle = draft.key_loaded || Boolean(saved?.key_stored || draft.key_masked)
   const keyValue = showSavedMask ? draft.key_masked : draft.api_key
   const keyType = showSavedMask || draft.key_visible ? 'text' : 'password'
-  const channelIsBusy = Boolean(channelBusy)
+  const channelIsBusy = Boolean(channelBusy?.models || channelBusy?.test || channelBusy?.reveal)
+  const modelsBusy = Boolean(channelBusy?.models)
+  const testBusy = Boolean(channelBusy?.test)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   useDismissOnOutside(modelMenuRef, modelMenuOpen, () => setModelMenuOpen(false))
@@ -363,11 +373,11 @@ function ChannelEditor({
           testId={`vk-channel-models-fetch-${draft.id}`}
           label="获取模型列表"
           onClick={() => onTest(draft, false)}
-          disabled={channelIsBusy}
+          disabled={modelsBusy}
           iconState="download"
           size="md"
         >
-          <MorphActionGlyph icon={MorphDownload} size={15} className={channelBusy === 'test' ? 'vk-provider-icon--busy' : ''} />
+          <MorphActionGlyph icon={MorphDownload} size={15} className={modelsBusy ? 'vk-provider-icon--busy' : ''} />
         </ActionIconButton>
         {models.length > 0 && (
           <div ref={modelMenuRef} className="relative shrink-0">
@@ -444,7 +454,7 @@ function ChannelEditor({
             className="vk-provider-protocol-control rounded-lg px-2 py-1.5 text-xs outline-none"
             style={fieldStyle}
             value={draft.reasoning_effort}
-            disabled={channelIsBusy}
+            disabled={testBusy}
             placeholder="默认 medium"
             title={availableReasoningEfforts.length ? '默认 medium；下拉建议来自本次接口请求，也可以输入接口支持的其他值' : '默认 medium，也可输入中转站支持的值'}
             onChange={(e) => { onPatch(draft.id, { reasoning_effort: e.target.value }); onClearError?.('reasoning_effort') }}
@@ -459,11 +469,11 @@ function ChannelEditor({
             testId={`vk-channel-test-${draft.id}`}
             label="测试连接"
             onClick={() => onTest(draft, true)}
-            disabled={channelIsBusy}
+            disabled={testBusy}
             iconState="activity"
             size="md"
           >
-            <MorphActionGlyph icon={MorphActivity} size={15} className={channelBusy === 'test' ? 'vk-provider-icon--busy' : ''} />
+            <MorphActionGlyph icon={MorphActivity} size={15} className={testBusy ? 'vk-provider-icon--busy' : ''} />
           </ActionIconButton>
         </div>
         {saved?.key_from_environment && (
@@ -497,7 +507,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [models, setModels] = useState<Record<string, string[]>>({})
   const [reasoningEfforts, setReasoningEfforts] = useState<Record<string, Record<string, string[]>>>({})
   const [busy, setBusy] = useState<string | null>(null)
-  const [channelBusy, setChannelBusy] = useState<Record<string, string>>({})
+  const [channelBusy, setChannelBusy] = useState<Record<string, ChannelBusyState>>({})
   const [modalSession, setModalSession] = useState<{ id: string; original: Draft | null } | null>(null)
   const [saving, setSaving] = useState(false)
   const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
@@ -577,9 +587,17 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   useEffect(() => {
     if (!notice) return
-    const timer = window.setTimeout(() => setNotice(null), 3000)
+    const timer = window.setTimeout(() => setNotice(null), NOTICE_DURATION_MS)
     return () => window.clearTimeout(timer)
   }, [notice?.id])
+
+  useEffect(() => {
+    if (!error) return
+    const timer = window.setTimeout(() => {
+      setError((current) => current === error ? null : current)
+    }, NOTICE_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [error])
 
   const addChannel = () => {
     const id = newId()
@@ -757,7 +775,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const reveal = async (draft: Draft) => {
     const location: AlertLocation = modalId === draft.id ? 'modal' : 'form'
-    setChannelBusy((current) => ({ ...current, [draft.id]: 'reveal' }))
+    setChannelBusy((current) => ({ ...current, [draft.id]: { ...current[draft.id], reveal: true } }))
     setError((current) => current?.location === location ? null : current)
     try {
       const result = await revealVkProviderKey(draft.key_env, baseUrl)
@@ -772,7 +790,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
-        delete next[draft.id]
+        const state = { ...next[draft.id], reveal: false }
+        if (state.models || state.test) next[draft.id] = state
+        else delete next[draft.id]
         return next
       })
     }
@@ -780,7 +800,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const runTest = async (draft: Draft, probeGeneration = true) => {
     const location: AlertLocation = modalId === draft.id ? 'modal' : 'form'
-    setChannelBusy((current) => ({ ...current, [draft.id]: 'test' }))
+    const operation: 'models' | 'test' = probeGeneration ? 'test' : 'models'
+    setChannelBusy((current) => ({
+      ...current,
+      [draft.id]: { ...current[draft.id], [operation]: true },
+    }))
     setError((current) => current?.location === location ? null : current)
     try {
       const startedAt = performance.now()
@@ -799,8 +823,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt))
       setResults((prev) => ({ ...prev, [draft.id]: result }))
       const probe = result.generation_probe
-      const successNotice = !probeGeneration || !probe
-        ? `连接成功 · ${elapsedMs} ms`
+      const successNotice = !probeGeneration
+        ? `获取到 ${(result.models ?? []).length} 个模型`
+        : !probe
+          ? `连接成功 · ${elapsedMs} ms`
         : probe?.first_text_ms != null
           ? `连接成功 · 首字 ${probe.first_text_ms} ms · 总耗时 ${probe.total_ms} ms`
           : probe?.ok
@@ -809,20 +835,23 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       showNotice(result.ok ? 'success' : 'error', result.ok ? successNotice : formatTestNotice(result), location)
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
       if (result.base_url && result.base_url !== draft.base_url) patch(draft.id, { base_url: result.base_url })
-      // Every click replaces the previous discovery result, including an empty
-      // result. Keeping stale choices would make refresh look real while still
-      // showing an older provider state.
-      setModels((prev) => ({ ...prev, [draft.id]: result.models ?? [] }))
-      setReasoningEfforts((prev) => ({
-        ...prev,
-        [draft.id]: result.reasoning_efforts ?? {},
-      }))
+      if (!probeGeneration) {
+        // Discovery owns the model menu. A generation probe must not replace or
+        // clear the list that the separate discovery action just produced.
+        setModels((prev) => ({ ...prev, [draft.id]: result.models ?? [] }))
+        setReasoningEfforts((prev) => ({
+          ...prev,
+          [draft.id]: result.reasoning_efforts ?? {},
+        }))
+      }
     } catch (err) {
       showNotice('error', err instanceof Error ? err.message : '连接测试失败', location)
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
-        delete next[draft.id]
+        const state = { ...next[draft.id], [operation]: false }
+        if (state.models || state.test || state.reveal) next[draft.id] = state
+        else delete next[draft.id]
         return next
       })
     }
@@ -880,7 +909,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             title={scopedNotice.message}
             role="status"
             className={`vk-provider-alert vk-provider-alert--${scopedNotice.tone}`}
-            durationMs={3000}
+            durationMs={NOTICE_DURATION_MS}
             progressTestId="vk-provider-notice-progress"
           />
         )}
@@ -890,6 +919,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             tone="error"
             title={scopedError.message}
             className="vk-provider-alert vk-provider-alert--error"
+            durationMs={NOTICE_DURATION_MS}
             onClose={() => setError((current) => current?.location === location ? null : current)}
           />
         )}
@@ -1020,10 +1050,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                         testId={`vk-channel-test-${draft.id}`}
                         label="测试连接"
                         onClick={() => { void runTest(draft, true) }}
-                        disabled={Boolean(channelBusy[draft.id]) || saving}
+                        disabled={Boolean(channelBusy[draft.id]?.test) || saving}
                         iconState="activity"
                       >
-                        <MorphActionGlyph icon={MorphActivity} size={15} className={channelBusy[draft.id] === 'test' ? 'vk-provider-icon--busy' : ''} />
+                        <MorphActionGlyph icon={MorphActivity} size={15} className={channelBusy[draft.id]?.test ? 'vk-provider-icon--busy' : ''} />
                       </ActionIconButton>
                     )}
                     <EditActionButton testId={`vk-channel-edit-${draft.id}`} onClick={() => openEditor(draft)} disabled={saving} />
@@ -1059,12 +1089,13 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               if (event.target === event.currentTarget && !blocked) closeModal(false)
             }}
           >
-            <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl p-5 shadow-2xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+            <div data-testid="vk-provider-modal-shell" className="relative max-h-[90vh] w-full max-w-2xl">
+              <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="relative max-h-[90vh] w-full overflow-y-auto rounded-xl p-5 shadow-2xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+              {alertSlot('modal')}
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 id="vk-provider-modal-title" className="text-lg font-semibold">{isNew ? '创建配置' : '编辑配置'}</h3>
                 <button type="button" aria-label="关闭模型配置弹窗" title="关闭" onClick={() => closeModal(false)} className="rounded-lg p-1.5" style={outlineStyle}><X size={18} /></button>
               </div>
-              {alertSlot('modal')}
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <div className={`vk-validation-field ${validationErrors[modalDraft.id]?.name ? 'is-error' : ''}`}>
                   <label htmlFor="vk-modal-name-input" className="mb-1 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>名称</label>
@@ -1097,6 +1128,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               <div className="mt-5 flex justify-end gap-2" style={{ borderTop: '1px solid var(--color-line)', paddingTop: '1rem' }}>
                 <button type="button" data-testid="vk-provider-modal-cancel" onClick={() => closeModal(false)} className={outlineButton} style={outlineStyle}>取消</button>
                 <button type="button" data-testid="vk-provider-modal-submit" onClick={() => { void saveModal(modalDraft) }} disabled={saving} className="rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-50" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>{saving ? '保存中…' : '保存'}</button>
+              </div>
               </div>
             </div>
           </div>

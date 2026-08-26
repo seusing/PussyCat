@@ -263,8 +263,13 @@ const STATUS_LABELS: Record<string, string> = {
  * 彩虹会把这条本该次要的状态条抢成全屏视觉焦点。
  */
 function InstallingBeam({ on, children }: { on: boolean; children: ReactNode }) {
-  if (!on) return <>{children}</>
-  return <BorderBeam size="pulse-inner" colorVariant="ocean" theme="dark">{children}</BorderBeam>
+  return (
+    <div className="vk-verdict-spacing">
+      {on
+        ? <BorderBeam size="pulse-inner" colorVariant="ocean" theme="dark" borderRadius={8} className="vk-installing-beam">{children}</BorderBeam>
+        : children}
+    </div>
+  )
 }
 
 type TaskBannerTone = 'info' | 'success' | 'danger' | 'warning' | 'rerun'
@@ -381,11 +386,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     const timer = setInterval(() => { void refreshRuntime() }, 2000)
     return () => clearInterval(timer)
   }, [runtime?.state, refreshRuntime])
-  useEffect(() => {
-    const state = runtime?.state ?? null
-    if (state === 'installed' && previousRuntimeState.current !== 'installed') void checkHealth()
-    previousRuntimeState.current = state
-  }, [runtime?.state, checkHealth])
   // —— 自动体检:进入面板就把环境查清楚并挑最强的,不让用户去点「检测」再去「选」 ——
   // 用户的原话是"能自动获取就自动获取"。检测本身零副作用;挑出来的若不是当前环境
   // 才 adopt(runtimeToAdopt 已经把"已经最强了"过滤掉了,避免无谓地重启 sidecar)。
@@ -410,20 +410,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     }
   }, [base])
   useEffect(() => { void refreshProviders() }, [refreshProviders])
-
-  const refreshEngineStatus = useCallback(async () => {
-    setHealthChecking(true)
-    try {
-      await Promise.all([
-        checkHealth({ manageBusy: false }),
-        refreshRuntime(),
-        refreshProviders(),
-        refreshRuntimeCandidates(),
-      ])
-    } finally {
-      setHealthChecking(false)
-    }
-  }, [checkHealth, refreshProviders, refreshRuntime, refreshRuntimeCandidates])
 
   const discoverTaskReasoningEfforts = async () => {
     setReasoningDiscovering(true)
@@ -751,6 +737,31 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     }
   }, [attachTaskNumbers, base, selectedJob?.job_id, selectedJobId])
   useEffect(() => { void refreshJobs() }, [refreshJobs, refreshToken])
+  const refreshEngineStatus = useCallback(async () => {
+    setHealthChecking(true)
+    try {
+      await refreshRuntime()
+      if (runtime?.state === 'installed' || health?.status === 'stopped') await refreshJobs()
+      await checkHealth({ manageBusy: false })
+      await Promise.all([refreshProviders(), refreshRuntimeCandidates()])
+    } finally {
+      setHealthChecking(false)
+    }
+  }, [checkHealth, health?.status, refreshJobs, refreshProviders, refreshRuntime, refreshRuntimeCandidates, runtime?.state])
+  useEffect(() => {
+    if (runtime?.state !== 'installed') {
+      previousRuntimeState.current = runtime?.state ?? null
+      return
+    }
+    if (previousRuntimeState.current === 'installed') return
+    previousRuntimeState.current = 'installed'
+    void (async () => {
+      // The health projection is intentionally sidecar-free. Touch the jobs route
+      // first so the newly installed runtime is actually started before probing it.
+      await refreshJobs()
+      await checkHealth()
+    })()
+  }, [checkHealth, refreshJobs, runtime?.state])
   useEffect(() => {
     if (!jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
     const timer = setInterval(() => { void refreshJobs() }, 15_000)
@@ -988,8 +999,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               }
           : healthChecked && (!health || !['ok', 'ready'].includes(health.status))
               ? {
-                text: '解析引擎没有响应', color: 'var(--color-warning)',
-                note: health?.summary ?? '暂时联系不上解析引擎。',
+                text: health?.status === 'stopped' ? '解析引擎尚未启动' : '解析引擎没有响应',
+                color: 'var(--color-warning)',
+                note: health?.status === 'stopped'
+                  ? '运行环境已经准备好，重新检测会自动启动解析引擎。'
+                  : health?.summary ?? '暂时联系不上解析引擎。',
                 action: { label: '重新检测', run: () => { void refreshEngineStatus() } },
               }
               : healthChecked && providerConfigured === false
@@ -1015,7 +1029,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       )}
       {verdict && (
         <InstallingBeam on={runtime?.state === 'installing'}>
-          <div className="mb-4 flex flex-col gap-2 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          <div className="vk-verdict-card flex flex-col gap-2 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
             <div className="min-w-0 flex-1">
               <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
                 {verdict.text}
