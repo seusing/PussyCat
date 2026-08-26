@@ -13,6 +13,13 @@ beforeEach(() => {
   vi.useRealTimers()
   vi.mocked(saveTextFileAs).mockReset().mockResolvedValue(true)
   useAppStore.setState(initialState, true)
+  const layer = document.createElement('div')
+  layer.dataset.testid = 'app-notification-layer'
+  document.body.append(layer)
+})
+
+afterEach(() => {
+  document.querySelector('[data-testid="app-notification-layer"]')?.remove()
 })
 
 const BASE = 'http://127.0.0.1:9999'
@@ -182,6 +189,8 @@ describe('VkPanel', () => {
     expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(false)
     expect(screen.getByTestId('vk-task-banner')).toHaveTextContent('请先完成模型配置选择')
     expect(screen.getByTestId('vk-task-banner')).toHaveAttribute('data-tone', 'warning')
+    expect(screen.getByTestId('app-notification-layer')).toContainElement(screen.getByTestId('vk-task-banner'))
+    expect(screen.getByTestId('vk-panel')).not.toContainElement(screen.getByTestId('vk-task-banner'))
     expect(useAppStore.getState().activeModule).not.toBe('providers')
     expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('请选择基础处理和深度分析使用的模型配置。')
   })
@@ -520,6 +529,8 @@ describe('VkPanel', () => {
     expect(banner).toHaveClass('is-info')
     expect(banner).toHaveClass('vk-task-banner')
     expect(banner.closest('.vk-task-banners')).toHaveClass('vk-task-banners')
+    expect(screen.getByTestId('app-notification-layer')).toContainElement(banner)
+    expect(screen.getByTestId('vk-panel')).not.toContainElement(banner)
     const progress = screen.getByTestId('vk-task-banner-progress')
     expect(progress).toHaveClass('is-info')
     expect(Number(progress.getAttribute('aria-valuenow'))).toBeGreaterThan(90)

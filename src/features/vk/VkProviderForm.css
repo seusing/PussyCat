@@ -129,14 +129,9 @@
 }
 
 .vk-provider-alert-slot {
-  position: absolute;
-  top: 0.75rem;
-  left: 50%;
-  z-index: 30;
   display: flex;
   width: min(36rem, calc(100% - 2rem));
   max-width: calc(100% - 2rem);
-  transform: translateX(-50%);
   flex-direction: column;
   align-items: center;
   gap: 0.5rem;
@@ -144,7 +139,11 @@
 }
 
 .vk-provider-alert-slot--modal {
+  position: absolute;
+  z-index: 30;
   top: 4.5rem;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .vk-provider-alert-slot .app-alert {

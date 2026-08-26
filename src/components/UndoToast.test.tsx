@@ -14,8 +14,10 @@ test('lastUndo 为空时不渲染', () => {
 test('取消站点收藏后显示 toast,点撤销回滚', async () => {
   useAppStore.getState().toggleSiteFavorite('x')   // 收藏
   useAppStore.getState().toggleSiteFavorite('x')   // 取消 → lastUndo
-  render(<UndoToast />)
-  expect(screen.getByTestId('undo-toast')).toBeInTheDocument()
+  render(<><div data-testid="app-notification-layer" /><UndoToast /></>)
+  const layer = screen.getByTestId('app-notification-layer')
+  expect(layer).toContainElement(screen.getByTestId('undo-toast'))
+  expect(screen.getByTestId('undo-toast')).not.toHaveClass('fixed', 'bottom-4', 'left-1/2', '-translate-x-1/2')
   expect(within(screen.getByTestId('undo-toast')).getByRole('progressbar', { name: '通知剩余时间' })).toHaveClass('is-duration')
   await userEvent.click(screen.getByTestId('undo-button'))
   expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])

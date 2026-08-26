@@ -250,12 +250,28 @@ select:focus-visible {
 @keyframes health-action-spin { to { transform: rotate(360deg); } }
 
 .app-main {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex: 1;
   flex-direction: column;
 }
+
+.app-notification-layer {
+  position: absolute;
+  z-index: 40;
+  top: 74px;
+  right: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.app-notification-layer .app-alert { pointer-events: auto; }
 
 .app-details-sidebar {
   min-width: 0;
@@ -814,6 +830,7 @@ select:focus-visible {
   .app-header-actions [data-testid='policy-disconnected'],
   .app-header-actions [data-testid='catalog-meta'] { display: none; }
   .app-header { min-height: 58px; flex-basis: 58px; padding: 0 14px; }
+  .app-notification-layer { top: 70px; }
   .app-header-primary { width: auto; justify-content: flex-start; }
   .app-header-actions { width: auto; }
   .inspiration-page, .inspiration-execute { padding: 20px 14px; }

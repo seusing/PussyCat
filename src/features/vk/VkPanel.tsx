@@ -10,6 +10,7 @@ import { Check, Copy, Download, LoaderCircle, RefreshCw, Upload } from 'lucide-r
 import Markdown from 'react-markdown'
 import { useAppStore } from '../../store/appStore'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
+import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { HostRequestError } from '../../host/errors'
 import {
   fetchVkHealth,
@@ -1004,11 +1005,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   return (
     <div className="mx-auto max-w-5xl p-3 sm:p-6" data-testid="vk-panel">
       {taskBanners.length > 0 && (
-        <div className="vk-task-banners" aria-live="polite">
-          {taskBanners.map((banner) => (
-            <TaskBannerNotice key={banner.id} banner={banner} onDismiss={dismissTaskBanner} />
-          ))}
-        </div>
+        <AppNotificationPortal>
+          <div className="vk-task-banners" aria-live="polite">
+            {taskBanners.map((banner) => (
+              <TaskBannerNotice key={banner.id} banner={banner} onDismiss={dismissTaskBanner} />
+            ))}
+          </div>
+        </AppNotificationPortal>
       )}
       {verdict && (
         <InstallingBeam on={runtime?.state === 'installing'}>

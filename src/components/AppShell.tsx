@@ -247,6 +247,8 @@ export default function AppShell({
           </div>
         </header>
 
+        <div data-testid="app-notification-layer" className="app-notification-layer" />
+
         {catalogStatus === 'loading' && (
           <div data-testid="catalog-loading" className="app-status-screen app-catalog-loading" role="status">
             <InlineLoader variant="spark" size={32} label="灵感汲取中" />

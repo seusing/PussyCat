@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkProviderForm } from './VkProviderForm'
 
@@ -8,6 +8,12 @@ const providerCss = readFileSync(resolve(process.cwd(), 'src/features/vk/VkProvi
 
 const BASE = 'http://127.0.0.1:9999'
 const SECRET = 'sk-relay-DO-NOT-LEAK-0123456789'
+
+beforeEach(() => {
+  const layer = document.createElement('div')
+  layer.dataset.testid = 'app-notification-layer'
+  document.body.append(layer)
+})
 
 function channel(over: Record<string, unknown> = {}) {
   return {
@@ -77,6 +83,7 @@ function deferred<T>() {
 const SAVE_OK = { saved: true, normalization_notes: [], keys_written: [], keys_injected: [], configured: true }
 
 afterEach(() => {
+  document.querySelector('[data-testid="app-notification-layer"]')?.remove()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -514,6 +521,41 @@ test('弹窗保存成功后通知父级收起配置', async () => {
   await openChannelEditor()
   await commitChannelEditor()
   await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('app-notification-layer')).toContainElement(
+    await screen.findByTestId('vk-provider-notice'),
+  )
+})
+
+test('弹窗保存失败只在弹窗内显示错误', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { status: 500, body: { error: '保存被拒绝' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const dialog = await openChannelEditor()
+  await commitChannelEditor()
+
+  const alert = await screen.findByTestId('vk-provider-error')
+  expect(dialog).toContainElement(alert)
+  expect(screen.getByTestId('app-notification-layer')).not.toContainElement(alert)
+  expect(screen.getAllByTestId('vk-provider-error')).toHaveLength(1)
+})
+
+test('页面乐观保存失败只在共享通知层显示错误', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { status: 500, body: { error: '页面保存失败' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  await userEvent.click(await screen.findByTestId('vk-channel-toggle-cheap'))
+
+  const alert = await screen.findByTestId('vk-provider-error')
+  expect(screen.getByTestId('app-notification-layer')).toContainElement(alert)
+  expect(screen.getByTestId('vk-provider-form')).not.toContainElement(alert)
+  expect(screen.getAllByTestId('vk-provider-error')).toHaveLength(1)
 })
 
 test('启用与禁用按钮使用锁图标并保持状态图标', async () => {
@@ -846,11 +888,12 @@ test('弹窗生成连接成功显示后端真实首字与总耗时且通知局�
   expect(notice).toHaveTextContent('连接成功 · 首字 47 ms · 总耗时 123 ms')
   expect(notice).not.toHaveTextContent('连接正常，可用模型 2 个')
   expect(dialog).toContainElement(notice)
+  expect(screen.getByTestId('app-notification-layer')).not.toContainElement(notice)
   expect(notice).not.toHaveClass('fixed')
   expect(getComputedStyle(notice).position).not.toBe('fixed')
 })
 
-test('局部通知绝对定位于表单或弹窗且不改变内容流', async () => {
+test('页面通知挂到共享悬浮层，弹窗通知仍以弹窗为锚点', async () => {
   const pending = deferred<unknown>()
   const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
   vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
@@ -864,22 +907,50 @@ test('局部通知绝对定位于表单或弹窗且不改变内容流', async ()
 
   const form = await screen.findByTestId('vk-provider-form')
   const section = screen.getByTestId('vk-provider-channels-section')
-  expect(form).toHaveClass('relative')
+  expect(form).not.toHaveClass('relative')
   await user.click(screen.getByTestId('vk-channel-test-cheap'))
+  const dialog = await openChannelEditor()
   pending.resolve({ ok: true, reason_code: 'ok', message: 'ok', models: [], normalization_notes: [] })
 
   const formSlot = (await screen.findByTestId('vk-provider-notice')).parentElement!
-  expect(form).toContainElement(formSlot)
-  expect(providerCss).toMatch(/\.vk-provider-alert-slot\s*\{[^}]*position:\s*absolute;/s)
-  expect(providerCss).not.toMatch(/\.vk-provider-alert-slot\s*\{[^}]*position:\s*fixed;/s)
+  const layer = screen.getByTestId('app-notification-layer')
+  expect(layer).toContainElement(formSlot)
+  expect(form).not.toContainElement(formSlot)
+  expect(dialog).not.toContainElement(screen.getByTestId('vk-provider-notice'))
+  expect(providerCss).toMatch(/\.vk-provider-alert-slot--modal\s*\{[^}]*position:\s*absolute;/s)
   expect(providerCss).toMatch(/\.vk-provider-alert-slot\s*\{[^}]*pointer-events:\s*none;/s)
   expect(providerCss).toMatch(/\.vk-provider-alert-slot \.app-alert\s*\{[^}]*pointer-events:\s*auto;/s)
   expect(section).toBe(screen.getByTestId('vk-provider-channels-section'))
   expect(section.compareDocumentPosition(screen.getByTestId('vk-provider-routing-section')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
-  await user.click(screen.getByTestId('vk-channel-edit-cheap'))
-  const dialog = await screen.findByRole('dialog')
   expect(dialog).toHaveClass('relative')
+})
+
+test('弹窗连接测试关闭后完成时不迁移到页面通知层', async () => {
+  const pending = deferred<unknown>()
+  const response = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') return Promise.resolve(response(settings()))
+    if (key === 'POST /vk/v1/providers/test') return pending.promise.then(response)
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: key }) })
+  }))
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const dialog = await openChannelEditor()
+  await user.click(within(dialog).getByRole('button', { name: '测试连接' }))
+  await user.click(screen.getByRole('button', { name: '关闭模型配置弹窗' }))
+  await act(async () => {
+    pending.resolve({ ok: true, reason_code: 'ok', message: 'ok', models: [], normalization_notes: [] })
+    await pending.promise
+  })
+
+  await waitFor(() => expect(screen.getByTestId('vk-channel-test-cheap')).toBeEnabled())
+  expect(screen.getByTestId('app-notification-layer')).not.toContainElement(
+    screen.queryByTestId('vk-provider-notice'),
+  )
+  expect(screen.queryByTestId('vk-provider-notice')).not.toBeInTheDocument()
 })
 
 test('旧后端无 generation probe 时使用前端实测耗时且不回显模型数', async () => {
@@ -1013,7 +1084,8 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
   expect(screen.getByTestId('vk-provider-notice')).toHaveClass('app-alert')
   expect(screen.getByTestId('vk-provider-notice')).toHaveAttribute('data-tone', 'success')
-  expect(screen.getByTestId('vk-provider-form')).toContainElement(screen.getByTestId('vk-provider-notice'))
+  expect(screen.getByTestId('app-notification-layer')).toContainElement(screen.getByTestId('vk-provider-notice'))
+  expect(screen.getByTestId('vk-provider-form')).not.toContainElement(screen.getByTestId('vk-provider-notice'))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(screen.queryByTestId('vk-channel-result-cheap')).not.toBeInTheDocument()
   await openChannelEditor()

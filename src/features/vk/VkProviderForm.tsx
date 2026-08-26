@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import './VkProviderForm.css'
 import { AppAlert } from '../../components/AppAlert'
+import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
 import {
   fetchVkProviderSettings,
@@ -26,11 +27,17 @@ const fieldStyle = {
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
 
+type AlertLocation = 'form' | 'modal'
+
 type Notice = {
   id: number
   message: string
   tone: 'success' | 'error'
+  location: AlertLocation
 }
+
+type ScopedError = { message: string; location: AlertLocation }
+type PersistResult = { ok: boolean; noticeMessage?: string }
 
 function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean, dismiss: () => void) {
   useEffect(() => {
@@ -494,7 +501,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [modalSession, setModalSession] = useState<{ id: string; original: Draft | null } | null>(null)
   const [saving, setSaving] = useState(false)
   const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ScopedError | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
@@ -504,9 +511,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const modalId = modalSession?.id ?? null
   useDismissOnOutside(ccSwitchPickerRef, ccSwitchPickerOpen, () => setCcSwitchPickerOpen(false))
 
-  const showNotice = useCallback((tone: Notice['tone'], message: string) => {
+  const showNotice = useCallback((tone: Notice['tone'], message: string, location: AlertLocation) => {
     noticeSeq.current += 1
-    setNotice({ id: noticeSeq.current, tone, message })
+    setNotice({ id: noticeSeq.current, tone, message, location })
   }, [])
 
   const load = useCallback(async () => {
@@ -519,7 +526,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         Object.entries(loaded.role_fallbacks ?? {}).map(([role, ids]) => [role, [...ids]]),
       ))
     } catch (err) {
-      setError(err instanceof Error ? err.message : '模型配置读取失败')
+      setError({ message: err instanceof Error ? err.message : '模型配置读取失败', location: 'form' })
     }
   }, [baseUrl])
   useEffect(() => { void load() }, [load])
@@ -550,8 +557,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const closeModal = (commit: boolean) => {
     if (!modalSession) return
+    setNotice((current) => current?.location === 'modal' ? null : current)
+    setError((current) => current?.location === 'modal' ? null : current)
     if (!commit) {
-      setNotice(null)
       setDrafts((list) => modalSession.original
         ? list.map((draft) => draft.id === modalSession.id ? cloneDraft(modalSession.original!) : draft)
         : list.filter((draft) => draft.id !== modalSession.id))
@@ -600,7 +608,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const importFromCcSwitch = async (candidate: VkProviderSettings['cc_switch']['candidates'][number]) => {
     setCcSwitchPickerOpen(false)
     setBusy(`ccswitch:${candidate.ref}`)
-    setError(null)
+    setError((current) => current?.location === 'form' ? null : current)
     try {
       const { channel, api_key } = await importVkCcSwitchChannel(
         candidate.ref, drafts.map((d) => d.id), baseUrl,
@@ -613,7 +621,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       }
       openNewDraft(imported)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '从 cc-switch 导入失败')
+      setError({ message: err instanceof Error ? err.message : '从 cc-switch 导入失败', location: 'form' })
     } finally {
       setBusy(null)
     }
@@ -634,43 +642,43 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     nextRoles: Record<string, string>,
     nextRoleFallbacks: Record<string, string[]>,
     withNotice = false,
-  ): Promise<boolean> => {
-    if (savingRef.current) return false
+    errorLocation: AlertLocation = 'form',
+  ): Promise<PersistResult> => {
+    if (savingRef.current) return { ok: false }
     savingRef.current = true
     setSaving(true)
-    setError(null)
-    setNotice(null)
+    setError((current) => current?.location === errorLocation ? null : current)
+    setNotice((current) => current?.location === errorLocation ? null : current)
     try {
       const result = await saveVkProviderSettings({
         channels: channelPayload(nextDrafts), roles: nextRoles, role_fallbacks: nextRoleFallbacks,
       }, baseUrl)
+      let noticeMessage: string | undefined
       if (withNotice) {
-        showNotice(
-          'success',
-          [
-            '已保存并立即生效',
-            ...result.normalization_notes,
-            result.keys_written.length ? `已安全保存 ${result.keys_written.length} 把 key` : '',
-          ].filter(Boolean).join('；'),
-        )
+        noticeMessage = [
+          '已保存并立即生效',
+          ...result.normalization_notes,
+          result.keys_written.length ? `已安全保存 ${result.keys_written.length} 把 key` : '',
+        ].filter(Boolean).join('；')
+        if (errorLocation === 'form') showNotice('success', noticeMessage, 'form')
       }
       // 角色选择、启停、删除和备用顺序采用乐观更新。服务端保存响应不含完整
       // settings，立即重新读取会把尚未刷新的旧快照覆盖回页面。弹窗保存仍回读，
       // 以接收服务端的规范化结果。
       if (withNotice) await load()
       onSaved?.()
-      return true
+      return { ok: true, noticeMessage }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '模型配置保存失败')
+      setError({ message: err instanceof Error ? err.message : '模型配置保存失败', location: errorLocation })
       void load()
-      return false
+      return { ok: false }
     } finally {
       savingRef.current = false
       setSaving(false)
     }
   }
 
-  const save = () => persist(drafts, roles, roleFallbacks, true)
+  const save = (errorLocation: AlertLocation) => persist(drafts, roles, roleFallbacks, true, errorLocation)
 
   const removeChannel = (id: string) => {
     const nextDrafts = drafts.filter((draft) => draft.id !== id)
@@ -748,8 +756,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }
 
   const reveal = async (draft: Draft) => {
+    const location: AlertLocation = modalId === draft.id ? 'modal' : 'form'
     setChannelBusy((current) => ({ ...current, [draft.id]: 'reveal' }))
-    setError(null)
+    setError((current) => current?.location === location ? null : current)
     try {
       const result = await revealVkProviderKey(draft.key_env, baseUrl)
       patch(draft.id, {
@@ -759,7 +768,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         key_touched: false,
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : '读取 key 失败')
+      setError({ message: err instanceof Error ? err.message : '读取 key 失败', location })
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
@@ -770,8 +779,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }
 
   const runTest = async (draft: Draft, probeGeneration = true) => {
+    const location: AlertLocation = modalId === draft.id ? 'modal' : 'form'
     setChannelBusy((current) => ({ ...current, [draft.id]: 'test' }))
-    setError(null)
+    setError((current) => current?.location === location ? null : current)
     try {
       const startedAt = performance.now()
       const result = await testVkProvider({
@@ -796,7 +806,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           : probe?.ok
             ? `连接成功 · 同步 · 总耗时 ${probe.total_ms} ms`
             : result.message
-      showNotice(result.ok ? 'success' : 'error', result.ok ? successNotice : formatTestNotice(result))
+      showNotice(result.ok ? 'success' : 'error', result.ok ? successNotice : formatTestNotice(result), location)
       // 后端规整过的地址直接回填 —— 看不见的自动修等于没修。
       if (result.base_url && result.base_url !== draft.base_url) patch(draft.id, { base_url: result.base_url })
       // Every click replaces the previous discovery result, including an empty
@@ -808,7 +818,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         [draft.id]: result.reasoning_efforts ?? {},
       }))
     } catch (err) {
-      showNotice('error', err instanceof Error ? err.message : '连接测试失败')
+      showNotice('error', err instanceof Error ? err.message : '连接测试失败', location)
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
@@ -842,46 +852,57 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       setValidationErrors((current) => ({ ...current, [draft.id]: errors }))
       return
     }
-    const ok = await save()
-    if (ok) closeModal(true)
+    const result = await save('modal')
+    if (result.ok) {
+      closeModal(true)
+      if (result.noticeMessage) showNotice('success', result.noticeMessage, 'form')
+    }
   }
 
   if (!settings) {
     return <div data-testid="vk-provider-form" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-      {error ?? '读取中…'}
+      {error?.message ?? '读取中…'}
     </div>
   }
 
   const roleKeys = Object.keys(settings.role_labels)
-  const alertSlot = (location: 'form' | 'modal') => (notice || error) ? (
-    <div className={`vk-provider-alert-slot vk-provider-alert-slot--${location}`}>
-      {notice && (
-        <AppAlert
-          key={notice.id}
-          testId="vk-provider-notice"
-          tone={notice.tone}
-          title={notice.message}
-          role="status"
-          className={`vk-provider-alert vk-provider-alert--${notice.tone}`}
-          durationMs={3000}
-          progressTestId="vk-provider-notice-progress"
-        />
-      )}
-      {error && (
-        <AppAlert
-          testId="vk-provider-error"
-          tone="error"
-          title={error}
-          className="vk-provider-alert vk-provider-alert--error"
-          onClose={() => setError(null)}
-        />
-      )}
-    </div>
-  ) : null
+  const alertSlot = (location: AlertLocation) => {
+    const scopedNotice = notice?.location === location ? notice : null
+    const scopedError = error?.location === location ? error : null
+    if (!scopedNotice && !scopedError) return null
+    const alerts = (
+      <div className={`vk-provider-alert-slot vk-provider-alert-slot--${location}`}>
+        {scopedNotice && (
+          <AppAlert
+            key={scopedNotice.id}
+            testId="vk-provider-notice"
+            tone={scopedNotice.tone}
+            title={scopedNotice.message}
+            role="status"
+            className={`vk-provider-alert vk-provider-alert--${scopedNotice.tone}`}
+            durationMs={3000}
+            progressTestId="vk-provider-notice-progress"
+          />
+        )}
+        {scopedError && (
+          <AppAlert
+            testId="vk-provider-error"
+            tone="error"
+            title={scopedError.message}
+            className="vk-provider-alert vk-provider-alert--error"
+            onClose={() => setError((current) => current?.location === location ? null : current)}
+          />
+        )}
+      </div>
+    )
+    return location === 'form'
+      ? <AppNotificationPortal>{alerts}</AppNotificationPortal>
+      : alerts
+  }
 
   return (
-    <div data-testid="vk-provider-form" className="relative space-y-4">
-      {!modalId && alertSlot('form')}
+    <div data-testid="vk-provider-form" className="space-y-4">
+      {alertSlot('form')}
       <section data-testid="vk-provider-channels-section" className="rounded-xl p-4"
         style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">

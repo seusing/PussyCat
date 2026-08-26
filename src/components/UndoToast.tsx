@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../store/appStore'
 import { AppAlert } from './AppAlert'
+import { AppNotificationPortal } from './AppNotificationPortal'
 
 const AUTO_DISMISS_MS = 3000
 
@@ -24,16 +25,18 @@ export function UndoToast() {
     : `command:${lastUndo.item.command}`
 
   return (
-    <AppAlert
-      key={toastKey}
-      testId="undo-toast"
-      tone="neutral"
-      title={label}
-      role="status"
-      ariaLive="polite"
-      durationMs={AUTO_DISMISS_MS}
-      className="undo-toast fixed bottom-4 left-1/2 -translate-x-1/2"
-      action={<button data-testid="undo-button" onClick={undo} style={{ color: 'var(--color-accent)' }}>撤销</button>}
-    />
+    <AppNotificationPortal>
+      <AppAlert
+        key={toastKey}
+        testId="undo-toast"
+        tone="neutral"
+        title={label}
+        role="status"
+        ariaLive="polite"
+        durationMs={AUTO_DISMISS_MS}
+        className="undo-toast"
+        action={<button data-testid="undo-button" onClick={undo} style={{ color: 'var(--color-accent)' }}>撤销</button>}
+      />
+    </AppNotificationPortal>
   )
 }

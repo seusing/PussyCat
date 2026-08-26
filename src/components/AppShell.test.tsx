@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import App from '../App'
 import AppShell from './AppShell'
@@ -12,6 +14,8 @@ import {
   MODULE_SIDEBAR_DEFAULT,
   DETAILS_DEFAULT,
 } from '../data/layout'
+
+const indexCss = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
 
 beforeEach(() => useAppStore.setState({ catalogStatus: 'ready' }))
 
@@ -65,6 +69,17 @@ function renderShell() {
 function gridTemplate(): string {
   return screen.getByTestId('app-grid').style.gridTemplateColumns
 }
+
+test('主页面提供唯一且脱离布局流的通知悬浮层', () => {
+  renderShell()
+  const layer = screen.getByTestId('app-notification-layer')
+  expect(screen.getAllByTestId('app-notification-layer')).toHaveLength(1)
+  expect(layer.parentElement).toHaveClass('app-main')
+  expect(indexCss).toMatch(/\.app-main\s*\{[^}]*position:\s*relative;/s)
+  expect(indexCss).toMatch(/\.app-notification-layer\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*40;[^}]*top:\s*74px;[^}]*right:\s*12px;[^}]*left:\s*12px;[^}]*pointer-events:\s*none;/s)
+  expect(indexCss).toMatch(/\.app-notification-layer \.app-alert\s*\{[^}]*pointer-events:\s*auto;/s)
+  expect(indexCss).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.app-notification-layer\s*\{\s*top:\s*70px;/)
+})
 
 test('默认两栏都显示:grid 列模板含五段,两条分隔条都在,两个开关 aria-pressed=true', () => {
   renderShell()
