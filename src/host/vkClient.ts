@@ -159,6 +159,12 @@ export interface VkModelAttempt {
   first_event_ms?: number | null
   first_text_ms?: number | null
   stream_event_count?: number
+  stream_event_types?: string
+  first_reasoning_ms?: number | null
+  last_event_type?: string | null
+  last_event_ms?: number | null
+  terminal_event_type?: string | null
+  stream_done_received?: boolean
   max_output_tokens?: number | null
   reasoning_effort?: string | null
   upstream_response_id?: string | null
@@ -183,7 +189,7 @@ export interface VkRunUsage {
   cached_tokens: number
   model_calls: number
   cost_cny: number | null
-  cost_status: 'estimated' | 'unknown' | string
+  cost_status: 'estimated' | 'pending' | 'unknown' | string
 }
 
 export interface VkQueryCitation {

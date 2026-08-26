@@ -364,9 +364,11 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 <div><dt>缓存 Token</dt><dd>{job.progress.usage.cached_tokens.toLocaleString('zh-CN')}</dd></div>
                 <div>
                   <dt>费用</dt>
-                  <dd>{job.progress.usage.cost_status === 'unknown' || job.progress.usage.cost_cny === null
-                    ? '未统计（通道未提供可信价格）'
-                    : `估算 ¥${job.progress.usage.cost_cny.toFixed(4)}`}</dd>
+                  <dd>{job.progress.usage.cost_status === 'pending'
+                    ? '待对账（上游可能仍在计费）'
+                    : job.progress.usage.cost_status === 'unknown' || job.progress.usage.cost_cny === null
+                      ? '未统计（通道未提供可信价格）'
+                      : `估算 ¥${job.progress.usage.cost_cny.toFixed(4)}`}</dd>
                 </div>
               </dl>
             </div>
@@ -402,6 +404,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                       {telemetryMs('首事件', attempt.first_event_ms)} · {telemetryMs('首字', attempt.first_text_ms)} · {' '}
                       总耗时 {Math.max(0, attempt.latency_ms)} ms
                     </p>
+                    <p>
+                      {telemetryMs('首推理事件', attempt.first_reasoning_ms)} · {' '}
+                      最后事件 {attempt.last_event_type || '未记录'}{attempt.last_event_ms == null ? '' : `（${attempt.last_event_ms} ms）`} · {' '}
+                      终止事件 {attempt.terminal_event_type || '未记录'} · {' '}
+                      [DONE] {attempt.stream_done_received ? '已收到' : '未收到'}
+                    </p>
+                    {attempt.stream_event_types && attempt.stream_event_types !== '{}' && (
+                      <p>事件类型 {attempt.stream_event_types}</p>
+                    )}
                     <p>
                       推理强度 {attempt.reasoning_effort || '未记录'} · {' '}
                       输出上限 {attempt.max_output_tokens == null ? '未记录' : attempt.max_output_tokens.toLocaleString('zh-CN')}
