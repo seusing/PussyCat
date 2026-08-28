@@ -178,6 +178,25 @@ describe('VkTaskTable', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
+  it('批量任务折成一行并标出视频数', () => {
+    const members: VkJobRow[] = [
+      { ...JOBS[0], job_id: 'b-1', batch_id: 'batch-x' },
+      { ...JOBS[1], job_id: 'b-2', batch_id: 'batch-x' },
+    ]
+    render(<VkTaskTable {...makeProps({
+      jobs: [{ ...members[0], batchMembers: members }],
+    })} />)
+
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(1)
+    expect(screen.getByText('2 个视频')).toBeInTheDocument()
+  })
+
+  it('单条任务不显示视频数徽章', () => {
+    render(<VkTaskTable {...makeProps({ jobs: [JOBS[0]] })} />)
+
+    expect(screen.queryByText(/个视频$/)).not.toBeInTheDocument()
+  })
+
   it('默认每页 10 条并能翻页', async () => {
     render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
 

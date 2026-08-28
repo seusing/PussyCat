@@ -63,6 +63,8 @@ export interface VkJobRow {
   submitted_at: string
   finished_at: string | null
   parent_job_id: string | null
+  /** 同一次提交拆出的多条任务共用它;界面据此归为一个任务编号。 */
+  batch_id?: string | null
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number
@@ -70,6 +72,10 @@ export interface VkJobRow {
   taskNumber?: number
   /** Root execution id used to fold retry attempts into one logical task row. */
   logicalTaskId?: string
+  /** 重试链的根;与 logicalTaskId 分开——批量折行和重试折行的含义不同。 */
+  retryRootId?: string
+  /** 同一次提交拆出的多个视频,折成一行时挂在这里。单条任务为 undefined。 */
+  batchMembers?: VkJobRow[]
   /** Fresh submission initiated from an existing task. */
   isRerun?: boolean
 }
@@ -125,6 +131,7 @@ export interface VkJobView {
   cancel_requested?: boolean
   error?: string | null
   parent_job_id: string | null
+  batch_id?: string | null
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number
@@ -212,6 +219,8 @@ export interface VkQueryAnswer {
 export type VkSubmitPayload = Record<string, unknown> & {
   idempotency_key: string
   client_job_id: string
+  /** 一次提交多个视频时由前端生成、同批共用。 */
+  batch_id?: string
 }
 
 // 历史任务 id 形如 `run:<run_id>`;冒号是 URL path 的合法字符(RFC 3986 pchar),

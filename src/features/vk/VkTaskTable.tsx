@@ -329,6 +329,12 @@ export function VkTaskTable({
                 <td>
                   <div className="vk-task-number-cell">
                     <span className="vk-task-number">{taskNumber}</span>
+                    {/* 一次提交多个视频折成一行,得让人看出这一行代表几个。 */}
+                    {(row.batchMembers?.length ?? 0) > 1 && (
+                      <span className="vk-task-batch-badge" title="本次提交包含多个视频">
+                        {row.batchMembers!.length} 个视频
+                      </span>
+                    )}
                     <button
                       type="button"
                       role="switch"

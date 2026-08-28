@@ -161,6 +161,15 @@
   font-weight: 600;
 }
 
+.vk-task-batch-badge {
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .vk-task-notification-toggle {
   display: grid;
   width: 30px;

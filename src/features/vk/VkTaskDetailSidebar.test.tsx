@@ -57,6 +57,58 @@ describe('VkTaskDetailSidebar', () => {
     localStorage.clear()
   })
 
+  it('批量提交的详情页列出全部视频与各自状态,并可点进任一条', async () => {
+    const user = userEvent.setup()
+    const members = [
+      { job_id: 'b-1', status: 'done', source: 'https://example.com/one' },
+      { job_id: 'b-2', status: 'failed', source: 'https://example.com/two' },
+      { job_id: 'b-3', status: 'running', source: 'https://example.com/three' },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+      if (hit) {
+        return new Response(JSON.stringify({
+          job_id: hit.job_id,
+          kind: 'run',
+          status: hit.status,
+          submitted_at: '2026-08-28T12:15:21+08:00',
+          finished_at: null,
+          parent_job_id: null,
+          batch_id: 'batch-x',
+          cache_bypass: false,
+          request: { source: hit.source, preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(members.map((member) => ({
+          job_id: member.job_id,
+          kind: 'run',
+          status: member.status,
+          submitted_at: '2026-08-28T12:15:21+08:00',
+          finished_at: null,
+          parent_job_id: null,
+          batch_id: 'batch-x',
+          cache_bypass: false,
+          request: { source: member.source },
+        }))), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+    const onJobChange = vi.fn()
+
+    render(
+      <VkTaskDetailSidebar jobId="b-1" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />,
+    )
+
+    const panel = await screen.findByTestId('vk-task-detail-sources')
+    // 3 个视频里 2 个已到终态(done/failed),第 3 个还在跑
+    expect(panel).toHaveTextContent('共 3 个视频 · 已完成 2/3')
+    expect(panel).toHaveTextContent('https://example.com/two')
+    await user.click(screen.getByText('https://example.com/three'))
+    expect(onJobChange).toHaveBeenCalledWith('b-3')
+  })
+
   it('renders real stage progress and the configured model name', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

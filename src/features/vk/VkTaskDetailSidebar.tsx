@@ -4,6 +4,7 @@ import { Check, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
   fetchVkJob,
+  fetchVkJobs,
   fetchVkProviderSettings,
   postVkJob,
   postVkJobAction,
@@ -34,6 +35,29 @@ function secondsLabel(value: number | null): string {
   if (value === null) return '进行中'
   if (value < 1) return `${Math.round(value * 1000)} ms`
   return `${value.toFixed(2)} 秒`
+}
+
+type BatchState = 'running' | 'done' | 'failed' | 'interrupted'
+
+const BATCH_STATE_LABELS: Record<BatchState, string> = {
+  running: '进行中',
+  done: '已完成',
+  failed: '失败',
+  interrupted: '已中断',
+}
+
+function batchState(status: string): BatchState {
+  const value = status.trim().toLowerCase()
+  if (SUCCESS_STATUSES.has(value)) return 'done'
+  if (INTERRUPTED_STATUSES.has(value)) return 'interrupted'
+  if (FAILED_STATUSES.has(value) || /fail|error|quarantin/.test(value)) return 'failed'
+  return 'running'
+}
+
+/** 批量成员的来源:公开请求里的 source(一条 job 一个视频),取不到就退回 job_id。 */
+function memberSource(row: { request?: { source?: string } }): string {
+  const source = row.request?.source
+  return typeof source === 'string' ? source.split(/\r?\n/)[0].trim() : ''
 }
 
 function sourceItems(job: VkJobView | null): string[] {
@@ -174,7 +198,11 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [error, setError] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
+  const [batchMembers, setBatchMembers] = useState<
+    { job_id: string; source: string; state: BatchState }[]
+  >([])
   const taskNumber = useMemo(() => vkTaskNumberFor(jobId), [jobId])
+  const batchDoneCount = batchMembers.filter((member) => member.state !== 'running').length
   const loadGeneration = useRef(0)
   const previousJobStatus = useRef<string | null>(null)
 
@@ -194,6 +222,24 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       setJob(nextJob)
       setProviders(nextProviders)
       setError(null)
+      // 同批的兄弟任务不在这条详情里,得从任务列表按 batch_id 捞。取不到就当单条处理——
+      // 批量视图是锦上添花,不该因为列表接口抖一下就把整个详情页拖垮。
+      if (nextJob.batch_id) {
+        const siblings = await fetchVkJobs(baseUrl).catch(() => [])
+        if (generation !== loadGeneration.current) return
+        setBatchMembers(
+          siblings
+            .filter((row) => row.batch_id === nextJob.batch_id)
+            .sort((left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at))
+            .map((row) => ({
+              job_id: row.job_id,
+              source: memberSource(row as { request?: { source?: string } }),
+              state: batchState(row.status),
+            })),
+        )
+      } else {
+        setBatchMembers([])
+      }
       const previous = previousJobStatus.current
       previousJobStatus.current = nextJob.status
       if (previous && ACTIVE_STATUSES.has(previous) && !ACTIVE_STATUSES.has(nextJob.status)) {
@@ -350,12 +396,39 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             <span style={{ width: `${progress.percent}%` }} />
           </div>
 
-          {/* 提交内容排在最前:打开详情第一个想确认的是"这条跑的是哪个视频"。 */}
-          <div className="vk-task-detail-section">
-            <h3>提交内容</h3>
-            {sources.length > 0
-              ? <ol>{sources.map((source) => <li key={source}>{source}</li>)}</ol>
-              : <p>未返回来源信息</p>}
+          {/* 提交内容排在最前:打开详情第一个想确认的是"这条跑的是哪个视频"。
+              一次提交多个视频时,这里要逐个列出各自的状态,而不是只显示被点开的那一条。 */}
+          <div className="vk-task-detail-section" data-testid="vk-task-detail-sources">
+            <h3>
+              提交内容
+              {batchMembers.length > 1 && (
+                <span className="vk-task-detail-batch-count">
+                  {' '}共 {batchMembers.length} 个视频 · 已完成 {batchDoneCount}/{batchMembers.length}
+                </span>
+              )}
+            </h3>
+            {batchMembers.length > 1
+              ? (
+                <ol className="vk-task-detail-batch-list">
+                  {batchMembers.map((member) => (
+                    <li key={member.job_id}>
+                      <button
+                        type="button"
+                        data-current={member.job_id === jobId || undefined}
+                        onClick={() => onJobChange?.(member.job_id)}
+                      >
+                        <span className="vk-task-detail-batch-source">{member.source || member.job_id}</span>
+                        <span className={`vk-task-detail-batch-status is-${member.state}`}>
+                          {BATCH_STATE_LABELS[member.state]}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )
+              : sources.length > 0
+                ? <ol>{sources.map((source) => <li key={source}>{source}</li>)}</ol>
+                : <p>未返回来源信息</p>}
           </div>
 
           <dl className="vk-task-detail-list">
