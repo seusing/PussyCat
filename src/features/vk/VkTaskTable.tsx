@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { InlineLoader } from 'generative-loaders'
@@ -47,6 +47,44 @@ const STATUS_LABELS: Record<NormalizedStatus, string> = {
   completed: '已完成',
 }
 
+// 分页与筛选都是纯展示状态,放在表格自己身上;VkPanel 仍然只管把全量任务递进来。
+const PAGE_SIZES = [10, 20, 50, 100] as const
+const ALL_PAGE_SIZE = 'all'
+type PageSize = (typeof PAGE_SIZES)[number] | typeof ALL_PAGE_SIZE
+
+const STATUS_FILTERS: readonly { value: string; label: string }[] = [
+  { value: 'all', label: '全部状态' },
+  { value: 'completed', label: '已完成' },
+  { value: 'failed', label: '失败' },
+  { value: 'running', label: '正在执行' },
+  { value: 'interrupted', label: '已中断' },
+]
+
+// 「重跑中」归到「正在执行」、「正在停止」也是,筛选器上再分这么细只会让人挑不中。
+const STATUS_FILTER_MATCH: Record<string, ReadonlySet<NormalizedStatus>> = {
+  completed: new Set<NormalizedStatus>(['completed']),
+  failed: new Set<NormalizedStatus>(['failed']),
+  running: new Set<NormalizedStatus>(['running', 'rerunning', 'stopping']),
+  interrupted: new Set<NormalizedStatus>(['interrupted']),
+}
+
+const TIME_FILTERS: readonly { value: string; label: string; days: number | null }[] = [
+  { value: 'all', label: '全部时间', days: null },
+  { value: 'today', label: '今天', days: 0 },
+  { value: '7d', label: '近 7 天', days: 7 },
+  { value: '30d', label: '近 30 天', days: 30 },
+]
+
+function withinDays(value: string, days: number | null): boolean {
+  if (days === null) return true
+  const started = new Date(value)
+  if (Number.isNaN(started.getTime())) return true    // 时间读不出来时不该把这条藏起来
+  const from = new Date()
+  from.setHours(0, 0, 0, 0)
+  if (days > 0) from.setDate(from.getDate() - days + 1)
+  return started.getTime() >= from.getTime()
+}
+
 function startedAtLabel(value: string): string {
   if (!value) return '—'
   const parsed = Date.parse(value)
@@ -89,6 +127,10 @@ export function VkTaskTable({
   onSave,
   onDelete,
 }: VkTaskTableProps) {
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [timeFilter, setTimeFilter] = useState('all')
+  const [pageSize, setPageSize] = useState<PageSize>(10)
+  const [page, setPage] = useState(1)
   const [menuJobId, setMenuJobId] = useState<string | null>(null)
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
   const [pendingDelete, setPendingDelete] = useState<VkJobRow | null>(null)
@@ -157,6 +199,25 @@ export function VkTaskTable({
     closeMenu(true)
   }
 
+  const filtered = useMemo(() => jobs.filter((row) => {
+    const matchStatus = statusFilter === 'all'
+      || (STATUS_FILTER_MATCH[statusFilter]?.has(normalizeStatus(row)) ?? true)
+    const days = TIME_FILTERS.find((item) => item.value === timeFilter)?.days ?? null
+    return matchStatus && withinDays(row.submitted_at, days)
+  }), [jobs, statusFilter, timeFilter])
+
+  const perPage = pageSize === ALL_PAGE_SIZE ? Math.max(1, filtered.length) : pageSize
+  const pageCount = Math.max(1, Math.ceil(filtered.length / perPage))
+  // 筛完之后当前页可能已经不存在(例如停在第 5 页却筛剩两页),夹回最后一页而不是显示空表。
+  const currentPage = Math.min(page, pageCount)
+  const visible = useMemo(
+    () => filtered.slice((currentPage - 1) * perPage, currentPage * perPage),
+    [filtered, currentPage, perPage],
+  )
+  useEffect(() => {
+    if (page !== currentPage) setPage(currentPage)
+  }, [page, currentPage])
+
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
     const current = items.indexOf(document.activeElement as HTMLButtonElement)
@@ -179,6 +240,52 @@ export function VkTaskTable({
 
   return (
     <div className="vk-task-table-shell" aria-busy={loading}>
+      <div className="vk-task-table-toolbar">
+        <label>
+          <span>任务状态</span>
+          <select
+            value={statusFilter}
+            onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }}
+            aria-label="按任务状态筛选"
+          >
+            {STATUS_FILTERS.map((item) => (
+              <option key={item.value} value={item.value}>{item.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>开始时间</span>
+          <select
+            value={timeFilter}
+            onChange={(event) => { setTimeFilter(event.target.value); setPage(1) }}
+            aria-label="按开始时间筛选"
+          >
+            {TIME_FILTERS.map((item) => (
+              <option key={item.value} value={item.value}>{item.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="vk-task-table-page-size">
+          <span>每页</span>
+          <select
+            value={String(pageSize)}
+            onChange={(event) => {
+              const value = event.target.value
+              setPageSize(value === ALL_PAGE_SIZE ? ALL_PAGE_SIZE : (Number(value) as PageSize))
+              setPage(1)
+            }}
+            aria-label="每页展示条数"
+          >
+            {PAGE_SIZES.map((size) => <option key={size} value={size}>{size} 条</option>)}
+            <option value={ALL_PAGE_SIZE}>全部</option>
+          </select>
+        </label>
+        <span className="vk-task-table-count" data-testid="vk-task-table-count">
+          {filtered.length === jobs.length
+            ? `共 ${jobs.length} 条`
+            : `筛出 ${filtered.length} 条 / 共 ${jobs.length} 条`}
+        </span>
+      </div>
       <div className="vk-task-table-viewport">
         <table className="vk-task-table">
         <thead>
@@ -191,12 +298,14 @@ export function VkTaskTable({
           </tr>
         </thead>
         <tbody>
-          {jobs.length === 0 && (
+          {visible.length === 0 && (
             <tr>
-              <td className="vk-task-empty" colSpan={5}>暂无任务</td>
+              <td className="vk-task-empty" colSpan={5}>
+                {jobs.length === 0 ? '暂无任务' : '没有符合筛选条件的任务'}
+              </td>
             </tr>
           )}
-          {jobs.map((row, index) => {
+          {visible.map((row, index) => {
             const taskNumber = row.taskNumber ?? index + 1
             const notificationEnabled = notifications[row.job_id] ?? false
             const status = normalizeStatus(row)
@@ -318,6 +427,25 @@ export function VkTaskTable({
         </tbody>
         </table>
       </div>
+      {pageCount > 1 && (
+        <nav className="vk-task-table-pager" aria-label="任务分页">
+          <button
+            type="button"
+            disabled={currentPage <= 1}
+            onClick={() => setPage(currentPage - 1)}
+          >
+            上一页
+          </button>
+          <span data-testid="vk-task-table-page">第 {currentPage} / {pageCount} 页</span>
+          <button
+            type="button"
+            disabled={currentPage >= pageCount}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            下一页
+          </button>
+        </nav>
+      )}
 
       {loading && (
         <div className="vk-task-table-loading" role="status" aria-live="polite">
