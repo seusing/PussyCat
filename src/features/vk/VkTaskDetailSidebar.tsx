@@ -196,13 +196,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [job, setJob] = useState<VkJobView | null>(null)
   const [providers, setProviders] = useState<VkProviderSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | null>(null)
+  const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | 'batch' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
   const [batchMembers, setBatchMembers] = useState<
     { job_id: string; source: string; state: BatchState }[]
   >([])
   const taskNumber = useMemo(() => vkTaskNumberFor(jobId), [jobId])
   const batchDoneCount = batchMembers.filter((member) => member.state !== 'running').length
+  const currentMemberIndex = batchMembers.findIndex((member) => member.job_id === jobId) + 1
+  const batchRerunnable = batchMembers.filter((member) => member.state !== 'running').length
   const loadGeneration = useRef(0)
   const previousJobStatus = useRef<string | null>(null)
 
@@ -312,6 +314,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
         request,
         idempotency_key: crypto.randomUUID(),
         client_job_id: crypto.randomUUID(),
+        ...(job.batch_id ? { batch_id: job.batch_id } : {}),
       }, baseUrl)
       markVkJobAsRerun(result.job_id)
       onJobChange?.(result.job_id)
@@ -320,6 +323,44 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     } finally {
       setActionPending(null)
     }
+  }
+
+  /** 整批重跑:失败的走 retry(沿用原请求),已完成的重新提交一次。
+   *
+   * 已完成的批量重跑会再花一次额度——这是明知的取舍:整批失败时也需要一键重来,
+   * 而"只重跑失败的那几条"覆盖不了那个场景。按钮上把条数写出来,别让人误点。 */
+  const rerunWholeBatch = async () => {
+    if (batchMembers.length < 2) return
+    setActionPending('batch')
+    setError(null)
+    const failures: string[] = []
+    let firstNewJobId: string | null = null
+    for (const member of batchMembers) {
+      if (member.state === 'running') continue    // 还在跑的没什么可重跑的
+      try {
+        const detail = await fetchVkJob(member.job_id, baseUrl)
+        const result = member.state === 'done'
+          ? await postVkJob({
+            request: detail.request as Record<string, unknown>,
+            idempotency_key: crypto.randomUUID(),
+            client_job_id: crypto.randomUUID(),
+            ...(detail.batch_id ? { batch_id: detail.batch_id } : {}),
+          }, baseUrl)
+          : await postVkJobAction(member.job_id, 'retry', baseUrl)
+        const newId = typeof result.job_id === 'string' ? result.job_id : null
+        if (newId) {
+          markVkJobAsRerun(newId)
+          firstNewJobId ??= newId
+        }
+      } catch (memberError) {
+        failures.push(`${member.source || member.job_id}：${detailError(memberError)}`)
+      }
+    }
+    setActionPending(null)
+    // 部分失败要说清是哪几条,否则用户只知道"没全跑起来"却不知道差在哪。
+    if (failures.length > 0) setError(`部分视频未能重跑\n${failures.join('\n')}`)
+    if (firstNewJobId) onJobChange?.(firstNewJobId)
+    else await load()
   }
 
   if (!jobId) {
@@ -404,6 +445,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               {batchMembers.length > 1 && (
                 <span className="vk-task-detail-batch-count">
                   {' '}共 {batchMembers.length} 个视频 · 已完成 {batchDoneCount}/{batchMembers.length}
+                  {/* 下面的动作按钮只作用于"当前这一条",而这一页是从一行批量任务点进来的
+                      ——不写明看哪一条,点「重试」的人会以为整批都重跑了。 */}
+                  {currentMemberIndex > 0 && ` · 当前查看第 ${currentMemberIndex} 个`}
                 </span>
               )}
             </h3>
@@ -523,6 +567,20 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
           {job.error && <div className="vk-task-detail-error">{job.error}</div>}
 
           <div className="vk-task-detail-actions">
+            {/* 整批重跑。放在最前:从批量行点进来的人,想要的多半是"这一批再来一次",
+                而不是只重跑落在眼前的这一条。条数写在按钮上,因为已完成的批量重跑会
+                再花一次额度——那是明知的取舍(整批失败时需要一键重来),但不能让人误点。 */}
+            {batchRerunnable > 1 && (
+              <button
+                type="button"
+                className="vk-task-batch-rerun-button"
+                disabled={actionPending !== null}
+                onClick={() => { void rerunWholeBatch() }}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                <span>{actionPending === 'batch' ? '正在重跑…' : `重跑全部 ${batchRerunnable} 个`}</span>
+              </button>
+            )}
             {active && (
               <button type="button" className="vk-task-stop-button" disabled={stopping || actionPending !== null} onClick={() => { void runAction('cancel') }}>
                 <Square size={13} fill="currentColor" aria-hidden="true" />

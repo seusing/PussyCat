@@ -246,6 +246,9 @@
 .vk-task-detail-actions button:disabled { opacity: .45; }
 .vk-task-output-list { margin-top: 0; }
 
+/* 整批重跑:范围比旁边几个按钮大,给个醒目边框,别跟"只作用于当前这一条"的混淆。 */
+.vk-task-batch-rerun-button { border-color: var(--color-accent, #4c8dff) !important; }
+
 /* 批量提交:一行任务下挂着多个视频,每个可点进去看自己的详情。 */
 .vk-task-detail-batch-count { color: var(--color-fg-dim); font-size: 11px; font-weight: 400; }
 

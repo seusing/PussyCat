@@ -109,6 +109,62 @@ describe('VkTaskDetailSidebar', () => {
     expect(onJobChange).toHaveBeenCalledWith('b-3')
   })
 
+  it('整批重跑:失败的走 retry,已完成的重新提交,进行中的跳过', async () => {
+    const user = userEvent.setup()
+    const members = [
+      { job_id: 'r-1', status: 'done', source: 'https://example.com/one' },
+      { job_id: 'r-2', status: 'failed', source: 'https://example.com/two' },
+      { job_id: 'r-3', status: 'running', source: 'https://example.com/three' },
+    ]
+    const retried: string[] = []
+    const resubmitted: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const retryHit = url.match(/\/vk\/v1\/jobs\/([^/]+)\/retry$/)
+      if (retryHit) {
+        retried.push(retryHit[1])
+        return new Response(JSON.stringify({ job_id: `${retryHit[1]}-retry` }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/vk/v1/jobs') && init?.method === 'POST') {
+        resubmitted.push(JSON.parse(String(init.body)))
+        return new Response(JSON.stringify({ job_id: 'fresh-1', kind: 'run' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+      if (hit) {
+        return new Response(JSON.stringify({
+          job_id: hit.job_id, kind: 'run', status: hit.status,
+          submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+          parent_job_id: null, batch_id: 'batch-r', cache_bypass: false,
+          request: { source: hit.source, preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(members.map((member) => ({
+          job_id: member.job_id, kind: 'run', status: member.status,
+          submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+          parent_job_id: null, batch_id: 'batch-r', cache_bypass: false,
+          request: { source: member.source },
+        }))), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="r-1" baseUrl={BASE} onClose={() => {}} />)
+
+    // 3 个里 2 个已到终态,按钮只承诺这 2 个
+    const button = await screen.findByRole('button', { name: /重跑全部 2 个/ })
+    await user.click(button)
+
+    // 逐个成员串行发请求，等循环跑完再断言
+    await waitFor(() => expect(retried).toEqual(['r-2']))   // 失败的走 retry
+    await waitFor(() => expect(resubmitted).toHaveLength(1)) // 已完成的重新提交
+    expect(resubmitted[0]).toMatchObject({ batch_id: 'batch-r' })   // 留在原批里
+  })
+
   it('renders real stage progress and the configured model name', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
