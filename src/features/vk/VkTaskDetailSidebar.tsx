@@ -10,7 +10,7 @@ import {
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
-import { isVkJobRerun, markVkJobAsRerun, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+import { isVkJobRerun, markVkJobAsRerun, vkTaskNumberFor, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import './VkTaskDetailSidebar.css'
 
 const ACTIVE_STATUSES = new Set([
@@ -174,6 +174,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [error, setError] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
+  const taskNumber = useMemo(() => vkTaskNumberFor(jobId), [jobId])
   const loadGeneration = useRef(0)
   const previousJobStatus = useRef<string | null>(null)
 
@@ -288,7 +289,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       <header>
         <div>
           <span>任务详情</span>
-          <strong>{job?.job_id ?? jobId}</strong>
+          {/* 列表上认的是编号，详情页原先只给 UUID，两边对不上号。编号在前，UUID 退成
+              次要信息——它仍要留着，排查问题时日志里只有 UUID。 */}
+          {taskNumber === null
+            ? <strong>{job?.job_id ?? jobId}</strong>
+            : (
+              <>
+                <strong data-testid="vk-task-detail-number">任务 {taskNumber}</strong>
+                <code className="vk-task-detail-job-id">{job?.job_id ?? jobId}</code>
+              </>
+            )}
         </div>
         <button type="button" onClick={onClose} aria-label="关闭任务详情" title="关闭">
           <X size={17} aria-hidden="true" />
@@ -340,6 +350,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             <span style={{ width: `${progress.percent}%` }} />
           </div>
 
+          {/* 提交内容排在最前:打开详情第一个想确认的是"这条跑的是哪个视频"。 */}
+          <div className="vk-task-detail-section">
+            <h3>提交内容</h3>
+            {sources.length > 0
+              ? <ol>{sources.map((source) => <li key={source}>{source}</li>)}</ol>
+              : <p>未返回来源信息</p>}
+          </div>
+
           <dl className="vk-task-detail-list">
             <div>
               <dt>模型配置</dt>
@@ -355,21 +373,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             </div>
           </dl>
 
+          {/* 缓存 Token 恒为 0（本产品不走 prompt 缓存），费用则因通道普遍不提供可信价格
+              而长期显示"未统计"——两个格子都只是占地方，去掉。 */}
           {job.progress?.usage && (
             <div className="vk-task-detail-section" data-testid="vk-run-metrics">
               <h3>本次解析用量</h3>
               <dl className="vk-run-metrics-grid">
                 <div><dt>输入 {job.progress.usage.input_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
                 <div><dt>输出 {job.progress.usage.output_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
-                <div><dt>缓存 Token</dt><dd>{job.progress.usage.cached_tokens.toLocaleString('zh-CN')}</dd></div>
-                <div>
-                  <dt>费用</dt>
-                  <dd>{job.progress.usage.cost_status === 'pending'
-                    ? '待对账（上游可能仍在计费）'
-                    : job.progress.usage.cost_status === 'unknown' || job.progress.usage.cost_cny === null
-                      ? '未统计（通道未提供可信价格）'
-                      : `估算 ¥${job.progress.usage.cost_cny.toFixed(4)}`}</dd>
-                </div>
               </dl>
             </div>
           )}
@@ -399,24 +410,29 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                       <span className={`is-${attempt.status}`}>{MODEL_ATTEMPT_STATUS[attempt.status] ?? attempt.status}</span>
                     </div>
                     <p>{stageLabel(attempt.stage)} · {attempt.model_reported || attempt.model_requested}</p>
-                    <p>
-                      {transportLabel(attempt.transport_mode)} · {telemetryMs('响应头', attempt.response_headers_ms)} · {' '}
-                      {telemetryMs('首事件', attempt.first_event_ms)} · {telemetryMs('首字', attempt.first_text_ms)} · {' '}
-                      总耗时 {Math.max(0, attempt.latency_ms)} ms
-                    </p>
-                    <p>
-                      {telemetryMs('首推理事件', attempt.first_reasoning_ms)} · {' '}
-                      最后事件 {attempt.last_event_type || '未记录'}{attempt.last_event_ms == null ? '' : `（${attempt.last_event_ms} ms）`} · {' '}
-                      终止事件 {attempt.terminal_event_type || '未记录'} · {' '}
-                      [DONE] {attempt.stream_done_received ? '已收到' : '未收到'}
-                    </p>
-                    {attempt.stream_event_types && attempt.stream_event_types !== '{}' && (
-                      <p>事件类型 {attempt.stream_event_types}</p>
-                    )}
-                    <p>
-                      推理强度 {attempt.reasoning_effort || '未记录'} · {' '}
-                      输出上限 {attempt.max_output_tokens == null ? '未记录' : attempt.max_output_tokens.toLocaleString('zh-CN')}
-                    </p>
+                    <p>总耗时 {Math.max(0, attempt.latency_ms)} ms · {telemetryMs('首字', attempt.first_text_ms)}</p>
+                    {/* 逐事件的流式明细只有排查卡顿时才用得上,平时是噪声。收进折叠区,
+                        需要时展开——不是删掉,那些字段正是上次定位超时的依据。 */}
+                    <details className="vk-model-attempt-trace">
+                      <summary>流式明细</summary>
+                      <p>
+                        {transportLabel(attempt.transport_mode)} · {telemetryMs('响应头', attempt.response_headers_ms)} · {' '}
+                        {telemetryMs('首事件', attempt.first_event_ms)}
+                      </p>
+                      <p>
+                        {telemetryMs('首推理事件', attempt.first_reasoning_ms)} · {' '}
+                        最后事件 {attempt.last_event_type || '未记录'}{attempt.last_event_ms == null ? '' : `（${attempt.last_event_ms} ms）`} · {' '}
+                        终止事件 {attempt.terminal_event_type || '未记录'} · {' '}
+                        [DONE] {attempt.stream_done_received ? '已收到' : '未收到'}
+                      </p>
+                      {attempt.stream_event_types && attempt.stream_event_types !== '{}' && (
+                        <p>事件类型 {attempt.stream_event_types}</p>
+                      )}
+                      <p>
+                        推理强度 {attempt.reasoning_effort || '未记录'} · {' '}
+                        输出上限 {attempt.max_output_tokens == null ? '未记录' : attempt.max_output_tokens.toLocaleString('zh-CN')}
+                      </p>
+                    </details>
                     {attempt.request_may_still_run && (
                       <p role="alert" style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
                         上游可能仍在运行和计费；系统没有自动重试
@@ -430,13 +446,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               </ol>
             </div>
           )}
-
-          <div className="vk-task-detail-section">
-            <h3>提交内容</h3>
-            {sources.length > 0
-              ? <ol>{sources.map((source) => <li key={source}>{source}</li>)}</ol>
-              : <p>未返回来源信息</p>}
-          </div>
 
           {job.error && <div className="vk-task-detail-error">{job.error}</div>}
 
@@ -487,24 +496,20 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 <span>{actionPending ? '正在提交…' : '再次提交任务'}</span>
               </motion.button>
             )}
+            {/* 看结果和再跑一次是同一时刻的两个选择,并排放;原先「查看解析结果」独占一个
+                区块吊在最底下,还得先滚过去。 */}
+            {completedSuccessfully && primaryOutput(job) && (
+              <button type="button" className="vk-task-open-output-button" onClick={() => {
+                const output = primaryOutput(job)
+                if (output) window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
+                  detail: { outputId: output.id, title: '解析结果' },
+                }))
+              }}>
+                <Eye size={14} aria-hidden="true" />
+                <span>{primaryOutput(job)?.label}</span>
+              </button>
+            )}
           </div>
-
-          {completedSuccessfully && primaryOutput(job) && (
-            <div className="vk-task-detail-section">
-              <h3>解析结果</h3>
-              <div className="vk-task-output-list">
-                <button type="button" onClick={() => {
-                  const output = primaryOutput(job)
-                  if (output) window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
-                    detail: { outputId: output.id, title: '解析结果' },
-                  }))
-                }}>
-                  <span>{primaryOutput(job)?.label}</span>
-                  <Eye size={14} aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </section>

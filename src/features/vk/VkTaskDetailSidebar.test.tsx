@@ -18,6 +18,45 @@ afterEach(() => {
 })
 
 describe('VkTaskDetailSidebar', () => {
+  it('列表上的任务编号要出现在详情页,提交内容排在模型配置之前', async () => {
+    // 详情页原先只给 UUID,而用户在列表上认的是编号,两边对不上号。编号由列表分配、
+    // 经 localStorage 索引传过来。
+    localStorage.setItem(
+      'opencli-app:vk-task-number-index:v1',
+      JSON.stringify({ 'job-num': 69 }),
+    )
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/job-num')) {
+        return new Response(JSON.stringify({
+          job_id: 'job-num',
+          kind: 'run',
+          status: 'done',
+          submitted_at: '2026-08-28T12:15:21+08:00',
+          finished_at: '2026-08-28T12:16:50+08:00',
+          parent_job_id: null,
+          cache_bypass: false,
+          request: { source: 'http://xhslink.com/o/52xnYPKG36K', preset: 'quick-summary' },
+          outputs: { note_path: 'note-1' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="job-num" baseUrl={BASE} onClose={() => {}} />)
+
+    expect(await screen.findByTestId('vk-task-detail-number')).toHaveTextContent('任务 69')
+    const panel = screen.getByTestId('vk-task-detail-sidebar')
+    const body = panel.textContent ?? ''
+    expect(body.indexOf('提交内容')).toBeGreaterThanOrEqual(0)
+    expect(body.indexOf('提交内容')).toBeLessThan(body.indexOf('模型配置'))
+    // 「查看解析结果」和「再次提交任务」是同一时刻的两个选择,并排放在操作区。
+    const actions = panel.querySelector('.vk-task-detail-actions')
+    expect(actions?.textContent).toContain('查看解析结果')
+    expect(actions?.textContent).toContain('再次提交任务')
+    localStorage.clear()
+  })
+
   it('renders real stage progress and the configured model name', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -86,7 +125,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByText('核对关键信息')).toBeInTheDocument()
   })
 
-  it('shows real stage timing and token usage while keeping unknown cost honest', async () => {
+  it('shows real stage timing and token usage without cost or cache clutter', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/vk/v1/jobs/job-metrics')) return new Response(JSON.stringify({
@@ -113,7 +152,10 @@ describe('VkTaskDetailSidebar', () => {
     const metrics = await screen.findByTestId('vk-run-metrics')
     expect(metrics).toHaveTextContent('输入 1,234')
     expect(metrics).toHaveTextContent('输出 321')
-    expect(metrics).toHaveTextContent('费用未统计')
+    // 费用与缓存 Token 已从详情页移除：缓存恒为 0，费用因通道普遍不提供可信价格
+    // 而长期是'未统计'，两个格子只占地方。
+    expect(metrics).not.toHaveTextContent('费用')
+    expect(metrics).not.toHaveTextContent('缓存')
     const stages = screen.getByTestId('vk-stage-metrics')
     expect(stages).toHaveTextContent('采集与转写')
     expect(stages).toHaveTextContent('2.50 秒')
@@ -211,9 +253,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       '上游可能仍在运行和计费；系统没有自动重试',
     )
-    expect(screen.getByTestId('vk-run-metrics')).toHaveTextContent(
-      '待对账（上游可能仍在计费）',
-    )
+    expect(screen.getByTestId('vk-run-metrics')).not.toHaveTextContent('待对账')
   })
 
   it('活跃任务在详情轮询返回终态后立即切换为失败界面', async () => {

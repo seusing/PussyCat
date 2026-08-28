@@ -44,7 +44,7 @@ import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
-import { isVkJobRerun, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+import { isVkJobRerun, rememberVkTaskNumbers, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import './VkPanel.css'
 
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
@@ -668,6 +668,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       setTaskNumbers(nextNumbers)
       saveNumberRecord(VK_TASK_NUMBERS_KEY, nextNumbers)
     }
+    // 编号是按「根任务 + 提交时间」算的，详情页只有一个 job_id，推不出来；这里落一份
+    // job_id → 编号的索引供它查。
+    rememberVkTaskNumbers(Object.fromEntries(numbered.map((row) => [row.job_id, row.taskNumber!])))
     return numbered
   }, [])
 

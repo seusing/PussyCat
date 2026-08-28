@@ -40,6 +40,15 @@
 .vk-task-detail-sidebar > header span { color: var(--color-fg-dim); font-size: 11px; }
 .vk-task-detail-sidebar > header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 编号是人认的东西,UUID 只在排查时用——同框但分主次。 */
+.vk-task-detail-job-id {
+  overflow: hidden;
+  color: var(--color-fg-dim);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vk-task-detail-sidebar > header button,
 .vk-task-detail-summary button {
   display: grid;
@@ -236,6 +245,15 @@
 .vk-task-output-list button:hover { background: #292d35; }
 .vk-task-detail-actions button:disabled { opacity: .45; }
 .vk-task-output-list { margin-top: 0; }
+
+/* 流式明细默认收起:平时是噪声,排查卡顿时才需要。 */
+.vk-model-attempt-trace > summary {
+  cursor: pointer;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  user-select: none;
+}
+.vk-model-attempt-trace[open] > summary { margin-bottom: 4px; }
 
 .vk-task-detail-actions button {
   transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease;
