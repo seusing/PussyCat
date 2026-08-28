@@ -11,8 +11,8 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
-  rmSync, statfsSync, writeFileSync,
+  copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync,
+  readdirSync, rmSync, statfsSync, writeFileSync,
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -27,6 +27,7 @@ import {
   RUNTIME_RECEIPT_SCHEMA,
   RUNTIME_TARGET,
   runtimeContractFingerprint,
+  runtimeEnvironmentFingerprint,
   runtimeModelPacksFor,
   runtimeRequirementsFor,
 } from './vk-runtime-contract.mjs'
@@ -48,6 +49,92 @@ function legacyModelCacheRoots(home, env = process.env) {
     }
   } catch { /* no previous app-owned model packs */ }
   return [...new Set(roots.map((root) => resolve(root)))]
+}
+
+// —— 依赖复用:硬链接克隆兄弟 runtime ——
+//
+// venv 有 2.3 GB / 41,558 个文件,其中应用 wheel 只占 493 KB。只改代码时把依赖重装
+// 一遍是纯浪费:实测复制要几分钟,而硬链接同样这 41,558 个文件只要 15.4 秒、磁盘增量
+// 为 0(两个目录各自看到完整一份,数据块共享)。
+//
+// **链的是兄弟 runtime 目录,不是 uv 缓存**——所以不能改用 `--link-mode hardlink`:
+// 那样 venv 会依赖 uv 缓存活着,`uv cache clean` 一执行就废。链到兄弟目录则两边都是
+// 本应用自己的目录,删掉任一个另一个照常(硬链接计数)。
+//
+// 原子性与回滚不受影响:仍然是"建新目录 → 全部门禁通过 → 末尾切 active.json"。
+const LONG_PATH_PREFIX = `${'\\'.repeat(2)}?${'\\'}`
+
+/** Windows 长路径前缀。本机 LongPathsEnabled=0,site-packages 深处会 WinError 3。 */
+function longPath(path) {
+  const absolute = resolve(path)
+  return absolute.startsWith(LONG_PATH_PREFIX) ? absolute : `${LONG_PATH_PREFIX}${absolute}`
+}
+
+/** 把 sourceDir 硬链接克隆到 targetDir。失败即抛,由调用方清理并回落全量安装。 */
+export function hardlinkCloneDir(sourceDir, targetDir, fsImpl = {
+  mkdirSync, readdirSync, linkSync, copyFileSync,
+}) {
+  let dirs = 0
+  let files = 0
+  const walk = (from, to) => {
+    // 逐层建目录,**不能用 recursive:true**:带长路径前缀时它会向上递归,
+    // 把前缀本身当目录去建,报"文件名、目录名或卷标语法不正确"。
+    try {
+      fsImpl.mkdirSync(longPath(to))
+      dirs += 1
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+    }
+    for (const entry of fsImpl.readdirSync(from, { withFileTypes: true })) {
+      const child = join(from, entry.name)
+      const mirror = join(to, entry.name)
+      if (entry.isDirectory()) {
+        walk(child, mirror)
+        continue
+      }
+      files += 1
+      try {
+        fsImpl.linkSync(longPath(child), longPath(mirror))
+      } catch {
+        // 跨卷、超出单文件链接数上限等:退回复制,别让整次克隆失败。
+        fsImpl.copyFileSync(longPath(child), longPath(mirror))
+      }
+    }
+  }
+  walk(sourceDir, targetDir)
+  return { dirs, files }
+}
+
+/** 找一个可以拿来克隆依赖的兄弟 runtime:环境指纹一致、且 python.exe 真在。
+ *
+ * 只认 receipt 里显式记着的环境指纹。老 receipt 没有这个字段,于是第一次装新版仍走
+ * 全量——这是对的:那些目录是用旧口径装的,没有依据断言它们的依赖与现在一致。
+ */
+export function reusableRuntimeDonor(
+  home, environmentFingerprint, excludeDir,
+  fsImpl = { readdirSync, readFileSync, existsSync },
+) {
+  if (!environmentFingerprint) return null
+  const versionsDir = join(resolve(home), 'runtime', 'versions')
+  let entries
+  try {
+    entries = fsImpl.readdirSync(versionsDir, { withFileTypes: true })
+  } catch {
+    return null           // 首次安装,还没有 versions 目录
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const dir = join(versionsDir, entry.name)
+    if (excludeDir && resolve(dir) === resolve(excludeDir)) continue
+    if (!fsImpl.existsSync(join(dir, 'Scripts', 'python.exe'))) continue
+    try {
+      const receipt = JSON.parse(fsImpl.readFileSync(join(dir, 'runtime-receipt.json'), 'utf8'))
+      if (receipt?.environmentFingerprint === environmentFingerprint) {
+        return { dir, label: entry.name }
+      }
+    } catch { /* 没有 receipt 或读不动:当它不可复用 */ }
+  }
+  return null
 }
 
 export class VkRuntimeInstallError extends Error {
@@ -123,6 +210,8 @@ export async function installVkRuntime({
   }
   const requirements = runtimeRequirementsFor(manifest, normalizedExtras)
   const runtimeFingerprint = runtimeContractFingerprint(manifest, normalizedExtras)
+  // 环境指纹 = 契约指纹去掉 wheel。相同即"那 2.3 GB 依赖没变",可以直接克隆兄弟。
+  const environmentFingerprint = runtimeEnvironmentFingerprint(manifest, normalizedExtras)
   if (!requirements || !runtimeFingerprint) {
     throw new VkRuntimeInstallError(
       'bundle-contract-missing',
@@ -282,13 +371,36 @@ export async function installVkRuntime({
   })
 
   // —— venv + 安装(显式 uv;uv 输出=真实下载/初始化阶段,逐行透传 log)——
-  await runStep('venv', uv, ['venv', '--python', python, versionDir])
+  //
+  // 先找环境指纹相同的兄弟 runtime:相同就说明那 2.3 GB 依赖一个字节没变,克隆过来
+  // 即可,不必重装。找不到或克隆失败就照旧全量装——这条快路只做减法,不改变任何
+  // 既有保证(仍是新目录、仍跑全套门禁、仍在末尾才切 active.json)。
+  const donor = reusableRuntimeDonor(resolvedHome, environmentFingerprint, versionDir)
+  let clonedFromDonor = false
+  if (donor) {
+    const startedAt = Date.now()
+    log(`reuse-env: 复用 ${donor.label} 的依赖(环境指纹一致,跳过重装)`)
+    try {
+      const { dirs, files } = hardlinkCloneDir(donor.dir, versionDir)
+      clonedFromDonor = true
+      log(`reuse-env: 硬链接 ${files} 个文件 / ${dirs} 个目录,用时 ${((Date.now() - startedAt) / 1000).toFixed(1)}s`)
+    } catch (error) {
+      // 克隆到一半失败会留下半个目录,必须清掉再走全量——否则 uv 会往残骸上装。
+      log(`reuse-env: 克隆失败,回落全量安装(${String(error?.message ?? error).slice(0, 160)})`)
+      rmSync(versionDir, { recursive: true, force: true })
+    }
+  }
+  if (!clonedFromDonor) {
+    await runStep('venv', uv, ['venv', '--python', python, versionDir])
+  }
   mkdirSync(versionDir, { recursive: true })
   const pythonExe = join(versionDir, 'Scripts', 'python.exe')
-  await runStep('install-locked', uv, [
-    'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
-    '--no-deps', '--require-hashes', '-r', requirementsPath,
-  ])
+  if (!clonedFromDonor) {
+    await runStep('install-locked', uv, [
+      'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
+      '--no-deps', '--require-hashes', '-r', requirementsPath,
+    ])
+  }
   await runStep('install-wheel', uv, [
     'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
     '--no-deps', wheel,
@@ -459,6 +571,8 @@ export async function installVkRuntime({
     requirements: requirements.name,
     requirementsSha256: requirements.sha256,
     runtimeFingerprint,
+    // 记下环境指纹,下次装新 wheel 时才找得到可复用的兄弟。
+    environmentFingerprint,
     runtimeTarget: {
       pythonImplementation: manifest.runtime.pythonImplementation,
       pythonVersion: manifest.runtime.pythonVersion,

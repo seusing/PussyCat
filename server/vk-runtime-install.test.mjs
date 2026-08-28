@@ -1,11 +1,15 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { VkRuntimeInstallError, installVkRuntime, sha256File } from './vk-runtime-install.mjs'
+import {
+  VkRuntimeInstallError, hardlinkCloneDir, installVkRuntime, reusableRuntimeDonor, sha256File,
+} from './vk-runtime-install.mjs'
 
 const dirs = []
 function tempDir(prefix) {
@@ -269,5 +273,53 @@ describe('installVkRuntime', () => {
     expect(guiCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
     expect(modelCall[2].env).toMatchObject({ PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' })
     expect(smokeCall[2].env).toMatchObject({ PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' })
+  })
+})
+
+describe('依赖复用', () => {
+  it('硬链接克隆:两边看到同一份数据,不是复制', () => {
+    const src = tempDir('vk-clone-src-')
+    const dst = join(tempDir('vk-clone-dst-'), 'target')
+    mkdirSync(join(src, 'Lib', 'site-packages', 'deep'), { recursive: true })
+    writeFileSync(join(src, 'Lib', 'site-packages', 'deep', 'mod.py'), 'x = 1\n', 'utf8')
+    writeFileSync(join(src, 'top.txt'), 'hello', 'utf8')
+
+    const { files } = hardlinkCloneDir(src, dst)
+
+    expect(files).toBe(2)
+    const cloned = join(dst, 'Lib', 'site-packages', 'deep', 'mod.py')
+    expect(readFileSync(cloned, 'utf8')).toBe('x = 1\n')
+    // 硬链接的证据:同一个 inode。若退化成复制,ino 会不同——那就白改了。
+    expect(statSync(cloned).ino).toBe(statSync(join(src, 'Lib', 'site-packages', 'deep', 'mod.py')).ino)
+    expect(statSync(cloned).nlink).toBeGreaterThanOrEqual(2)
+  })
+
+  it('只认 receipt 里显式记着的环境指纹', () => {
+    const home = tempDir('vk-donor-')
+    const versions = join(home, 'runtime', 'versions')
+    const make = (label, receipt) => {
+      const dir = join(versions, label)
+      mkdirSync(join(dir, 'Scripts'), { recursive: true })
+      writeFileSync(join(dir, 'Scripts', 'python.exe'), '', 'utf8')
+      if (receipt) writeFileSync(join(dir, 'runtime-receipt.json'), JSON.stringify(receipt), 'utf8')
+      return dir
+    }
+    make('legacy', { schema: 'vk-runtime-receipt@2' })          // 旧 receipt:没有这个字段
+    make('other', { environmentFingerprint: 'bbb' })
+    const match = make('match', { environmentFingerprint: 'aaa' })
+    // 没装完的目录(缺 python.exe)不能拿来当供体
+    mkdirSync(join(versions, 'partial'), { recursive: true })
+    writeFileSync(join(versions, 'partial', 'runtime-receipt.json'),
+      JSON.stringify({ environmentFingerprint: 'aaa' }), 'utf8')
+
+    expect(reusableRuntimeDonor(home, 'aaa')?.dir).toBe(match)
+    expect(reusableRuntimeDonor(home, 'ccc')).toBeNull()
+    // 正在装的那个自己不能当自己的供体
+    expect(reusableRuntimeDonor(home, 'aaa', match)).toBeNull()
+    expect(reusableRuntimeDonor(home, null)).toBeNull()
+  })
+
+  it('还没有 versions 目录时不报错,只是没得复用', () => {
+    expect(reusableRuntimeDonor(tempDir('vk-empty-'), 'aaa')).toBeNull()
   })
 })
