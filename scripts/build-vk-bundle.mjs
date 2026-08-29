@@ -17,6 +17,15 @@ const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const DEFAULT_PYTHON_SOURCE_DIR = 'C:\\Users\\Lauseusing\\Developer\\video-knowledge-m1-productization'
 const DEFAULT_WHEEL_NAME = 'video_knowledge-0.1.0-py3-none-any.whl'
 
+/**
+ * Single source of truth for where the Python engine lives. package-app.mjs resolves the
+ * same directory to compare the bundled manifest against the live Python checkout — the two
+ * must never disagree about which repository is being packaged.
+ */
+export function resolvePythonSourceDir(explicit) {
+  return explicit ?? process.env.VK_PYTHON_SOURCE_DIR ?? DEFAULT_PYTHON_SOURCE_DIR
+}
+
 export function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
@@ -119,9 +128,7 @@ export function buildVkBundle(options = {}) {
   const uvPath = options.uvPath
     ?? process.env.VK_UV_PATH
     ?? 'C:\\Users\\Lauseusing\\.local\\bin\\uv.exe'
-  const pythonSourceDir = options.pythonSourceDir
-    ?? process.env.VK_PYTHON_SOURCE_DIR
-    ?? DEFAULT_PYTHON_SOURCE_DIR
+  const pythonSourceDir = resolvePythonSourceDir(options.pythonSourceDir)
   const environmentWheelPath = process.env.VK_WHEEL_PATH?.trim() || undefined
   const explicitWheelPath = options.wheelPath !== undefined
     || Boolean(environmentWheelPath)
