@@ -11,11 +11,12 @@
 // 照旧中止。这三条就是那道边界。
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installVkRuntime, sha256File } from './vk-runtime-install.mjs'
+import { resolveActiveRuntime } from './vk-runtime-resolver.mjs'
 
 const dirs = []
 function tempDir(prefix) {
@@ -73,6 +74,15 @@ function runInstall({ pipCheckStderr, importOnnxruntimeOk = true, calls = [] }) 
     const child = new FakeChild()
     queueMicrotask(() => {
       const joined = argv.join(' ')
+      if (argv[0] === 'venv') {
+        // 校验器会检查 python.exe 真的在盘上,假装置也得把它造出来,
+        // 否则 receipt 会因为一个跟本用例无关的原因被判无效。
+        const versionDir = argv[argv.length - 1]
+        mkdirSync(join(versionDir, 'Scripts'), { recursive: true })
+        writeFileSync(join(versionDir, 'Scripts', 'python.exe'), 'py')
+        child.emit('close', 0)
+        return
+      }
       if (argv.includes('gui')) {
         child.stdout.write('gui=http://127.0.0.1:45678\n')
         return
@@ -130,6 +140,22 @@ describe('pip-check 对 onnxruntime-directml 的放行', () => {
     expect(existsSync(join(home, 'runtime', 'active.json'))).toBe(true)
     // 放行的依据必须是真的 import 过一次,不是看名字放过去
     expect(calls.some((argv) => argv.join(' ').includes('import onnxruntime'))).toBe(true)
+  })
+
+  it('放行后写出的 receipt 必须仍能通过校验器', async () => {
+    // 这次翻车就在这:为了「如实记录」把 receipt 的 pipCheck 改成
+    // 'passed-with-onnxruntime-directml',而 validateReceipt 是按 === 'passed' 判有效的。
+    // 于是刚装好的 receipt 被判无效,resolveActiveRuntime 走修复分支挑了个旧 runtime
+    // 盖回 active.json —— 装成功了,横幅还在。
+    //
+    // 写入端和校验端此前没有测试连起来,所以这个断裂没人挡。豁免是注解,不是结论。
+    const calls = []
+    const { home, promise } = runInstall({ pipCheckStderr: ONNXRUNTIME_ONLY, calls })
+    const installed = await promise
+
+    const active = resolveActiveRuntime({ home })
+    expect(active).not.toBeNull()
+    expect(String(active.version)).toBe(installed.version)
   })
 
   it('import 也失败时不放行 —— 那是真坏了', async () => {

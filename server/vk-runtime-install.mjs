@@ -421,7 +421,12 @@ export async function installVkRuntime({
   // 只放行这一种替换,且不靠名字放行:必须**真的 import 得到** onnxruntime 才算数。
   // 「导入得到」比「名字对得上」是更强的证据,其余任何不兼容照旧中止。
   let pipCheckOutput = ''
-  let pipCheckNote = 'passed'
+  // 豁免另立字段,**不改 pipCheck 的取值**。pipCheck 是结论(环境合不合格),校验器
+  // (vk-runtime-resolver 的 validateReceipt)按 === 'passed' 判 receipt 有效;把结论
+  // 改成 'passed-with-onnxruntime-directml' 会让刚装好的 receipt 被判无效,
+  // resolveActiveRuntime 随即走修复分支、挑一个旧 runtime 盖回 active.json ——
+  // 真机上就这么表现为「装成功了但横幅还在」。豁免是**注解**,不是结论。
+  let pipCheckExemption = null
   try {
     pipCheckOutput = await runStep('pip-check', uv, ['pip', 'check', '--python', pythonExe])
   } catch (error) {
@@ -434,7 +439,7 @@ export async function installVkRuntime({
     await runStep('pip-check-onnxruntime', pythonExe, [
       '-c', 'import onnxruntime; print(onnxruntime.__version__)',
     ])
-    pipCheckNote = 'passed-with-onnxruntime-directml'
+    pipCheckExemption = 'onnxruntime-directml'
     log('pip-check: faster-whisper 声明的 onnxruntime 由 onnxruntime-directml 提供，'
       + '已实测 import 通过，按兼容处理')
   }
@@ -604,7 +609,8 @@ export async function installVkRuntime({
     packages,
     packageInventorySha256,
     pipCheck: {
-      status: pipCheckNote,
+      status: 'passed',
+      exemption: pipCheckExemption,
       output: scrubSidecarText(pipCheckOutput.trim()).slice(-1_000),
     },
     modelPacks: installedModelPacks,
@@ -639,7 +645,8 @@ export async function installVkRuntime({
     packageInventory: 'runtime-inventory.json',
     packageInventorySha256,
     runtimeSizeBytes,
-    pipCheck: pipCheckNote,
+    pipCheck: 'passed',
+    pipCheckExemption,
     modelPacks: installedModelPacks,
     asrSmoke,
     ffmpegVersion: asrSmoke?.ffmpeg ?? null,
