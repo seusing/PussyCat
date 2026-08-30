@@ -83,7 +83,8 @@ describe('VkSidecarManager', () => {
       '--config-dir', 'C:\\fixture\\vk-config',
       '--port', '0',
       '--no-browser',
-      '--max-workers', '1',
+      // 上限不是目标值:Python 侧按当时的可用内存动态放行,装不下就排队。
+      '--max-workers', '5',
     ])
     expect(options.shell).toBe(false)
     expect(options.windowsHide).toBe(true)

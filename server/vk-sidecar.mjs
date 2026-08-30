@@ -89,7 +89,9 @@ export class VkSidecarManager {
     requiredApiMinor = 1,
     requiredSchemaMajor = 1,
     requiredSchemaMinor = 1,
-    maxWorkers = 1,
+    // 上限,不是目标值。Python 侧按当时的可用内存动态放行(单任务峰值约 5 GB),
+    // 装不下就排队,所以这里给天花板即可,不必也不该在宿主端猜机器配置。
+    maxWorkers = 5,
     stderrTailLines = 40,
     baseEnv = process.env,
   } = {}) {
