@@ -132,6 +132,9 @@ describe('installVkRuntime', () => {
         if (argv.includes('gui')) {
           child.stdout.write('gui=http://127.0.0.1:45678\n')
         } else {
+          if (argv.includes('video_knowledge.runtime_ocr_models')) {
+            child.stdout.write(`VK_OCR_MODEL_RESULT=${JSON.stringify({ ready: true, reused: true, files: [] })}\n`)
+          }
           if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
           if (argv.some((arg) => String(arg).includes('importlib.metadata'))) child.stdout.write('[]\n')
           child.emit('close', 0)
@@ -173,6 +176,9 @@ describe('installVkRuntime', () => {
       queueMicrotask(() => {
         if (argv.includes('gui')) child.stdout.write('gui=http://127.0.0.1:45678\n')
         else {
+          if (argv.includes('video_knowledge.runtime_ocr_models')) {
+            child.stdout.write(`VK_OCR_MODEL_RESULT=${JSON.stringify({ ready: true, reused: true, files: [] })}\n`)
+          }
           if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
           if (argv.some((arg) => String(arg).includes('importlib.metadata'))) child.stdout.write('[]\n')
           child.emit('close', 0)
@@ -231,6 +237,12 @@ describe('installVkRuntime', () => {
               ready: true, transcript: '本地语音识别正常', ffmpeg: 'ffmpeg fixture',
             })}\n`)
           }
+          if (argv.includes('video_knowledge.runtime_ocr_models')) {
+            child.stdout.write(`VK_OCR_MODEL_RESULT=${JSON.stringify({
+              ready: true, model_dir: join(home, 'ocr-models'), reused: false,
+              files: [{ name: 'ch_PP-OCRv4_det_mobile.onnx', bytes: 4745517, sha256: 'd'.repeat(64) }],
+            })}\n`)
+          }
           if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
           if (argv.some((arg) => String(arg).includes('importlib.metadata'))) child.stdout.write('[]\n')
           child.emit('close', 0)
@@ -273,6 +285,38 @@ describe('installVkRuntime', () => {
     expect(guiCall[2].env.MODELSCOPE_CACHE).toBe(modelCache)
     expect(modelCall[2].env).toMatchObject({ PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' })
     expect(smokeCall[2].env).toMatchObject({ PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' })
+  })
+
+  it('OCR 模型字节对不上时中止安装,不激活', async () => {
+    // 这一步存在的理由就是它:模型不对却照样激活,落库的 sha256 就是假的。
+    const bundle = makeBundle()
+    const home = tempDir('vk-home-')
+    const spawnImpl = (program, argv) => {
+      const child = new FakeChild()
+      queueMicrotask(() => {
+        if (argv.includes('gui')) child.stdout.write('gui=http://127.0.0.1:45678\n')
+        else {
+          if (argv.includes('video_knowledge.runtime_ocr_models')) {
+            child.stdout.write(`VK_OCR_MODEL_RESULT=${JSON.stringify({
+              ready: false, reason: 'ocr-model-install-failed', detail: 'sha256 对不上',
+            })}\n`)
+            child.emit('close', 2)
+            return
+          }
+          if (argv.some((arg) => String(arg).includes('migrate'))) child.stdout.write('["008"]\n')
+          if (argv.some((arg) => String(arg).includes('importlib.metadata'))) child.stdout.write('[]\n')
+          child.emit('close', 0)
+        }
+      })
+      return child
+    }
+
+    await expect(installVkRuntime({
+      home, bundleDir: bundle, uvPath: join(bundle, 'uv.exe'), spawnImpl,
+      fetchImpl: async () => new Response('{}'),
+    })).rejects.toMatchObject({ reasonCode: 'ocr-model-install-failed' })
+
+    expect(existsSync(join(home, 'runtime', 'active.json'))).toBe(false)
   })
 })
 

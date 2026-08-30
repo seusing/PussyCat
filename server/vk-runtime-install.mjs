@@ -351,7 +351,15 @@ export async function installVkRuntime({
         let reasonCode = step.startsWith('smoke')
           ? `smoke-${step.slice(6)}`
           : classifyUvFailure(output)
-        if (step.startsWith('models-')) {
+        if (step === 'models-ocr') {
+          // OCR 模型走自己的结果前缀,别拿 ASR 的去解析——解析不到会把具体原因吞成通用码。
+          try {
+            reasonCode = prefixedJson(output, 'VK_OCR_MODEL_RESULT=', 'ocr-model-install-failed')?.reason
+              ?? 'ocr-model-install-failed'
+          } catch {
+            reasonCode = 'ocr-model-install-failed'
+          }
+        } else if (step.startsWith('models-')) {
           try {
             reasonCode = prefixedJson(output, 'VK_MODEL_PACK_RESULT=', 'model-install-failed')?.reason
               ?? 'model-install-failed'
@@ -456,6 +464,19 @@ export async function installVkRuntime({
   }
 
   // —— 四门 smoke ——
+  // —— OCR 模型:安装期取齐并校验字节 ——
+  // rapidocr 3.x 不把模型打进 wheel,首次用到时才去 ModelScope 下。留到用户第一次解析
+  // 视频时下载,要么让他干等、要么离线直接失败;而且这三个文件的 sha256 要随视觉证据
+  // 落库,必须是校验过的那一份。这一步本来就在联网装依赖,不新增网络依赖点。
+  //
+  // 放在硬链接克隆之后:克隆来的兄弟 runtime 已经带着模型,那时这步会报 reused。
+  const ocrOutput = await runStep('models-ocr', pythonExe, ['-m', 'video_knowledge.runtime_ocr_models'])
+  const ocrResult = prefixedJson(ocrOutput, 'VK_OCR_MODEL_RESULT=', 'ocr-model-install-failed')
+  if (ocrResult?.ready !== true) {
+    throw new VkRuntimeInstallError('ocr-model-install-failed', 'OCR 模型未通过字节校验')
+  }
+  log(`models-ocr: ${ocrResult.reused ? '复用已有' : '已下载'} ${(ocrResult.files ?? []).length} 个模型`)
+
   await runStep('smoke-import', pythonExe, ['-c', 'import video_knowledge, importlib.metadata as m; print("import ok", m.version("video-knowledge"))'])
   await runStep('smoke-console', pythonExe, ['-m', 'video_knowledge', '-h'])
 
