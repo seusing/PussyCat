@@ -1,8 +1,8 @@
 // runtime 安装编排(v2 阶段3):首启检测 active.json,缺失时经 /vk/v1/runtime/*
 // 提供 not-installed/installing/installed/failed 类型化状态与单飞安装。
 // 进度=安装核心逐行透传的真实输出(已脱敏),不造百分比。
-import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { installVkRuntime } from './vk-runtime-install.mjs'
 import {
   listOwnedRuntimeReceipts,
@@ -63,6 +63,47 @@ export class VkRuntimeManager {
     this.detected = new Map()
   }
 
+  #failurePath() {
+    return this.home ? join(resolve(this.home), 'runtime', 'last-install-failure.json') : null
+  }
+
+  #persistFailure() {
+    const path = this.#failurePath()
+    if (!path) return
+    try {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, JSON.stringify({
+        reasonCode: this.#reasonCode,
+        summary: this.#summary,
+        at: this.now(),
+        log: this.#log.slice(-LOG_TAIL_LINES),
+      }, null, 2))
+    } catch { /* 记不下来也不该让安装流程更糟 */ }
+  }
+
+  #clearFailure() {
+    const path = this.#failurePath()
+    if (!path) return
+    try {
+      rmSync(path, { force: true })
+    } catch { /* 清不掉只是多留一条陈旧记录,不影响可用性 */ }
+  }
+
+  /** 上一次安装失败的原因;进程重启后仍读得到。 */
+  lastInstallFailure() {
+    if (this.#state === 'failed') {
+      return { reasonCode: this.#reasonCode, summary: this.#summary ?? '安装失败' }
+    }
+    const path = this.#failurePath()
+    if (!path || !existsSync(path)) return null
+    try {
+      const saved = JSON.parse(readFileSync(path, 'utf8'))
+      return { reasonCode: saved.reasonCode ?? 'install-failed', summary: String(saved.summary ?? '安装失败'), at: saved.at }
+    } catch {
+      return null
+    }
+  }
+
   activeRuntime() {
     const runtime = resolveActiveRuntime({ home: this.home, bundleDir: this.bundleDir })
     if (runtime?.source === 'external' && !this.allowExternalRuntime) return null
@@ -111,6 +152,9 @@ export class VkRuntimeManager {
       }
     }
     if (active) {
+      // 上次装失败、之后进程重启过:此时 #state 已经是初始值,但横幅仍会因为 current=false
+      // 而继续显示。把落盘的原因带出来,免得用户面对一个不解释自己的「有更新」。
+      const persisted = active.current === true ? null : this.lastInstallFailure()
       return {
         state: 'installed',
         version: String(active.version ?? 'unknown'),
@@ -120,6 +164,7 @@ export class VkRuntimeManager {
         extras: Array.isArray(active.extras) ? active.extras : [],
         current: active.current === true,
         legacyUnreproducible: active.legacyUnreproducible === true,
+        ...(persisted ? { lastInstallFailure: persisted } : {}),
         reasonCode: null,
         summary: active.current
           ? `解析引擎已就绪(${active.version ?? 'unknown'})`
@@ -251,6 +296,7 @@ export class VkRuntimeManager {
     const selected = matches[0]
     if (pathKey(selected.receiptPath) === snapshot.activePath) return this.status()
     writeActiveRuntime(this.home, selected)
+    this.#clearFailure()
     this.#state = 'installed'
     this.#reasonCode = null
     this.#summary = null
@@ -436,6 +482,10 @@ export class VkRuntimeManager {
       this.#reasonCode = error?.reasonCode ?? 'install-failed'
       this.#summary = String(error?.message ?? '安装失败')
       if (error?.detail) this.#log.push(String(error.detail))
+      // 失败原因原先只活在内存里,应用一重启就没了:用户看到的是一个「有更新」的横幅,
+      // 点了、等了几分钟、横幅还在,而且没有任何说明——真机上连点两次都这样。
+      // 落盘之后重启也能把上次为什么没装上讲清楚。
+      this.#persistFailure()
       throw error
     }).finally(() => {
       this.#installing = null

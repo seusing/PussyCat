@@ -470,12 +470,24 @@ export async function installVkRuntime({
   // 落库,必须是校验过的那一份。这一步本来就在联网装依赖,不新增网络依赖点。
   //
   // 放在硬链接克隆之后:克隆来的兄弟 runtime 已经带着模型,那时这步会报 reused。
-  const ocrOutput = await runStep('models-ocr', pythonExe, ['-m', 'video_knowledge.runtime_ocr_models'])
-  const ocrResult = prefixedJson(ocrOutput, 'VK_OCR_MODEL_RESULT=', 'ocr-model-install-failed')
-  if (ocrResult?.ready !== true) {
-    throw new VkRuntimeInstallError('ocr-model-install-failed', 'OCR 模型未通过字节校验')
+  // **这一步失败不中止安装**。OCR 模型只服务烧录字幕这一个能力,ASR/转写/问答都不需要
+  // 它;为了 15 MB 的下载打嗝就把整次更新作废、让用户停在旧引擎上,代价完全不成比例
+  // ——真机上就这么废掉过一次:装好的 runtime 因为这步失败没写 receipt、从未激活,
+  // 用户只看到「解析引擎有更新」的横幅点两次都不消失。
+  //
+  // 降级路径是安全的:模型缺失时运行期 `_pinned_model_params` 返回空,rapidocr 会按
+  // **同样钉死的 PP-OCRv4** 现下一份,只是首次用到时多等十几秒,版本不会跑偏。
+  let ocrModels = null
+  try {
+    const ocrOutput = await runStep('models-ocr', pythonExe, ['-m', 'video_knowledge.runtime_ocr_models'])
+    ocrModels = prefixedJson(ocrOutput, 'VK_OCR_MODEL_RESULT=', 'ocr-model-install-failed')
+  } catch (error) {
+    log(`models-ocr: 预取失败(${error?.reasonCode ?? 'unknown'}),不阻断安装；`
+      + '烧录字幕首次使用时会自动补下')
   }
-  log(`models-ocr: ${ocrResult.reused ? '复用已有' : '已下载'} ${(ocrResult.files ?? []).length} 个模型`)
+  if (ocrModels?.ready === true) {
+    log(`models-ocr: ${ocrModels.reused ? '复用已有' : '已下载'} ${(ocrModels.files ?? []).length} 个模型`)
+  }
 
   await runStep('smoke-import', pythonExe, ['-c', 'import video_knowledge, importlib.metadata as m; print("import ok", m.version("video-knowledge"))'])
   await runStep('smoke-console', pythonExe, ['-m', 'video_knowledge', '-h'])
