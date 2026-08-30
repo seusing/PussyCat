@@ -44,7 +44,7 @@ import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
-import { isVkJobRerun, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+import { isVkJobRerun, rememberVkTaskNumbers, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import './VkPanel.css'
 
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
@@ -165,7 +165,45 @@ function attachLogicalTaskIds(rows: VkJobRow[]): VkJobRow[] {
     }
     return current
   }
-  return rows.map((row) => ({ ...row, logicalTaskId: rootFor(row).job_id }))
+  // 两种归并各有含义,顺序不能反:parent 链把「重试」折回被重试的那条;batch_id 再把
+  // 「同一次提交拆出的多个视频」折成一条逻辑任务。先解重试、再解批量——一条批量任务里
+  // 的某个视频被重试后,它应该跟着原批走,而不是自成一批。
+  const batchAnchor = new Map<string, string>()
+  for (const row of rows) {
+    const rootId = rootFor(row).job_id
+    const batch = byId.get(rootId)?.batch_id ?? row.batch_id
+    if (!batch) continue
+    // 锚点取批内最早提交的那条,保证编号不随轮询顺序漂移。
+    const current = batchAnchor.get(batch)
+    const currentRow = current ? byId.get(current) : undefined
+    if (!currentRow || rootFor(row).submitted_at < currentRow.submitted_at) {
+      batchAnchor.set(batch, rootId)
+    }
+  }
+  return rows.map((row) => {
+    const rootId = rootFor(row).job_id
+    const batch = byId.get(rootId)?.batch_id ?? row.batch_id
+    return {
+      ...row,
+      retryRootId: rootId,
+      logicalTaskId: (batch && batchAnchor.get(batch)) || rootId,
+    }
+  })
+}
+
+const TERMINAL_JOB_STATUSES = new Set([
+  'done', 'partial', 'failed', 'quarantined', 'error',
+  'cancelled', 'interrupted', 'completed_after_cancel_request',
+])
+
+/** 一批里若还有没跑完的,整批算「正在执行」;都跑完了但有失败的,整批算失败。 */
+function aggregateBatchStatus(members: VkJobRow[]): string {
+  const pending = members.find((row) => !TERMINAL_JOB_STATUSES.has(row.status.trim().toLowerCase()))
+  if (pending) return pending.status
+  const failed = members.find((row) => /fail|error|quarantin/.test(row.status.trim().toLowerCase()))
+  if (failed) return failed.status
+  const interrupted = members.find((row) => /cancel|interrupt/.test(row.status.trim().toLowerCase()))
+  return interrupted?.status ?? members[0].status
 }
 
 /** The sidecar exposes pipeline runs for historical inspection. They are not
@@ -196,13 +234,41 @@ function collapseInternalRunRows(rows: VkJobRow[]): VkJobRow[] {
 }
 
 function latestLogicalTasks(rows: VkJobRow[]): VkJobRow[] {
-  const latest = new Map<string, VkJobRow>()
+  // 两步折叠,含义不同不能合并:重试链是「新的取代旧的」,只留最新一次尝试;批量是
+  // 「并列的多个视频」,谁也不取代谁,得聚合成一行并把成员带上。
+  const latestAttempt = new Map<string, VkJobRow>()
   for (const row of rows) {
-    const key = row.logicalTaskId ?? row.job_id
-    const previous = latest.get(key)
-    if (!previous || Date.parse(row.submitted_at) > Date.parse(previous.submitted_at)) latest.set(key, row)
+    const key = row.retryRootId ?? row.job_id
+    const previous = latestAttempt.get(key)
+    if (!previous || Date.parse(row.submitted_at) > Date.parse(previous.submitted_at)) {
+      latestAttempt.set(key, row)
+    }
   }
-  return [...latest.values()].sort((left, right) => Date.parse(right.submitted_at) - Date.parse(left.submitted_at))
+
+  const byBatch = new Map<string, VkJobRow[]>()
+  for (const row of latestAttempt.values()) {
+    const key = row.logicalTaskId ?? row.job_id
+    byBatch.set(key, [...(byBatch.get(key) ?? []), row])
+  }
+
+  const collapsed = [...byBatch.values()].map((members) => {
+    if (members.length === 1) return members[0]
+    const ordered = [...members].sort(
+      (left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at),
+    )
+    const finishes = ordered.map((row) => row.finished_at)
+    return {
+      ...ordered[0],
+      status: aggregateBatchStatus(ordered),
+      // 有一个还没跑完,整批就还没跑完——耗时该继续走,不能按某个成员的结束时间定死。
+      finished_at: finishes.every(Boolean)
+        ? finishes.reduce((a, b) => (Date.parse(b!) > Date.parse(a!) ? b : a))!
+        : null,
+      batchMembers: ordered,
+    }
+  })
+
+  return collapsed.sort((left, right) => Date.parse(right.submitted_at) - Date.parse(left.submitted_at))
 }
 
 function primaryOutput(job: VkJobView): { id: string; title: string } | null {
@@ -594,6 +660,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     setPreviewing(true)
     const submissionNoticeId = `submitted:${crypto.randomUUID()}`
     let submittedAny = false
+    // 管线一次只处理一个来源，所以多个视频只能拆成多条 job；同批共用一个 batch_id，
+    // 列表据此把它们归为一个任务编号，详情页据此说清"这次共几个视频、进度到哪"。
+    // 单个视频也带上：批量与否是提交时的事实，不该让下游去猜。
+    const batchId = crypto.randomUUID()
     try {
       for (const sourceValue of sources) {
         const previewedRequest = await postVkPreview(buildProjection(sourceValue), base)
@@ -602,6 +672,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           request,
           idempotency_key: crypto.randomUUID(),
           client_job_id: crypto.randomUUID(),
+          batch_id: batchId,
         }, base)
         if (!submittedAny) {
           submittedAny = true
@@ -668,6 +739,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       setTaskNumbers(nextNumbers)
       saveNumberRecord(VK_TASK_NUMBERS_KEY, nextNumbers)
     }
+    // 编号是按「根任务 + 提交时间」算的，详情页只有一个 job_id，推不出来；这里落一份
+    // job_id → 编号的索引供它查。
+    rememberVkTaskNumbers(Object.fromEntries(numbered.map((row) => [row.job_id, row.taskNumber!])))
     return numbered
   }, [])
 

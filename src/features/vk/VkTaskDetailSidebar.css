@@ -40,6 +40,15 @@
 .vk-task-detail-sidebar > header span { color: var(--color-fg-dim); font-size: 11px; }
 .vk-task-detail-sidebar > header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 编号是人认的东西,UUID 只在排查时用——同框但分主次。 */
+.vk-task-detail-job-id {
+  overflow: hidden;
+  color: var(--color-fg-dim);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vk-task-detail-sidebar > header button,
 .vk-task-detail-summary button {
   display: grid;
@@ -236,6 +245,49 @@
 .vk-task-output-list button:hover { background: #292d35; }
 .vk-task-detail-actions button:disabled { opacity: .45; }
 .vk-task-output-list { margin-top: 0; }
+
+/* 整批重跑:范围比旁边几个按钮大,给个醒目边框,别跟"只作用于当前这一条"的混淆。 */
+.vk-task-batch-rerun-button { border-color: var(--color-accent, #4c8dff) !important; }
+
+/* 批量提交:一行任务下挂着多个视频,每个可点进去看自己的详情。 */
+.vk-task-detail-batch-count { color: var(--color-fg-dim); font-size: 11px; font-weight: 400; }
+
+.vk-task-detail-batch-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; }
+.vk-task-detail-batch-list li { list-style: none; }
+
+.vk-task-detail-batch-list button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: #20232a;
+  padding: 6px 8px;
+  color: var(--color-fg);
+  font-size: 12px;
+  text-align: left;
+}
+
+.vk-task-detail-batch-list button:hover { background: #292d35; }
+.vk-task-detail-batch-list button[data-current] { border-color: var(--color-accent, #4c8dff); }
+
+.vk-task-detail-batch-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vk-task-detail-batch-status { flex: 0 0 auto; font-size: 11px; }
+.vk-task-detail-batch-status.is-done { color: #57c98b; }
+.vk-task-detail-batch-status.is-failed { color: #e2686a; }
+.vk-task-detail-batch-status.is-interrupted { color: #d8a657; }
+.vk-task-detail-batch-status.is-running { color: var(--color-fg-dim); }
+
+/* 流式明细默认收起:平时是噪声,排查卡顿时才需要。 */
+.vk-model-attempt-trace > summary {
+  cursor: pointer;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  user-select: none;
+}
+.vk-model-attempt-trace[open] > summary { margin-bottom: 4px; }
 
 .vk-task-detail-actions button {
   transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease;

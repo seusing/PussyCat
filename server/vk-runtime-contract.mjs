@@ -64,7 +64,16 @@ export function runtimeModelPacksFor(manifest, extras = []) {
     .sort((left, right) => String(left.id).localeCompare(String(right.id)))
 }
 
-export function runtimeContractFingerprint(manifest, extras = []) {
+/** 契约指纹的公共前半段:依赖环境本身,**不含应用 wheel**。
+ *
+ * 拆出来是为了区分两类更新。整个 venv 有 2.3 GB / 41,558 个文件,其中应用代码只占
+ * 493 KB;而原先的指纹把两者算在一起,于是只改代码也会算出一个新指纹 → 新目录 →
+ * 把 2.3 GB 依赖重装一遍(实测几分钟)。环境指纹相同就说明"那堆 asr/whisperx 一个
+ * 字节没变",装依赖这一步可以整个跳过。
+ *
+ * 返回 null 的条件与契约指纹一致——两者共用同一份校验,不能一个认一个不认。
+ */
+function fingerprintInputs(manifest, extras) {
   const normalizedExtras = normalizeRuntimeExtras(extras)
   const requirements = runtimeRequirementsFor(manifest, normalizedExtras)
   const modelPacks = runtimeModelPacksFor(manifest, normalizedExtras)
@@ -82,21 +91,46 @@ export function runtimeContractFingerprint(manifest, extras = []) {
   ) {
     return null
   }
-  const target = {
-    pythonImplementation: manifest.runtime.pythonImplementation,
-    pythonVersion: manifest.runtime.pythonVersion,
-    pythonAbi: manifest.runtime.pythonAbi,
-    platform: manifest.runtime.platform,
-  }
-  const payload = {
-    schema: RUNTIME_CONTRACT_SCHEMA,
+  return {
+    normalizedExtras,
+    environment: {
+      schema: RUNTIME_CONTRACT_SCHEMA,
+      uvSha256: manifest.uv.sha256,
+      pythonLockSha256: sourceLockSha256,
+      requirementsSha256: requirements.sha256,
+      extras: normalizedExtras,
+      modelPacks,
+      target: {
+        pythonImplementation: manifest.runtime.pythonImplementation,
+        pythonVersion: manifest.runtime.pythonVersion,
+        pythonAbi: manifest.runtime.pythonAbi,
+        platform: manifest.runtime.platform,
+      },
+    },
     wheelSha256: manifest.wheel.sha256,
-    uvSha256: manifest.uv.sha256,
-    pythonLockSha256: sourceLockSha256,
-    requirementsSha256: requirements.sha256,
-    extras: normalizedExtras,
-    modelPacks,
-    target,
+  }
+}
+
+export function runtimeEnvironmentFingerprint(manifest, extras = []) {
+  const inputs = fingerprintInputs(manifest, extras)
+  if (!inputs) return null
+  return createHash('sha256').update(JSON.stringify(inputs.environment)).digest('hex')
+}
+
+export function runtimeContractFingerprint(manifest, extras = []) {
+  const inputs = fingerprintInputs(manifest, extras)
+  if (!inputs) return null
+  // 载荷保持与拆分前逐字段一致(顺序也一样),否则已装 runtime 的指纹会全部对不上,
+  // 所有人下次启动都被判为"有更新"并白重装一次。
+  const payload = {
+    schema: inputs.environment.schema,
+    wheelSha256: inputs.wheelSha256,
+    uvSha256: inputs.environment.uvSha256,
+    pythonLockSha256: inputs.environment.pythonLockSha256,
+    requirementsSha256: inputs.environment.requirementsSha256,
+    extras: inputs.environment.extras,
+    modelPacks: inputs.environment.modelPacks,
+    target: inputs.environment.target,
   }
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
 }

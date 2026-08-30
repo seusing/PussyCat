@@ -4,13 +4,14 @@ import { Check, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
   fetchVkJob,
+  fetchVkJobs,
   fetchVkProviderSettings,
   postVkJob,
   postVkJobAction,
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
-import { isVkJobRerun, markVkJobAsRerun, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+import { isVkJobRerun, markVkJobAsRerun, vkTaskNumberFor, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import './VkTaskDetailSidebar.css'
 
 const ACTIVE_STATUSES = new Set([
@@ -34,6 +35,29 @@ function secondsLabel(value: number | null): string {
   if (value === null) return '进行中'
   if (value < 1) return `${Math.round(value * 1000)} ms`
   return `${value.toFixed(2)} 秒`
+}
+
+type BatchState = 'running' | 'done' | 'failed' | 'interrupted'
+
+const BATCH_STATE_LABELS: Record<BatchState, string> = {
+  running: '进行中',
+  done: '已完成',
+  failed: '失败',
+  interrupted: '已中断',
+}
+
+function batchState(status: string): BatchState {
+  const value = status.trim().toLowerCase()
+  if (SUCCESS_STATUSES.has(value)) return 'done'
+  if (INTERRUPTED_STATUSES.has(value)) return 'interrupted'
+  if (FAILED_STATUSES.has(value) || /fail|error|quarantin/.test(value)) return 'failed'
+  return 'running'
+}
+
+/** 批量成员的来源:公开请求里的 source(一条 job 一个视频),取不到就退回 job_id。 */
+function memberSource(row: { request?: { source?: string } }): string {
+  const source = row.request?.source
+  return typeof source === 'string' ? source.split(/\r?\n/)[0].trim() : ''
 }
 
 function sourceItems(job: VkJobView | null): string[] {
@@ -172,8 +196,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [job, setJob] = useState<VkJobView | null>(null)
   const [providers, setProviders] = useState<VkProviderSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | null>(null)
+  const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | 'batch' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
+  const [batchMembers, setBatchMembers] = useState<
+    { job_id: string; source: string; state: BatchState }[]
+  >([])
+  const taskNumber = useMemo(() => vkTaskNumberFor(jobId), [jobId])
+  const batchDoneCount = batchMembers.filter((member) => member.state !== 'running').length
+  const currentMemberIndex = batchMembers.findIndex((member) => member.job_id === jobId) + 1
+  const batchRerunnable = batchMembers.filter((member) => member.state !== 'running').length
   const loadGeneration = useRef(0)
   const previousJobStatus = useRef<string | null>(null)
 
@@ -193,6 +224,24 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       setJob(nextJob)
       setProviders(nextProviders)
       setError(null)
+      // 同批的兄弟任务不在这条详情里,得从任务列表按 batch_id 捞。取不到就当单条处理——
+      // 批量视图是锦上添花,不该因为列表接口抖一下就把整个详情页拖垮。
+      if (nextJob.batch_id) {
+        const siblings = await fetchVkJobs(baseUrl).catch(() => [])
+        if (generation !== loadGeneration.current) return
+        setBatchMembers(
+          siblings
+            .filter((row) => row.batch_id === nextJob.batch_id)
+            .sort((left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at))
+            .map((row) => ({
+              job_id: row.job_id,
+              source: memberSource(row as { request?: { source?: string } }),
+              state: batchState(row.status),
+            })),
+        )
+      } else {
+        setBatchMembers([])
+      }
       const previous = previousJobStatus.current
       previousJobStatus.current = nextJob.status
       if (previous && ACTIVE_STATUSES.has(previous) && !ACTIVE_STATUSES.has(nextJob.status)) {
@@ -265,6 +314,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
         request,
         idempotency_key: crypto.randomUUID(),
         client_job_id: crypto.randomUUID(),
+        ...(job.batch_id ? { batch_id: job.batch_id } : {}),
       }, baseUrl)
       markVkJobAsRerun(result.job_id)
       onJobChange?.(result.job_id)
@@ -273,6 +323,44 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     } finally {
       setActionPending(null)
     }
+  }
+
+  /** 整批重跑:失败的走 retry(沿用原请求),已完成的重新提交一次。
+   *
+   * 已完成的批量重跑会再花一次额度——这是明知的取舍:整批失败时也需要一键重来,
+   * 而"只重跑失败的那几条"覆盖不了那个场景。按钮上把条数写出来,别让人误点。 */
+  const rerunWholeBatch = async () => {
+    if (batchMembers.length < 2) return
+    setActionPending('batch')
+    setError(null)
+    const failures: string[] = []
+    let firstNewJobId: string | null = null
+    for (const member of batchMembers) {
+      if (member.state === 'running') continue    // 还在跑的没什么可重跑的
+      try {
+        const detail = await fetchVkJob(member.job_id, baseUrl)
+        const result = member.state === 'done'
+          ? await postVkJob({
+            request: detail.request as Record<string, unknown>,
+            idempotency_key: crypto.randomUUID(),
+            client_job_id: crypto.randomUUID(),
+            ...(detail.batch_id ? { batch_id: detail.batch_id } : {}),
+          }, baseUrl)
+          : await postVkJobAction(member.job_id, 'retry', baseUrl)
+        const newId = typeof result.job_id === 'string' ? result.job_id : null
+        if (newId) {
+          markVkJobAsRerun(newId)
+          firstNewJobId ??= newId
+        }
+      } catch (memberError) {
+        failures.push(`${member.source || member.job_id}：${detailError(memberError)}`)
+      }
+    }
+    setActionPending(null)
+    // 部分失败要说清是哪几条,否则用户只知道"没全跑起来"却不知道差在哪。
+    if (failures.length > 0) setError(`部分视频未能重跑\n${failures.join('\n')}`)
+    if (firstNewJobId) onJobChange?.(firstNewJobId)
+    else await load()
   }
 
   if (!jobId) {
@@ -288,7 +376,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       <header>
         <div>
           <span>任务详情</span>
-          <strong>{job?.job_id ?? jobId}</strong>
+          {/* 列表上认的是编号，详情页原先只给 UUID，两边对不上号。编号在前，UUID 退成
+              次要信息——它仍要留着，排查问题时日志里只有 UUID。 */}
+          {taskNumber === null
+            ? <strong>{job?.job_id ?? jobId}</strong>
+            : (
+              <>
+                <strong data-testid="vk-task-detail-number">任务 {taskNumber}</strong>
+                <code className="vk-task-detail-job-id">{job?.job_id ?? jobId}</code>
+              </>
+            )}
         </div>
         <button type="button" onClick={onClose} aria-label="关闭任务详情" title="关闭">
           <X size={17} aria-hidden="true" />
@@ -340,6 +437,44 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             <span style={{ width: `${progress.percent}%` }} />
           </div>
 
+          {/* 提交内容排在最前:打开详情第一个想确认的是"这条跑的是哪个视频"。
+              一次提交多个视频时,这里要逐个列出各自的状态,而不是只显示被点开的那一条。 */}
+          <div className="vk-task-detail-section" data-testid="vk-task-detail-sources">
+            <h3>
+              提交内容
+              {batchMembers.length > 1 && (
+                <span className="vk-task-detail-batch-count">
+                  {' '}共 {batchMembers.length} 个视频 · 已完成 {batchDoneCount}/{batchMembers.length}
+                  {/* 下面的动作按钮只作用于"当前这一条",而这一页是从一行批量任务点进来的
+                      ——不写明看哪一条,点「重试」的人会以为整批都重跑了。 */}
+                  {currentMemberIndex > 0 && ` · 当前查看第 ${currentMemberIndex} 个`}
+                </span>
+              )}
+            </h3>
+            {batchMembers.length > 1
+              ? (
+                <ol className="vk-task-detail-batch-list">
+                  {batchMembers.map((member) => (
+                    <li key={member.job_id}>
+                      <button
+                        type="button"
+                        data-current={member.job_id === jobId || undefined}
+                        onClick={() => onJobChange?.(member.job_id)}
+                      >
+                        <span className="vk-task-detail-batch-source">{member.source || member.job_id}</span>
+                        <span className={`vk-task-detail-batch-status is-${member.state}`}>
+                          {BATCH_STATE_LABELS[member.state]}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )
+              : sources.length > 0
+                ? <ol>{sources.map((source) => <li key={source}>{source}</li>)}</ol>
+                : <p>未返回来源信息</p>}
+          </div>
+
           <dl className="vk-task-detail-list">
             <div>
               <dt>模型配置</dt>
@@ -355,21 +490,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             </div>
           </dl>
 
+          {/* 缓存 Token 恒为 0（本产品不走 prompt 缓存），费用则因通道普遍不提供可信价格
+              而长期显示"未统计"——两个格子都只是占地方，去掉。 */}
           {job.progress?.usage && (
             <div className="vk-task-detail-section" data-testid="vk-run-metrics">
               <h3>本次解析用量</h3>
               <dl className="vk-run-metrics-grid">
                 <div><dt>输入 {job.progress.usage.input_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
                 <div><dt>输出 {job.progress.usage.output_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
-                <div><dt>缓存 Token</dt><dd>{job.progress.usage.cached_tokens.toLocaleString('zh-CN')}</dd></div>
-                <div>
-                  <dt>费用</dt>
-                  <dd>{job.progress.usage.cost_status === 'pending'
-                    ? '待对账（上游可能仍在计费）'
-                    : job.progress.usage.cost_status === 'unknown' || job.progress.usage.cost_cny === null
-                      ? '未统计（通道未提供可信价格）'
-                      : `估算 ¥${job.progress.usage.cost_cny.toFixed(4)}`}</dd>
-                </div>
               </dl>
             </div>
           )}
@@ -399,24 +527,29 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                       <span className={`is-${attempt.status}`}>{MODEL_ATTEMPT_STATUS[attempt.status] ?? attempt.status}</span>
                     </div>
                     <p>{stageLabel(attempt.stage)} · {attempt.model_reported || attempt.model_requested}</p>
-                    <p>
-                      {transportLabel(attempt.transport_mode)} · {telemetryMs('响应头', attempt.response_headers_ms)} · {' '}
-                      {telemetryMs('首事件', attempt.first_event_ms)} · {telemetryMs('首字', attempt.first_text_ms)} · {' '}
-                      总耗时 {Math.max(0, attempt.latency_ms)} ms
-                    </p>
-                    <p>
-                      {telemetryMs('首推理事件', attempt.first_reasoning_ms)} · {' '}
-                      最后事件 {attempt.last_event_type || '未记录'}{attempt.last_event_ms == null ? '' : `（${attempt.last_event_ms} ms）`} · {' '}
-                      终止事件 {attempt.terminal_event_type || '未记录'} · {' '}
-                      [DONE] {attempt.stream_done_received ? '已收到' : '未收到'}
-                    </p>
-                    {attempt.stream_event_types && attempt.stream_event_types !== '{}' && (
-                      <p>事件类型 {attempt.stream_event_types}</p>
-                    )}
-                    <p>
-                      推理强度 {attempt.reasoning_effort || '未记录'} · {' '}
-                      输出上限 {attempt.max_output_tokens == null ? '未记录' : attempt.max_output_tokens.toLocaleString('zh-CN')}
-                    </p>
+                    <p>总耗时 {Math.max(0, attempt.latency_ms)} ms · {telemetryMs('首字', attempt.first_text_ms)}</p>
+                    {/* 逐事件的流式明细只有排查卡顿时才用得上,平时是噪声。收进折叠区,
+                        需要时展开——不是删掉,那些字段正是上次定位超时的依据。 */}
+                    <details className="vk-model-attempt-trace">
+                      <summary>流式明细</summary>
+                      <p>
+                        {transportLabel(attempt.transport_mode)} · {telemetryMs('响应头', attempt.response_headers_ms)} · {' '}
+                        {telemetryMs('首事件', attempt.first_event_ms)}
+                      </p>
+                      <p>
+                        {telemetryMs('首推理事件', attempt.first_reasoning_ms)} · {' '}
+                        最后事件 {attempt.last_event_type || '未记录'}{attempt.last_event_ms == null ? '' : `（${attempt.last_event_ms} ms）`} · {' '}
+                        终止事件 {attempt.terminal_event_type || '未记录'} · {' '}
+                        [DONE] {attempt.stream_done_received ? '已收到' : '未收到'}
+                      </p>
+                      {attempt.stream_event_types && attempt.stream_event_types !== '{}' && (
+                        <p>事件类型 {attempt.stream_event_types}</p>
+                      )}
+                      <p>
+                        推理强度 {attempt.reasoning_effort || '未记录'} · {' '}
+                        输出上限 {attempt.max_output_tokens == null ? '未记录' : attempt.max_output_tokens.toLocaleString('zh-CN')}
+                      </p>
+                    </details>
                     {attempt.request_may_still_run && (
                       <p role="alert" style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
                         上游可能仍在运行和计费；系统没有自动重试
@@ -431,16 +564,23 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             </div>
           )}
 
-          <div className="vk-task-detail-section">
-            <h3>提交内容</h3>
-            {sources.length > 0
-              ? <ol>{sources.map((source) => <li key={source}>{source}</li>)}</ol>
-              : <p>未返回来源信息</p>}
-          </div>
-
           {job.error && <div className="vk-task-detail-error">{job.error}</div>}
 
           <div className="vk-task-detail-actions">
+            {/* 整批重跑。放在最前:从批量行点进来的人,想要的多半是"这一批再来一次",
+                而不是只重跑落在眼前的这一条。条数写在按钮上,因为已完成的批量重跑会
+                再花一次额度——那是明知的取舍(整批失败时需要一键重来),但不能让人误点。 */}
+            {batchRerunnable > 1 && (
+              <button
+                type="button"
+                className="vk-task-batch-rerun-button"
+                disabled={actionPending !== null}
+                onClick={() => { void rerunWholeBatch() }}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                <span>{actionPending === 'batch' ? '正在重跑…' : `重跑全部 ${batchRerunnable} 个`}</span>
+              </button>
+            )}
             {active && (
               <button type="button" className="vk-task-stop-button" disabled={stopping || actionPending !== null} onClick={() => { void runAction('cancel') }}>
                 <Square size={13} fill="currentColor" aria-hidden="true" />
@@ -487,24 +627,20 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 <span>{actionPending ? '正在提交…' : '再次提交任务'}</span>
               </motion.button>
             )}
+            {/* 看结果和再跑一次是同一时刻的两个选择,并排放;原先「查看解析结果」独占一个
+                区块吊在最底下,还得先滚过去。 */}
+            {completedSuccessfully && primaryOutput(job) && (
+              <button type="button" className="vk-task-open-output-button" onClick={() => {
+                const output = primaryOutput(job)
+                if (output) window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
+                  detail: { outputId: output.id, title: '解析结果' },
+                }))
+              }}>
+                <Eye size={14} aria-hidden="true" />
+                <span>{primaryOutput(job)?.label}</span>
+              </button>
+            )}
           </div>
-
-          {completedSuccessfully && primaryOutput(job) && (
-            <div className="vk-task-detail-section">
-              <h3>解析结果</h3>
-              <div className="vk-task-output-list">
-                <button type="button" onClick={() => {
-                  const output = primaryOutput(job)
-                  if (output) window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
-                    detail: { outputId: output.id, title: '解析结果' },
-                  }))
-                }}>
-                  <span>{primaryOutput(job)?.label}</span>
-                  <Eye size={14} aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </section>

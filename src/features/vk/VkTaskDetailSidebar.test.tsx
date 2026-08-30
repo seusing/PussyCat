@@ -18,6 +18,153 @@ afterEach(() => {
 })
 
 describe('VkTaskDetailSidebar', () => {
+  it('列表上的任务编号要出现在详情页,提交内容排在模型配置之前', async () => {
+    // 详情页原先只给 UUID,而用户在列表上认的是编号,两边对不上号。编号由列表分配、
+    // 经 localStorage 索引传过来。
+    localStorage.setItem(
+      'opencli-app:vk-task-number-index:v1',
+      JSON.stringify({ 'job-num': 69 }),
+    )
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/job-num')) {
+        return new Response(JSON.stringify({
+          job_id: 'job-num',
+          kind: 'run',
+          status: 'done',
+          submitted_at: '2026-08-28T12:15:21+08:00',
+          finished_at: '2026-08-28T12:16:50+08:00',
+          parent_job_id: null,
+          cache_bypass: false,
+          request: { source: 'http://xhslink.com/o/52xnYPKG36K', preset: 'quick-summary' },
+          outputs: { note_path: 'note-1' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="job-num" baseUrl={BASE} onClose={() => {}} />)
+
+    expect(await screen.findByTestId('vk-task-detail-number')).toHaveTextContent('任务 69')
+    const panel = screen.getByTestId('vk-task-detail-sidebar')
+    const body = panel.textContent ?? ''
+    expect(body.indexOf('提交内容')).toBeGreaterThanOrEqual(0)
+    expect(body.indexOf('提交内容')).toBeLessThan(body.indexOf('模型配置'))
+    // 「查看解析结果」和「再次提交任务」是同一时刻的两个选择,并排放在操作区。
+    const actions = panel.querySelector('.vk-task-detail-actions')
+    expect(actions?.textContent).toContain('查看解析结果')
+    expect(actions?.textContent).toContain('再次提交任务')
+    localStorage.clear()
+  })
+
+  it('批量提交的详情页列出全部视频与各自状态,并可点进任一条', async () => {
+    const user = userEvent.setup()
+    const members = [
+      { job_id: 'b-1', status: 'done', source: 'https://example.com/one' },
+      { job_id: 'b-2', status: 'failed', source: 'https://example.com/two' },
+      { job_id: 'b-3', status: 'running', source: 'https://example.com/three' },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+      if (hit) {
+        return new Response(JSON.stringify({
+          job_id: hit.job_id,
+          kind: 'run',
+          status: hit.status,
+          submitted_at: '2026-08-28T12:15:21+08:00',
+          finished_at: null,
+          parent_job_id: null,
+          batch_id: 'batch-x',
+          cache_bypass: false,
+          request: { source: hit.source, preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(members.map((member) => ({
+          job_id: member.job_id,
+          kind: 'run',
+          status: member.status,
+          submitted_at: '2026-08-28T12:15:21+08:00',
+          finished_at: null,
+          parent_job_id: null,
+          batch_id: 'batch-x',
+          cache_bypass: false,
+          request: { source: member.source },
+        }))), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+    const onJobChange = vi.fn()
+
+    render(
+      <VkTaskDetailSidebar jobId="b-1" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />,
+    )
+
+    const panel = await screen.findByTestId('vk-task-detail-sources')
+    // 3 个视频里 2 个已到终态(done/failed),第 3 个还在跑
+    expect(panel).toHaveTextContent('共 3 个视频 · 已完成 2/3')
+    expect(panel).toHaveTextContent('https://example.com/two')
+    await user.click(screen.getByText('https://example.com/three'))
+    expect(onJobChange).toHaveBeenCalledWith('b-3')
+  })
+
+  it('整批重跑:失败的走 retry,已完成的重新提交,进行中的跳过', async () => {
+    const user = userEvent.setup()
+    const members = [
+      { job_id: 'r-1', status: 'done', source: 'https://example.com/one' },
+      { job_id: 'r-2', status: 'failed', source: 'https://example.com/two' },
+      { job_id: 'r-3', status: 'running', source: 'https://example.com/three' },
+    ]
+    const retried: string[] = []
+    const resubmitted: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const retryHit = url.match(/\/vk\/v1\/jobs\/([^/]+)\/retry$/)
+      if (retryHit) {
+        retried.push(retryHit[1])
+        return new Response(JSON.stringify({ job_id: `${retryHit[1]}-retry` }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/vk/v1/jobs') && init?.method === 'POST') {
+        resubmitted.push(JSON.parse(String(init.body)))
+        return new Response(JSON.stringify({ job_id: 'fresh-1', kind: 'run' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+      if (hit) {
+        return new Response(JSON.stringify({
+          job_id: hit.job_id, kind: 'run', status: hit.status,
+          submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+          parent_job_id: null, batch_id: 'batch-r', cache_bypass: false,
+          request: { source: hit.source, preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(members.map((member) => ({
+          job_id: member.job_id, kind: 'run', status: member.status,
+          submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+          parent_job_id: null, batch_id: 'batch-r', cache_bypass: false,
+          request: { source: member.source },
+        }))), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="r-1" baseUrl={BASE} onClose={() => {}} />)
+
+    // 3 个里 2 个已到终态,按钮只承诺这 2 个
+    const button = await screen.findByRole('button', { name: /重跑全部 2 个/ })
+    await user.click(button)
+
+    // 逐个成员串行发请求，等循环跑完再断言
+    await waitFor(() => expect(retried).toEqual(['r-2']))   // 失败的走 retry
+    await waitFor(() => expect(resubmitted).toHaveLength(1)) // 已完成的重新提交
+    expect(resubmitted[0]).toMatchObject({ batch_id: 'batch-r' })   // 留在原批里
+  })
+
   it('renders real stage progress and the configured model name', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -86,7 +233,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByText('核对关键信息')).toBeInTheDocument()
   })
 
-  it('shows real stage timing and token usage while keeping unknown cost honest', async () => {
+  it('shows real stage timing and token usage without cost or cache clutter', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/vk/v1/jobs/job-metrics')) return new Response(JSON.stringify({
@@ -113,7 +260,10 @@ describe('VkTaskDetailSidebar', () => {
     const metrics = await screen.findByTestId('vk-run-metrics')
     expect(metrics).toHaveTextContent('输入 1,234')
     expect(metrics).toHaveTextContent('输出 321')
-    expect(metrics).toHaveTextContent('费用未统计')
+    // 费用与缓存 Token 已从详情页移除：缓存恒为 0，费用因通道普遍不提供可信价格
+    // 而长期是'未统计'，两个格子只占地方。
+    expect(metrics).not.toHaveTextContent('费用')
+    expect(metrics).not.toHaveTextContent('缓存')
     const stages = screen.getByTestId('vk-stage-metrics')
     expect(stages).toHaveTextContent('采集与转写')
     expect(stages).toHaveTextContent('2.50 秒')
@@ -211,9 +361,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       '上游可能仍在运行和计费；系统没有自动重试',
     )
-    expect(screen.getByTestId('vk-run-metrics')).toHaveTextContent(
-      '待对账（上游可能仍在计费）',
-    )
+    expect(screen.getByTestId('vk-run-metrics')).not.toHaveTextContent('待对账')
   })
 
   it('活跃任务在详情轮询返回终态后立即切换为失败界面', async () => {

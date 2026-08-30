@@ -34,6 +34,18 @@ const JOBS: VkJobRow[] = [
   },
 ]
 
+function manyJobs(count: number): VkJobRow[] {
+  return Array.from({ length: count }, (_, index) => ({
+    job_id: `job-${index}`,
+    kind: 'process',
+    status: index % 2 === 0 ? 'done' : 'failed',
+    submitted_at: new Date(Date.now() - index * 60_000).toISOString(),
+    finished_at: new Date(Date.now() - index * 60_000 + 5_000).toISOString(),
+    parent_job_id: null,
+    cache_bypass: false,
+  }))
+}
+
 function makeProps(overrides: Partial<VkTaskTableProps> = {}): VkTaskTableProps {
   return {
     jobs: JOBS,
@@ -60,9 +72,10 @@ describe('VkTaskTable', () => {
       '操作',
     ])
     expect(screen.getAllByTestId('vk-job-row')).toHaveLength(3)
-    expect(screen.getByText('正在执行')).toHaveAttribute('data-status', 'running')
-    expect(screen.getByText('已完成')).toHaveAttribute('data-status', 'completed')
-    expect(screen.getByText('失败')).toHaveAttribute('data-status', 'failed')
+    // 状态徽章的文字与筛选下拉的选项同名,断言要限定在表格里,否则会同时命中两处。
+    expect(within(table).getByText('正在执行')).toHaveAttribute('data-status', 'running')
+    expect(within(table).getByText('已完成')).toHaveAttribute('data-status', 'completed')
+    expect(within(table).getByText('失败')).toHaveAttribute('data-status', 'failed')
     expect(screen.getByText('2m5s')).toBeInTheDocument()
   })
 
@@ -74,8 +87,9 @@ describe('VkTaskTable', () => {
       ],
     })} />)
 
-    expect(screen.getByText('重跑中')).toHaveAttribute('data-status', 'rerunning')
-    expect(screen.getByText('已中断')).toHaveAttribute('data-status', 'interrupted')
+    const table = screen.getByRole('table')
+    expect(within(table).getByText('重跑中')).toHaveAttribute('data-status', 'rerunning')
+    expect(within(table).getByText('已中断')).toHaveAttribute('data-status', 'interrupted')
   })
 
   it('selects a row by click and keyboard', async () => {
@@ -162,5 +176,66 @@ describe('VkTaskTable', () => {
     expect(onDelete).toHaveBeenCalledTimes(1)
     expect(onDelete).toHaveBeenCalledWith(JOBS[2])
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('批量任务折成一行并标出视频数', () => {
+    const members: VkJobRow[] = [
+      { ...JOBS[0], job_id: 'b-1', batch_id: 'batch-x' },
+      { ...JOBS[1], job_id: 'b-2', batch_id: 'batch-x' },
+    ]
+    render(<VkTaskTable {...makeProps({
+      jobs: [{ ...members[0], batchMembers: members }],
+    })} />)
+
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(1)
+    expect(screen.getByText('2 个视频')).toBeInTheDocument()
+  })
+
+  it('单条任务不显示视频数徽章', () => {
+    render(<VkTaskTable {...makeProps({ jobs: [JOBS[0]] })} />)
+
+    expect(screen.queryByText(/个视频$/)).not.toBeInTheDocument()
+  })
+
+  it('默认每页 10 条并能翻页', async () => {
+    render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
+
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(10)
+    expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 1 / 3 页')
+
+    await userEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 2 / 3 页')
+    await userEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(5)   // 末页只剩 5 条
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+  })
+
+  it('每页条数可切到全部,翻页条随之消失', async () => {
+    render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
+
+    await userEvent.selectOptions(screen.getByLabelText('每页展示条数'), 'all')
+
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(25)
+    expect(screen.queryByTestId('vk-task-table-page')).not.toBeInTheDocument()
+  })
+
+  it('按状态筛选后回到第一页,并显示筛出条数', async () => {
+    render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '下一页' }))
+    await userEvent.selectOptions(screen.getByLabelText('按任务状态筛选'), 'failed')
+
+    // 25 条里单数下标是 failed,共 12 条;筛完必须回第 1 页,否则会停在一个已不存在的页上。
+    expect(screen.getByTestId('vk-task-table-count')).toHaveTextContent('筛出 12 条 / 共 25 条')
+    expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 1 / 2 页')
+  })
+
+  it('筛不出任何任务时给出与"暂无任务"不同的提示', async () => {
+    render(<VkTaskTable {...makeProps({ jobs: JOBS })} />)
+
+    await userEvent.selectOptions(screen.getByLabelText('按任务状态筛选'), 'interrupted')
+
+    expect(screen.getByText('没有符合筛选条件的任务')).toBeInTheDocument()
+    expect(screen.queryByText('暂无任务')).not.toBeInTheDocument()
   })
 })
