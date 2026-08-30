@@ -413,7 +413,31 @@ export async function installVkRuntime({
     'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
     '--no-deps', wheel,
   ])
-  const pipCheckOutput = await runStep('pip-check', uv, ['pip', 'check', '--python', pythonExe])
+  // `uv pip check` 只比对**发行版名字**。Windows 上我们装的是 onnxruntime-directml
+  // (走 GPU),它提供的正是 `onnxruntime` 这个导入包,但发行版叫另一个名字,于是
+  // faster-whisper 声明的 `onnxruntime>=1.14,<2` 被判成「未安装」——一个功能完全正常
+  // 的环境被判不兼容,安装中止、从未激活,用户那边就是「解析引擎有更新」点几次都不消失。
+  //
+  // 只放行这一种替换,且不靠名字放行:必须**真的 import 得到** onnxruntime 才算数。
+  // 「导入得到」比「名字对得上」是更强的证据,其余任何不兼容照旧中止。
+  let pipCheckOutput = ''
+  let pipCheckNote = 'passed'
+  try {
+    pipCheckOutput = await runStep('pip-check', uv, ['pip', 'check', '--python', pythonExe])
+  } catch (error) {
+    const lines = String(error?.detail ?? '')
+      .split(/\r?\n/)
+      .filter((line) => line.includes('but it') && line.includes('installed'))
+    const onlyOnnxruntime = lines.length > 0
+      && lines.every((line) => /requires `onnxruntime[^`]*`/.test(line))
+    if (!onlyOnnxruntime) throw error
+    await runStep('pip-check-onnxruntime', pythonExe, [
+      '-c', 'import onnxruntime; print(onnxruntime.__version__)',
+    ])
+    pipCheckNote = 'passed-with-onnxruntime-directml'
+    log('pip-check: faster-whisper 声明的 onnxruntime 由 onnxruntime-directml 提供，'
+      + '已实测 import 通过，按兼容处理')
+  }
 
   const installedModelPacks = []
   let modelEnvironment = {}
@@ -580,7 +604,7 @@ export async function installVkRuntime({
     packages,
     packageInventorySha256,
     pipCheck: {
-      status: 'passed',
+      status: pipCheckNote,
       output: scrubSidecarText(pipCheckOutput.trim()).slice(-1_000),
     },
     modelPacks: installedModelPacks,
@@ -615,7 +639,7 @@ export async function installVkRuntime({
     packageInventory: 'runtime-inventory.json',
     packageInventorySha256,
     runtimeSizeBytes,
-    pipCheck: 'passed',
+    pipCheck: pipCheckNote,
     modelPacks: installedModelPacks,
     asrSmoke,
     ffmpegVersion: asrSmoke?.ffmpeg ?? null,
