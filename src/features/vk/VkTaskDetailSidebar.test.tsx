@@ -155,14 +155,72 @@ describe('VkTaskDetailSidebar', () => {
 
     render(<VkTaskDetailSidebar jobId="r-1" baseUrl={BASE} onClose={() => {}} />)
 
-    // 3 个里 2 个已到终态,按钮只承诺这 2 个
-    const button = await screen.findByRole('button', { name: /重跑全部 2 个/ })
-    await user.click(button)
+    // 默认只选失败的那条:三条里只有 r-2 失败,所以按钮说的是「重跑小任务2」
+    const button = await screen.findByRole('button', { name: /重跑小任务2/ })
+    // 悬停展开上拉菜单,勾上已完成的那条 —— 用户要能自己挑
+    await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+    const doneItem = await screen.findByRole('menuitemcheckbox', { name: /小任务1/ })
+    expect(doneItem).toHaveAttribute('aria-checked', 'false')
+    expect(doneItem).toHaveTextContent('再计费')      // 重跑已完成的会再花钱,得写明
+    await user.click(doneItem)
+    // 进行中的那条不能选:它本来就在跑
+    expect(await screen.findByRole('menuitemcheckbox', { name: /小任务3/ })).toBeDisabled()
+
+    await user.click(await screen.findByRole('button', { name: /重跑全部 2 个/ }))
 
     // 逐个成员串行发请求，等循环跑完再断言
     await waitFor(() => expect(retried).toEqual(['r-2']))   // 失败的走 retry
     await waitFor(() => expect(resubmitted).toHaveLength(1)) // 已完成的重新提交
     expect(resubmitted[0]).toMatchObject({ batch_id: 'batch-r' })   // 留在原批里
+  })
+
+  it('只重跑选中的那一条:没勾的不动', async () => {
+    const user = userEvent.setup()
+    const members = [
+      { job_id: 's-1', status: 'failed', source: 'https://example.com/one' },
+      { job_id: 's-2', status: 'failed', source: 'https://example.com/two' },
+    ]
+    const retried: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const retryHit = url.match(/\/vk\/v1\/jobs\/([^/]+)\/retry$/)
+      if (retryHit) {
+        retried.push(retryHit[1])
+        return new Response(JSON.stringify({ job_id: `${retryHit[1]}-retry` }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+      const payload = (member: typeof members[number]) => ({
+        job_id: member.job_id, kind: 'run', status: member.status,
+        submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+        parent_job_id: null, batch_id: 'batch-s', cache_bypass: false,
+        request: { source: member.source, preset: 'quick-summary' },
+      })
+      if (hit) {
+        return new Response(JSON.stringify(payload(hit)), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(members.map(payload)), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="s-1" baseUrl={BASE} onClose={() => {}} />)
+
+    // 两条都失败 → 默认全选
+    const button = await screen.findByRole('button', { name: /重跑全部 2 个/ })
+    expect(button).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: /小任务1/ }))  // 取消勾选
+    await user.click(await screen.findByRole('button', { name: /重跑小任务2/ }))
+
+    await waitFor(() => expect(retried).toEqual(['s-2']))
+    expect(retried).not.toContain('s-1')
   })
 
   it('renders real stage progress and the configured model name', async () => {
@@ -205,8 +263,11 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByText('阶段 2 / 4')).toBeInTheDocument()
     expect(screen.getByText('理解视频重点')).toBeInTheDocument()
     expect(screen.getByText('我的总结模型')).toBeInTheDocument()
-    expect(screen.getByText('https://www.youtube.com/watch?v=1')).toBeInTheDocument()
-    expect(screen.getByText('https://www.bilibili.com/video/BV1')).toBeInTheDocument()
+    // 标题栏现在也显示当前这条的链接,所以第一条链接会出现两次;这里断言的是「提交内容」
+    // 那一段,用容器限定范围,不然是在赌页面上只有一处提到它。
+    const sources = screen.getByTestId('vk-task-detail-sources')
+    expect(sources).toHaveTextContent('https://www.youtube.com/watch?v=1')
+    expect(sources).toHaveTextContent('https://www.bilibili.com/video/BV1')
     await waitFor(() => expect(screen.getByLabelText('任务正在执行')).toBeInTheDocument())
   })
 

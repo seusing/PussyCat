@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
+import { Check, ChevronUp, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
   fetchVkJob,
@@ -203,8 +203,40 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   >([])
   const taskNumber = useMemo(() => vkTaskNumberFor(jobId), [jobId])
   const batchDoneCount = batchMembers.filter((member) => member.state !== 'running').length
-  const currentMemberIndex = batchMembers.findIndex((member) => member.job_id === jobId) + 1
-  const batchRerunnable = batchMembers.filter((member) => member.state !== 'running').length
+  const currentSource = batchMembers.find((member) => member.job_id === jobId)?.source
+    ?? sourceItems(job)[0]
+    ?? ''
+  // 还在跑的不参与重跑:它本来就在跑,再点一次只会白花一次额度。
+  const rerunable = useMemo(
+    () => batchMembers.filter((member) => member.state !== 'running'),
+    [batchMembers],
+  )
+  const failedIds = useMemo(
+    () => rerunable.filter((member) => member.state === 'failed').map((member) => member.job_id),
+    [rerunable],
+  )
+  // 悬停展开,但**不只靠悬停**:纯 hover 菜单键盘用不了,鼠标移向菜单项的途中也容易掠出
+  // 容器把菜单收掉(实测就是这么翻的)。点箭头可以「钉住」,钉住后移开不收。
+  const [rerunMenuOpen, setRerunMenuOpen] = useState(false)
+  const [rerunMenuPinned, setRerunMenuPinned] = useState(false)
+  const [rerunPicked, setRerunPicked] = useState<Set<string> | null>(null)
+  // 默认只选失败的——那是绝大多数情况下想重跑的。全失败时它就等于「全部重跑」;
+  // 一条没失败时退回全选,否则按钮会是个点不动的空壳。
+  const selection = useMemo(() => {
+    if (rerunPicked) return rerunPicked
+    if (failedIds.length > 0) return new Set(failedIds)
+    return new Set(rerunable.map((member) => member.job_id))
+  }, [rerunPicked, failedIds, rerunable])
+  const selectedCount = rerunable.filter((member) => selection.has(member.job_id)).length
+  const selectedLabel = useMemo(() => {
+    const picked = rerunable
+      .map((member, index) => ({ member, ordinal: batchMembers.indexOf(member) + 1, index }))
+      .filter((entry) => selection.has(entry.member.job_id))
+    if (picked.length === 0) return '未选中任何小任务'
+    if (picked.length === rerunable.length) return `重跑全部 ${picked.length} 个`
+    if (picked.length === 1) return `重跑小任务${picked[0].ordinal}`
+    return `重跑选中 ${picked.length} 个`
+  }, [rerunable, batchMembers, selection])
   const loadGeneration = useRef(0)
   const previousJobStatus = useRef<string | null>(null)
 
@@ -329,13 +361,17 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
    *
    * 已完成的批量重跑会再花一次额度——这是明知的取舍:整批失败时也需要一键重来,
    * 而"只重跑失败的那几条"覆盖不了那个场景。按钮上把条数写出来,别让人误点。 */
-  const rerunWholeBatch = async () => {
-    if (batchMembers.length < 2) return
+  /** 重跑选中的那些小任务。空选等于不做事,由调用方保证非空。 */
+  const rerunSelected = async (selection: ReadonlySet<string>) => {
+    if (selection.size === 0) return
+    setRerunMenuOpen(false)
+    setRerunMenuPinned(false)
     setActionPending('batch')
     setError(null)
     const failures: string[] = []
     let firstNewJobId: string | null = null
     for (const member of batchMembers) {
+      if (!selection.has(member.job_id)) continue
       if (member.state === 'running') continue    // 还在跑的没什么可重跑的
       try {
         const detail = await fetchVkJob(member.job_id, baseUrl)
@@ -376,14 +412,17 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       <header>
         <div>
           <span>任务详情</span>
-          {/* 列表上认的是编号，详情页原先只给 UUID，两边对不上号。编号在前，UUID 退成
-              次要信息——它仍要留着，排查问题时日志里只有 UUID。 */}
+          {/* 列表上认的是编号，详情页原先只给 UUID，两边对不上号。编号在前，副标题给
+              **链接**——那才是人认得出的东西；一串 UUID 对着看什么也认不出来。UUID 仍要
+              留着（排查问题时日志里只有它），退到 title 里，鼠标悬停可见、可复制。 */}
           {taskNumber === null
-            ? <strong>{job?.job_id ?? jobId}</strong>
+            ? <strong>{currentSource || job?.job_id || jobId}</strong>
             : (
               <>
                 <strong data-testid="vk-task-detail-number">任务 {taskNumber}</strong>
-                <code className="vk-task-detail-job-id">{job?.job_id ?? jobId}</code>
+                <code className="vk-task-detail-job-id" title={job?.job_id ?? jobId}>
+                  {currentSource || job?.job_id || jobId}
+                </code>
               </>
             )}
         </div>
@@ -444,24 +483,29 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               提交内容
               {batchMembers.length > 1 && (
                 <span className="vk-task-detail-batch-count">
+                  {/* 不写"当前查看第 N 个":批量是并行跑的,那句话会让人以为在排队等前一条。
+                      当前看的是哪条,由下面列表里高亮的那一项表达,不必用序数再说一遍。 */}
                   {' '}共 {batchMembers.length} 个视频 · 已完成 {batchDoneCount}/{batchMembers.length}
-                  {/* 下面的动作按钮只作用于"当前这一条",而这一页是从一行批量任务点进来的
-                      ——不写明看哪一条,点「重试」的人会以为整批都重跑了。 */}
-                  {currentMemberIndex > 0 && ` · 当前查看第 ${currentMemberIndex} 个`}
                 </span>
               )}
             </h3>
             {batchMembers.length > 1
               ? (
                 <ol className="vk-task-detail-batch-list">
-                  {batchMembers.map((member) => (
+                  {batchMembers.map((member, index) => (
                     <li key={member.job_id}>
                       <button
                         type="button"
                         data-current={member.job_id === jobId || undefined}
                         onClick={() => onJobChange?.(member.job_id)}
+                        title={member.job_id}
                       >
-                        <span className="vk-task-detail-batch-source">{member.source || member.job_id}</span>
+                        {/* 「小任务N：链接」。原先只给 source,取不到就退回一串 UUID——而列表
+                            接口此前根本不返回 source,于是实际显示的全是 UUID,谁也认不出哪条是
+                            哪条。序号是为了让下面的重跑菜单能用同一个称呼指代它们。 */}
+                        <span className="vk-task-detail-batch-source">
+                          <b>小任务{index + 1}：</b>{member.source || member.job_id}
+                        </span>
                         <span className={`vk-task-detail-batch-status is-${member.state}`}>
                           {BATCH_STATE_LABELS[member.state]}
                         </span>
@@ -570,16 +614,90 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             {/* 整批重跑。放在最前:从批量行点进来的人,想要的多半是"这一批再来一次",
                 而不是只重跑落在眼前的这一条。条数写在按钮上,因为已完成的批量重跑会
                 再花一次额度——那是明知的取舍(整批失败时需要一键重来),但不能让人误点。 */}
-            {batchRerunnable > 1 && (
-              <button
-                type="button"
-                className="vk-task-batch-rerun-button"
-                disabled={actionPending !== null}
-                onClick={() => { void rerunWholeBatch() }}
+            {rerunable.length > 1 && (
+              <div
+                className="vk-task-batch-rerun"
+                onMouseEnter={() => setRerunMenuOpen(true)}
+                onMouseLeave={() => { if (!rerunMenuPinned) setRerunMenuOpen(false) }}
               >
-                <RefreshCw size={14} aria-hidden="true" />
-                <span>{actionPending === 'batch' ? '正在重跑…' : `重跑全部 ${batchRerunnable} 个`}</span>
-              </button>
+                {rerunMenuOpen && (
+                  <div className="vk-task-operation-menu vk-task-batch-rerun-menu" role="menu">
+                    {batchMembers.map((member, index) => {
+                      const disabled = member.state === 'running'
+                      const checked = selection.has(member.job_id)
+                      return (
+                        <button
+                          key={member.job_id}
+                          type="button"
+                          role="menuitemcheckbox"
+                          aria-checked={checked}
+                          disabled={disabled}
+                          onClick={() => {
+                            const next = new Set(selection)
+                            if (next.has(member.job_id)) next.delete(member.job_id)
+                            else next.add(member.job_id)
+                            setRerunPicked(next)
+                          }}
+                        >
+                          {checked ? <Check size={15} aria-hidden="true" /> : <span className="vk-task-batch-rerun-blank" />}
+                          <span className="vk-task-batch-rerun-item">
+                            <b>小任务{index + 1}</b>
+                            <em>{member.source || member.job_id}</em>
+                          </span>
+                          {/* 重跑已完成的会再花一次额度,选之前得看得见 */}
+                          <span className={`vk-task-detail-batch-status is-${member.state}`}>
+                            {member.state === 'done' ? '已完成 · 再计费' : BATCH_STATE_LABELS[member.state]}
+                          </span>
+                        </button>
+                      )
+                    })}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="vk-task-batch-rerun-all"
+                      onClick={() => setRerunPicked(
+                        selectedCount === rerunable.length
+                          ? new Set(failedIds)
+                          : new Set(rerunable.map((member) => member.job_id)),
+                      )}
+                    >
+                      <RefreshCw size={15} aria-hidden="true" />
+                      <span>{selectedCount === rerunable.length ? '只选失败的' : '全选'}</span>
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="vk-task-batch-rerun-button"
+                  disabled={actionPending !== null || selectedCount === 0}
+                  aria-haspopup="menu"
+                  aria-expanded={rerunMenuOpen}
+                  onFocus={() => setRerunMenuOpen(true)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setRerunMenuOpen(false)
+                    if (event.key === 'ArrowUp') { event.preventDefault(); setRerunMenuOpen(true) }
+                  }}
+                  onClick={() => { void rerunSelected(selection) }}
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  <span>{actionPending === 'batch' ? '正在重跑…' : selectedLabel}</span>
+                </button>
+                <button
+                  type="button"
+                  className="vk-task-batch-rerun-caret"
+                  aria-label={rerunMenuPinned ? '收起小任务选择' : '展开小任务选择'}
+                  aria-haspopup="menu"
+                  aria-expanded={rerunMenuOpen}
+                  disabled={actionPending !== null}
+                  onClick={() => {
+                    const next = !rerunMenuPinned
+                    setRerunMenuPinned(next)
+                    setRerunMenuOpen(next)
+                  }}
+                >
+                  <ChevronUp size={13} aria-hidden="true" />
+                </button>
+              </div>
             )}
             {active && (
               <button type="button" className="vk-task-stop-button" disabled={stopping || actionPending !== null} onClick={() => { void runAction('cancel') }}>

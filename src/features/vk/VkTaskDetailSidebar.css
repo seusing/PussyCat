@@ -330,3 +330,42 @@
 @media (prefers-reduced-motion: reduce) {
   .vk-task-progress-track > span { transition: none; }
 }
+
+/* 批量重跑:主按钮执行当前选择,悬停/聚焦展开上拉菜单挑具体哪几条。
+   菜单沿用任务列表那套 .vk-task-operation-menu 的观感,只覆盖定位与宽度——
+   同一个应用里两种菜单长得不一样,比少一个菜单更糟。 */
+.vk-task-batch-rerun { position: relative; }
+
+.vk-task-batch-rerun-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: max(100%, 320px);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.vk-task-batch-rerun-menu button { min-height: 38px; align-items: center; display: flex; }
+
+/* 没勾选时占住勾的位置,免得条目左右跳动 */
+.vk-task-batch-rerun-blank { display: inline-block; width: 15px; flex: 0 0 auto; }
+
+.vk-task-batch-rerun-item {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+.vk-task-batch-rerun-item b { font-weight: 600; }
+.vk-task-batch-rerun-item em {
+  overflow: hidden;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vk-task-batch-rerun-all { border-top: 1px solid #343a45; margin-top: 3px; padding-top: 6px; }
+.vk-task-batch-rerun-caret { margin-left: auto; color: var(--color-fg-dim); }
