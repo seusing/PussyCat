@@ -75,6 +75,62 @@ describe('VkRuntimeManager', () => {
     expect(stopped).toEqual(['sidecar'])
   })
 
+  it('安装日志与逐步耗时落盘 —— 成功和失败都要留下,进程重启后仍读得到', async () => {
+    // 装一次两分钟,想知道花在哪就得有这个。此前日志只活在内存里、跑完即失,
+    // 事后只能靠重测倒推,同一个问题得重测两遍。
+    const home = tempDir('vk-home-')
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      installImpl: async ({ log }) => {
+        log('reuse-env: 硬链接 41646 个文件 / 4605 个目录,用时 21.6s')
+        log('smoke-asr: 完成 35.0s')
+        const version = 'vk-fixture'
+        writeActiveRuntime(home, ownedRuntime(home, version, new Date().toISOString()))
+        return {
+          version,
+          pythonPath: join(home, 'runtime', 'versions', version, 'Scripts', 'python.exe'),
+          stepTimings: [
+            { step: 'reuse-env-clone', seconds: 21.6, outcome: '完成' },
+            { step: 'smoke-asr', seconds: 35, outcome: '完成' },
+          ],
+        }
+      },
+    })
+
+    await manager.install()
+    const saved = manager.lastInstallLog()
+
+    expect(saved.outcome).toBe('installed')
+    expect(saved.version).toBe('vk-fixture')
+    expect(saved.stepTimings.find((item) => item.step === 'smoke-asr').seconds).toBe(35)
+    expect(saved.log.some((line) => line.includes('41646'))).toBe(true)
+    // 换一个 manager(等价于进程重启)仍读得到——这正是它落盘的理由。
+    expect(new VkRuntimeManager({ home, bundleDir: bundleDir() }).lastInstallLog().version)
+      .toBe('vk-fixture')
+  })
+
+  it('安装失败也把日志留下,带上失败原因', async () => {
+    const home = tempDir('vk-home-')
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      installImpl: async ({ log }) => {
+        log('smoke-asr: 失败(exit 2) 35.0s')
+        const error = new Error('真实 ASR smoke 未产生转写')
+        error.reasonCode = 'smoke-asr'
+        throw error
+      },
+    })
+
+    await expect(manager.install()).rejects.toThrow()
+    const saved = manager.lastInstallLog()
+
+    expect(saved.outcome).toBe('failed')
+    expect(saved.reasonCode).toBe('smoke-asr')
+    expect(saved.log.some((line) => line.includes('smoke-asr'))).toBe(true)
+  })
+
   it('无捆绑件 → not-available(bundle-missing)', () => {
     const manager = new VkRuntimeManager({ home: tempDir('vk-home-'), bundleDir: undefined })
     expect(manager.status()).toMatchObject({ state: 'not-available', reasonCode: 'bundle-missing' })

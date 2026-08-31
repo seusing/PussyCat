@@ -324,7 +324,16 @@ export async function installVkRuntime({
   // stale partial target cannot remove the old active runtime.
   if (existsSync(versionDir)) rmSync(versionDir, { recursive: true, force: true })
 
+  // 每步耗时。装一次两分钟,想知道两分钟花在哪就得有这个;此前日志只在内存里、
+  // 跑完即失,事后只能靠重测倒推,同一个问题得重测两遍。
+  const stepTimings = []
   const runStep = (step, command, argv, stepEnv = {}) => new Promise((resolveStep, rejectStep) => {
+    const stepStartedAt = Date.now()
+    const finish = (outcome) => {
+      const seconds = (Date.now() - stepStartedAt) / 1000
+      stepTimings.push({ step, seconds: Number(seconds.toFixed(1)), outcome })
+      log(`${step}: ${outcome} ${seconds.toFixed(1)}s`)
+    }
     log(`${step}: ${command.split(/[\\/]/).pop()} ${argv.join(' ')}`)
     const child = spawnImpl(command, argv, {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
@@ -344,8 +353,12 @@ export async function installVkRuntime({
       output += text
       for (const line of text.split(/\r?\n/)) if (line.trim()) log(scrubSidecarText(line.trim()))
     })
-    child.once('error', (error) => rejectStep(new VkRuntimeInstallError('install-failed', `${step} 无法启动`, String(error?.message ?? error))))
+    child.once('error', (error) => {
+      finish('无法启动')
+      rejectStep(new VkRuntimeInstallError('install-failed', `${step} 无法启动`, String(error?.message ?? error)))
+    })
     child.once('close', (code) => {
+      finish(code === 0 ? '完成' : `失败(exit ${code})`)
       if (code === 0) resolveStep(output)
       else {
         let reasonCode = step.startsWith('smoke')
@@ -391,7 +404,11 @@ export async function installVkRuntime({
     try {
       const { dirs, files } = hardlinkCloneDir(donor.dir, versionDir)
       clonedFromDonor = true
-      log(`reuse-env: 硬链接 ${files} 个文件 / ${dirs} 个目录,用时 ${((Date.now() - startedAt) / 1000).toFixed(1)}s`)
+      const cloneSeconds = (Date.now() - startedAt) / 1000
+      stepTimings.push({
+        step: 'reuse-env-clone', seconds: Number(cloneSeconds.toFixed(1)), outcome: '完成',
+      })
+      log(`reuse-env: 硬链接 ${files} 个文件 / ${dirs} 个目录,用时 ${cloneSeconds.toFixed(1)}s`)
     } catch (error) {
       // 克隆到一半失败会留下半个目录,必须清掉再走全量——否则 uv 会往残骸上装。
       log(`reuse-env: 克隆失败,回落全量安装(${String(error?.message ?? error).slice(0, 160)})`)
@@ -658,5 +675,11 @@ export async function installVkRuntime({
   })
   writeActiveRuntime(resolvedHome, receipt)
   log(`active -> ${versionLabel}`)
-  return { version: versionLabel, pythonPath: pythonExe }
+  // 耗时排行直接进日志:下次问"更新为什么要两分钟",看这一行就够,不必再重测一遍。
+  const totalSeconds = stepTimings.reduce((sum, item) => sum + item.seconds, 0)
+  const ranked = [...stepTimings].sort((a, b) => b.seconds - a.seconds)
+  log(`timing: 合计 ${totalSeconds.toFixed(1)}s —— ${
+    ranked.map((item) => `${item.step} ${item.seconds}s`).join(' / ')
+  }`)
+  return { version: versionLabel, pythonPath: pythonExe, stepTimings }
 }

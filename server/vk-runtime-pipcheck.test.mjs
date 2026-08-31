@@ -66,7 +66,7 @@ class FakeChild extends EventEmitter {
 }
 
 /** pipCheckStderr 非空即让 pip-check 以 exit 1 失败并吐出该文本。 */
-function runInstall({ pipCheckStderr, importOnnxruntimeOk = true, calls = [] }) {
+function runInstall({ pipCheckStderr, importOnnxruntimeOk = true, calls = [], log = () => {} }) {
   const bundle = makeBundle()
   const home = tempDir('vk-home-')
   const spawnImpl = (_program, argv) => {
@@ -119,7 +119,7 @@ function runInstall({ pipCheckStderr, importOnnxruntimeOk = true, calls = [] }) 
   return {
     home,
     promise: installVkRuntime({
-      home, bundleDir: bundle, spawnImpl,
+      home, bundleDir: bundle, spawnImpl, log,
       fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({
         service: 'video-knowledge', shell_mode: true, api_version: '1.4.0',
         processing_request_schema_version: '1.1.0', capabilities: [],
@@ -131,6 +131,39 @@ function runInstall({ pipCheckStderr, importOnnxruntimeOk = true, calls = [] }) 
 const ONNXRUNTIME_ONLY =
   'Found 1 incompatibility\n'
   + 'The package `faster-whisper` requires `onnxruntime>=1.14,<2`, but it\'s not installed\n'
+
+describe('安装耗时', () => {
+  it('每步计时随结果返回,并在日志里给出耗时排行', async () => {
+    // 装一次两分钟。没有这个,"两分钟花在哪"只能靠事后逐步重测倒推——同一个问题
+    // 得重测两遍,而重测用的还是热缓存,量出来的数跟真实那次对不上。
+    const lines = []
+    const { promise } = runInstall({ log: (line) => lines.push(String(line)) })
+    const result = await promise
+
+    const steps = result.stepTimings.map((item) => item.step)
+    expect(steps).toContain('install-wheel')
+    expect(steps).toContain('pip-check')
+    expect(steps).toContain('smoke-import')
+    for (const item of result.stepTimings) {
+      expect(typeof item.seconds).toBe('number')
+      expect(item.outcome).toBe('完成')
+    }
+    const ranking = lines.find((line) => line.startsWith('timing: 合计'))
+    expect(ranking).toBeTruthy()
+    expect(ranking).toContain('pip-check')
+  })
+
+  it('失败的那一步也记进耗时,别让最贵的一步在失败时反而看不见', async () => {
+    const lines = []
+    const { promise } = runInstall({
+      pipCheckStderr: ONNXRUNTIME_ONLY + 'The package `x` requires `z`, but it is not installed\n',
+      log: (line) => lines.push(String(line)),
+    })
+
+    await expect(promise).rejects.toThrow()
+    expect(lines.some((line) => line.includes('pip-check: 失败(exit 1)'))).toBe(true)
+  })
+})
 
 describe('pip-check 对 onnxruntime-directml 的放行', () => {
   it('只差 onnxruntime 且 import 通过时放行,安装照常激活', async () => {

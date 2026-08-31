@@ -81,6 +81,39 @@ export class VkRuntimeManager {
     } catch { /* 记不下来也不该让安装流程更糟 */ }
   }
 
+  #logPath() {
+    return this.home ? join(resolve(this.home), 'runtime', 'last-install-log.json') : null
+  }
+
+  /** 整份安装日志落盘。内存里那份只留 500 行、进程一走就没,想回答"这两分钟花在哪"
+   *  只能事后重测倒推 —— 同一个问题得重测两遍。成功与失败都写,写不下去不影响安装。 */
+  #persistLog(outcome, extra = {}) {
+    const path = this.#logPath()
+    if (!path) return
+    try {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, JSON.stringify({
+        schema: 'vk-install-log@1',
+        outcome,
+        at: this.now(),
+        extras: this.#installingExtras ?? [],
+        ...extra,
+        log: this.#log.slice(),
+      }, null, 2))
+    } catch { /* 记不下来也不该让安装流程更糟 */ }
+  }
+
+  /** 上一次安装的完整日志与逐步耗时;进程重启后仍读得到。 */
+  lastInstallLog() {
+    const path = this.#logPath()
+    if (!path || !existsSync(path)) return null
+    try {
+      return JSON.parse(readFileSync(path, 'utf8'))
+    } catch {
+      return null
+    }
+  }
+
   #clearFailure() {
     const path = this.#failurePath()
     if (!path) return
@@ -468,6 +501,10 @@ export class VkRuntimeManager {
       this.#state = 'installed'
       this.#reasonCode = null
       this.#summary = null
+      this.#persistLog('installed', {
+        version: result?.version ?? null,
+        stepTimings: result?.stepTimings ?? [],
+      })
       try {
         await afterActivate()
       } catch (error) {
@@ -486,6 +523,7 @@ export class VkRuntimeManager {
       // 点了、等了几分钟、横幅还在,而且没有任何说明——真机上连点两次都这样。
       // 落盘之后重启也能把上次为什么没装上讲清楚。
       this.#persistFailure()
+      this.#persistLog('failed', { reasonCode: this.#reasonCode, summary: this.#summary })
       throw error
     }).finally(() => {
       this.#installing = null
