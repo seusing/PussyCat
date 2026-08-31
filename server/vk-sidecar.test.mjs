@@ -332,6 +332,66 @@ describe('VkSidecarManager', () => {
     ])
   })
 
+  it('拆层 runtime 启动时把应用层挂进 PYTHONPATH —— 少了它就是拿空底座启动', async () => {
+    // 拆层布局的解释器是共享底座,里面**没有**我们的包(安装期专门验过)。
+    // PYTHONPATH 漏传的表现不是报错难看,是 sidecar 起不来。
+    const children = []
+    const calls = []
+    const manager = new VkSidecarManager({
+      runtimeResolver: () => ({
+        pythonPath: 'C:\fixture\runtime\bases\abc\Scripts\python.exe',
+        source: 'app-owned',
+        runtimeLayout: 'split',
+        appPath: 'C:\fixture\runtime\versions\v1\app',
+        modelPacks: [],
+      }),
+      rootDir: 'C:\fixture\vk-data',
+      configDir: 'C:\fixture\vk-config',
+      spawnImpl: (...args) => {
+        calls.push(args)
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => META_OK }),
+      randomToken: () => 'fixture-token-0123456789abcdef0123456789',
+    })
+
+    const started = manager.ensureStarted()
+    emitReady(children[0])
+    await started
+
+    expect(calls[0][2].env.PYTHONPATH).toBe('C:\fixture\runtime\versions\v1\app')
+  })
+
+  it('自包含 runtime 不挂 PYTHONPATH —— 老布局的包就在解释器自己的 site-packages 里', async () => {
+    const children = []
+    const calls = []
+    const manager = new VkSidecarManager({
+      runtimeResolver: () => ({
+        pythonPath: 'C:\fixture\runtime-a\python.exe',
+        source: 'app-owned',
+        modelPacks: [],
+      }),
+      rootDir: 'C:\fixture\vk-data',
+      configDir: 'C:\fixture\vk-config',
+      spawnImpl: (...args) => {
+        calls.push(args)
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => META_OK }),
+      randomToken: () => 'fixture-token-0123456789abcdef0123456789',
+    })
+
+    const started = manager.ensureStarted()
+    emitReady(children[0])
+    await started
+
+    expect(calls[0][2].env.PYTHONPATH).toBeUndefined()
+  })
+
   it('keeps the explicit developer Python override ahead of an active receipt', async () => {
     const { child, calls, manager } = setup({
       pythonPath: 'C:\\fixture\\developer\\python.exe',

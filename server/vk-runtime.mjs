@@ -7,6 +7,7 @@ import { installVkRuntime } from './vk-runtime-install.mjs'
 import {
   listOwnedRuntimeReceipts,
   ownedRuntimeSizeBytesAsync,
+  pruneUnreferencedBases,
   removeOwnedRuntimeReceipt,
   resolveActiveRuntime,
   writeActiveRuntime,
@@ -356,10 +357,17 @@ export class VkRuntimeManager {
         throw new VkRuntimeError(409, 'runtime-cleanup-failed', String(error?.message ?? error))
       }
     }
+    // 拆层之后版本目录只有几 MB,依赖在共享底座里。只删版本目录的话「清理」会释放
+    // 一个几乎为零的数字,底座继续堆着 —— 那不叫清理。删完顺手回收没人引用的底座。
+    let reclaimedBases = 0
+    try {
+      reclaimedBases = pruneUnreferencedBases({ home: this.home }).length
+    } catch { /* 回收失败只是留下垃圾,不该让一次成功的清理变成失败 */ }
     const remaining = await this.versions()
     return {
       ...remaining,
       removed,
+      reclaimedBases,
       reclaimedBytes: removed.reduce((total, runtime) => total + runtime.sizeBytes, 0),
     }
   }

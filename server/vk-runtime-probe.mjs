@@ -19,12 +19,12 @@ function directories(path) {
   try { return readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory()) } catch { return [] }
 }
 
-function addCandidate(map, pythonPath, source) {
+function addCandidate(map, pythonPath, source, appPath = null) {
   if (!pythonPath || !isAbsolute(pythonPath) || !existsSync(pythonPath)) return
   try { if (!statSync(pythonPath).isFile()) return } catch { return }
   const canonical = (() => { try { return realpathSync(pythonPath) } catch { return resolve(pythonPath) } })()
   const key = process.platform === 'win32' ? canonical.toLowerCase() : canonical
-  if (!map.has(key)) map.set(key, { pythonPath: canonical, source })
+  if (!map.has(key)) map.set(key, { pythonPath: canonical, source, appPath })
 }
 
 export function discoverVkRuntimePaths({
@@ -35,9 +35,11 @@ export function discoverVkRuntimePaths({
 } = {}) {
   const found = new Map()
   const active = resolveActiveRuntime({ home, bundleDir })
-  if (active?.source === 'app-owned') addCandidate(found, active.pythonPath, 'app-owned')
+  if (active?.source === 'app-owned') {
+    addCandidate(found, active.pythonPath, 'app-owned', active.appPath ?? null)
+  }
   for (const receipt of listOwnedRuntimeReceipts({ home, bundleDir })) {
-    addCandidate(found, receipt.pythonPath, 'app-owned')
+    addCandidate(found, receipt.pythonPath, 'app-owned', receipt.appPath ?? null)
   }
   if (!allowExternalRuntime) return [...found.values()].slice(0, 64)
   addCandidate(found, executableAt(env.VIRTUAL_ENV), 'virtual-env')
@@ -101,6 +103,7 @@ async function withTimeout(promise, timeoutMs) {
 export async function probeVkRuntime({
   pythonPath,
   source,
+  appPath = null,
   spawnImpl = spawn,
   fetchImpl = fetch,
   baseEnv = process.env,
@@ -123,7 +126,11 @@ export async function probeVkRuntime({
       '--config-dir', join(probeRoot, 'config'), '--port', '0', '--no-browser', '--max-workers', '1',
     ], {
       shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: probeEnv(token, probeRoot, baseEnv),
+      // 拆层布局的解释器里没有我们的包,应用层得跟着一起传,否则探针只会得出
+      // 「这个 runtime 不兼容」这个错误结论。
+      env: typeof appPath === 'string'
+        ? { ...probeEnv(token, probeRoot, baseEnv), PYTHONPATH: appPath }
+        : probeEnv(token, probeRoot, baseEnv),
     })
     // 外部环境的诊断只用于分类，不回显；持续排空避免 pipe 填满后子进程假死。
     child.stderr?.on('data', () => {})

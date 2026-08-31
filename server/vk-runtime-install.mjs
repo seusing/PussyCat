@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { scrubSidecarText } from './vk-sidecar.mjs'
 import {
   ownedRuntimeSizeBytes,
+  pruneUnreferencedBases,
   writeActiveRuntime,
   writeRuntimeReceipt,
 } from './vk-runtime-resolver.mjs'
@@ -103,6 +104,30 @@ export function hardlinkCloneDir(sourceDir, targetDir, fsImpl = {
   }
   walk(sourceDir, targetDir)
   return { dirs, files }
+}
+
+export const BASE_RECEIPT_FILE = 'base-receipt.json'
+export const BASE_RECEIPT_SCHEMA = 'vk-runtime-base@1'
+
+/** 底座目录:按环境指纹寻址,依赖一个字节没变就是同一个底座。 */
+export function baseDirForFingerprint(home, environmentFingerprint) {
+  return join(resolve(home), 'runtime', 'bases', String(environmentFingerprint).slice(0, 16))
+}
+
+/** 底座可用的判据 —— 三条都要:解释器在、receipt 记着同一个环境指纹、里面**没有**
+ *  我们自己的包。第三条不是洁癖:底座留着旧版 video_knowledge 的话,一旦 PYTHONPATH
+ *  没传到(漏一个 spawn 点就会),跑的就是旧代码,而且一声不吭。 */
+export function baseIsReady(baseDir, environmentFingerprint) {
+  const python = join(baseDir, 'Scripts', 'python.exe')
+  if (!existsSync(python)) return false
+  try {
+    const receipt = JSON.parse(readFileSync(join(baseDir, BASE_RECEIPT_FILE), 'utf8'))
+    return receipt?.schema === BASE_RECEIPT_SCHEMA
+      && receipt?.environmentFingerprint === environmentFingerprint
+      && receipt?.appFree === true
+  } catch {
+    return false
+  }
 }
 
 /** 找一个可以拿来克隆依赖的兄弟 runtime:环境指纹一致、且 python.exe 真在。
@@ -391,45 +416,88 @@ export async function installVkRuntime({
     })
   })
 
-  // —— venv + 安装(显式 uv;uv 输出=真实下载/初始化阶段,逐行透传 log)——
+  // —— 底座 + 应用层(显式 uv;uv 输出=真实下载/初始化阶段,逐行透传 log)——
   //
-  // 先找环境指纹相同的兄弟 runtime:相同就说明那 2.3 GB 依赖一个字节没变,克隆过来
-  // 即可,不必重装。找不到或克隆失败就照旧全量装——这条快路只做减法,不改变任何
-  // 既有保证(仍是新目录、仍跑全套门禁、仍在末尾才切 active.json)。
-  const donor = reusableRuntimeDonor(resolvedHome, environmentFingerprint, versionDir)
-  let clonedFromDonor = false
-  if (donor) {
-    const startedAt = Date.now()
-    log(`reuse-env: 复用 ${donor.label} 的依赖(环境指纹一致,跳过重装)`)
-    try {
-      const { dirs, files } = hardlinkCloneDir(donor.dir, versionDir)
-      clonedFromDonor = true
-      const cloneSeconds = (Date.now() - startedAt) / 1000
-      stepTimings.push({
-        step: 'reuse-env-clone', seconds: Number(cloneSeconds.toFixed(1)), outcome: '完成',
-      })
-      log(`reuse-env: 硬链接 ${files} 个文件 / ${dirs} 个目录,用时 ${cloneSeconds.toFixed(1)}s`)
-    } catch (error) {
-      // 克隆到一半失败会留下半个目录,必须清掉再走全量——否则 uv 会往残骸上装。
-      log(`reuse-env: 克隆失败,回落全量安装(${String(error?.message ?? error).slice(0, 160)})`)
-      rmSync(versionDir, { recursive: true, force: true })
+  // 2.4 GB 依赖与 493 KB 应用码变化频率差几个数量级,不该绑成同一个不可变单元。
+  // 依赖进按环境指纹寻址的**底座**、跨版本共享;应用码进版本目录的 app/,靠 PYTHONPATH
+  // 前置。依赖没变时这一段只剩装那 493 KB(实测 175 个文件、不到 1 秒),原先要克隆
+  // 41,646 个文件、22~60 秒。
+  //
+  // 既有保证一条没动:仍是新的版本目录、仍跑全套门禁、仍在末尾才切 active.json。
+  // 老的自包含 runtime 继续有效——解析器两种形态都认。
+  const baseDir = baseDirForFingerprint(resolvedHome, environmentFingerprint)
+  const pythonExe = join(baseDir, 'Scripts', 'python.exe')
+  const appDir = join(versionDir, 'app')
+  if (baseIsReady(baseDir, environmentFingerprint)) {
+    log(`reuse-base: 复用底座 ${baseDir.split(/[\\/]/).pop()}(环境指纹一致,依赖零动作)`)
+    stepTimings.push({ step: 'reuse-base', seconds: 0, outcome: '完成' })
+  } else {
+    // 底座要重建。优先从环境指纹一致的老 runtime 硬链接克隆(22 秒),没有再全量装
+    // (拷 2.4 GB,几分钟)。克隆来的目录里带着我们自己的包,必须摘掉——底座只放依赖。
+    rmSync(baseDir, { recursive: true, force: true })
+    const donor = reusableRuntimeDonor(resolvedHome, environmentFingerprint, versionDir)
+    let clonedFromDonor = false
+    if (donor) {
+      const startedAt = Date.now()
+      log(`base-clone: 从 ${donor.label} 硬链接依赖(环境指纹一致,跳过重装)`)
+      try {
+        // hardlinkCloneDir 逐层建目录、**不能用 recursive**(长路径前缀会让它向上
+        // 递归去建前缀本身)。所以父目录得先备好:第一次拆层安装时 runtime/bases
+        // 还不存在,少了这一行克隆会以 ENOENT 失败、静默回落全量装 —— 真机上就是
+        // 这么退化的,过渡成本从 20 秒变成 230 秒。
+        mkdirSync(dirname(baseDir), { recursive: true })
+        const { dirs, files } = hardlinkCloneDir(donor.dir, baseDir)
+        clonedFromDonor = true
+        const cloneSeconds = (Date.now() - startedAt) / 1000
+        stepTimings.push({
+          step: 'base-clone', seconds: Number(cloneSeconds.toFixed(1)), outcome: '完成',
+        })
+        log(`base-clone: 硬链接 ${files} 个文件 / ${dirs} 个目录,用时 ${cloneSeconds.toFixed(1)}s`)
+        await runStep('base-strip-app', uv, [
+          'pip', 'uninstall', '--python', pythonExe, 'video-knowledge',
+        ])
+      } catch (error) {
+        // 回落是安全的(照样装得出一个能用的 runtime),但**代价是 20 秒变几分钟**。
+        // 只写一行 log 太容易被忽略——记进耗时表,它会出现在末尾那行耗时排行里。
+        stepTimings.push({ step: 'base-clone', seconds: 0, outcome: '失败,回落全量安装' })
+        log(`base-clone: 克隆失败,回落全量安装(${String(error?.message ?? error).slice(0, 160)})`)
+        rmSync(baseDir, { recursive: true, force: true })
+        clonedFromDonor = false
+      }
     }
-  }
-  if (!clonedFromDonor) {
-    await runStep('venv', uv, ['venv', '--python', python, versionDir])
+    if (!clonedFromDonor) {
+      await runStep('base-venv', uv, ['venv', '--python', python, baseDir])
+      await runStep('base-install-locked', uv, [
+        'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
+        '--no-deps', '--require-hashes', '-r', requirementsPath,
+      ])
+    }
+    // 「底座里没有我们的包」是承重条件,不能靠"我们没装过"来推定 —— 克隆那条路里
+    // 它本来就在。当场验一次,验不过就不写 receipt,这个底座下次也不会被复用。
+    await runStep('base-verify-clean', pythonExe, [
+      '-c',
+      'import importlib.util, sys;'
+      + ' sys.exit(1 if importlib.util.find_spec("video_knowledge") else 0)',
+    ])
+    // 目录归 uv venv 建,但我们要往里写文件,不该把"外部工具一定建好了"当前提。
+    mkdirSync(baseDir, { recursive: true })
+    writeFileSync(join(baseDir, BASE_RECEIPT_FILE), `${JSON.stringify({
+      schema: BASE_RECEIPT_SCHEMA,
+      environmentFingerprint,
+      requirementsSha256: requirements.sha256,
+      appFree: true,
+      createdAt: new Date().toISOString(),
+    }, null, 2)}\n`, 'utf8')
   }
   mkdirSync(versionDir, { recursive: true })
-  const pythonExe = join(versionDir, 'Scripts', 'python.exe')
-  if (!clonedFromDonor) {
-    await runStep('install-locked', uv, [
-      'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
-      '--no-deps', '--require-hashes', '-r', requirementsPath,
-    ])
-  }
-  await runStep('install-wheel', uv, [
-    'pip', 'install', '--link-mode', 'copy', '--python', pythonExe,
-    '--no-deps', wheel,
+  // 应用层:493 KB 的包单独装到版本目录里,靠 PYTHONPATH 前置于底座。这一步是
+  // 每次更新真正变的**全部**内容,实测 175 个文件 / 不到 1 秒。
+  await runStep('install-app', uv, [
+    'pip', 'install', '--target', appDir, '--python', pythonExe, '--no-deps', wheel,
   ])
+  // 从这里起所有 spawn 都要带上应用层,否则跑的是一个没有我们包的底座。
+  // 挂到 baseEnv 上而不是逐处传:漏一处的后果是"import 不到"或更糟的"跑了旧代码"。
+  baseEnv.PYTHONPATH = appDir
   // `uv pip check` 只比对**发行版名字**。Windows 上我们装的是 onnxruntime-directml
   // (走 GPU),它提供的正是 `onnxruntime` 这个导入包,但发行版叫另一个名字,于是
   // faster-whisper 声明的 `onnxruntime>=1.14,<2` 被判成「未安装」——一个功能完全正常
@@ -437,6 +505,12 @@ export async function installVkRuntime({
   //
   // 只放行这一种替换,且不靠名字放行:必须**真的 import 得到** onnxruntime 才算数。
   // 「导入得到」比「名字对得上」是更强的证据,其余任何不兼容照旧中止。
+  // 拆层之后 `uv pip check` 看的是**底座的 site-packages**,里面没有我们的包 ——
+  // 它检的是依赖之间彼此相容,检不到我们 wheel 自己声明的依赖。
+  //
+  // 这不是漏检:requirements 是从我们的 lockfile `uv export` 出来的,wheel 一旦增删
+  // 依赖,requirements 就变 → requirementsSha256 变 → 环境指纹变 → 底座重建。
+  // 「我们的依赖都装齐了」这件事是被指纹结构性捕获的,不靠这一步。
   let pipCheckOutput = ''
   // 豁免另立字段,**不改 pipCheck 的取值**。pipCheck 是结论(环境合不合格),校验器
   // (vk-runtime-resolver 的 validateReceipt)按 === 'passed' 判 receipt 有效;把结论
@@ -598,7 +672,12 @@ export async function installVkRuntime({
     const backup = `${realDb}.backup-${versionLabel.replace(/[^\w.-]/g, '_')}-${Date.now()}`
     copyFileSync(realDb, backup)
     log(`已备份真实库 -> ${backup.split(/[\\/]/).pop()}`)
-    const result = spawnSync(pythonExe, ['-c', 'import sys, json; from pathlib import Path; from video_knowledge.adapters.storage.db import connect, migrate, default_migrations_dir; conn = connect(Path(sys.argv[1])); print(json.dumps(migrate(conn, default_migrations_dir())))', realDb], { shell: false, windowsHide: true, encoding: 'utf8' })
+    const result = spawnSync(pythonExe, ['-c', 'import sys, json; from pathlib import Path; from video_knowledge.adapters.storage.db import connect, migrate, default_migrations_dir; conn = connect(Path(sys.argv[1])); print(json.dumps(migrate(conn, default_migrations_dir())))', realDb], {
+      shell: false, windowsHide: true, encoding: 'utf8',
+      // 这一处原先没传 env,继承的是 process.env —— 拆层之后那里面没有 PYTHONPATH,
+      // 于是迁移脚本 import 不到我们的包。
+      env: { ...baseEnv, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+    })
     if (result.status !== 0) {
       copyFileSync(backup, realDb)
       throw new VkRuntimeInstallError('db-migrate', '真实库迁移失败,已从备份还原', scrubSidecarText(String(result.stderr ?? '').slice(-500)))
@@ -633,9 +712,14 @@ export async function installVkRuntime({
     modelPacks: installedModelPacks,
     asrSmoke,
   }, null, 2)}\n`, 'utf8')
+  // 拆层后这里报的是**版本目录**的体积(几 MB),也就是删掉它真正释放的字节;
+  // 共享底座不记在任何一个版本头上。
   const runtimeSizeBytes = ownedRuntimeSizeBytes({
     home: resolvedHome,
-    runtime: { source: 'app-owned', pythonPath: pythonExe },
+    runtime: {
+      source: 'app-owned', pythonPath: pythonExe,
+      runtimeLayout: 'split', version: versionLabel,
+    },
   })
 
   // —— 原子切换 ——
@@ -659,6 +743,9 @@ export async function installVkRuntime({
       pythonAbi: manifest.runtime.pythonAbi,
       platform: manifest.runtime.platform,
     },
+    runtimeLayout: 'split',
+    basePath: baseDir,
+    appPath: appDir,
     packageInventory: 'runtime-inventory.json',
     packageInventorySha256,
     runtimeSizeBytes,
@@ -675,6 +762,14 @@ export async function installVkRuntime({
   })
   writeActiveRuntime(resolvedHome, receipt)
   log(`active -> ${versionLabel}`)
+  // 放在激活**之后**:此刻 active.json 已经指向新版本,再回收才不会误删正在用的底座。
+  try {
+    const pruned = pruneUnreferencedBases({ home: resolvedHome })
+    if (pruned.length) log(`prune-bases: 回收 ${pruned.length} 个无人引用的底座`)
+  } catch (error) {
+    // 回收失败只是留下垃圾,不该让一次成功的安装变成失败。
+    log(`prune-bases: 跳过(${String(error?.message ?? error).slice(0, 120)})`)
+  }
   // 耗时排行直接进日志:下次问"更新为什么要两分钟",看这一行就够,不必再重测一遍。
   const totalSeconds = stepTimings.reduce((sum, item) => sum + item.seconds, 0)
   const ranked = [...stepTimings].sort((a, b) => b.seconds - a.seconds)

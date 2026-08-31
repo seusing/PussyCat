@@ -74,6 +74,15 @@ function runInstall({ pipCheckStderr, importOnnxruntimeOk = true, calls = [], lo
     const child = new FakeChild()
     queueMicrotask(() => {
       const joined = argv.join(' ')
+      if (joined.includes('--target')) {
+        // 应用层:uv pip install --target <appDir> —— 造出包体,校验器要看得到
+        // <appDir>/video_knowledge/__init__.py 才认这份 receipt。
+        const target = argv[argv.indexOf('--target') + 1]
+        mkdirSync(join(target, 'video_knowledge'), { recursive: true })
+        writeFileSync(join(target, 'video_knowledge', '__init__.py'), '')
+        child.emit('close', 0)
+        return
+      }
       if (argv[0] === 'venv') {
         // 校验器会检查 python.exe 真的在盘上,假装置也得把它造出来,
         // 否则 receipt 会因为一个跟本用例无关的原因被判无效。
@@ -141,7 +150,7 @@ describe('安装耗时', () => {
     const result = await promise
 
     const steps = result.stepTimings.map((item) => item.step)
-    expect(steps).toContain('install-wheel')
+    expect(steps).toContain('install-app')
     expect(steps).toContain('pip-check')
     expect(steps).toContain('smoke-import')
     for (const item of result.stepTimings) {

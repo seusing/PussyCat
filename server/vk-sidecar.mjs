@@ -183,9 +183,16 @@ export class VkSidecarManager {
     const asrModels = Array.isArray(resolvedRuntime.modelPacks)
       ? resolvedRuntime.modelPacks.find((pack) => pack?.id === 'local-asr')
       : null
-    this.resolvedRuntimeEnv = typeof asrModels?.cacheRoot === 'string'
-      ? { MODELSCOPE_CACHE: asrModels.cacheRoot }
-      : {}
+    this.resolvedRuntimeEnv = {
+      ...(typeof asrModels?.cacheRoot === 'string'
+        ? { MODELSCOPE_CACHE: asrModels.cacheRoot }
+        : {}),
+      // 拆层布局:解释器是共享底座,我们的包在版本目录的 app/ 里,靠 PYTHONPATH 前置。
+      // 不挂就是拿着一个没有 video_knowledge 的 venv 去启动 —— 直接 import 失败。
+      ...(typeof resolvedRuntime.appPath === 'string'
+        ? { PYTHONPATH: resolvedRuntime.appPath }
+        : {}),
+    }
     if (!this.#starting) {
       this.#starting = this.#start().finally(() => {
         this.#starting = null
