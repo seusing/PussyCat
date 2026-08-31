@@ -156,8 +156,8 @@ describe('VkTaskDetailSidebar', () => {
     render(<VkTaskDetailSidebar jobId="r-1" baseUrl={BASE} onClose={() => {}} />)
 
     // 默认只选失败的那条:三条里只有 r-2 失败,所以按钮说的是「重跑小任务2」
-    const button = await screen.findByRole('button', { name: /重跑小任务2/ })
-    // 悬停展开上拉菜单,勾上已完成的那条 —— 用户要能自己挑
+    expect(await screen.findByRole('button', { name: /重跑小任务2/ })).toBeInTheDocument()
+    // 展开上拉菜单,勾上已完成的那条 —— 用户要能自己挑
     await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
     const doneItem = await screen.findByRole('menuitemcheckbox', { name: /小任务1/ })
     expect(doneItem).toHaveAttribute('aria-checked', 'false')
