@@ -57,6 +57,78 @@ describe('VkTaskDetailSidebar', () => {
     localStorage.clear()
   })
 
+  it('小任务显示的是视频链接 —— 列表接口把 source 放在行的顶层', async () => {
+    // 这条是补一次真机翻车:实现时按 `request.source` 读,而列表接口给的是**顶层**
+    // `source`。类型上 VkJobRow 当时也没有这个字段,于是永远取不到、六条小任务
+    // 显示的全是 UUID。测试当时用的夹具恰好写成了 request 形状,把 bug 一起放过了。
+    // 现在夹具照列表接口的真实形状写。
+    const listRows = [
+      {
+        job_id: 'm-1', kind: 'run', status: 'interrupted', submitted_at: '2026-08-31T20:19:02+08:00',
+        finished_at: null, parent_job_id: null, cache_bypass: false, batch_id: 'b-9',
+        source: 'http://xhslink.com/o/7KxpRMJTWVG',
+      },
+      {
+        job_id: 'm-2', kind: 'run', status: 'interrupted', submitted_at: '2026-08-31T20:19:03+08:00',
+        finished_at: null, parent_job_id: null, cache_bypass: false, batch_id: 'b-9',
+        source: 'http://xhslink.com/o/ctLgY5XELG',
+      },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/m-1')) {
+        return new Response(JSON.stringify({
+          job_id: 'm-1', kind: 'run', status: 'interrupted',
+          submitted_at: '2026-08-31T20:19:02+08:00', finished_at: null,
+          parent_job_id: null, cache_bypass: false, batch_id: 'b-9',
+          request: { source: 'http://xhslink.com/o/7KxpRMJTWVG', preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(listRows), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="m-1" baseUrl={BASE} onClose={() => {}} />)
+
+    const sources = await screen.findByTestId('vk-task-detail-sources')
+    expect(sources.textContent).toContain('小任务1：http://xhslink.com/o/7KxpRMJTWVG')
+    expect(sources.textContent).toContain('小任务2：http://xhslink.com/o/ctLgY5XELG')
+    expect(sources.textContent).not.toContain('m-1')
+  })
+
+  it('打开批内成员时,标题按批次回查编号 —— 直查 job_id 必然落空', async () => {
+    // 列表把一批折成一行,只记得住那一行的 job_id;详情页打开的却往往是批里的另一个
+    // 成员。只按 job_id 查索引就查不到,标题退回一串 UUID —— 真机上就是这样。
+    localStorage.setItem(
+      'opencli-app:vk-task-number-index:v1',
+      JSON.stringify({ 'batch:b-9': 81 }),
+    )
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/member-4')) {
+        return new Response(JSON.stringify({
+          job_id: 'member-4', kind: 'run', status: 'interrupted',
+          submitted_at: '2026-08-31T20:22:54+08:00', finished_at: null,
+          parent_job_id: 'm-1', cache_bypass: false, batch_id: 'b-9',
+          request: { source: 'http://xhslink.com/o/3JhSoa6TiKq', preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="member-4" baseUrl={BASE} onClose={() => {}} />)
+
+    expect(await screen.findByTestId('vk-task-detail-number')).toHaveTextContent('任务 81')
+    localStorage.clear()
+  })
+
   it('批量提交的详情页列出全部视频与各自状态,并可点进任一条', async () => {
     const user = userEvent.setup()
     const members = [

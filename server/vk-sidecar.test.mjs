@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkSidecarError, VkSidecarManager, scrubSidecarText } from './vk-sidecar.mjs'
 
@@ -221,6 +224,50 @@ describe('VkSidecarManager', () => {
     expect(serialized).not.toContain('fixture-token-0123456789abcdef0123456789')
     expect(serialized).not.toMatch(/[A-Za-z]:(\\\\|\\|\/)/)
     expect(serialized).toContain('runner.py')
+  })
+
+  it('异常退出的现场落盘 —— 内存里那份撑不到有人来看', async () => {
+    // host 会立刻把 sidecar 拉起来,Python 那侧的 reconcile 随即把在跑的任务统一标成
+    // 「已中断」。用户看到的是一批同一秒结束、没有任何原因的任务;诊断只在内存里,
+    // 那时早没了。真机上为了回答「为什么中断」,只能去翻进程启动时间和 Windows
+    // 事件日志倒推 —— 一小时之后仍然指不出根因。
+    const home = mkdtempSync(join(tmpdir(), 'vk-sidecar-exit-'))
+    try {
+      const { child, manager } = setup({ homeDir: home })
+      const startPromise = manager.ensureStarted()
+      emitReady(child)
+      await startPromise
+
+      child.stderr.write('MemoryError: unable to allocate\n')
+      child.emit('close', 3, null)
+
+      const saved = JSON.parse(
+        readFileSync(join(home, 'runtime', 'last-sidecar-exit.json'), 'utf8'),
+      )
+      expect(saved.schema).toBe('vk-sidecar-exit@1')
+      expect(saved.exitCode).toBe(3)
+      expect(saved.stderrTail.join('\n')).toContain('MemoryError')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('主动停止不写现场 —— 那不是故障', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'vk-sidecar-exit-'))
+    try {
+      const { child, manager } = setup({ homeDir: home })
+      const startPromise = manager.ensureStarted()
+      emitReady(child)
+      await startPromise
+
+      const stopping = manager.stop()
+      child.emit('close', 0, null)
+      await stopping
+
+      expect(existsSync(join(home, 'runtime', 'last-sidecar-exit.json'))).toBe(false)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('drains carriage-return progress output without blocking the Host event loop', async () => {

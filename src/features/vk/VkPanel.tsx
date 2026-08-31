@@ -44,7 +44,9 @@ import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
-import { isVkJobRerun, rememberVkTaskNumbers, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+import {
+  isVkJobRerun, rememberVkTaskNumbers, vkBatchNumberKey, VK_OPEN_OUTPUT_EVENT,
+} from './taskUiState'
 import './VkPanel.css'
 
 const PRESETS = ['quick-summary', 'course-learning', 'interview-analysis', 'science-explainer']
@@ -148,8 +150,15 @@ function saveNumberRecord(key: string, value: Record<string, number>): void {
   try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* UI preference remains in memory */ }
 }
 
-function taskNumberKey(row: VkJobRow): string {
-  return `${row.job_id}|${row.submitted_at}`
+/** 任务编号的身份。
+ *
+ * **有 batch_id 就用它**:中断后重跑沿用原批次(后端 retry 保留 batch_id、并把
+ * parent_job_id 指回被重试的那条),编号也该落回原来那个 —— 用户看到的应当是
+ * 「我把 81 重跑了一次」,而不是列表里又多出一条 82。
+ *
+ * 没有批次的单条任务才退回「job_id + 提交时间」。 */
+export function taskNumberKey(row: VkJobRow): string {
+  return row.batch_id ? vkBatchNumberKey(row.batch_id) : `${row.job_id}|${row.submitted_at}`
 }
 
 function attachLogicalTaskIds(rows: VkJobRow[]): VkJobRow[] {
@@ -741,7 +750,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     }
     // 编号是按「根任务 + 提交时间」算的，详情页只有一个 job_id，推不出来；这里落一份
     // job_id → 编号的索引供它查。
-    rememberVkTaskNumbers(Object.fromEntries(numbered.map((row) => [row.job_id, row.taskNumber!])))
+    // 两种键都落:job_id 供直查,batch 供详情页打开批内成员时回查。
+    rememberVkTaskNumbers(Object.fromEntries(numbered.flatMap((row) => [
+      [row.job_id, row.taskNumber!] as [string, number],
+      ...(row.batch_id
+        ? [[vkBatchNumberKey(row.batch_id), row.taskNumber!] as [string, number]]
+        : []),
+    ])))
     return numbered
   }, [])
 

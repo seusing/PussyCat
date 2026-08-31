@@ -11,7 +11,9 @@ import {
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
-import { isVkJobRerun, markVkJobAsRerun, vkTaskNumberFor, VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+import {
+  isVkJobRerun, markVkJobAsRerun, vkTaskNumberFor, vkTaskNumberForBatch, VK_OPEN_OUTPUT_EVENT,
+} from './taskUiState'
 import './VkTaskDetailSidebar.css'
 
 const ACTIVE_STATUSES = new Set([
@@ -54,9 +56,13 @@ function batchState(status: string): BatchState {
   return 'running'
 }
 
-/** 批量成员的来源:公开请求里的 source(一条 job 一个视频),取不到就退回 job_id。 */
-function memberSource(row: { request?: { source?: string } }): string {
-  const source = row.request?.source
+/** 批量成员的来源:一条 job 一个视频,取不到就退回 job_id。
+ *
+ * **列表接口把 source 放在行的顶层**,不在 `request` 里(那是单条详情的形状)。
+ * 之前只读 `request.source`,于是永远取不到,六条小任务显示的全是 UUID —— 功能看着
+ * 做完了、测试也绿,实际一次都没生效。两处都读,顺序按接口的真实形状来。 */
+function memberSource(row: { source?: string; request?: { source?: string } }): string {
+  const source = row.source ?? row.request?.source
   return typeof source === 'string' ? source.split(/\r?\n/)[0].trim() : ''
 }
 
@@ -201,7 +207,12 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [batchMembers, setBatchMembers] = useState<
     { job_id: string; source: string; state: BatchState }[]
   >([])
-  const taskNumber = useMemo(() => vkTaskNumberFor(jobId), [jobId])
+  // 编号先按 job_id 查;查不到再按批次查 —— 列表把一批折成一行、只记得住那一行的
+  // job_id,而详情页打开的往往是批里的某个成员,直查必然落空,标题就退回一串 UUID。
+  const taskNumber = useMemo(
+    () => vkTaskNumberFor(jobId) ?? vkTaskNumberForBatch(job?.batch_id ?? null),
+    [jobId, job?.batch_id],
+  )
   const batchDoneCount = batchMembers.filter((member) => member.state !== 'running').length
   const currentSource = batchMembers.find((member) => member.job_id === jobId)?.source
     ?? sourceItems(job)[0]
@@ -267,7 +278,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             .sort((left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at))
             .map((row) => ({
               job_id: row.job_id,
-              source: memberSource(row as { request?: { source?: string } }),
+              source: memberSource(row),
               state: batchState(row.status),
             })),
         )

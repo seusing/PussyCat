@@ -74,7 +74,7 @@
 
 .vk-task-table {
   width: 100%;
-  min-width: 720px;
+  min-width: 580px;
   border-collapse: collapse;
   table-layout: fixed;
   color: var(--color-fg);
@@ -103,11 +103,14 @@
   white-space: nowrap;
 }
 
-.vk-task-table th:nth-child(1) { width: 142px; }
-.vk-task-table th:nth-child(2) { width: 220px; }
-.vk-task-table th:nth-child(3) { width: 104px; }
-.vk-task-table th:nth-child(4) { width: 126px; }
-.vk-task-table th:nth-child(5) { width: 150px; }
+/* 列宽收紧过一轮。详情栏打开后表格区只剩几百像素,而原先五列合计 742px、表格
+   min-width 720px —— 横向滚动把「任务状态」整列推出可视区,用户只看得到「任务」
+   两个字。收紧到合计 572px,同样窗口宽度下四列都在。 */
+.vk-task-table th:nth-child(1) { width: 112px; }
+.vk-task-table th:nth-child(2) { width: 168px; }
+.vk-task-table th:nth-child(3) { width: 76px; }
+.vk-task-table th:nth-child(4) { width: 104px; }
+.vk-task-table th:nth-child(5) { width: 112px; }
 
 .vk-task-table tbody tr:last-child td { border-bottom: 0; }
 

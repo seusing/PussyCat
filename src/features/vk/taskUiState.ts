@@ -49,3 +49,14 @@ export function vkTaskNumberFor(jobId: string | null): number | null {
   if (!jobId) return null
   return loadTaskNumberIndex()[jobId] ?? null
 }
+
+/** 批次维度的编号键。批量任务在列表里折成一行,详情页打开的却是批里的某个成员,
+ *  只按 job_id 记索引必然查不到,标题就退回一串 UUID。 */
+export function vkBatchNumberKey(batchId: string): string {
+  return `batch:${batchId}`
+}
+
+export function vkTaskNumberForBatch(batchId: string | null): number | null {
+  if (!batchId) return null
+  return loadTaskNumberIndex()[vkBatchNumberKey(batchId)] ?? null
+}

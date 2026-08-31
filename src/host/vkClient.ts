@@ -65,6 +65,8 @@ export interface VkJobRow {
   parent_job_id: string | null
   /** 同一次提交拆出的多条任务共用它;界面据此归为一个任务编号。 */
   batch_id?: string | null
+  /** 这条任务跑的是哪个视频(公开请求里的第一行来源)。列表接口直接给,不在 request 里。 */
+  source?: string
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number

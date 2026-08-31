@@ -9,6 +9,8 @@
 // 注入,不落日志、不进 health 投影、不回传前端;stderr 诊断先脱敏再保留。
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join, resolve as resolvePath } from 'node:path'
 
 export class VkSidecarError extends Error {
   constructor(statusCode, message, { reasonCode = 'sidecar-error', detail } = {}) {
@@ -367,6 +369,31 @@ export class VkSidecarManager {
       `sidecar 异常退出(exit=${code ?? 'null'}${signal ? `, signal=${signal}` : ''})`,
       tail || undefined,
     )
+    this.#persistExit(code, signal, tail)
+  }
+
+  /** sidecar 异常退出的现场落盘。
+   *
+   * 诊断原先只活在内存里,而 host 会立刻把 sidecar 拉起来 —— 重启后 Python 那侧的
+   * reconcile 把在跑的任务统一标成 interrupted,用户看到「已中断」却没有任何原因,
+   * 我们这边也只剩一堆同一秒结束的任务行。真机上为了回答「为什么中断」,只能去翻
+   * 进程启动时间和 Windows 事件日志倒推,最后仍然指不出根因。
+   *
+   * 写不下去只是少一份现场,绝不能让它影响重启。 */
+  #persistExit(code, signal, tail) {
+    if (!this.homeDir) return
+    try {
+      const path = join(resolvePath(this.homeDir), 'runtime', 'last-sidecar-exit.json')
+      mkdirSync(join(resolvePath(this.homeDir), 'runtime'), { recursive: true })
+      writeFileSync(path, `${JSON.stringify({
+        schema: 'vk-sidecar-exit@1',
+        at: new Date().toISOString(),
+        exitCode: code ?? null,
+        signal: signal ?? null,
+        pythonPath: this.resolvedPythonPath ?? this.pythonPath ?? null,
+        stderrTail: tail ? tail.split('\n') : [],
+      }, null, 2)}\n`, 'utf8')
+    } catch { /* 少一份现场,不该再搭上一次重启 */ }
   }
 
   async fetchApi(path, init = {}) {
