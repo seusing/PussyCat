@@ -81,6 +81,10 @@ test('主页面提供唯一且脱离布局流的通知悬浮层', () => {
   expect(indexCss).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.app-notification-layer\s*\{\s*top:\s*70px;/)
 })
 
+test('桌面健康状态浮层不被应用侧栏裁切', () => {
+  expect(indexCss).toMatch(/\.app-sidebar-health\s*\{[^}]*overflow:\s*visible;/s)
+})
+
 test('默认两栏都显示:grid 列模板含五段,两条分隔条都在,两个开关 aria-pressed=true', () => {
   renderShell()
   expect(screen.getByTestId('col-nav')).toBeInTheDocument()

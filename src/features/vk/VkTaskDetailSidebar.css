@@ -16,6 +16,7 @@
 
 .vk-task-detail-sidebar {
   display: flex;
+  min-width: 0;
   flex-direction: column;
 }
 
@@ -67,7 +68,9 @@
 
 .vk-task-detail-body {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
+  overflow-x: hidden;
   padding: 16px;
 }
 
@@ -190,9 +193,9 @@
 .vk-stage-metric-list span { color: var(--color-fg-dim); font-size: 11px; }
 .vk-stage-metric-list p { margin: 3px 0 0; }
 
-.vk-task-detail-section { margin-top: 20px; }
+.vk-task-detail-section { min-width: 0; margin-top: 20px; }
 .vk-task-detail-section h3 { margin: 0 0 9px; font-size: 12px; font-weight: 650; }
-.vk-task-detail-section ol { display: grid; gap: 7px; margin: 0; padding-left: 20px; }
+.vk-task-detail-section > ol:not(.vk-task-detail-batch-list) { display: grid; gap: 7px; margin: 0; padding-left: 20px; }
 .vk-task-detail-section li,
 .vk-task-detail-section p { color: var(--color-fg-dim); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 
@@ -252,11 +255,12 @@
 /* 批量提交:一行任务下挂着多个视频,每个可点进去看自己的详情。 */
 .vk-task-detail-batch-count { color: var(--color-fg-dim); font-size: 11px; font-weight: 400; }
 
-.vk-task-detail-batch-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; }
-.vk-task-detail-batch-list li { list-style: none; }
+.vk-task-detail-batch-list { display: flex; min-width: 0; flex-direction: column; gap: 4px; margin: 0; padding: 0; }
+.vk-task-detail-batch-list li { min-width: 0; list-style: none; }
 
 .vk-task-detail-batch-list button {
   display: flex;
+  min-width: 0;
   width: 100%;
   align-items: center;
   justify-content: space-between;

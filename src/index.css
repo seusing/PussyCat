@@ -218,7 +218,7 @@ select:focus-visible {
 .app-sidebar-health {
   margin-top: auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .health-action-button {

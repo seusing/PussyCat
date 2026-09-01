@@ -1,5 +1,7 @@
 import userEvent from '@testing-library/user-event'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkTaskDetailSidebar } from './VkTaskDetailSidebar'
 
@@ -18,6 +20,17 @@ afterEach(() => {
 })
 
 describe('VkTaskDetailSidebar', () => {
+  it('批量来源列表保持 flex 且窄侧栏下允许链接让位给状态', () => {
+    const css = readFileSync(resolve(import.meta.dirname, 'VkTaskDetailSidebar.css'), 'utf8')
+
+    expect(css).toContain('.vk-task-detail-section > ol:not(.vk-task-detail-batch-list)')
+    expect(css).not.toContain('.vk-task-detail-section ol {')
+    expect(css).toMatch(/\.vk-task-detail-batch-list\s*\{[^}]*display:\s*flex/)
+    expect(css).toMatch(/\.vk-task-detail-batch-list\s*\{[^}]*min-width:\s*0/)
+    expect(css).toMatch(/\.vk-task-detail-batch-list li\s*\{[^}]*min-width:\s*0/)
+    expect(css).toMatch(/\.vk-task-detail-batch-list button\s*\{[^}]*min-width:\s*0/)
+  })
+
   it('列表上的任务编号要出现在详情页,提交内容排在模型配置之前', async () => {
     // 详情页原先只给 UUID,而用户在列表上认的是编号,两边对不上号。编号由列表分配、
     // 经 localStorage 索引传过来。

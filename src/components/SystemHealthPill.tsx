@@ -44,6 +44,7 @@ const REFRESH_DEBOUNCE_MS = 3000
 // 被吃掉。两种情况下用户都得再手点一次才看见真实状态 —— 而机器此刻完全有能力自己看。
 const REPAIR_POLL_INTERVAL_MS = 650
 const REPAIR_POLL_WINDOW_MS = 20_000
+const DETAILS_LEAVE_DELAY_MS = 150
 
 type HostState = 'checking' | 'online' | 'offline'
 type BridgeState = 'idle' | 'checking' | 'failed'
@@ -117,6 +118,22 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [lastCheckedAt, setLastCheckedAt] = useState<number | undefined>()
   const rootRef = useRef<HTMLDivElement>(null)
+  const detailsLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const cancelDetailsLeave = useCallback(() => {
+    if (detailsLeaveTimerRef.current !== undefined) {
+      clearTimeout(detailsLeaveTimerRef.current)
+      detailsLeaveTimerRef.current = undefined
+    }
+  }, [])
+  const scheduleDetailsClose = useCallback(() => {
+    cancelDetailsLeave()
+    detailsLeaveTimerRef.current = setTimeout(() => {
+      detailsLeaveTimerRef.current = undefined
+      setDetailsOpen(false)
+    }, DETAILS_LEAVE_DELAY_MS)
+  }, [cancelDetailsLeave])
+  useEffect(() => cancelDetailsLeave, [cancelDetailsLeave])
 
   // 点别处就收起。浮层压在页面上方,不收起就会挡住它下面的东西 —— 而"再点一次那颗灯"
   // 并不是人的第一反应。用 pointerdown 而不是 click:点下去就收,不必等抬手。
@@ -344,11 +361,16 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       className="relative inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm"
       style={{ background: 'var(--color-panel)', color: TONE_COLOR[verdict.tone] }}
       title={nextStep ?? verdict.label}
-      // 悬浮即展开、移开即收起。原先要点一下才开、再点一下才关 —— 想瞄一眼状态要花掉两次
-      // 点击。事件挂在**根节点**上(它同时包住结论与浮层),所以鼠标从结论滑进浮层里的
-      // 「修复」按钮不会算作移开。
-      onMouseEnter={() => setDetailsOpen(true)}
-      onMouseLeave={() => setDetailsOpen(false)}
+      // 悬浮即展开、移开短暂延迟后收起。延迟让鼠标能从胶囊经过浮层上方的桥接间隙,
+      // 不会因为命中测试暂时离开根节点而卸载卡片。
+      onMouseEnter={() => { cancelDetailsLeave(); setDetailsOpen(true) }}
+      onMouseLeave={(event) => {
+        // 无明确目标表示离开窗口或测试环境的 unhover,无需等待桥接间隙。
+        if (!event.relatedTarget || event.relatedTarget === window || event.relatedTarget === document || event.relatedTarget === document.body || event.relatedTarget === document.documentElement) {
+          cancelDetailsLeave()
+          setDetailsOpen(false)
+        } else scheduleDetailsClose()
+      }}
       // 键盘同权:只认 hover 会把键盘用户挡在外面。focus 进来就开,焦点离开整块才关。
       onFocus={() => setDetailsOpen(true)}
       onBlur={(event) => {
@@ -399,14 +421,9 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       )}
 
       {/* 外面这层是「桥」,不可见,只负责把胶囊与卡片之间那 8px 缝盖住。
-          缝原先是卡片自己的 mt-2 撑的,于是那条带上命中的元素是 header —— 鼠标从胶囊
-          往下走的一瞬就算离开了根节点,mouseleave 触发、卡片收起,用户永远够不到里面的
-          「修复浏览器连接」。DOM 上卡片一直是根节点的后代,问题不在层级,在**命中测试**:
-          mouseleave 看的是指针底下压着谁,不是 DOM 谁包着谁。
-          改成外层用 pt-2 撑同样的间距:它的盒子从胶囊底边就开始,缝被自己盖住,
-          而卡片看上去仍然隔着 8px,视觉一模一样。 */}
+          浮层从胶囊上方展开,避免贴近视口底部时被裁掉; pb-2 让鼠标经过间隙时仍命中根节点。 */}
       {detailsOpen && (
-        <div className="absolute right-0 top-full z-50 pt-2">
+        <div className="absolute right-0 bottom-full z-50 pb-2">
         <div
           data-testid="health-details"
           className="w-64 rounded-lg p-3 text-xs shadow-xl"
