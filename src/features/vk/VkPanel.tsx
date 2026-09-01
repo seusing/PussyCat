@@ -456,11 +456,19 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   useEffect(() => {
     if (health) void refreshRuntime()
   }, [health, refreshRuntime])
+  // 未落定的状态都要继续轮询,**不只是 installing**。
+  //
+  // 「解析引擎有更新」= installed + current:false。原先这个状态不在轮询里:前端拿到
+  // 一次快照就不再看了,而安装可能由别的路径完成(应用启动时自动装、上一会话装到一半、
+  // sidecar 崩溃重启带起来的那次)。真机上就是这样——后端 /runtime/status 明明回的是
+  // 「已就绪 current:true」,横幅还挂在那里不走。以前会自行消失,只是因为那几次恰好都
+  // 是用户点了「立即更新」→ 状态先变成 installing → 轮询开起来 → 装完自然刷掉。
+  const runtimeSettled = runtime?.state === 'installed' && runtime.current === true
   useEffect(() => {
-    if (runtime?.state !== 'installing') return
+    if (!runtime || runtimeSettled) return undefined
     const timer = setInterval(() => { void refreshRuntime() }, 2000)
     return () => clearInterval(timer)
-  }, [runtime?.state, refreshRuntime])
+  }, [runtime, runtimeSettled, refreshRuntime])
   // —— 自动体检:进入面板就把环境查清楚并挑最强的,不让用户去点「检测」再去「选」 ——
   // 用户的原话是"能自动获取就自动获取"。检测本身零副作用;挑出来的若不是当前环境
   // 才 adopt(runtimeToAdopt 已经把"已经最强了"过滤掉了,避免无谓地重启 sidecar)。

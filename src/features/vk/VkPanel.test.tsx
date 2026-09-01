@@ -154,6 +154,36 @@ describe('VkPanel', () => {
     expect(JSON.parse(String(install.init?.body))).toEqual({ rebuild: false })
   })
 
+  it('别处把运行时装好之后,更新横幅自己会消失', async () => {
+    // 真机上横幅赖着不走:后端 /runtime/status 明明回「已就绪 current:true」,前端却还
+    // 挂着「解析引擎有更新」。原因是轮询只在 state === 'installing' 时开——而这次安装
+    // 不是用户点「立即更新」触发的(应用启动时自己装的),前端拿到的第一份快照就是
+    // current:false,之后再没看过。以前会自行消失,只因为那几次恰好都是用户点了按钮、
+    // 状态先变成 installing、轮询顺带把结果刷了回来。
+    let current = false
+    {
+      stubRoutes({
+        'GET /vk/v1/health': { body: HEALTH },
+        'GET /vk/v1/jobs': { body: [] },
+        'GET /vk/v1/runtime/status': { body: () => ({ ...RUNTIME_INSTALLED, current }) },
+        'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+        'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: true } },
+      })
+      render(<VkPanel baseUrl={BASE} />)
+
+      await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎有更新'))
+
+      current = true                       // 安装在别处完成
+
+      // 轮询间隔 2s,给足两拍。用真实定时器:waitFor 自己也依赖定时器,配 fake timers
+      // 会互相卡死。
+      await waitFor(
+        () => expect(screen.queryByText('解析引擎有更新')).not.toBeInTheDocument(),
+        { timeout: 6000 },
+      )
+    }
+  })
+
   it('已安装运行时为当前版本时不显示更新提示', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },

@@ -57,6 +57,67 @@ describe('VkTaskDetailSidebar', () => {
     localStorage.clear()
   })
 
+  it('重跑不改变小任务条数 —— 提交了几条,永远显示几条', async () => {
+    // 后端把每次尝试记成一条新 job(parent 指回原条、batch 不变),这是对的:审计要
+    // 看得见每一次尝试。但**界面不该因此多出行**——用户提交了 2 个视频,重跑一次之后
+    // 看到的仍该是 2 条,状态从「已中断」变成新的那次的状态,而不是变成 4 条。
+    const rows = [
+      {
+        job_id: 'orig-1', kind: 'run', status: 'interrupted',
+        submitted_at: '2026-09-01T08:55:45+08:00', finished_at: null,
+        parent_job_id: null, cache_bypass: false, batch_id: 'b-86',
+        source: 'http://xhslink.com/o/7KxpRMJTWVG',
+      },
+      {
+        job_id: 'orig-2', kind: 'run', status: 'interrupted',
+        submitted_at: '2026-09-01T08:55:46+08:00', finished_at: null,
+        parent_job_id: null, cache_bypass: false, batch_id: 'b-86',
+        source: 'http://xhslink.com/o/ctLgY5XELG',
+      },
+      {
+        job_id: 'retry-1', kind: 'run', status: 'done',
+        submitted_at: '2026-09-01T09:10:01+08:00', finished_at: null,
+        parent_job_id: 'orig-1', cache_bypass: false, batch_id: 'b-86',
+        source: 'http://xhslink.com/o/7KxpRMJTWVG',
+      },
+      {
+        job_id: 'retry-2', kind: 'run', status: 'running',
+        submitted_at: '2026-09-01T09:10:02+08:00', finished_at: null,
+        parent_job_id: 'orig-2', cache_bypass: false, batch_id: 'b-86',
+        source: 'http://xhslink.com/o/ctLgY5XELG',
+      },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/orig-1')) {
+        return new Response(JSON.stringify({
+          job_id: 'orig-1', kind: 'run', status: 'interrupted',
+          submitted_at: '2026-09-01T08:55:45+08:00', finished_at: null,
+          parent_job_id: null, cache_bypass: false, batch_id: 'b-86',
+          request: { source: 'http://xhslink.com/o/7KxpRMJTWVG', preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(rows), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="orig-1" baseUrl={BASE} onClose={() => {}} />)
+
+    const sources = await screen.findByTestId('vk-task-detail-sources')
+    // 两条,不是四条
+    expect(sources.textContent).toContain('小任务1：')
+    expect(sources.textContent).toContain('小任务2：')
+    expect(sources.textContent).not.toContain('小任务3')
+    // 每条显示的是**最新一次尝试**的状态
+    const items = sources.querySelectorAll('.vk-task-detail-batch-status')
+    expect(items).toHaveLength(2)
+    expect([...items].map((node) => node.textContent)).toEqual(['已完成', '进行中'])
+  })
+
   it('小任务显示的是视频链接 —— 列表接口把 source 放在行的顶层', async () => {
     // 这条是补一次真机翻车:实现时按 `request.source` 读,而列表接口给的是**顶层**
     // `source`。类型上 VkJobRow 当时也没有这个字段,于是永远取不到、六条小任务

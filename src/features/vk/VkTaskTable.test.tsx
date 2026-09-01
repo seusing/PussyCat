@@ -178,7 +178,10 @@ describe('VkTaskTable', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
-  it('批量任务折成一行并标出视频数', () => {
+  it('批量任务折成一行,条数退到悬停提示里不占列宽', () => {
+    // 徽标原先直接印在编号列,把列撑宽、日期挤到图标上,详情栏一开还把「任务状态」
+    // 整列推出可视区。**状态是每行都要看的,条数不是** —— 列表这点宽度该留给前者,
+    // 条数在详情页的「提交内容」里本来就写着。
     const members: VkJobRow[] = [
       { ...JOBS[0], job_id: 'b-1', batch_id: 'batch-x' },
       { ...JOBS[1], job_id: 'b-2', batch_id: 'batch-x' },
@@ -188,7 +191,8 @@ describe('VkTaskTable', () => {
     })} />)
 
     expect(screen.getAllByTestId('vk-job-row')).toHaveLength(1)
-    expect(screen.getByText('2 个视频')).toBeInTheDocument()
+    expect(screen.queryByText('2 个视频')).not.toBeInTheDocument()
+    expect(screen.getByTitle('本次提交包含 2 个视频')).toBeInTheDocument()
   })
 
   it('单条任务不显示视频数徽章', () => {

@@ -346,16 +346,17 @@
 }
 
 /* 按钮和菜单之间那 6px 视觉间隙,鼠标一穿过去就算离开了容器,菜单当场收起 ——
-   于是"悬停能看见、就是点不中",只能先用箭头钉住。这里把间隙补成 hover 目标的一部分:
-   菜单在容器内,伪元素也在容器内,鼠标走过去 onMouseLeave 不再触发。
-   留 2px 富余,免得高 DPI 缩放下的半像素让它又断开。 */
-.vk-task-batch-rerun-menu::after {
+   于是"悬停能看见、就是点不中",只能先用箭头钉住。把间隙补成 hover 目标的一部分。
+   **桥必须挂在容器上,不能挂在菜单上**:菜单自己有 `overflow-y: auto`,挂它身上的
+   伪元素会被裁掉,等于没加(上一版就是这么写的,所以没生效)。
+   容器没有 overflow 裁剪,伪元素铺在它正上方那段间隙里,鼠标走过去仍在容器内。 */
+.vk-task-batch-rerun::before {
   content: '';
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   right: 0;
   left: 0;
-  height: 8px;
+  height: 10px;
 }
 
 .vk-task-batch-rerun-menu button { min-height: 38px; align-items: center; display: flex; }

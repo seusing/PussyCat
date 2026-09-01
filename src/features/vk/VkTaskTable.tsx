@@ -328,13 +328,18 @@ export function VkTaskTable({
               >
                 <td>
                   <div className="vk-task-number-cell">
-                    <span className="vk-task-number">{taskNumber}</span>
-                    {/* 一次提交多个视频折成一行,得让人看出这一行代表几个。 */}
-                    {(row.batchMembers?.length ?? 0) > 1 && (
-                      <span className="vk-task-batch-badge" title="本次提交包含多个视频">
-                        {row.batchMembers!.length} 个视频
-                      </span>
-                    )}
+                    {/* 「N 个视频」的徽标去掉了:它把编号列撑宽,详情栏一开就把右边的
+                        「任务状态」整列挤出可视区,而条数在详情页的「提交内容」里写得
+                        清清楚楚。**状态是每一行都要看的,条数不是** —— 列表这点宽度
+                        该留给前者。悬停仍能从 title 里知道这一行是几个视频。 */}
+                    <span
+                      className="vk-task-number"
+                      title={(row.batchMembers?.length ?? 0) > 1
+                        ? `本次提交包含 ${row.batchMembers!.length} 个视频`
+                        : undefined}
+                    >
+                      {taskNumber}
+                    </span>
                     <button
                       type="button"
                       role="switch"
