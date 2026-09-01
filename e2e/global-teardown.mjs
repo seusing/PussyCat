@@ -8,6 +8,14 @@ export default async function globalTeardown() {
     state.host.once('exit', resolveExit)
     setTimeout(resolveExit, 5000)
   })
-  state.stub.close()
-  rmSync(state.home, { recursive: true, force: true })
+  await new Promise((resolveClose) => {
+    if (!state.stub.listening) {
+      resolveClose()
+      return
+    }
+    state.stub.close(() => resolveClose())
+  })
+  // Windows can release SQLite handles a moment after the sidecar process exits.
+  // Bounded retries keep teardown deterministic without hiding a persistent cleanup failure.
+  rmSync(state.home, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 })
 }

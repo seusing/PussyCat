@@ -15,6 +15,7 @@ export const RUNS_DEFAULT = 360
 export const MODULE_SIDEBAR_MIN = 176
 export const MODULE_SIDEBAR_MAX = 360
 export const MODULE_SIDEBAR_DEFAULT = 224
+export const MODULE_SIDEBAR_COLLAPSED = 56
 
 // 300 已经拖不动了却仍挡着表格的「任务状态」列;放到 260,让人能把详情栏压回右边。
 export const DETAILS_MIN = 260

@@ -40,6 +40,18 @@ test('渲染:role/aria-orientation/tabIndex/aria-value* 齐全', () => {
   expect(handle).toHaveAttribute('aria-label', '调整导航栏宽度')
 })
 
+test('禁用时保留布局槽但不可聚焦或改变宽度', () => {
+  const { onResize, onCommit, handle } = renderHandle({ disabled: true })
+  expect(handle).toHaveAttribute('aria-hidden', 'true')
+  expect(handle).toHaveAttribute('tabindex', '-1')
+  expect(handle).toHaveAttribute('data-disabled', 'true')
+  fireEvent.keyDown(handle, { key: 'ArrowRight' })
+  fireEvent(handle, pointerEvent('pointerdown', { clientX: 100 }))
+  fireEvent(window, pointerEvent('pointermove', { clientX: 150 }))
+  expect(onResize).not.toHaveBeenCalled()
+  expect(onCommit).not.toHaveBeenCalled()
+})
+
 test('拖拽(side=left):向右移动 → onResize 收到 value+增量', () => {
   const { onResize, handle } = renderHandle({ value: 280, side: 'left' })
   fireEvent(handle, pointerEvent('pointerdown', { clientX: 100 }))

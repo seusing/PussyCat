@@ -2,6 +2,7 @@ import {
   defaultLayout, normalizeLayout, loadLayout, saveLayout, clamp, clampColumnWidth,
   LAYOUT_KEY, NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
   MODULE_SIDEBAR_DEFAULT, DETAILS_DEFAULT,
+  MODULE_SIDEBAR_COLLAPSED,
 } from './layout'
 
 // 内存假 Storage:纯函数可注入,不依赖 jsdom 全局(与 preferences.test.ts 同款写法)
@@ -32,6 +33,7 @@ const expectedLayout = (overrides: Partial<ReturnType<typeof defaultLayout>> = {
 
 test('defaultLayout 结构正确', () => {
   expect(defaultLayout()).toEqual(expectedLayout())
+  expect(MODULE_SIDEBAR_COLLAPSED).toBe(56)
 })
 
 test('save→load 往返等值', () => {

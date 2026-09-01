@@ -29,6 +29,13 @@ describe('VkTaskDetailSidebar', () => {
     expect(css).toMatch(/\.vk-task-detail-batch-list\s*\{[^}]*min-width:\s*0/)
     expect(css).toMatch(/\.vk-task-detail-batch-list li\s*\{[^}]*min-width:\s*0/)
     expect(css).toMatch(/\.vk-task-detail-batch-list button\s*\{[^}]*min-width:\s*0/)
+    expect(css).toContain('.vk-task-detail-batch-member[data-state=')
+    expect(css).toContain('data-current')
+    expect(css).toContain('@keyframes vk-rerun-item-in')
+    expect(css).toContain('max-width: calc(100vw - 24px)')
+    expect(css).toContain('.vk-task-batch-rerun-option.is-done')
+    expect(css).toContain('.vk-stage-metric-chip')
+    expect(css).toContain('prefers-reduced-motion')
   })
 
   it('列表上的任务编号要出现在详情页,提交内容排在模型配置之前', async () => {
@@ -63,6 +70,11 @@ describe('VkTaskDetailSidebar', () => {
     const body = panel.textContent ?? ''
     expect(body.indexOf('提交内容')).toBeGreaterThanOrEqual(0)
     expect(body.indexOf('提交内容')).toBeLessThan(body.indexOf('模型配置'))
+    expect(screen.getByTestId('vk-task-detail-metadata')).toHaveTextContent('执行耗时')
+    expect(screen.getByTestId('vk-task-detail-execution-elapsed')).toHaveTextContent('1m29s')
+    expect(screen.getByTestId('vk-run-metrics')).toHaveTextContent('输入 0')
+    expect(screen.getByTestId('vk-run-metrics')).toHaveTextContent('输出 0')
+    expect(screen.getByTestId('vk-stage-metrics')).toHaveTextContent('暂无阶段耗时')
     // 「查看解析结果」和「再次提交任务」是同一时刻的两个选择,并排放在操作区。
     const actions = panel.querySelector('.vk-task-detail-actions')
     expect(actions?.textContent).toContain('查看解析结果')
@@ -303,7 +315,7 @@ describe('VkTaskDetailSidebar', () => {
 
     const panel = await screen.findByTestId('vk-task-detail-sources')
     // 3 个视频里 2 个已到终态(done/failed),第 3 个还在跑
-    expect(panel).toHaveTextContent('共 3 个视频 · 已完成 2/3')
+    expect(panel).toHaveTextContent('共 3 个视频 · 已处理 2/3')
     expect(panel).toHaveTextContent('https://example.com/two')
     await user.click(screen.getByText('https://example.com/three'))
     expect(onJobChange).toHaveBeenCalledWith('b-3')
@@ -384,6 +396,124 @@ describe('VkTaskDetailSidebar', () => {
     expect(resubmitted).toHaveLength(0)
   })
 
+  it('当前成员先结束时仍轮询批次,直到最后一个成员进入终态', async () => {
+    let poll: (() => Promise<void>) | undefined
+    let listRequests = 0
+    vi.spyOn(window, 'setInterval').mockImplementation((callback: TimerHandler, delay?: number) => {
+      if (delay === 1500) poll = callback as () => Promise<void>
+      return 999_998 as never
+    })
+    const rows = (siblingStatus: 'running' | 'done') => [
+      {
+        job_id: 'batch-current', kind: 'run', status: 'done',
+        submitted_at: '2026-08-28T12:15:21+08:00', finished_at: '2026-08-28T12:16:21+08:00',
+        parent_job_id: null, cache_bypass: false, batch_id: 'batch-live',
+        source: 'https://example.com/current',
+      },
+      {
+        job_id: 'batch-sibling', kind: 'run', status: siblingStatus,
+        submitted_at: '2026-08-28T12:15:22+08:00',
+        finished_at: siblingStatus === 'done' ? '2026-08-28T12:16:22+08:00' : null,
+        parent_job_id: null, cache_bypass: false, batch_id: 'batch-live',
+        source: 'https://example.com/sibling',
+      },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/batch-current')) {
+        return new Response(JSON.stringify({
+          job_id: 'batch-current', kind: 'run', status: 'done',
+          submitted_at: '2026-08-28T12:15:21+08:00', finished_at: '2026-08-28T12:16:21+08:00',
+          parent_job_id: null, cache_bypass: false, batch_id: 'batch-live',
+          request: { source: 'https://example.com/current', preset: 'quick-summary' },
+        }), { status: 200 })
+      }
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      if (url.endsWith('/vk/v1/jobs')) {
+        listRequests += 1
+        return new Response(JSON.stringify(rows(listRequests === 1 ? 'running' : 'done')), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="batch-current" baseUrl={BASE} onClose={() => {}} />)
+
+    await waitFor(() => expect(poll).toBeTypeOf('function'))
+    expect(screen.queryByRole('button', { name: '重新提交全部任务' })).not.toBeInTheDocument()
+    await act(async () => { await poll?.() })
+    expect(await screen.findByRole('button', { name: '重新提交全部任务' })).toBeInTheDocument()
+    expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 2/2')
+  })
+
+  it('终态批量默认真正重跑全部成员,而不是只改按钮文案', async () => {
+    const user = userEvent.setup()
+    const members = [
+      { job_id: 'mixed-done', status: 'done', source: 'https://example.com/done' },
+      { job_id: 'mixed-failed', status: 'failed', source: 'https://example.com/failed' },
+    ]
+    const actions: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const action = url.match(/\/vk\/v1\/jobs\/([^/]+)\/(retry|refresh)$/)
+      if (action) {
+        actions.push(`${action[2]}:${action[1]}`)
+        return new Response(JSON.stringify({ job_id: `${action[1]}-${action[2]}` }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+      const payload = (member: typeof members[number]) => ({
+        job_id: member.job_id, kind: 'run', status: member.status,
+        submitted_at: '2026-08-28T12:15:21+08:00', finished_at: '2026-08-28T12:16:21+08:00',
+        parent_job_id: null, batch_id: 'batch-mixed', cache_bypass: false,
+        request: { source: member.source, preset: 'quick-summary' },
+      })
+      if (hit) return new Response(JSON.stringify(payload(hit)), { status: 200 })
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(members.map(payload)), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="mixed-done" baseUrl={BASE} onClose={() => {}} />)
+
+    const button = await screen.findByRole('button', { name: '重新提交全部任务' })
+    await user.click(button)
+    await waitFor(() => expect(actions).toEqual(['refresh:mixed-done', 'retry:mixed-failed']))
+  })
+
+  it('批量重跑菜单按实际条目索引递进出现,并把状态映射成语义颜色', async () => {
+    const members = Array.from({ length: 5 }, (_, index) => ({
+      job_id: `stagger-${index + 1}`,
+      status: index === 1 ? 'interrupted' : 'done',
+      source: `https://example.com/${index + 1}`,
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+      const payload = (member: typeof members[number]) => ({
+        job_id: member.job_id, kind: 'run', status: member.status,
+        submitted_at: '2026-08-28T12:15:21+08:00', finished_at: '2026-08-28T12:16:21+08:00',
+        parent_job_id: null, batch_id: 'batch-stagger', cache_bypass: false,
+        request: { source: member.source, preset: 'quick-summary' },
+      })
+      if (hit) return new Response(JSON.stringify(payload(hit)), { status: 200 })
+      if (url.endsWith('/vk/v1/jobs')) return new Response(JSON.stringify(members.map(payload)), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+
+    const user = userEvent.setup()
+    render(<VkTaskDetailSidebar jobId="stagger-1" baseUrl={BASE} onClose={() => {}} />)
+    await screen.findByRole('button', { name: '重新提交全部任务' })
+    await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+    const options = await screen.findAllByRole('menuitemcheckbox')
+    expect(options).toHaveLength(5)
+    expect(options[0]).toHaveStyle({ animationDelay: '30ms' })
+    expect(options[4]).toHaveStyle({ animationDelay: '190ms' })
+    expect(options[0]).toHaveAttribute('data-color', 'success')
+    expect(options[1]).toHaveAttribute('data-color', 'warning')
+  })
+
   it('只重跑选中的那一条:没勾的不动', async () => {
     const user = userEvent.setup()
     const members = [
@@ -423,7 +553,7 @@ describe('VkTaskDetailSidebar', () => {
     render(<VkTaskDetailSidebar jobId="s-1" baseUrl={BASE} onClose={() => {}} />)
 
     // 两条都失败 → 默认全选
-    const button = await screen.findByRole('button', { name: /重跑全部 2 个/ })
+    const button = await screen.findByRole('button', { name: '重新提交全部任务' })
     expect(button).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
     await user.click(await screen.findByRole('menuitemcheckbox', { name: /小任务1/ }))  // 取消勾选
@@ -541,6 +671,9 @@ describe('VkTaskDetailSidebar', () => {
     expect(stages).toHaveTextContent('理解视频')
     expect(stages).toHaveTextContent('7.25 秒')
     expect(stages).toHaveTextContent('custom-stage')
+    expect(stages.querySelectorAll('.vk-stage-metric-chip')).toHaveLength(3)
+    expect(stages.querySelectorAll('.vk-stage-metric-chip-time')).toHaveLength(3)
+    expect(screen.getByTestId('vk-task-detail-execution-elapsed')).toHaveTextContent('10s')
   })
 
   it('shows every actual model attempt and explains a configured fallback switch', async () => {

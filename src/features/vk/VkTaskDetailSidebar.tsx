@@ -40,6 +40,12 @@ function secondsLabel(value: number | null): string {
   return `${value.toFixed(2)} 秒`
 }
 
+function tokenLabel(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value.toLocaleString('zh-CN')
+    : '0'
+}
+
 type BatchState = 'running' | 'done' | 'failed' | 'interrupted'
 
 const BATCH_STATE_LABELS: Record<BatchState, string> = {
@@ -47,6 +53,13 @@ const BATCH_STATE_LABELS: Record<BatchState, string> = {
   done: '已完成',
   failed: '失败',
   interrupted: '已中断',
+}
+
+const BATCH_STATE_COLORS: Record<BatchState, 'primary' | 'success' | 'warning' | 'danger'> = {
+  running: 'primary',
+  done: 'success',
+  failed: 'danger',
+  interrupted: 'warning',
 }
 
 function batchState(status: string): BatchState {
@@ -285,7 +298,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     () => vkTaskNumberFor(jobId) ?? vkTaskNumberForBatch(job?.batch_id ?? null),
     [jobId, job?.batch_id],
   )
-  const batchDoneCount = batchMembers.filter((member) => member.state !== 'running').length
+  const batchSettledCount = batchMembers.filter((member) => member.state !== 'running').length
   const currentSource = batchMembers.find((member) => member.job_id === jobId)?.source
     ?? sourceItems(job)[0]
     ?? ''
@@ -298,12 +311,24 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     () => rerunable.filter((member) => member.state === 'failed').map((member) => member.job_id),
     [rerunable],
   )
+  const batchTerminal = batchMembers.length > 1 && batchMembers.every((member) => member.state !== 'running')
   // 悬停展开,但**不只靠悬停**:纯 hover 菜单键盘用不了,鼠标移向菜单项的途中也容易掠出
   // 容器把菜单收掉(实测就是这么翻的)。点箭头可以「钉住」,钉住后移开不收。
   const [rerunMenuOpen, setRerunMenuOpen] = useState(false)
   const [rerunMenuPinned, setRerunMenuPinned] = useState(false)
   const rerunMenuRef = useRef<HTMLDivElement | null>(null)
   const [rerunPicked, setRerunPicked] = useState<Set<string> | null>(null)
+  const batchStateSignature = useMemo(
+    () => batchMembers.map((member) => `${member.job_id}:${member.state}`).join('|'),
+    [batchMembers],
+  )
+  // 切换任务或批次从执行中进入终态时,清掉上一批的手动勾选。终态批量的首次动作
+  // 必须回到「重新提交全部任务」,不能把上一批的选择偷偷带过来。
+  useEffect(() => {
+    setRerunPicked(null)
+    setRerunMenuOpen(false)
+    setRerunMenuPinned(false)
+  }, [jobId, batchStateSignature])
   // 钉住之后点别处要能收起来。原先只有再点一次箭头才收,菜单于是一直挂在那儿挡着下面
   // 的内容 —— 用户的原话是「点击菜单以外的地方时不会自动收回」。Esc 一并收。
   useEffect(() => {
@@ -322,13 +347,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       document.removeEventListener('keydown', onKey)
     }
   }, [rerunMenuOpen])
-  // 默认只选失败的——那是绝大多数情况下想重跑的。全失败时它就等于「全部重跑」;
-  // 一条没失败时退回全选,否则按钮会是个点不动的空壳。
+  // 执行中的批量默认只选失败项,避免重复计费;批次全部进入终态后首次操作改为全选,
+  // 让「重新提交全部任务」的文案与实际请求集合保持一致。
   const selection = useMemo(() => {
     if (rerunPicked) return rerunPicked
+    if (batchTerminal) return new Set(rerunable.map((member) => member.job_id))
     if (failedIds.length > 0) return new Set(failedIds)
     return new Set(rerunable.map((member) => member.job_id))
-  }, [rerunPicked, failedIds, rerunable])
+  }, [batchTerminal, rerunPicked, failedIds, rerunable])
   const selectedCount = rerunable.filter((member) => selection.has(member.job_id)).length
   const selectedLabel = useMemo(() => {
     const picked = rerunable
@@ -396,10 +422,11 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     return () => window.removeEventListener(VK_JOB_TERMINAL_EVENT, syncTerminalDetail)
   }, [jobId, load])
   useEffect(() => {
-    if (!job || !ACTIVE_STATUSES.has(job.status)) return
+    const batchActive = batchMembers.some((member) => member.state === 'running')
+    if (!job || (!ACTIVE_STATUSES.has(job.status) && !batchActive)) return
     const timer = window.setInterval(load, 1500)
     return () => window.clearInterval(timer)
-  }, [job, load])
+  }, [batchMembers, job, load])
 
   const sources = useMemo(() => sourceItems(job), [job])
   const active = !!job && ACTIVE_STATUSES.has(job.status)
@@ -452,11 +479,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     }
   }
 
-  /** 整批重跑:失败的走 retry(沿用原请求),已完成的重新提交一次。
-   *
-   * 已完成的批量重跑会再花一次额度——这是明知的取舍:整批失败时也需要一键重来,
-   * 而"只重跑失败的那几条"覆盖不了那个场景。按钮上把条数写出来,别让人误点。 */
-  /** 重跑选中的那些小任务。空选等于不做事,由调用方保证非空。 */
+  /** 重跑选中的小任务:失败/中断走 retry,已完成走 refresh。空选由调用方拦截。 */
   const rerunSelected = async (selection: ReadonlySet<string>) => {
     if (selection.size === 0) return
     setRerunMenuOpen(false)
@@ -577,7 +600,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 <span className="vk-task-detail-batch-count">
                   {/* 不写"当前查看第 N 个":批量是并行跑的,那句话会让人以为在排队等前一条。
                       当前看的是哪条,由下面列表里高亮的那一项表达,不必用序数再说一遍。 */}
-                  {' '}共 {batchMembers.length} 个视频 · 已完成 {batchDoneCount}/{batchMembers.length}
+                  {' '}共 {batchMembers.length} 个视频 · 已处理 {batchSettledCount}/{batchMembers.length}
                 </span>
               )}
             </h3>
@@ -585,7 +608,12 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               ? (
                 <ol className="vk-task-detail-batch-list">
                   {batchMembers.map((member, index) => (
-                    <li key={member.job_id}>
+                    <li
+                      key={member.job_id}
+                      className={`vk-task-detail-batch-member is-${member.state}`}
+                      data-state={member.state}
+                      data-color={BATCH_STATE_COLORS[member.state]}
+                    >
                       <button
                         type="button"
                         data-current={member.job_id === jobId || undefined}
@@ -619,7 +647,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 : <p>未返回来源信息</p>}
           </div>
 
-          <dl className="vk-task-detail-list">
+          <dl className="vk-task-detail-list" data-testid="vk-task-detail-metadata">
             <div>
               <dt>模型配置</dt>
               <dd>{configuredModelName(job, providers)}</dd>
@@ -632,31 +660,38 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               <dt>提交时间</dt>
               <dd>{job.submitted_at ? new Date(job.submitted_at).toLocaleString('zh-CN') : '—'}</dd>
             </div>
+            <div data-testid="vk-task-detail-execution-elapsed">
+              <dt>执行耗时</dt>
+              <dd>{vkElapsedLabel(job.submitted_at, job.finished_at ?? null)}</dd>
+            </div>
           </dl>
 
           {/* 缓存 Token 恒为 0（本产品不走 prompt 缓存），费用则因通道普遍不提供可信价格
-              而长期显示"未统计"——两个格子都只是占地方，去掉。 */}
-          {job.progress?.usage && (
-            <div className="vk-task-detail-section" data-testid="vk-run-metrics">
-              <h3>本次解析用量</h3>
-              <dl className="vk-run-metrics-grid">
-                <div><dt>输入 {job.progress.usage.input_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
-                <div><dt>输出 {job.progress.usage.output_tokens.toLocaleString('zh-CN')}</dt><dd>Token</dd></div>
-              </dl>
-            </div>
-          )}
-
-          {(job.progress?.stage_metrics?.length ?? 0) > 0 && (
+              而长期显示"未统计"——两个格子都只是占地方，去掉。即使任务在模型调用前中断,
+              也保留 0/0 结论,让详情字段始终完整。 */}
+          <div className="vk-task-detail-section" data-testid="vk-run-metrics">
+            <h3>本次解析用量</h3>
+            <dl className="vk-run-metrics-grid">
+              <div><dt>输入 {tokenLabel(job.progress?.usage?.input_tokens)}</dt><dd>Token</dd></div>
+              <div><dt>输出 {tokenLabel(job.progress?.usage?.output_tokens)}</dt><dd>Token</dd></div>
+            </dl>
+          </div>
+          {(job.progress?.stage_metrics?.length ?? 0) > 0 ? (
             <div className="vk-task-detail-section" data-testid="vk-stage-metrics">
               <h3>阶段耗时</h3>
               <ol className="vk-stage-metric-list">
                 {job.progress!.stage_metrics!.map((metric, index) => (
-                  <li key={`${metric.stage}-${index}`}>
-                    <div><strong>{stageLabel(metric.stage)}</strong><span>{secondsLabel(metric.elapsed_s)}</span></div>
-                    <p>{metric.model_calls} 次模型调用 · 输入 {metric.input_tokens.toLocaleString('zh-CN')} · 输出 {metric.output_tokens.toLocaleString('zh-CN')}</p>
+                  <li key={`${metric.stage}-${index}`} className="vk-stage-metric-chip" data-stage={metric.stage}>
+                    <div className="vk-stage-metric-chip-row"><strong>{stageLabel(metric.stage)}</strong><span className="vk-stage-metric-chip-time">{secondsLabel(metric.elapsed_s)}</span></div>
+                    <p className="vk-stage-metric-chip-detail">{metric.model_calls} 次模型调用 · 输入 {tokenLabel(metric.input_tokens)} · 输出 {tokenLabel(metric.output_tokens)}</p>
                   </li>
                 ))}
               </ol>
+            </div>
+          ) : (
+            <div className="vk-task-detail-section" data-testid="vk-stage-metrics">
+              <h3>阶段耗时</h3>
+              <p className="vk-stage-metric-empty">暂无阶段耗时</p>
             </div>
           )}
 
@@ -717,6 +752,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             {rerunable.length > 1 && (
               <div
                 className="vk-task-batch-rerun"
+                data-terminal-batch={batchTerminal || undefined}
                 ref={rerunMenuRef}
                 onMouseEnter={() => setRerunMenuOpen(true)}
                 onMouseLeave={() => { if (!rerunMenuPinned) setRerunMenuOpen(false) }}
@@ -731,8 +767,12 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                           key={member.job_id}
                           type="button"
                           role="menuitemcheckbox"
+                          className={`vk-task-batch-rerun-option is-${member.state}`}
+                          data-state={member.state}
+                          data-color={BATCH_STATE_COLORS[member.state]}
                           aria-checked={checked}
                           disabled={disabled}
+                          style={{ animationDelay: `${30 + index * 40}ms` }}
                           onClick={() => {
                             const next = new Set(selection)
                             if (next.has(member.job_id)) next.delete(member.job_id)
@@ -746,7 +786,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                             <em>{member.source || member.job_id}</em>
                           </span>
                           {/* 重跑已完成的会再花一次额度,选之前得看得见 */}
-                          <span className={`vk-task-detail-batch-status is-${member.state}`}>
+                          <span className={`vk-task-detail-batch-status is-${member.state}`} data-state={member.state}>
                             {member.state === 'done' ? '已完成 · 再计费' : BATCH_STATE_LABELS[member.state]}
                           </span>
                         </button>
@@ -781,7 +821,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                   onClick={() => { void rerunSelected(selection) }}
                 >
                   <RefreshCw size={14} aria-hidden="true" />
-                  <span>{actionPending === 'batch' ? '正在重跑…' : selectedLabel}</span>
+                  <span>{actionPending === 'batch' ? '正在重跑…' : batchTerminal && rerunPicked === null ? '重新提交全部任务' : selectedLabel}</span>
                 </button>
                 <button
                   type="button"

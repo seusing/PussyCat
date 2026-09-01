@@ -189,6 +189,22 @@
   gap: 10px;
 }
 
+.vk-stage-metric-chip {
+  min-width: 0;
+  border-left: 2px solid color-mix(in srgb, var(--color-accent) 65%, var(--color-line));
+  background: color-mix(in srgb, var(--color-accent) 5%, #171a20);
+}
+.vk-stage-metric-chip-row { min-width: 0; }
+.vk-stage-metric-chip-time {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: #20232a;
+  padding: 2px 7px;
+  font-variant-numeric: tabular-nums;
+}
+.vk-stage-metric-chip-detail { min-width: 0; }
+
 .vk-stage-metric-list strong { color: var(--color-fg); font-size: 12px; }
 .vk-stage-metric-list span { color: var(--color-fg-dim); font-size: 11px; }
 .vk-stage-metric-list p { margin: 3px 0 0; }
@@ -274,8 +290,13 @@
   text-align: left;
 }
 
-.vk-task-detail-batch-list button:hover { background: #292d35; }
-.vk-task-detail-batch-list button[data-current] { border-color: var(--color-accent, #4c8dff); }
+.vk-task-detail-batch-member button { border-color: color-mix(in srgb, var(--batch-state-color) 48%, var(--color-line)); background: color-mix(in srgb, var(--batch-state-color) 8%, #20232a); }
+.vk-task-detail-batch-member button:hover { background: color-mix(in srgb, var(--batch-state-color) 15%, #292d35); }
+.vk-task-detail-batch-member[data-state='done'] { --batch-state-color: var(--color-success); }
+.vk-task-detail-batch-member[data-state='interrupted'] { --batch-state-color: var(--color-warning); }
+.vk-task-detail-batch-member[data-state='failed'] { --batch-state-color: var(--color-danger); }
+.vk-task-detail-batch-member[data-state='running'] { --batch-state-color: var(--color-accent); }
+.vk-task-detail-batch-member button[data-current] { box-shadow: inset 3px 0 0 var(--batch-state-color); }
 
 /* **链接让位、状态不让**。原先只有 overflow/ellipsis 而没有 min-width: 0 ——
    flex 项默认不会缩到内容宽度以下,于是链接把状态整个顶出按钮外,边栏一窄就看不见
@@ -295,10 +316,10 @@
   color: var(--color-fg-dim);
   font-size: 11px;
 }
-.vk-task-detail-batch-status.is-done { color: #57c98b; }
-.vk-task-detail-batch-status.is-failed { color: #e2686a; }
-.vk-task-detail-batch-status.is-interrupted { color: #d8a657; }
-.vk-task-detail-batch-status.is-running { color: var(--color-fg-dim); }
+.vk-task-detail-batch-status.is-done { color: var(--color-success); }
+.vk-task-detail-batch-status.is-failed { color: var(--color-danger); }
+.vk-task-detail-batch-status.is-interrupted { color: var(--color-warning); }
+.vk-task-detail-batch-status.is-running { color: var(--color-accent); }
 
 /* 流式明细默认收起:平时是噪声,排查卡顿时才需要。 */
 .vk-model-attempt-trace > summary {
@@ -361,9 +382,25 @@
   bottom: calc(100% + 6px);
   left: 0;
   width: max(100%, 320px);
+  max-width: calc(100vw - 24px);
   max-height: 320px;
   overflow-y: auto;
+  z-index: 4;
+  opacity: 1;
 }
+/* 桌面详情栏靠右时,菜单向左展开,避免固定 320px 把链接裁在窗口外。 */
+@media (min-width: 761px) {
+  .vk-task-batch-rerun-menu { right: 0; left: auto; }
+}
+/* 移动端详情栏从右侧覆盖主区,保留左侧安全边距给 68px 图标 rail。 */
+@media (max-width: 760px) {
+  .vk-task-batch-rerun-menu {
+    width: max(100%, 280px);
+    max-width: calc(100vw - 64px);
+  }
+}
+.vk-task-batch-rerun:hover .vk-task-batch-rerun-menu,
+.vk-task-batch-rerun:focus-within .vk-task-batch-rerun-menu { visibility: visible; }
 
 /* 按钮和菜单之间那 6px 视觉间隙,鼠标一穿过去就算离开了容器,菜单当场收起 ——
    于是"悬停能看见、就是点不中",只能先用箭头钉住。把间隙补成 hover 目标的一部分。
@@ -379,7 +416,17 @@
   height: 10px;
 }
 
-.vk-task-batch-rerun-menu button { min-height: 38px; align-items: center; display: flex; }
+.vk-task-batch-rerun-menu button { min-height: 38px; align-items: center; display: flex; opacity: 0; transform: translateY(5px); animation: vk-rerun-item-in 180ms ease forwards; }
+.vk-task-batch-rerun-option { border-color: color-mix(in srgb, var(--batch-state-color) 48%, var(--color-line)) !important; background: color-mix(in srgb, var(--batch-state-color) 8%, #20232a) !important; }
+.vk-task-batch-rerun-option.is-done { --batch-state-color: var(--color-success); }
+.vk-task-batch-rerun-option.is-interrupted { --batch-state-color: var(--color-warning); }
+.vk-task-batch-rerun-option.is-failed { --batch-state-color: var(--color-danger); }
+.vk-task-batch-rerun-option.is-running { --batch-state-color: var(--color-accent); }
+.vk-task-batch-rerun-option:hover:not(:disabled),
+.vk-task-batch-rerun-option:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--batch-state-color) 16%, #292d35) !important;
+}
+@keyframes vk-rerun-item-in { to { opacity: 1; transform: translateY(0); } }
 
 /* 没勾选时占住勾的位置,免得条目左右跳动 */
 .vk-task-batch-rerun-blank { display: inline-block; width: 15px; flex: 0 0 auto; }
@@ -398,8 +445,20 @@
   font-size: 11px;
   font-style: normal;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .vk-task-batch-rerun-all { border-top: 1px solid #343a45; margin-top: 3px; padding-top: 6px; }
 .vk-task-batch-rerun-caret { margin-left: auto; color: var(--color-fg-dim); }
+
+@media (max-width: 320px) {
+  .vk-task-detail-body { padding: 12px 10px; }
+  .vk-task-detail-batch-list button { gap: 5px; padding-inline: 6px; }
+  .vk-task-detail-batch-status { font-size: 10px; }
+  .vk-task-batch-rerun-menu { width: max(100%, 280px); max-width: calc(100vw - 64px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vk-task-batch-rerun-menu button { animation: none; opacity: 1; transform: none; }
+}

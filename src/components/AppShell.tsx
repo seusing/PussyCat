@@ -21,6 +21,7 @@ import {
   loadLayout, saveLayout, clampColumnWidth,
   NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
   MODULE_SIDEBAR_MIN, MODULE_SIDEBAR_MAX, MODULE_SIDEBAR_DEFAULT,
+  MODULE_SIDEBAR_COLLAPSED,
   DETAILS_MIN, DETAILS_MAX, DETAILS_DEFAULT, SHELL_CENTER_MIN,
 } from '../data/layout'
 import type { LayoutSnapshot } from '../data/layout'
@@ -33,6 +34,8 @@ const MODULES = [
   { key: 'wrss' as const, label: '公众号', icon: Rss },
   { key: 'radar' as const, label: 'Codex Radar', icon: RadioTower },
 ]
+
+const MODULE_SIDEBAR_HANDLE_WIDTH = 9
 
 function ModuleNavigation() {
   const activeModule = useAppStore((state) => state.activeModule)
@@ -79,6 +82,7 @@ export default function AppShell({
   const gridRef = useRef<HTMLDivElement>(null)
   const [layout, setLayout] = useState<LayoutSnapshot>(() => loadLayout())
   const layoutRef = useRef(layout)
+  const [sidebarTransitioning, setSidebarTransitioning] = useState(false)
   // 窗口宽度也要参与夹取。夹取原先只发生在**拖拽**时,窗口本身被拉窄时没人重算,
   // 两侧仍按存下来的像素占位,中栏(minmax(0, 1fr))被压到 0 —— 标题、图标、内容
   // 全叠在一起。用户复现的正是这条:先拖窄中栏,再从右上角等比缩小窗口。
@@ -133,7 +137,9 @@ export default function AppShell({
     setLayout(next)
   }, [rightPanel, rightPanelOpen])
   const proposeDetails = useCallback((proposed: number) => {
-    const otherWidth = layoutRef.current.moduleSidebarHidden ? 0 : layoutRef.current.moduleSidebarWidth
+    const otherWidth = layoutRef.current.moduleSidebarHidden
+      ? MODULE_SIDEBAR_COLLAPSED
+      : layoutRef.current.moduleSidebarWidth
     const next = {
       ...layoutRef.current,
       detailsWidth: clampColumnWidth(
@@ -148,6 +154,7 @@ export default function AppShell({
     setLayout(next)
   }, [])
   const toggleModuleSidebar = useCallback(() => {
+    setSidebarTransitioning(true)
     const next = { ...layoutRef.current, moduleSidebarHidden: !layoutRef.current.moduleSidebarHidden }
     layoutRef.current = next
     setLayout(next)
@@ -165,10 +172,11 @@ export default function AppShell({
   // 渲染用的是**夹取后**的宽度,存下来的原值不动:窗口重新拉宽时,用户自己调好的
   // 宽度要回得来。直接把夹取结果写回 layout 就回不来了。
   const detailsShown = !!rightPanel && rightPanelOpen
+  const sidebarCollapsed = layout.moduleSidebarHidden
   const effectiveDetailsWidth = detailsShown
     ? clampColumnWidth(
       layout.detailsWidth, DETAILS_MIN, DETAILS_MAX,
-      layout.moduleSidebarHidden ? 0 : layout.moduleSidebarWidth, shellWidth,
+      sidebarCollapsed ? MODULE_SIDEBAR_COLLAPSED : layout.moduleSidebarWidth, shellWidth,
     )
     : layout.detailsWidth
   const effectiveModuleSidebarWidth = clampColumnWidth(
@@ -177,8 +185,8 @@ export default function AppShell({
   )
 
   const shellTemplateColumns = [
-    !layout.moduleSidebarHidden && `${effectiveModuleSidebarWidth}px`,
-    !layout.moduleSidebarHidden && 'auto',
+    `${sidebarCollapsed ? MODULE_SIDEBAR_COLLAPSED : effectiveModuleSidebarWidth}px`,
+    `${sidebarCollapsed ? 0 : MODULE_SIDEBAR_HANDLE_WIDTH}px`,
     // **不能是 minmax(0, 1fr)**:那等于允许中栏被压成 0。夹取是第一道防线,这里是
     // 第二道 —— 两侧加起来超过窗口时宁可整体出现滚动,也不让内容叠在一起。
     `minmax(${SHELL_CENTER_MIN}px, 1fr)`,
@@ -189,12 +197,17 @@ export default function AppShell({
   return (
     <div
       ref={shellRef}
-      className="app-shell"
-      data-left-open={!layout.moduleSidebarHidden}
+      className={`app-shell${sidebarTransitioning ? ' is-sidebar-transitioning' : ''}`}
+      data-testid="app-shell"
+      data-left-open={!sidebarCollapsed}
+      data-sidebar-collapsed={sidebarCollapsed}
       data-right-open={!!rightPanel && rightPanelOpen}
+      onTransitionEnd={(event) => {
+        if (event.propertyName === 'grid-template-columns') setSidebarTransitioning(false)
+      }}
       style={{ gridTemplateColumns: shellTemplateColumns, '--app-details-width': `${layout.detailsWidth}px` } as CSSProperties}
     >
-      {!layout.moduleSidebarHidden && <aside data-testid="app-sidebar" className="app-sidebar">
+      <aside data-testid="app-sidebar" className="app-sidebar" data-sidebar-collapsed={sidebarCollapsed}>
         <div className="app-brand">
           <span className="app-brand-mark">
             <img data-testid="app-brand-icon" src="/app-icon.png" alt="" aria-hidden="true" className="h-full w-full rounded-[7px] object-cover" />
@@ -203,21 +216,20 @@ export default function AppShell({
         </div>
         <ModuleNavigation />
         <div className="app-sidebar-health"><SystemHealthPill baseUrl={baseUrl} /></div>
-      </aside>}
+      </aside>
 
-      {!layout.moduleSidebarHidden && (
-        <ResizableSplit
-          value={layout.moduleSidebarWidth}
-          side="left"
-          min={MODULE_SIDEBAR_MIN}
-          max={MODULE_SIDEBAR_MAX}
-          defaultValue={MODULE_SIDEBAR_DEFAULT}
-          onResize={proposeModuleSidebar}
-          onCommit={commitLayout}
-          ariaLabel="调整应用导航栏宽度"
-          testId="separator-app-sidebar"
-        />
-      )}
+      <ResizableSplit
+        value={layout.moduleSidebarWidth}
+        side="left"
+        min={MODULE_SIDEBAR_MIN}
+        max={MODULE_SIDEBAR_MAX}
+        defaultValue={MODULE_SIDEBAR_DEFAULT}
+        onResize={proposeModuleSidebar}
+        onCommit={commitLayout}
+        ariaLabel="调整应用导航栏宽度"
+        testId="separator-app-sidebar"
+        disabled={sidebarCollapsed}
+      />
 
       <div className="app-main">
         <header data-testid="app-header" className="app-header flex-wrap">
@@ -225,11 +237,11 @@ export default function AppShell({
             <button
               type="button"
               data-testid="toggle-app-sidebar"
-              aria-label="显示/隐藏应用导航栏"
+              aria-label={sidebarCollapsed ? '展开应用导航栏' : '折叠应用导航栏'}
               aria-pressed={!layout.moduleSidebarHidden}
               onClick={toggleModuleSidebar}
               className="app-icon-button"
-              title={layout.moduleSidebarHidden ? '显示导航栏' : '隐藏导航栏'}
+              title={sidebarCollapsed ? '展开导航栏' : '折叠导航栏'}
             >
               {layout.moduleSidebarHidden ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
             </button>

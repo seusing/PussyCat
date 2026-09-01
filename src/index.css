@@ -146,6 +146,10 @@ select:focus-visible {
   background: #0d0f13;
 }
 
+.app-shell.is-sidebar-transitioning {
+  transition: grid-template-columns 280ms cubic-bezier(.16, 1, .3, 1);
+}
+
 .app-sidebar {
   display: flex;
   width: 100%;
@@ -155,6 +159,78 @@ select:focus-visible {
   border-right: 1px solid #2a2e37;
   background: #17191f;
   padding: 18px 14px 14px;
+  overflow: visible;
+  transition: width 280ms cubic-bezier(.16, 1, .3, 1), padding 280ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.app-sidebar[data-sidebar-collapsed='true'] {
+  align-items: center;
+  gap: 18px;
+  overflow: visible;
+  padding-inline: 7px;
+}
+
+.app-sidebar[data-sidebar-collapsed='true'] .app-brand {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.app-sidebar[data-sidebar-collapsed='true'] .app-module-tabs button {
+  justify-content: center;
+  gap: 0;
+  padding-inline: 0;
+  min-height: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+}
+
+.app-sidebar[data-sidebar-collapsed='true'] .app-module-tabs { width: 100%; }
+
+.app-sidebar[data-sidebar-collapsed='true'] .sidebar-label {
+  width: 0;
+  max-width: 0;
+  height: 0;
+  flex: 0 0 0;
+  margin: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
+  line-height: 0;
+}
+
+.app-sidebar .sidebar-label {
+  min-width: 0;
+  transition: opacity 180ms ease, transform 180ms ease, max-width 280ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.app-sidebar[data-sidebar-collapsed='true'] .app-sidebar-health {
+  display: flex;
+  justify-content: center;
+}
+
+@media (min-width: 761px) {
+  .app-sidebar[data-sidebar-collapsed='true'] .app-sidebar-health {
+    width: 42px;
+  }
+
+  .app-sidebar[data-sidebar-collapsed='true'] .app-sidebar-health [data-testid='health-pill'] {
+    width: 42px;
+    flex-direction: column;
+    gap: 4px;
+    justify-content: center;
+    padding: 4px 0;
+  }
+
+  .app-sidebar[data-sidebar-collapsed='true'] .app-sidebar-health [data-testid='health-details-toggle'] {
+    width: 34px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .app-sidebar[data-sidebar-collapsed='true'] .app-sidebar-health [data-testid='health-label'] {
+    display: none;
+  }
 }
 
 .app-brand {
@@ -219,6 +295,12 @@ select:focus-visible {
   margin-top: auto;
   min-width: 0;
   overflow: visible;
+}
+
+.resize-handle[data-disabled='true'] {
+  width: 0 !important;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .health-action-button {
@@ -811,8 +893,9 @@ select:focus-visible {
 }
 
 @media (max-width: 760px) {
-  .app-shell[data-left-open='true'] { grid-template-columns: 68px minmax(0, 1fr) !important; }
-  .app-shell[data-left-open='false'] { grid-template-columns: minmax(0, 1fr) !important; }
+  .app-shell[data-left-open='true'],
+  .app-shell[data-sidebar-collapsed='true'] { grid-template-columns: 68px minmax(0, 1fr) !important; }
+  .app-shell[data-left-open='false']:not([data-sidebar-collapsed='true']) { grid-template-columns: 68px minmax(0, 1fr) !important; }
   .app-shell [data-testid='separator-app-sidebar'],
   .app-shell [data-testid='separator-details-sidebar'] { display: none; }
   .app-sidebar { width: 68px; padding-inline: 9px; }

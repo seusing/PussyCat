@@ -85,6 +85,12 @@ test('桌面健康状态浮层不被应用侧栏裁切', () => {
   expect(indexCss).toMatch(/\.app-sidebar-health\s*\{[^}]*overflow:\s*visible;/s)
 })
 
+test('模块侧栏折叠 rail 保留固定图标槽并淡出标签', () => {
+  expect(indexCss).toMatch(/\.app-sidebar\[data-sidebar-collapsed='true'\][\s\S]*?padding-inline:\s*7px;/)
+  expect(indexCss).toMatch(/\.app-sidebar\[data-sidebar-collapsed='true'\] \.sidebar-label[\s\S]*?opacity:\s*0;/)
+  expect(indexCss).toMatch(/transition:\s*width\s+280ms\s+cubic-bezier\(\.16, 1, \.3, 1\)/)
+})
+
 test('默认两栏都显示:grid 列模板含五段,两条分隔条都在,两个开关 aria-pressed=true', () => {
   renderShell()
   expect(screen.getByTestId('col-nav')).toBeInTheDocument()
@@ -160,7 +166,7 @@ test('隐藏→再显示:恢复隐藏前的宽度(不是重置为默认值),折�
   expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ ...defaultLayout(), navWidth: 350, runsWidth: 400 })
 })
 
-test('full-page modules keep the global sidebar toggle and persist its hidden state', () => {
+test('full-page modules keep a collapsed rail and persist its hidden state', () => {
   render(
     <AppShell
       nav={<div>NAV</div>}
@@ -175,13 +181,39 @@ test('full-page modules keep the global sidebar toggle and persist its hidden st
   expect(screen.getByTestId('app-sidebar')).toBeInTheDocument()
   expect(screen.getByTestId('separator-app-sidebar')).toHaveAttribute('aria-valuenow', String(MODULE_SIDEBAR_DEFAULT))
   fireEvent.click(screen.getByTestId('toggle-app-sidebar'))
-  expect(screen.queryByTestId('app-sidebar')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('separator-app-sidebar')).not.toBeInTheDocument()
+  expect(screen.getByTestId('app-sidebar')).toHaveAttribute('data-sidebar-collapsed', 'true')
+  expect(screen.getByTestId('separator-app-sidebar')).toHaveAttribute('data-disabled', 'true')
+  expect(screen.getByTestId('separator-app-sidebar')).toHaveAttribute('tabindex', '-1')
+  expect(screen.getByTestId('separator-app-sidebar')).toHaveAttribute('aria-hidden', 'true')
+  expect(screen.getByTestId('app-shell')).toHaveAttribute('data-sidebar-collapsed', 'true')
+  expect(screen.getByTestId('toggle-app-sidebar')).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByTestId('toggle-app-sidebar')).toHaveAccessibleName('展开应用导航栏')
   expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toMatchObject({ moduleSidebarHidden: true })
 
   fireEvent.click(screen.getByTestId('toggle-app-sidebar'))
   expect(screen.getByTestId('app-sidebar')).toBeInTheDocument()
+  expect(screen.getByTestId('app-sidebar')).toHaveAttribute('data-sidebar-collapsed', 'false')
+  expect(screen.getByTestId('separator-app-sidebar')).not.toHaveAttribute('data-disabled')
+  expect(screen.getByTestId('toggle-app-sidebar')).toHaveAccessibleName('折叠应用导航栏')
   expect(screen.getByTestId('separator-app-sidebar')).toHaveAttribute('aria-valuenow', String(MODULE_SIDEBAR_DEFAULT))
+})
+
+test('折叠 rail 仍计入详情栏夹取,避免窄窗口挤压状态内容', () => {
+  render(
+    <AppShell
+      nav={<div>NAV</div>}
+      config={<div>CONFIG</div>}
+      runs={<div>RUNS</div>}
+      fullPage={<div>FULL PAGE</div>}
+      rightPanel={<div>DETAILS</div>}
+      rightPanelOpen
+      catalogStatus="ready"
+      onRetryCatalog={() => {}}
+    />,
+  )
+  fireEvent.click(screen.getByTestId('toggle-app-sidebar'))
+  expect(screen.getByTestId('app-shell').style.gridTemplateColumns)
+    .toContain('56px 0px minmax(360px, 1fr) auto 380px')
 })
 
 test('the task details panel renders in a resizable right sidebar', () => {
