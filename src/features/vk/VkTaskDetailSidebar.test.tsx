@@ -57,6 +57,60 @@ describe('VkTaskDetailSidebar', () => {
     localStorage.clear()
   })
 
+  it('后端没串上 parent 也照样只显示原本那几条', async () => {
+    // 用户的要求是"提交时几条,永远显示几条",**与后端怎么记账无关**。历史上"重跑
+    // 已完成的"走的是另开一条新任务(带 batch、不带 parent),那些行按重试链串不起来,
+    // 小任务列表就一次比一次长:2 条变 3 条、3 条变 4 条。提交路径已经改成 refresh,
+    // 但显示不该依赖后端一定串对 —— 归并键用来源链接,那是"这一条是哪个视频"的事实。
+    const rows = [
+      {
+        job_id: 'a', kind: 'run', status: 'interrupted',
+        submitted_at: '2026-09-01T14:53:44+08:00', finished_at: null,
+        parent_job_id: null, cache_bypass: false, batch_id: 'b-88',
+        source: 'http://xhslink.com/o/3w78dsVlUql',
+      },
+      {
+        job_id: 'b', kind: 'run', status: 'done',
+        submitted_at: '2026-09-01T14:53:45+08:00', finished_at: null,
+        parent_job_id: null, cache_bypass: false, batch_id: 'b-88',
+        source: 'http://xhslink.com/o/52xnYPKG36K',
+      },
+      // 同一个视频的又一次尝试,**没有 parent_job_id**
+      {
+        job_id: 'c', kind: 'run', status: 'running',
+        submitted_at: '2026-09-01T14:54:14+08:00', finished_at: null,
+        parent_job_id: null, cache_bypass: false, batch_id: 'b-88',
+        source: 'http://xhslink.com/o/3w78dsVlUql',
+      },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/a')) {
+        return new Response(JSON.stringify({
+          job_id: 'a', kind: 'run', status: 'interrupted',
+          submitted_at: '2026-09-01T14:53:44+08:00', finished_at: null,
+          parent_job_id: null, cache_bypass: false, batch_id: 'b-88',
+          request: { source: 'http://xhslink.com/o/3w78dsVlUql', preset: 'quick-summary' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/vk/v1/jobs')) {
+        return new Response(JSON.stringify(rows), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 404 })
+    }))
+
+    render(<VkTaskDetailSidebar jobId="a" baseUrl={BASE} onClose={() => {}} />)
+
+    const sources = await screen.findByTestId('vk-task-detail-sources')
+    expect(sources.textContent).toContain('共 2 个视频')
+    expect(sources.textContent).not.toContain('小任务3')
+    // 同一个视频取最新那次的状态
+    expect([...sources.querySelectorAll('.vk-task-detail-batch-status')]
+      .map((node) => node.textContent)).toEqual(['进行中', '已完成'])
+  })
+
   it('重跑不改变小任务条数 —— 提交了几条,永远显示几条', async () => {
     // 后端把每次尝试记成一条新 job(parent 指回原条、batch 不变),这是对的:审计要
     // 看得见每一次尝试。但**界面不该因此多出行**——用户提交了 2 个视频,重跑一次之后
@@ -242,7 +296,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(onJobChange).toHaveBeenCalledWith('b-3')
   })
 
-  it('整批重跑:失败的走 retry,已完成的重新提交,进行中的跳过', async () => {
+  it('整批重跑:失败的走 retry,已完成的走 refresh,进行中的跳过', async () => {
     const user = userEvent.setup()
     const members = [
       { job_id: 'r-1', status: 'done', source: 'https://example.com/one' },
@@ -250,6 +304,7 @@ describe('VkTaskDetailSidebar', () => {
       { job_id: 'r-3', status: 'running', source: 'https://example.com/three' },
     ]
     const retried: string[] = []
+    const refreshed: string[] = []
     const resubmitted: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -257,6 +312,13 @@ describe('VkTaskDetailSidebar', () => {
       if (retryHit) {
         retried.push(retryHit[1])
         return new Response(JSON.stringify({ job_id: `${retryHit[1]}-retry` }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      const refreshHit = url.match(/\/vk\/v1\/jobs\/([^/]+)\/refresh$/)
+      if (refreshHit) {
+        refreshed.push(refreshHit[1])
+        return new Response(JSON.stringify({ job_id: `${refreshHit[1]}-refresh` }), {
           status: 200, headers: { 'content-type': 'application/json' },
         })
       }
@@ -302,9 +364,11 @@ describe('VkTaskDetailSidebar', () => {
     await user.click(await screen.findByRole('button', { name: /重跑全部 2 个/ }))
 
     // 逐个成员串行发请求，等循环跑完再断言
-    await waitFor(() => expect(retried).toEqual(['r-2']))   // 失败的走 retry
-    await waitFor(() => expect(resubmitted).toHaveLength(1)) // 已完成的重新提交
-    expect(resubmitted[0]).toMatchObject({ batch_id: 'batch-r' })   // 留在原批里
+    await waitFor(() => expect(retried).toEqual(['r-2']))     // 失败的走 retry
+    await waitFor(() => expect(refreshed).toEqual(['r-1']))   // 已完成的走 refresh
+    // **不许再走"另开一条新任务"那条路**:那样出来的 job 没有 parent,前端按重试链
+    // 折叠时认不出它是同一个视频的又一次尝试,小任务列表就会一次比一次长。
+    expect(resubmitted).toHaveLength(0)
   })
 
   it('只重跑选中的那一条:没勾的不动', async () => {

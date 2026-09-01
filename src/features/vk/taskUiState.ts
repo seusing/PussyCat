@@ -60,3 +60,18 @@ export function vkTaskNumberForBatch(batchId: string | null): number | null {
   if (!batchId) return null
   return loadTaskNumberIndex()[vkBatchNumberKey(batchId)] ?? null
 }
+
+/** 「提交到结束」的墙钟。没结束就算到此刻。
+ *
+ * 从任务列表挪过来的:批量任务一行代表多个视频,列表上那个耗时是**整批**的墙钟
+ * (第一条提交到最后一条结束),很容易被读成"每条要跑这么久"。现在只在详情页按
+ * 单条显示。 */
+export function vkElapsedLabel(submittedAt: string, finishedAt?: string | null): string {
+  const start = Date.parse(submittedAt)
+  if (Number.isNaN(start)) return '—'
+  const finish = finishedAt ? Date.parse(finishedAt) : Date.now()
+  if (Number.isNaN(finish)) return '—'
+  const seconds = Math.max(0, Math.round((finish - start) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m${seconds % 60}s`
+}

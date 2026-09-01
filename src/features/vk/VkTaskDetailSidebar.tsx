@@ -12,7 +12,8 @@ import {
 import type { VkJobView, VkProviderSettings } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
 import {
-  isVkJobRerun, markVkJobAsRerun, vkTaskNumberFor, vkTaskNumberForBatch, VK_OPEN_OUTPUT_EVENT,
+  isVkJobRerun, markVkJobAsRerun, vkElapsedLabel, vkTaskNumberFor, vkTaskNumberForBatch,
+  VK_OPEN_OUTPUT_EVENT,
 } from './taskUiState'
 import './VkTaskDetailSidebar.css'
 
@@ -56,6 +57,14 @@ function batchState(status: string): BatchState {
   return 'running'
 }
 
+type BatchMember = {
+  job_id: string
+  source: string
+  state: BatchState
+  submitted_at: string
+  finished_at: string | null
+}
+
 /** 批量成员的来源:一条 job 一个视频,取不到就退回 job_id。
  *
  * **列表接口把 source 放在行的顶层**,不在 `request` 里(那是单条详情的形状)。
@@ -77,8 +86,11 @@ function memberSource(row: { source?: string; request?: { source?: string } }): 
  * 任意一条能取到的——同一个视频,链接本来就一样。
  */
 function collapseAttempts(
-  rows: readonly { job_id: string; parent_job_id?: string | null; submitted_at: string; status: string; source?: string }[],
-): { job_id: string; source: string; state: BatchState }[] {
+  rows: readonly {
+    job_id: string; parent_job_id?: string | null; submitted_at: string
+    finished_at?: string | null; status: string; source?: string
+  }[],
+): BatchMember[] {
   const byId = new Map(rows.map((row) => [row.job_id, row]))
   const rootOf = (row: typeof rows[number]): string => {
     let current = row
@@ -91,21 +103,27 @@ function collapseAttempts(
     }
     return current.job_id
   }
+  // 归并键:**同一个视频**。优先用来源链接——那是"这一条小任务是哪个视频"的唯一
+  // 事实,与后端怎么串联尝试无关。取不到来源(老数据)才退回重试链的根。
+  //
+  // 只按重试链归并是不够的:重跑一条已完成的曾经走的是"另开一条新任务"(带 batch、
+  // 不带 parent),那条链认不出来,小任务列表于是一次比一次长。那条路已经改成 refresh
+  // 了,但**显示不该依赖后端一定串对**——用户的要求是"提交时几条,永远显示几条"。
   const chains = new Map<string, typeof rows[number][]>()
   for (const row of rows) {
-    const root = rootOf(row)
-    const chain = chains.get(root)
+    const key = memberSource(row) || rootOf(row)
+    const chain = chains.get(key)
     if (chain) chain.push(row)
-    else chains.set(root, [row])
+    else chains.set(key, [row])
   }
   return [...chains.entries()]
-    .map(([root, attempts]) => {
+    .map(([, attempts]) => {
       const ordered = [...attempts].sort(
         (left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at),
       )
       const latest = ordered[ordered.length - 1]
       const source = ordered.map(memberSource).find(Boolean) ?? ''
-      return { root, first: ordered[0], latest, source }
+      return { first: ordered[0], latest, source }
     })
     // 排序按**首次**提交,这样重跑不会把行的位置打乱——小任务2 永远是小任务2。
     .sort((left, right) => Date.parse(left.first.submitted_at) - Date.parse(right.first.submitted_at))
@@ -113,6 +131,10 @@ function collapseAttempts(
       job_id: latest.job_id,
       source,
       state: batchState(latest.status),
+      // 耗时按**最新那次尝试**算。从首次提交算起会把中间等着的时间也算进去,
+      // 那不是这次跑用了多久。
+      submitted_at: latest.submitted_at,
+      finished_at: latest.finished_at ?? null,
     }))
 }
 
@@ -255,7 +277,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | 'batch' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
   const [batchMembers, setBatchMembers] = useState<
-    { job_id: string; source: string; state: BatchState }[]
+    BatchMember[]
   >([])
   // 编号先按 job_id 查;查不到再按批次查 —— 列表把一批折成一行、只记得住那一行的
   // job_id,而详情页打开的往往是批里的某个成员,直查必然落空,标题就退回一串 UUID。
@@ -447,15 +469,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       if (!selection.has(member.job_id)) continue
       if (member.state === 'running') continue    // 还在跑的没什么可重跑的
       try {
-        const detail = await fetchVkJob(member.job_id, baseUrl)
-        const result = member.state === 'done'
-          ? await postVkJob({
-            request: detail.request as Record<string, unknown>,
-            idempotency_key: crypto.randomUUID(),
-            client_job_id: crypto.randomUUID(),
-            ...(detail.batch_id ? { batch_id: detail.batch_id } : {}),
-          }, baseUrl)
-          : await postVkJobAction(member.job_id, 'retry', baseUrl)
+        // 两条路都走 job action,**都会把 parent_job_id 指回被重跑的那条**:
+        //   失败/中断 → retry(沿用请求,走缓存)
+        //   已完成   → refresh(同一请求,显式绕过缓存——重跑一条已完成的,要的就是重算)
+        // 原先"已完成"那支是 postVkJob 另开一条新任务:batch_id 虽然带上了,但**没有
+        // parent**,于是前端按重试链折叠时认不出它是同一个视频的又一次尝试,小任务
+        // 列表就一次比一次长(用户看到 2 条变 3 条、3 条变 4 条)。
+        const result = await postVkJobAction(
+          member.job_id, member.state === 'done' ? 'refresh' : 'retry', baseUrl,
+        )
         const newId = typeof result.job_id === 'string' ? result.job_id : null
         if (newId) {
           markVkJobAsRerun(newId)
@@ -580,6 +602,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                           {BATCH_STATE_LABELS[member.state]}
                         </span>
                       </button>
+                      {/* 耗时只给**当前点开的那一条**。列表页那一列已经去掉——批量里
+                          它显示的是整批墙钟,会被读成"每条要跑这么久"。挂在被点开的
+                          小任务下面,问的是哪条就答哪条。 */}
+                      {member.job_id === jobId && (
+                        <p className="vk-task-detail-batch-elapsed">
+                          耗时 {vkElapsedLabel(member.submitted_at, member.finished_at)}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ol>

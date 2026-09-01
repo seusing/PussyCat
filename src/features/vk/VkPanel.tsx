@@ -260,7 +260,20 @@ function latestLogicalTasks(rows: VkJobRow[]): VkJobRow[] {
     byBatch.set(key, [...(byBatch.get(key) ?? []), row])
   }
 
-  const collapsed = [...byBatch.values()].map((members) => {
+  const collapsed = [...byBatch.values()].map((rawMembers) => {
+    // 批内**再按来源去重一次**。retryRootId 只认 parent 链;历史上"重跑已完成的"
+    // 曾经是另开一条不带 parent 的新任务,那些行串不起来,一批就会越看越多。
+    // 同一批里同一个链接就是同一个视频,取最新那次。**只在批内做**——跨批同名链接
+    // 是两次独立提交,不能合。
+    const bySource = new Map<string, VkJobRow>()
+    for (const row of rawMembers) {
+      const key = row.source?.trim() || row.retryRootId || row.job_id
+      const previous = bySource.get(key)
+      if (!previous || Date.parse(row.submitted_at) > Date.parse(previous.submitted_at)) {
+        bySource.set(key, row)
+      }
+    }
+    const members = [...bySource.values()]
     if (members.length === 1) return members[0]
     const ordered = [...members].sort(
       (left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at),

@@ -917,7 +917,9 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-job-row')).toBeInTheDocument())
     expect(screen.getByTestId('vk-job-row').textContent).toContain('失败')
-    expect(screen.getByTestId('vk-job-row').textContent).toContain('10m0s')
+    // 耗时列去掉了:批量任务一行代表多个视频,那一列显示的是整批墙钟,会被读成
+    // 「每条要跑这么久」。逐条耗时改在详情页按小任务给。
+    expect(screen.getByTestId('vk-job-row').textContent).not.toContain('10m0s')
 
     await user.click(screen.getByTestId('vk-job-row'))
     await waitFor(() => expect(screen.getByTestId('vk-job-detail')).toBeInTheDocument())

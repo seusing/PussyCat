@@ -273,8 +273,24 @@
 .vk-task-detail-batch-list button:hover { background: #292d35; }
 .vk-task-detail-batch-list button[data-current] { border-color: var(--color-accent, #4c8dff); }
 
-.vk-task-detail-batch-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vk-task-detail-batch-status { flex: 0 0 auto; font-size: 11px; }
+/* **链接让位、状态不让**。原先只有 overflow/ellipsis 而没有 min-width: 0 ——
+   flex 项默认不会缩到内容宽度以下,于是链接把状态整个顶出按钮外,边栏一窄就看不见
+   状态了(用户反复提的就是这条)。min-width: 0 才真的允许它截断。 */
+.vk-task-detail-batch-source {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vk-task-detail-batch-status { flex: 0 0 auto; white-space: nowrap; font-size: 11px; }
+
+.vk-task-detail-batch-elapsed {
+  margin: 2px 0 0;
+  padding-left: 8px;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+}
 .vk-task-detail-batch-status.is-done { color: #57c98b; }
 .vk-task-detail-batch-status.is-failed { color: #e2686a; }
 .vk-task-detail-batch-status.is-interrupted { color: #d8a657; }

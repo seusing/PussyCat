@@ -74,7 +74,7 @@
 
 .vk-task-table {
   width: 100%;
-  min-width: 452px;
+  min-width: 388px;
   border-collapse: collapse;
   table-layout: fixed;
   color: var(--color-fg);
@@ -103,40 +103,39 @@
   white-space: nowrap;
 }
 
-/* 列宽收紧过两轮。详情栏打开后表格区只剩几百像素,而最初五列合计 742px、表格
-   min-width 720px —— 横向滚动把「任务状态」整列推出可视区,用户只看得到「任务」
-   两个字。第一轮收到 572px 仍不够(编号列还挂着「N 个视频」徽标,把日期挤到图标上)。
-   这一轮把徽标去掉、宽度再收一档,合计 452px。 */
+/* 列宽收紧过三轮,「耗时」列这一轮整个去掉了(批量任务里它显示的是整批墙钟,很容易
+   被读成"每条要跑这么久";逐条耗时移到详情页)。最初五列合计 742px、表格 min-width
+   720px —— 横向滚动把「任务状态」整列推出可视区,用户只看得到「任务」两个字。
+   现在四列合计 388px。 */
 .vk-task-table th:nth-child(1) { width: 68px; }
 .vk-task-table th:nth-child(2) { width: 152px; }
-.vk-task-table th:nth-child(3) { width: 64px; }
-.vk-task-table th:nth-child(4) { width: 96px; }
-.vk-task-table th:nth-child(5) { width: 72px; }
+.vk-task-table th:nth-child(3) { width: 96px; }
+.vk-task-table th:nth-child(4) { width: 72px; }
 
 /* **状态列钉在右边**。收窄只是让它在常见宽度下放得下;真要保证"无论边栏怎么调都
-   看得到",只能让它不随横向滚动走。这是用户明确要的那条底线:链接、条数都可以省,
-   状态不能省。 */
-.vk-task-table td:nth-child(4) { right: 72px; }   /* 让开最后那列「操作」的宽度 */
-.vk-task-table td:nth-child(5) { right: 0; }
-.vk-task-table th:nth-child(4) { right: 72px; }
-.vk-task-table th:nth-child(5) { right: 0; }
-
+   看得到",只能让它不随横向滚动走。这是用户明确要的那条底线:链接、条数、耗时都
+   可以省,状态不能省。 */
+.vk-task-table td:nth-child(3),
+.vk-task-table th:nth-child(3) { right: 72px; }   /* 让开最后那列「操作」的宽度 */
 .vk-task-table td:nth-child(4),
-.vk-task-table td:nth-child(5) {
+.vk-task-table th:nth-child(4) { right: 0; }
+
+.vk-task-table td:nth-child(3),
+.vk-task-table td:nth-child(4) {
   position: sticky;
   z-index: 1;
   /* 钉住的格子必须**不透明**,否则横向滚动时下面的内容会从底下透出来。
-     行底色本身是半透明叠在外壳的 --color-panel 上,这里要把它composite 掉。 */
+     行底色本身是半透明叠在外壳的 --color-panel 上,这里要把它 composite 掉。 */
   background: var(--color-panel);
 }
 
-.vk-task-table th:nth-child(4),
-.vk-task-table th:nth-child(5) { z-index: 2; }    /* 表头同时横竖钉住,得压过内容格 */
+.vk-task-table th:nth-child(3),
+.vk-task-table th:nth-child(4) { z-index: 2; }    /* 表头同时横竖钉住,得压过内容格 */
 
+.vk-task-table tbody tr[data-testid='vk-job-row']:hover td:nth-child(3),
 .vk-task-table tbody tr[data-testid='vk-job-row']:hover td:nth-child(4),
-.vk-task-table tbody tr[data-testid='vk-job-row']:hover td:nth-child(5),
-.vk-task-table tbody tr[data-testid='vk-job-row'][data-selected='true'] td:nth-child(4),
-.vk-task-table tbody tr[data-testid='vk-job-row'][data-selected='true'] td:nth-child(5) {
+.vk-task-table tbody tr[data-testid='vk-job-row'][data-selected='true'] td:nth-child(3),
+.vk-task-table tbody tr[data-testid='vk-job-row'][data-selected='true'] td:nth-child(4) {
   background: color-mix(in srgb, var(--color-hover) 76%, var(--color-panel));
 }
 

@@ -100,18 +100,6 @@ function startedAtLabel(value: string): string {
   }).format(parsed)
 }
 
-function elapsedLabel(row: VkJobRow): string {
-  const start = Date.parse(row.submitted_at)
-  if (Number.isNaN(start)) return '—'
-  const finish = row.finished_at ? Date.parse(row.finished_at) : Date.now()
-  if (Number.isNaN(finish)) return '—'
-  const seconds = Math.max(0, Math.round((finish - start) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainder = seconds % 60
-  return `${minutes}m${remainder}s`
-}
-
 function stopRowSelection(event: MouseEvent<HTMLElement>): void {
   event.stopPropagation()
 }
@@ -292,7 +280,6 @@ export function VkTaskTable({
           <tr>
             <th scope="col">任务编号</th>
             <th scope="col">任务开始时间</th>
-            <th scope="col">耗时</th>
             <th scope="col">任务状态</th>
             <th scope="col">操作</th>
           </tr>
@@ -360,11 +347,6 @@ export function VkTaskTable({
                 </td>
                 <td>
                   <time dateTime={row.submitted_at} title={row.submitted_at}>{startedAtLabel(row.submitted_at)}</time>
-                </td>
-                <td>
-                  <div className="vk-task-elapsed-cell">
-                    <span>{elapsedLabel(row)}</span>
-                  </div>
                 </td>
                 <td>
                   <span className={`vk-task-badge is-${status}`} data-status={status}>{STATUS_LABELS[status]}</span>

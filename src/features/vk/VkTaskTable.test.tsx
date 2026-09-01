@@ -64,10 +64,11 @@ describe('VkTaskTable', () => {
     render(<VkTaskTable {...makeProps()} />)
 
     const table = screen.getByRole('table')
+    // 「耗时」列去掉了:批量任务一行代表多个视频,那一列显示的是整批墙钟,很容易被
+    // 读成"每条要跑这么久"。逐条耗时移到详情页,挂在各自的小任务下面。
     expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
       '任务编号',
       '任务开始时间',
-      '耗时',
       '任务状态',
       '操作',
     ])
@@ -76,7 +77,6 @@ describe('VkTaskTable', () => {
     expect(within(table).getByText('正在执行')).toHaveAttribute('data-status', 'running')
     expect(within(table).getByText('已完成')).toHaveAttribute('data-status', 'completed')
     expect(within(table).getByText('失败')).toHaveAttribute('data-status', 'failed')
-    expect(screen.getByText('2m5s')).toBeInTheDocument()
   })
 
   it('distinguishes rerun and interrupted states from ordinary execution', () => {
