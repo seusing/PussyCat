@@ -66,6 +66,56 @@ function memberSource(row: { source?: string; request?: { source?: string } }): 
   return typeof source === 'string' ? source.split(/\r?\n/)[0].trim() : ''
 }
 
+/** 把「同一个视频的多次尝试」折成一行。
+ *
+ * 重试在后端是一条新 job(parent_job_id 指回被重试的那条、batch_id 不变),这是对的
+ * ——审计要看得见每一次尝试。但**界面上不该因此多出一行**:用户重跑的是「小任务2」,
+ * 看到的就该还是小任务2,状态从「已中断」变成「进行中」,而不是列表尾巴上又冒出
+ * 「小任务3」。真机上两个视频重跑一次就变成四条,谁也说不清哪条对哪条。
+ *
+ * 折叠取**最新一次尝试**的状态与 job_id(点进去、重跑都该落在它身上),来源取链上
+ * 任意一条能取到的——同一个视频,链接本来就一样。
+ */
+function collapseAttempts(
+  rows: readonly { job_id: string; parent_job_id?: string | null; submitted_at: string; status: string; source?: string }[],
+): { job_id: string; source: string; state: BatchState }[] {
+  const byId = new Map(rows.map((row) => [row.job_id, row]))
+  const rootOf = (row: typeof rows[number]): string => {
+    let current = row
+    const seen = new Set<string>()
+    while (current.parent_job_id && !seen.has(current.job_id)) {
+      seen.add(current.job_id)
+      const parent = byId.get(current.parent_job_id)
+      if (!parent) break
+      current = parent
+    }
+    return current.job_id
+  }
+  const chains = new Map<string, typeof rows[number][]>()
+  for (const row of rows) {
+    const root = rootOf(row)
+    const chain = chains.get(root)
+    if (chain) chain.push(row)
+    else chains.set(root, [row])
+  }
+  return [...chains.entries()]
+    .map(([root, attempts]) => {
+      const ordered = [...attempts].sort(
+        (left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at),
+      )
+      const latest = ordered[ordered.length - 1]
+      const source = ordered.map(memberSource).find(Boolean) ?? ''
+      return { root, first: ordered[0], latest, source }
+    })
+    // 排序按**首次**提交,这样重跑不会把行的位置打乱——小任务2 永远是小任务2。
+    .sort((left, right) => Date.parse(left.first.submitted_at) - Date.parse(right.first.submitted_at))
+    .map(({ latest, source }) => ({
+      job_id: latest.job_id,
+      source,
+      state: batchState(latest.status),
+    }))
+}
+
 function sourceItems(job: VkJobView | null): string[] {
   const source = job?.request?.source
   if (typeof source !== 'string') return []
@@ -230,7 +280,26 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   // 容器把菜单收掉(实测就是这么翻的)。点箭头可以「钉住」,钉住后移开不收。
   const [rerunMenuOpen, setRerunMenuOpen] = useState(false)
   const [rerunMenuPinned, setRerunMenuPinned] = useState(false)
+  const rerunMenuRef = useRef<HTMLDivElement | null>(null)
   const [rerunPicked, setRerunPicked] = useState<Set<string> | null>(null)
+  // 钉住之后点别处要能收起来。原先只有再点一次箭头才收,菜单于是一直挂在那儿挡着下面
+  // 的内容 —— 用户的原话是「点击菜单以外的地方时不会自动收回」。Esc 一并收。
+  useEffect(() => {
+    if (!rerunMenuOpen) return undefined
+    const dismiss = (event: Event) => {
+      const node = rerunMenuRef.current
+      if (node && event.target instanceof Node && node.contains(event.target)) return
+      setRerunMenuOpen(false)
+      setRerunMenuPinned(false)
+    }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss(event) }
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [rerunMenuOpen])
   // 默认只选失败的——那是绝大多数情况下想重跑的。全失败时它就等于「全部重跑」;
   // 一条没失败时退回全选,否则按钮会是个点不动的空壳。
   const selection = useMemo(() => {
@@ -272,16 +341,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       if (nextJob.batch_id) {
         const siblings = await fetchVkJobs(baseUrl).catch(() => [])
         if (generation !== loadGeneration.current) return
-        setBatchMembers(
-          siblings
-            .filter((row) => row.batch_id === nextJob.batch_id)
-            .sort((left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at))
-            .map((row) => ({
-              job_id: row.job_id,
-              source: memberSource(row),
-              state: batchState(row.status),
-            })),
-        )
+        setBatchMembers(collapseAttempts(
+          siblings.filter((row) => row.batch_id === nextJob.batch_id),
+        ))
       } else {
         setBatchMembers([])
       }
@@ -423,18 +485,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       <header>
         <div>
           <span>任务详情</span>
-          {/* 列表上认的是编号，详情页原先只给 UUID，两边对不上号。编号在前，副标题给
-              **链接**——那才是人认得出的东西；一串 UUID 对着看什么也认不出来。UUID 仍要
-              留着（排查问题时日志里只有它），退到 title 里，鼠标悬停可见、可复制。 */}
+          {/* 标题只给编号。链接在下面的「提交内容」里逐条列着,标题再放一条只是重复;
+              一批多个视频时它还只能显示其中一条,反而误导。UUID 退到 title 属性里
+              ——排查问题时日志里只有它,鼠标悬停仍拿得到。 */}
           {taskNumber === null
-            ? <strong>{currentSource || job?.job_id || jobId}</strong>
+            ? <strong title={job?.job_id ?? jobId ?? undefined}>{currentSource || job?.job_id || jobId}</strong>
             : (
-              <>
-                <strong data-testid="vk-task-detail-number">任务 {taskNumber}</strong>
-                <code className="vk-task-detail-job-id" title={job?.job_id ?? jobId}>
-                  {currentSource || job?.job_id || jobId}
-                </code>
-              </>
+              <strong data-testid="vk-task-detail-number" title={job?.job_id ?? jobId ?? undefined}>
+                任务 {taskNumber}
+              </strong>
             )}
         </div>
         <button type="button" onClick={onClose} aria-label="关闭任务详情" title="关闭">
@@ -628,6 +687,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             {rerunable.length > 1 && (
               <div
                 className="vk-task-batch-rerun"
+                ref={rerunMenuRef}
                 onMouseEnter={() => setRerunMenuOpen(true)}
                 onMouseLeave={() => { if (!rerunMenuPinned) setRerunMenuOpen(false) }}
               >

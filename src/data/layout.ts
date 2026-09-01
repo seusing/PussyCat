@@ -23,6 +23,10 @@ export const DETAILS_DEFAULT = 380
 
 // 中栏(命令详情)最小宽度——不持久化、不可独立拖拽,只作为左右两栏拖拽时的挤压下限。
 export const CONFIG_MIN = 400
+// 外壳中栏的硬下限。CSS 那道 minmax 原先写的是 0,等于允许中栏被压成零宽——
+// 窗口拉窄时标题、图标、内容会直接叠在一起。取值比 CONFIG_MIN 小:那是配置面板
+// 的口径,外壳中栏放的是模块内容,不必一样宽。
+export const SHELL_CENTER_MIN = 360
 
 export type LayoutSnapshot = {
   navWidth: number

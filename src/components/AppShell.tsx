@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { InlineLoader } from 'generative-loaders'
 import 'generative-loaders/styles.css'
@@ -21,7 +21,7 @@ import {
   loadLayout, saveLayout, clampColumnWidth,
   NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
   MODULE_SIDEBAR_MIN, MODULE_SIDEBAR_MAX, MODULE_SIDEBAR_DEFAULT,
-  DETAILS_MIN, DETAILS_MAX, DETAILS_DEFAULT,
+  DETAILS_MIN, DETAILS_MAX, DETAILS_DEFAULT, SHELL_CENTER_MIN,
 } from '../data/layout'
 import type { LayoutSnapshot } from '../data/layout'
 
@@ -79,6 +79,20 @@ export default function AppShell({
   const gridRef = useRef<HTMLDivElement>(null)
   const [layout, setLayout] = useState<LayoutSnapshot>(() => loadLayout())
   const layoutRef = useRef(layout)
+  // 窗口宽度也要参与夹取。夹取原先只发生在**拖拽**时,窗口本身被拉窄时没人重算,
+  // 两侧仍按存下来的像素占位,中栏(minmax(0, 1fr))被压到 0 —— 标题、图标、内容
+  // 全叠在一起。用户复现的正是这条:先拖窄中栏,再从右上角等比缩小窗口。
+  // 双击调整条能恢复,是因为那条路会重新走夹取。
+  const [shellWidth, setShellWidth] = useState(0)
+  useEffect(() => {
+    const node = shellRef.current
+    if (!node || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(([entry]) => {
+      setShellWidth(entry?.contentRect.width ?? 0)
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
 
   const proposeNav = useCallback((proposed: number) => {
     const next = { ...layoutRef.current, navWidth: clampColumnWidth(proposed, NAV_MIN, NAV_MAX, layoutRef.current.runsWidth, gridRef.current?.getBoundingClientRect().width ?? 0) }
@@ -148,12 +162,28 @@ export default function AppShell({
     !layout.runsHidden && `${layout.runsWidth}px`,
   ].filter((value): value is string => !!value).join(' ')
 
+  // 渲染用的是**夹取后**的宽度,存下来的原值不动:窗口重新拉宽时,用户自己调好的
+  // 宽度要回得来。直接把夹取结果写回 layout 就回不来了。
+  const detailsShown = !!rightPanel && rightPanelOpen
+  const effectiveDetailsWidth = detailsShown
+    ? clampColumnWidth(
+      layout.detailsWidth, DETAILS_MIN, DETAILS_MAX,
+      layout.moduleSidebarHidden ? 0 : layout.moduleSidebarWidth, shellWidth,
+    )
+    : layout.detailsWidth
+  const effectiveModuleSidebarWidth = clampColumnWidth(
+    layout.moduleSidebarWidth, MODULE_SIDEBAR_MIN, MODULE_SIDEBAR_MAX,
+    detailsShown ? effectiveDetailsWidth : 0, shellWidth,
+  )
+
   const shellTemplateColumns = [
-    !layout.moduleSidebarHidden && `${layout.moduleSidebarWidth}px`,
+    !layout.moduleSidebarHidden && `${effectiveModuleSidebarWidth}px`,
     !layout.moduleSidebarHidden && 'auto',
-    'minmax(0, 1fr)',
-    rightPanel && rightPanelOpen && 'auto',
-    rightPanel && rightPanelOpen && `${layout.detailsWidth}px`,
+    // **不能是 minmax(0, 1fr)**:那等于允许中栏被压成 0。夹取是第一道防线,这里是
+    // 第二道 —— 两侧加起来超过窗口时宁可整体出现滚动,也不让内容叠在一起。
+    `minmax(${SHELL_CENTER_MIN}px, 1fr)`,
+    detailsShown && 'auto',
+    detailsShown && `${effectiveDetailsWidth}px`,
   ].filter((value): value is string => !!value).join(' ')
 
   return (

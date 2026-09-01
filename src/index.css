@@ -295,7 +295,13 @@ select:focus-visible {
 
 .app-header-primary,
 .app-header-actions { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.app-header-actions { margin-left: auto; justify-content: flex-end; }
+/* 标题这一侧**可压缩**、右侧动作区**不压缩**:两边都能缩时,窄栏下标题不肯让位,
+   最后是文字压到右边图标上(实测就是这样)。标题自己有 ellipsis,该让的是它。 */
+.app-header-primary { flex: 1 1 auto; }
+.app-header-actions { flex: 0 0 auto; margin-left: auto; justify-content: flex-end; }
+/* 图标按钮不参与压缩,否则会被挤成一条竖线 */
+.app-header-primary > button,
+.app-header-actions > button { flex: 0 0 auto; }
 .app-header-primary > div { display: flex; min-width: 0; align-items: baseline; gap: 9px; }
 .app-header-primary span { color: #6f7888; font-size: 11px; text-transform: uppercase; }
 .app-header-primary strong { overflow: hidden; color: #eef0f4; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
