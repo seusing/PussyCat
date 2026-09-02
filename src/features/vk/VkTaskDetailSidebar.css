@@ -18,6 +18,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
+  position: relative;
 }
 
 .vk-task-detail-sidebar > header {
@@ -66,6 +67,18 @@
 .vk-task-detail-sidebar > header button:hover,
 .vk-task-detail-summary button:hover { background: #292d35; color: var(--color-fg); }
 
+.vk-task-detail-notification {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 10px 12px 0;
+}
+
+.vk-task-detail-notification .app-alert {
+  width: 100%;
+  max-width: none;
+  padding: 10px 12px;
+}
+
 .vk-task-detail-body {
   min-height: 0;
   min-width: 0;
@@ -100,46 +113,6 @@
 .vk-task-detail-badge.is-running { border-color: rgb(91 141 239 / 52%); background: rgb(91 141 239 / 16%); color: #9fc2ff; }
 .vk-task-detail-badge.is-completed { border-color: rgb(74 194 99 / 35%); background: rgb(74 194 99 / 11%); color: #7ee18d; }
 .vk-task-detail-badge.is-failed { border-color: rgb(232 89 81 / 37%); background: rgb(232 89 81 / 12%); color: #ffaaa5; }
-
-.vk-task-progress-visual {
-  display: flex;
-  min-height: 112px;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  border-block: 1px solid var(--color-line);
-  margin-bottom: 16px;
-}
-
-.vk-task-progress-copy { display: flex; flex-direction: column; gap: 3px; }
-.vk-task-progress-copy strong { font-size: 20px; font-variant-numeric: tabular-nums; }
-.vk-task-progress-copy span { color: var(--color-fg-dim); font-size: 12px; }
-
-.vk-task-progress-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 7px;
-  color: var(--color-fg-dim);
-  font-size: 12px;
-}
-
-.vk-task-progress-meta strong { color: var(--color-fg); font-variant-numeric: tabular-nums; }
-
-.vk-task-progress-track {
-  height: 7px;
-  overflow: hidden;
-  border-radius: 4px;
-  background: #343b48;
-}
-
-.vk-task-progress-track > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #69d78a;
-  transition: width 360ms cubic-bezier(.22, 1, .36, 1);
-}
 
 .vk-task-detail-list {
   display: grid;
@@ -211,7 +184,7 @@
 
 .vk-task-detail-section { min-width: 0; margin-top: 20px; }
 .vk-task-detail-section h3 { margin: 0 0 9px; font-size: 12px; font-weight: 650; }
-.vk-task-detail-section > ol:not(.vk-task-detail-batch-list) { display: grid; gap: 7px; margin: 0; padding-left: 20px; }
+.vk-task-detail-section > ol:not(.vk-task-detail-batch-list):not(.vk-task-detail-task-list) { display: grid; gap: 7px; margin: 0; padding-left: 20px; }
 .vk-task-detail-section li,
 .vk-task-detail-section p { color: var(--color-fg-dim); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 
@@ -268,40 +241,73 @@
 /* 整批重跑:范围比旁边几个按钮大,给个醒目边框,别跟"只作用于当前这一条"的混淆。 */
 .vk-task-batch-rerun-button { border-color: var(--color-accent, #4c8dff) !important; }
 
-/* 批量提交:一行任务下挂着多个视频,每个可点进去看自己的详情。 */
+/* 提交内容按 task rows 展示:链接、状态、耗时在同一行;阶段进度按需展开。 */
 .vk-task-detail-batch-count { color: var(--color-fg-dim); font-size: 11px; font-weight: 400; }
 
-.vk-task-detail-batch-list { display: flex; min-width: 0; flex-direction: column; gap: 4px; margin: 0; padding: 0; }
-.vk-task-detail-batch-list li { min-width: 0; list-style: none; }
+.vk-task-detail-batch-list,
+.vk-task-detail-task-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+}
 
-.vk-task-detail-batch-list button {
+/* Keep the legacy selector as a stable hook for integrations that style the
+   pre-task-row list; the rendered list uses .vk-task-detail-task-list. */
+.vk-task-detail-batch-list {
+  display: flex;
+  min-width: 0;
+}
+
+.vk-task-detail-batch-list li { min-width: 0; list-style: none; }
+.vk-task-detail-task-row { min-width: 0; list-style: none; }
+
+.vk-task-detail-batch-list button { min-width: 0; }
+.vk-task-detail-task-row > button {
   display: flex;
   min-width: 0;
   width: 100%;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   border: 1px solid var(--color-line);
-  border-radius: 6px;
+  border-radius: 8px;
   background: #20232a;
-  padding: 6px 8px;
+  padding: 8px 9px;
   color: var(--color-fg);
   font-size: 12px;
   text-align: left;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.vk-task-detail-batch-member button { border-color: color-mix(in srgb, var(--batch-state-color) 48%, var(--color-line)); background: color-mix(in srgb, var(--batch-state-color) 8%, #20232a); }
-.vk-task-detail-batch-member button:hover { background: color-mix(in srgb, var(--batch-state-color) 15%, #292d35); }
-.vk-task-detail-batch-member[data-state='done'] { --batch-state-color: var(--color-success); }
-.vk-task-detail-batch-member[data-state='interrupted'] { --batch-state-color: var(--color-warning); }
-.vk-task-detail-batch-member[data-state='failed'] { --batch-state-color: var(--color-danger); }
-.vk-task-detail-batch-member[data-state='running'] { --batch-state-color: var(--color-accent); }
-.vk-task-detail-batch-member button[data-current] { box-shadow: inset 3px 0 0 var(--batch-state-color); }
+.vk-task-detail-task-row > button:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent); outline-offset: 2px; }
 
-/* **链接让位、状态不让**。原先只有 overflow/ellipsis 而没有 min-width: 0 ——
-   flex 项默认不会缩到内容宽度以下,于是链接把状态整个顶出按钮外,边栏一窄就看不见
-   状态了(用户反复提的就是这条)。min-width: 0 才真的允许它截断。 */
-.vk-task-detail-batch-source {
+.vk-task-detail-task-row > button:hover,
+.vk-task-detail-task-row > button:focus-visible {
+  background: color-mix(in srgb, var(--batch-state-color) 15%, #292d35);
+}
+
+.vk-task-detail-batch-member[data-state='done'],
+.vk-task-detail-task-row[data-state='done'] { --batch-state-color: var(--color-success); }
+.vk-task-detail-batch-member[data-state='interrupted'],
+.vk-task-detail-task-row[data-state='interrupted'] { --batch-state-color: var(--color-warning); }
+.vk-task-detail-batch-member[data-state='failed'],
+.vk-task-detail-task-row[data-state='failed'] { --batch-state-color: var(--color-danger); }
+.vk-task-detail-batch-member[data-state='running'],
+.vk-task-detail-task-row[data-state='running'] { --batch-state-color: var(--color-accent); }
+.vk-task-detail-task-row > button[data-current] { box-shadow: inset 3px 0 0 var(--batch-state-color); }
+
+.vk-task-detail-task-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+.vk-task-detail-task-main b { flex: 0 0 auto; font-weight: 650; }
+.vk-task-detail-task-source {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -309,17 +315,48 @@
   white-space: nowrap;
 }
 .vk-task-detail-batch-status { flex: 0 0 auto; white-space: nowrap; font-size: 11px; }
-
-.vk-task-detail-batch-elapsed {
-  margin: 2px 0 0;
-  padding-left: 8px;
-  color: var(--color-fg-dim);
-  font-size: 11px;
-}
+.vk-task-detail-task-elapsed { flex: 0 0 auto; color: var(--color-fg-dim); font-size: 11px; white-space: nowrap; }
+.vk-task-detail-task-chevron { flex: 0 0 auto; color: var(--color-fg-dim); transition: transform 180ms ease; }
+.vk-task-detail-task-row > button[aria-expanded='true'] .vk-task-detail-task-chevron { transform: rotate(180deg); }
 .vk-task-detail-batch-status.is-done { color: var(--color-success); }
 .vk-task-detail-batch-status.is-failed { color: var(--color-danger); }
 .vk-task-detail-batch-status.is-interrupted { color: var(--color-warning); }
 .vk-task-detail-batch-status.is-running { color: var(--color-accent); }
+
+.vk-task-detail-task-disclosure {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 220ms cubic-bezier(.23,1,.32,1), opacity 180ms ease;
+  animation: vk-task-disclosure-in 220ms cubic-bezier(.23,1,.32,1) both;
+}
+.vk-task-detail-task-disclosure-inner { min-height: 0; overflow: hidden; }
+.vk-task-detail-stage-details { min-width: 0; margin: 6px 0 2px 14px; border-left: 1px solid var(--color-line); padding: 2px 0 2px 12px; }
+.vk-task-detail-stage-progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--color-fg-dim); font-size: 11px; }
+.vk-task-detail-stage-progress-meta strong { color: var(--color-fg); font-variant-numeric: tabular-nums; }
+.vk-task-detail-stage-chips { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.vk-task-detail-stage-chip { min-width: 0; border: 1px solid var(--color-line); border-radius: 7px; background: #171a20; padding: 7px 8px; opacity: 0; transform: translateY(6px); animation: vk-task-stage-chip-in 280ms cubic-bezier(.23,1,.32,1) both; transition: border-color 180ms ease, background-color 180ms ease; }
+.vk-task-detail-stage-chip > div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.vk-task-detail-stage-chip strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.vk-task-detail-stage-chip span { flex: 0 0 auto; border: 1px solid var(--color-line); border-radius: 999px; background: #20232a; padding: 2px 6px; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.vk-task-detail-stage-chip p { margin: 3px 0 0; color: var(--color-fg-dim); font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.vk-task-detail-stage-chip.is-active { border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-line)); }
+.vk-task-detail-stage-chip.is-active span { color: var(--color-accent); }
+.vk-task-detail-stage-chip.is-completed { border-color: color-mix(in srgb, var(--color-success) 28%, var(--color-line)); }
+.vk-task-detail-stage-chip.is-completed span { color: var(--color-success); }
+.vk-task-detail-stage-empty { margin: 0; color: var(--color-fg-dim); font-size: 11px; }
+.vk-task-detail-task-empty { list-style: none; color: var(--color-fg-dim); font-size: 12px; }
+
+@keyframes vk-task-disclosure-in {
+  from { grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); }
+  to { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
+}
+
+@keyframes vk-task-stage-chip-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 /* 流式明细默认收起:平时是噪声,排查卡顿时才需要。 */
 .vk-model-attempt-trace > summary {
@@ -369,54 +406,43 @@
 .vk-task-detail-badge.is-interrupted { border-color: rgb(214 171 74 / 42%); background: rgb(214 171 74 / 13%); color: #edc66b; }
 
 @media (prefers-reduced-motion: reduce) {
-  .vk-task-progress-track > span { transition: none; }
+  .vk-task-detail-task-disclosure,
+  .vk-task-detail-stage-chip { animation: none; opacity: 1; transform: none; }
 }
 
-/* 批量重跑:主按钮执行当前选择,悬停/聚焦展开上拉菜单挑具体哪几条。
-   菜单沿用任务列表那套 .vk-task-operation-menu 的观感,只覆盖定位与宽度——
-   同一个应用里两种菜单长得不一样,比少一个菜单更糟。 */
+/* 批量重跑:菜单通过 portal 挂到 body,不受详情滚动容器的 overflow 裁切。 */
 .vk-task-batch-rerun { position: relative; }
-
 .vk-task-batch-rerun-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: max(100%, 320px);
+  position: fixed;
+  z-index: 60;
   max-width: calc(100vw - 24px);
-  max-height: 320px;
+  max-height: min(320px, calc(100vh - 24px));
   overflow-y: auto;
-  z-index: 4;
-  opacity: 1;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: #171a20;
+  box-shadow: 0 18px 44px rgb(0 0 0 / 38%);
+  padding: 6px;
 }
-/* 桌面详情栏靠右时,菜单向左展开,避免固定 320px 把链接裁在窗口外。 */
-@media (min-width: 761px) {
-  .vk-task-batch-rerun-menu { right: 0; left: auto; }
+.vk-task-batch-rerun-menu button {
+  display: flex;
+  min-height: 38px;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: #20232a;
+  color: var(--color-fg);
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: left;
+  opacity: 0;
+  transform: translateY(5px);
+  animation: vk-rerun-item-in 180ms ease forwards;
 }
-/* 移动端详情栏从右侧覆盖主区,保留左侧安全边距给 68px 图标 rail。 */
-@media (max-width: 760px) {
-  .vk-task-batch-rerun-menu {
-    width: max(100%, 280px);
-    max-width: calc(100vw - 64px);
-  }
-}
-.vk-task-batch-rerun:hover .vk-task-batch-rerun-menu,
-.vk-task-batch-rerun:focus-within .vk-task-batch-rerun-menu { visibility: visible; }
-
-/* 按钮和菜单之间那 6px 视觉间隙,鼠标一穿过去就算离开了容器,菜单当场收起 ——
-   于是"悬停能看见、就是点不中",只能先用箭头钉住。把间隙补成 hover 目标的一部分。
-   **桥必须挂在容器上,不能挂在菜单上**:菜单自己有 `overflow-y: auto`,挂它身上的
-   伪元素会被裁掉,等于没加(上一版就是这么写的,所以没生效)。
-   容器没有 overflow 裁剪,伪元素铺在它正上方那段间隙里,鼠标走过去仍在容器内。 */
-.vk-task-batch-rerun::before {
-  content: '';
-  position: absolute;
-  bottom: 100%;
-  right: 0;
-  left: 0;
-  height: 10px;
-}
-
-.vk-task-batch-rerun-menu button { min-height: 38px; align-items: center; display: flex; opacity: 0; transform: translateY(5px); animation: vk-rerun-item-in 180ms ease forwards; }
+.vk-task-batch-rerun-menu button:hover:not(:disabled),
+.vk-task-batch-rerun-menu button:focus-visible:not(:disabled) { background: #292d35; }
 .vk-task-batch-rerun-option { border-color: color-mix(in srgb, var(--batch-state-color) 48%, var(--color-line)) !important; background: color-mix(in srgb, var(--batch-state-color) 8%, #20232a) !important; }
 .vk-task-batch-rerun-option.is-done { --batch-state-color: var(--color-success); }
 .vk-task-batch-rerun-option.is-interrupted { --batch-state-color: var(--color-warning); }
@@ -454,9 +480,9 @@
 
 @media (max-width: 320px) {
   .vk-task-detail-body { padding: 12px 10px; }
-  .vk-task-detail-batch-list button { gap: 5px; padding-inline: 6px; }
+  .vk-task-detail-task-row > button { gap: 5px; padding-inline: 6px; }
+  .vk-task-detail-task-main { align-items: flex-start; flex-direction: column; gap: 2px; }
   .vk-task-detail-batch-status { font-size: 10px; }
-  .vk-task-batch-rerun-menu { width: max(100%, 280px); max-width: calc(100vw - 64px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

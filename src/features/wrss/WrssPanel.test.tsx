@@ -27,6 +27,17 @@ describe('WrssPanel', () => {
     expect(screen.getByText(/356 MB/)).toBeInTheDocument()
   })
 
+  it('describes the enable action next to its control', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => response({ ...base, state: 'not-installed' })))
+    render(<WrssPanel />)
+
+    const button = await screen.findByRole('button', { name: '启用公众号' })
+    const description = screen.getByTestId('wrss-action-description-enable')
+    expect(button).toHaveAttribute('aria-describedby', 'wrss-action-description-enable')
+    expect(description).toBeVisible()
+    expect(description.textContent?.trim()).not.toBe('')
+  })
+
   it('shows a dark skeleton while installing without exposing logs', async () => {
     vi.stubGlobal('fetch', vi.fn(() => response({ ...base, state: 'installing', progress_log: ['venv: internal path'] })))
     render(<WrssPanel />)
@@ -70,5 +81,28 @@ describe('WrssPanel', () => {
       expect.stringContaining('/integrations/wrss/enable'),
       expect.objectContaining({ method: 'POST' }),
     ))
+  })
+
+  it('describes retry and technical-detail actions individually', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => response({
+      ...base,
+      state: 'failed',
+      summary: '安装失败，请重试',
+      reason_code: 'runtime-error',
+      progress_log: ['step failed'],
+    })))
+    render(<WrssPanel />)
+
+    const retry = await screen.findByRole('button', { name: '重试' })
+    const retryDescription = screen.getByTestId('wrss-action-description-retry')
+    expect(retry).toHaveAttribute('aria-describedby', 'wrss-action-description-retry')
+    expect(retryDescription).toBeVisible()
+    expect(retryDescription.textContent?.trim()).not.toBe('')
+
+    const technical = screen.getByTestId('wrss-action-description-technical')
+    expect(technical).toBeVisible()
+    expect(technical.textContent?.trim()).not.toBe('')
+    const summary = screen.getByText('查看技术详情')
+    expect(summary).toHaveAttribute('aria-describedby', 'wrss-action-description-technical')
   })
 })

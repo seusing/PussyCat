@@ -112,22 +112,57 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
           {state === 'not-installed' && (
             <div className="wrss-ready">
               <p>首次启用会按需下载 WeRSS 运行环境，安装包大小 {SIZE_LABEL}。</p>
-              <button type="button" className="wrss-primary" onClick={() => { void enable() }}>启用公众号</button>
+              <p
+                id="wrss-action-description-enable"
+                data-testid="wrss-action-description-enable"
+                className="wrss-action-description"
+              >
+                下载并启动公众号阅读环境，完成后自动打开公众号界面。
+              </p>
+              <button
+                type="button"
+                className="wrss-primary"
+                aria-describedby="wrss-action-description-enable"
+                title="下载并启动公众号阅读环境"
+                onClick={() => { void enable() }}
+              >启用公众号</button>
             </div>
           )}
 
           {state === 'failed' && (
             <div className="wrss-failed">
               <p>{status?.summary ?? '公众号运行环境失败'}</p>
-              <button type="button" className="wrss-primary" onClick={() => { void enable() }}>重试</button>
+              <p
+                id="wrss-action-description-retry"
+                data-testid="wrss-action-description-retry"
+                className="wrss-action-description"
+              >
+                重新启动公众号运行环境，并保留本次失败信息供查看。
+              </p>
+              <button
+                type="button"
+                className="wrss-primary"
+                aria-describedby="wrss-action-description-retry"
+                title="重新启动公众号运行环境"
+                onClick={() => { void enable() }}
+              >重试</button>
               {(logs.length > 0 || !!status?.reason_code) && (
-                <details className="wrss-details">
-                  <summary>查看技术详情</summary>
+                <>
+                  <p
+                    id="wrss-action-description-technical"
+                    data-testid="wrss-action-description-technical"
+                    className="wrss-action-description"
+                  >
+                    展开安装原因、状态码和运行日志，便于定位启动失败。
+                  </p>
+                  <details className="wrss-details">
+                    <summary aria-describedby="wrss-action-description-technical">查看技术详情</summary>
                   {status?.reason_code && <div>reason_code: {status.reason_code}</div>}
                   <div className="wrss-log" aria-label="安装技术日志">
                     {logs.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
                   </div>
-                </details>
+                  </details>
+                </>
               )}
             </div>
           )}

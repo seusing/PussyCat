@@ -83,6 +83,7 @@ export default function AppShell({
   const [layout, setLayout] = useState<LayoutSnapshot>(() => loadLayout())
   const layoutRef = useRef(layout)
   const [sidebarTransitioning, setSidebarTransitioning] = useState(false)
+  const [detailsTransitioning, setDetailsTransitioning] = useState(false)
   // 窗口宽度也要参与夹取。夹取原先只发生在**拖拽**时,窗口本身被拉窄时没人重算,
   // 两侧仍按存下来的像素占位,中栏(minmax(0, 1fr))被压到 0 —— 标题、图标、内容
   // 全叠在一起。用户复现的正是这条:先拖窄中栏,再从右上角等比缩小窗口。
@@ -172,6 +173,15 @@ export default function AppShell({
   // 渲染用的是**夹取后**的宽度,存下来的原值不动:窗口重新拉宽时,用户自己调好的
   // 宽度要回得来。直接把夹取结果写回 layout 就回不来了。
   const detailsShown = !!rightPanel && rightPanelOpen
+  const detailsMounted = !!rightPanel
+  const previousDetailsShown = useRef(detailsShown)
+  useEffect(() => {
+    if (previousDetailsShown.current === detailsShown) return
+    previousDetailsShown.current = detailsShown
+    setDetailsTransitioning(true)
+    const timer = window.setTimeout(() => setDetailsTransitioning(false), 320)
+    return () => window.clearTimeout(timer)
+  }, [detailsShown])
   const sidebarCollapsed = layout.moduleSidebarHidden
   const effectiveDetailsWidth = detailsShown
     ? clampColumnWidth(
@@ -190,20 +200,23 @@ export default function AppShell({
     // **不能是 minmax(0, 1fr)**:那等于允许中栏被压成 0。夹取是第一道防线,这里是
     // 第二道 —— 两侧加起来超过窗口时宁可整体出现滚动,也不让内容叠在一起。
     `minmax(${SHELL_CENTER_MIN}px, 1fr)`,
-    detailsShown && 'auto',
-    detailsShown && `${effectiveDetailsWidth}px`,
+    detailsMounted && 'auto',
+    detailsMounted && `${detailsShown ? effectiveDetailsWidth : 0}px`,
   ].filter((value): value is string => !!value).join(' ')
 
   return (
     <div
       ref={shellRef}
-      className={`app-shell${sidebarTransitioning ? ' is-sidebar-transitioning' : ''}`}
+      className={`app-shell${sidebarTransitioning ? ' is-sidebar-transitioning' : ''}${detailsTransitioning || previousDetailsShown.current !== detailsShown ? ' is-details-transitioning' : ''}`}
       data-testid="app-shell"
       data-left-open={!sidebarCollapsed}
       data-sidebar-collapsed={sidebarCollapsed}
       data-right-open={!!rightPanel && rightPanelOpen}
       onTransitionEnd={(event) => {
-        if (event.propertyName === 'grid-template-columns') setSidebarTransitioning(false)
+        if (event.propertyName === 'grid-template-columns') {
+          setSidebarTransitioning(false)
+          setDetailsTransitioning(false)
+        }
       }}
       style={{ gridTemplateColumns: shellTemplateColumns, '--app-details-width': `${layout.detailsWidth}px` } as CSSProperties}
     >
@@ -330,7 +343,7 @@ export default function AppShell({
         )}
       </div>
 
-      {rightPanel && rightPanelOpen && (
+      {rightPanel && (
         <>
           <ResizableSplit
             value={layout.detailsWidth}
@@ -342,8 +355,9 @@ export default function AppShell({
             onCommit={commitLayout}
             ariaLabel="调整任务详情栏宽度"
             testId="separator-details-sidebar"
+            disabled={!detailsShown}
           />
-          <aside data-testid="details-sidebar" className="app-details-sidebar">{rightPanel}</aside>
+          <aside data-testid="details-sidebar" data-open={detailsShown} className="app-details-sidebar">{rightPanel}</aside>
         </>
       )}
     </div>

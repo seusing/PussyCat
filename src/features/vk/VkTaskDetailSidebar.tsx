@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, ChevronUp, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
-import { ThinkingOrb } from 'thinking-orbs'
+import { Check, ChevronDown, ChevronUp, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
 import {
   fetchVkJob,
   fetchVkJobs,
@@ -9,8 +9,10 @@ import {
   postVkJob,
   postVkJobAction,
 } from '../../host/vkClient'
-import type { VkJobView, VkProviderSettings } from '../../host/vkClient'
+import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
+import { AppAlert } from '../../components/AppAlert'
+import { copyText } from '../../lib/clipboard'
 import {
   isVkJobRerun, markVkJobAsRerun, vkElapsedLabel, vkTaskNumberFor, vkTaskNumberForBatch,
   VK_OPEN_OUTPUT_EVENT,
@@ -233,6 +235,62 @@ function stageProgress(job: VkJobView, successful: boolean): {
   }
 }
 
+type StageDisplay = {
+  stage: string
+  metric: VkStageMetric | null
+  state: 'completed' | 'active'
+}
+
+/**
+ * 只返回后端已经触及的阶段。阶段列表不是预先绘制的计划清单：
+ * completed_stages、当前阶段、阶段指标和模型调用记录中的任一项，才足以让阶段出现在 UI。
+ */
+function stageDisplayEntries(job: VkJobView): StageDisplay[] {
+  const progress = job.progress
+  const completedStages = new Set(
+    (Array.isArray(progress?.completed_stages) ? progress.completed_stages : [])
+      .filter((stage): stage is string => typeof stage === 'string' && stage.length > 0),
+  )
+  const metrics = (Array.isArray(progress?.stage_metrics) ? progress.stage_metrics : [])
+    .filter((metric): metric is VkStageMetric => !!metric && typeof metric.stage === 'string' && metric.stage.length > 0)
+  const metricByStage = new Map<string, VkStageMetric>()
+  for (const metric of metrics) metricByStage.set(metric.stage, metric)
+
+  const observed = new Set<string>(completedStages)
+  for (const metric of metrics) observed.add(metric.stage)
+  for (const attempt of progress?.model_attempts ?? []) {
+    if (typeof attempt?.stage === 'string' && attempt.stage.length > 0) observed.add(attempt.stage)
+  }
+  const currentStage = typeof progress?.current_stage === 'string' && progress.current_stage.length > 0
+    ? progress.current_stage
+    : undefined
+  if (currentStage) observed.add(currentStage)
+  if (observed.size === 0) return []
+
+  const sawFullAnalysis = observed.has('claim') || observed.has('qc')
+  const quickRequested = job.auto_route?.processing_depth === 'quick' || job.request?.preset === 'quick-summary'
+  const phases = !sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES
+  const phaseOrder = phases.flatMap((phase) => phase.stages)
+  const orderedStages = [
+    ...phaseOrder.filter((stage) => observed.has(stage)),
+    ...[...observed].filter((stage) => !phaseOrder.includes(stage)),
+  ]
+  const latestMetricStage = metrics.at(-1)?.stage
+  const latestAttemptStage = progress?.model_attempts?.at(-1)?.stage
+  const activeStage = ACTIVE_STATUSES.has(job.status)
+    ? currentStage ?? latestAttemptStage ?? latestMetricStage
+    : undefined
+
+  return orderedStages.map((stage) => {
+    const metric = metricByStage.get(stage) ?? null
+    const metricStillRunning = !!metric && /running|active|progress|started/i.test(metric.status)
+    const isActive = ACTIVE_STATUSES.has(job.status)
+      && !completedStages.has(stage)
+      && (stage === activeStage || metricStillRunning)
+    return { stage, metric, state: isActive ? 'active' : 'completed' }
+  })
+}
+
 function configuredModelName(job: VkJobView, settings: VkProviderSettings | null): string {
   const actualRoutes = [...new Set(
     (job.progress?.model_attempts ?? []).map((attempt) => attempt.provider_route),
@@ -278,6 +336,138 @@ function modelAttemptName(route: string, settings: VkProviderSettings | null): s
   return settings?.channels.find((channel) => channel.id === channelId)?.name ?? route
 }
 
+type TaskRowProps = {
+  id: string
+  label: string
+  source: string
+  state: BatchState
+  elapsed: string
+  current: boolean
+  expanded: boolean
+  onToggle: () => void
+  onCopy: (source: string) => void
+  children?: ReactNode
+}
+
+function TaskRow({
+  id, label, source, state, elapsed, current, expanded, onToggle, onCopy, children,
+}: TaskRowProps) {
+  const copiedFromClickRef = useRef(false)
+  return (
+    <li
+      className={`vk-task-detail-task-row is-${state}`}
+      data-testid="vk-task-detail-task-row"
+      data-row-id={id}
+      data-state={state}
+      data-color={BATCH_STATE_COLORS[state]}
+    >
+      <button
+        type="button"
+        data-testid={`vk-task-detail-task-row-${id}`}
+        data-current={current || undefined}
+        aria-expanded={expanded}
+        onClick={(event) => {
+          // A double click is a copy gesture; do not immediately collapse the row on its second click.
+          if (event.detail > 1) {
+            if (event.detail === 2) {
+              copiedFromClickRef.current = true
+              onCopy(source)
+            }
+            return
+          }
+          onToggle()
+        }}
+        onDoubleClick={(event) => {
+          if (copiedFromClickRef.current) {
+            copiedFromClickRef.current = false
+            return
+          }
+          event.preventDefault()
+          event.stopPropagation()
+          onCopy(source)
+        }}
+        title="双击复制链接"
+      >
+        <span className="vk-task-detail-task-main">
+          <b>{label}：</b>
+          <span className="vk-task-detail-task-source">{source || '未返回来源信息'}</span>
+        </span>
+        <span className={`vk-task-detail-batch-status is-${state}`}>{BATCH_STATE_LABELS[state]}</span>
+        <span className="vk-task-detail-task-elapsed">{elapsed}</span>
+        <ChevronDown className="vk-task-detail-task-chevron" size={14} aria-hidden="true" />
+      </button>
+      {expanded && children ? (
+        <div className="vk-task-detail-task-disclosure">
+          <div className="vk-task-detail-task-disclosure-inner">
+            {children}
+          </div>
+        </div>
+      ) : null}
+    </li>
+  )
+}
+
+function TaskProgressDetails({
+  job, progress,
+}: {
+  job: VkJobView
+  progress: ReturnType<typeof stageProgress>
+}) {
+  const entries = stageDisplayEntries(job)
+  const stageCountLabel = ACTIVE_STATUSES.has(job.status)
+    ? `阶段 ${Math.min(progress.completed + 1, progress.total)} / ${progress.total}`
+    : `${entries.length} 个阶段已记录`
+
+  return (
+    <div
+      className="vk-task-detail-stage-details"
+      data-testid="vk-task-detail-stage-details"
+      data-stage-count={entries.length}
+    >
+      <div className="vk-task-detail-stage-progress-meta">
+        <span>{progress.currentLabel}</span>
+        <strong>{stageCountLabel}</strong>
+      </div>
+      {entries.length > 0 ? (
+        <div className="vk-task-detail-stage-chips">
+          {entries.map((entry, index) => {
+            const metric = entry.metric
+            const elapsed = entry.state === 'active'
+              ? '进行中'
+              : metric?.elapsed_s == null
+                ? '未记录'
+                : secondsLabel(metric.elapsed_s)
+            const detail = metric
+              ? `${metric.model_calls} 次模型调用 · 输入 ${tokenLabel(metric.input_tokens)} · 输出 ${tokenLabel(metric.output_tokens)}`
+              : entry.state === 'active'
+                ? '阶段进行中，完成后显示耗时与调用量'
+                : '阶段已完成，未返回耗时与调用量'
+            return (
+            <div
+              key={entry.stage}
+              className={`vk-task-detail-stage-chip${entry.state === 'active' ? ' is-active' : ' is-completed'}`}
+              data-stage={entry.stage}
+              data-stage-state={entry.state}
+              style={{ animationDelay: `${index * 55}ms` }}
+            >
+              <div>
+                <strong>{stageLabel(entry.stage)}</strong>
+                <span>{elapsed}</span>
+              </div>
+              <p>{detail}</p>
+            </div>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="vk-task-detail-stage-empty">
+          {ACTIVE_STATUSES.has(job.status) ? '等待阶段数据' : '尚未返回阶段数据'}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   jobId: string | null
   baseUrl?: string
@@ -292,6 +482,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   const [batchMembers, setBatchMembers] = useState<
     BatchMember[]
   >([])
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+  const pendingExpandedTaskRef = useRef<string | null | undefined>(undefined)
+  const [copyNoticeKey, setCopyNoticeKey] = useState(0)
   // 编号先按 job_id 查;查不到再按批次查 —— 列表把一批折成一行、只记得住那一行的
   // job_id,而详情页打开的往往是批里的某个成员,直查必然落空,标题就退回一串 UUID。
   const taskNumber = useMemo(
@@ -316,7 +509,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   // 容器把菜单收掉(实测就是这么翻的)。点箭头可以「钉住」,钉住后移开不收。
   const [rerunMenuOpen, setRerunMenuOpen] = useState(false)
   const [rerunMenuPinned, setRerunMenuPinned] = useState(false)
+  const rerunMenuPinnedRef = useRef(false)
   const rerunMenuRef = useRef<HTMLDivElement | null>(null)
+  const rerunMenuCloseTimer = useRef<number | null>(null)
+  const [rerunMenuPosition, setRerunMenuPosition] = useState<{ left: number; bottom: number; width: number } | null>(null)
   const [rerunPicked, setRerunPicked] = useState<Set<string> | null>(null)
   const batchStateSignature = useMemo(
     () => batchMembers.map((member) => `${member.job_id}:${member.state}`).join('|'),
@@ -328,15 +524,84 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     setRerunPicked(null)
     setRerunMenuOpen(false)
     setRerunMenuPinned(false)
+    rerunMenuPinnedRef.current = false
+    const pendingExpandedTask = pendingExpandedTaskRef.current
+    pendingExpandedTaskRef.current = undefined
+    if (pendingExpandedTask === undefined) setExpandedTaskId(null)
+    else setExpandedTaskId(pendingExpandedTask)
   }, [jobId, batchStateSignature])
+
+  useEffect(() => {
+    if (!copyNoticeKey) return undefined
+    const timer = window.setTimeout(() => setCopyNoticeKey(0), 1_800)
+    return () => window.clearTimeout(timer)
+  }, [copyNoticeKey])
+
+  const clearRerunMenuClose = useCallback(() => {
+    if (rerunMenuCloseTimer.current !== null) {
+      window.clearTimeout(rerunMenuCloseTimer.current)
+      rerunMenuCloseTimer.current = null
+    }
+  }, [])
+
+  const updateRerunMenuPosition = useCallback(() => {
+    const anchor = rerunMenuRef.current?.getBoundingClientRect()
+    if (!anchor) return
+    const margin = 12
+    const width = Math.min(Math.max(anchor.width, 320), Math.max(220, window.innerWidth - margin * 2))
+    const left = Math.max(margin, Math.min(anchor.right - width, window.innerWidth - margin - width))
+    const bottom = Math.max(margin, window.innerHeight - anchor.top + 6)
+    setRerunMenuPosition({ left, bottom, width })
+  }, [])
+
+  const openRerunMenu = useCallback(() => {
+    clearRerunMenuClose()
+    updateRerunMenuPosition()
+    setRerunMenuOpen(true)
+  }, [clearRerunMenuClose, updateRerunMenuPosition])
+
+  const scheduleRerunMenuClose = useCallback(() => {
+    if (rerunMenuPinnedRef.current) return
+    clearRerunMenuClose()
+    rerunMenuCloseTimer.current = window.setTimeout(() => {
+      setRerunMenuOpen(false)
+      rerunMenuCloseTimer.current = null
+    }, 160)
+  }, [clearRerunMenuClose])
+
+  useEffect(() => () => clearRerunMenuClose(), [clearRerunMenuClose])
+
+  useEffect(() => {
+    if (!rerunMenuOpen) return undefined
+    updateRerunMenuPosition()
+    const update = () => updateRerunMenuPosition()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [rerunMenuOpen, updateRerunMenuPosition])
+
+  const copyLink = useCallback(async (source: string) => {
+    const link = source.trim()
+    if (!link) return
+    if (await copyText(link)) setCopyNoticeKey((key) => key + 1)
+  }, [])
   // 钉住之后点别处要能收起来。原先只有再点一次箭头才收,菜单于是一直挂在那儿挡着下面
   // 的内容 —— 用户的原话是「点击菜单以外的地方时不会自动收回」。Esc 一并收。
   useEffect(() => {
     if (!rerunMenuOpen) return undefined
     const dismiss = (event: Event) => {
       const node = rerunMenuRef.current
-      if (node && event.target instanceof Node && node.contains(event.target)) return
+      const target = event.target
+      if (
+        target instanceof Node
+        && ((node && node.contains(target))
+          || (target instanceof Element && target.closest('.vk-task-batch-rerun-menu')))
+      ) return
       setRerunMenuOpen(false)
+      rerunMenuPinnedRef.current = false
       setRerunMenuPinned(false)
     }
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss(event) }
@@ -527,6 +792,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
 
   return (
     <section className="vk-task-detail-sidebar" data-testid="vk-task-detail-sidebar" aria-label="任务执行详情">
+      {copyNoticeKey > 0 && (
+        <div className="vk-task-detail-notification" data-testid="vk-task-detail-notification">
+          <AppAlert
+            testId="vk-copy-notice"
+            tone="success"
+            title="已复制链接"
+            durationMs={1_800}
+          />
+        </div>
+      )}
       <header>
         <div>
           <span>任务详情</span>
@@ -560,91 +835,66 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             </button>
           </div>
 
-          {active && (
-            <div className="vk-task-progress-visual" aria-label="任务正在执行">
-              <ThinkingOrb
-                state={rerunning ? 'solving' : 'composing'}
-                size={64}
-                speed={rerunning ? 0.9 : 1.5}
-                theme="dark"
-                aria-label={rerunning ? '任务重跑中' : '任务处理中'}
-              />
-              <div className="vk-task-progress-copy">
-                <strong>阶段 {Math.min(progress.completed + 1, progress.total)} / {progress.total}</strong>
-                <span>{progress.currentLabel}</span>
-              </div>
-            </div>
-          )}
-
-          <div className="vk-task-progress-meta">
-            <span>处理进度</span>
-            <strong>{progress.percent}%</strong>
-          </div>
-          <div
-            className="vk-task-progress-track"
-            role="progressbar"
-            aria-label="处理阶段进度"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress.percent}
-          >
-            <span style={{ width: `${progress.percent}%` }} />
-          </div>
-
-          {/* 提交内容排在最前:打开详情第一个想确认的是"这条跑的是哪个视频"。
-              一次提交多个视频时,这里要逐个列出各自的状态,而不是只显示被点开的那一条。 */}
+          {/* 提交内容是唯一的任务入口。阶段耗时收进对应 task row,默认收起,点击后按已到达
+              的阶段渐进展示,批量任务切换成员时只加载该成员的真实进度。 */}
           <div className="vk-task-detail-section" data-testid="vk-task-detail-sources">
             <h3>
               提交内容
               {batchMembers.length > 1 && (
                 <span className="vk-task-detail-batch-count">
-                  {/* 不写"当前查看第 N 个":批量是并行跑的,那句话会让人以为在排队等前一条。
-                      当前看的是哪条,由下面列表里高亮的那一项表达,不必用序数再说一遍。 */}
                   {' '}共 {batchMembers.length} 个视频 · 已处理 {batchSettledCount}/{batchMembers.length}
                 </span>
               )}
             </h3>
-            {batchMembers.length > 1
-              ? (
-                <ol className="vk-task-detail-batch-list">
-                  {batchMembers.map((member, index) => (
-                    <li
-                      key={member.job_id}
-                      className={`vk-task-detail-batch-member is-${member.state}`}
-                      data-state={member.state}
-                      data-color={BATCH_STATE_COLORS[member.state]}
-                    >
-                      <button
-                        type="button"
-                        data-current={member.job_id === jobId || undefined}
-                        onClick={() => onJobChange?.(member.job_id)}
-                        title={member.job_id}
+            <ol className="vk-task-detail-task-list">
+              {batchMembers.length > 1
+                ? batchMembers.map((member, index) => (
+                  <TaskRow
+                    key={member.job_id}
+                    id={member.job_id}
+                    label={`小任务${index + 1}`}
+                    source={member.source || member.job_id}
+                    state={member.state}
+                    elapsed={`耗时 ${vkElapsedLabel(member.submitted_at, member.finished_at)}`}
+                    current={member.job_id === jobId}
+                    expanded={expandedTaskId === member.job_id}
+                    onToggle={() => {
+                      const nextExpandedTask = expandedTaskId === member.job_id ? null : member.job_id
+                      if (member.job_id !== jobId) pendingExpandedTaskRef.current = nextExpandedTask
+                      setExpandedTaskId(nextExpandedTask)
+                      onJobChange?.(member.job_id)
+                    }}
+                    onCopy={copyLink}
+                  >
+                    {member.job_id === jobId && (
+                      <TaskProgressDetails job={job} progress={progress} />
+                    )}
+                  </TaskRow>
+                ))
+                : sources.length > 0
+                  ? sources.map((source, index) => {
+                    const rowId = `source-${index}`
+                    return (
+                      <TaskRow
+                        key={rowId}
+                        id={rowId}
+                        label="链接"
+                        source={source}
+                        state={batchState(job.status)}
+                        elapsed={`耗时 ${vkElapsedLabel(job.submitted_at, job.finished_at)}`}
+                        current
+                        expanded={expandedTaskId === rowId}
+                        onToggle={() => setExpandedTaskId((current) => current === rowId ? null : rowId)}
+                        onCopy={copyLink}
                       >
-                        {/* 「小任务N：链接」。原先只给 source,取不到就退回一串 UUID——而列表
-                            接口此前根本不返回 source,于是实际显示的全是 UUID,谁也认不出哪条是
-                            哪条。序号是为了让下面的重跑菜单能用同一个称呼指代它们。 */}
-                        <span className="vk-task-detail-batch-source">
-                          <b>小任务{index + 1}：</b>{member.source || member.job_id}
-                        </span>
-                        <span className={`vk-task-detail-batch-status is-${member.state}`}>
-                          {BATCH_STATE_LABELS[member.state]}
-                        </span>
-                      </button>
-                      {/* 耗时只给**当前点开的那一条**。列表页那一列已经去掉——批量里
-                          它显示的是整批墙钟,会被读成"每条要跑这么久"。挂在被点开的
-                          小任务下面,问的是哪条就答哪条。 */}
-                      {member.job_id === jobId && (
-                        <p className="vk-task-detail-batch-elapsed">
-                          耗时 {vkElapsedLabel(member.submitted_at, member.finished_at)}
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ol>
-              )
-              : sources.length > 0
-                ? <ol>{sources.map((source) => <li key={source}>{source}</li>)}</ol>
-                : <p>未返回来源信息</p>}
+                        <TaskProgressDetails job={job} progress={progress} />
+                      </TaskRow>
+                    )
+                  })
+                  : (
+                    <li className="vk-task-detail-task-empty">未返回来源信息</li>
+                  )}
+            </ol>
           </div>
 
           <dl className="vk-task-detail-list" data-testid="vk-task-detail-metadata">
@@ -660,10 +910,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               <dt>提交时间</dt>
               <dd>{job.submitted_at ? new Date(job.submitted_at).toLocaleString('zh-CN') : '—'}</dd>
             </div>
-            <div data-testid="vk-task-detail-execution-elapsed">
-              <dt>执行耗时</dt>
-              <dd>{vkElapsedLabel(job.submitted_at, job.finished_at ?? null)}</dd>
-            </div>
           </dl>
 
           {/* 缓存 Token 恒为 0（本产品不走 prompt 缓存），费用则因通道普遍不提供可信价格
@@ -676,25 +922,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               <div><dt>输出 {tokenLabel(job.progress?.usage?.output_tokens)}</dt><dd>Token</dd></div>
             </dl>
           </div>
-          {(job.progress?.stage_metrics?.length ?? 0) > 0 ? (
-            <div className="vk-task-detail-section" data-testid="vk-stage-metrics">
-              <h3>阶段耗时</h3>
-              <ol className="vk-stage-metric-list">
-                {job.progress!.stage_metrics!.map((metric, index) => (
-                  <li key={`${metric.stage}-${index}`} className="vk-stage-metric-chip" data-stage={metric.stage}>
-                    <div className="vk-stage-metric-chip-row"><strong>{stageLabel(metric.stage)}</strong><span className="vk-stage-metric-chip-time">{secondsLabel(metric.elapsed_s)}</span></div>
-                    <p className="vk-stage-metric-chip-detail">{metric.model_calls} 次模型调用 · 输入 {tokenLabel(metric.input_tokens)} · 输出 {tokenLabel(metric.output_tokens)}</p>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : (
-            <div className="vk-task-detail-section" data-testid="vk-stage-metrics">
-              <h3>阶段耗时</h3>
-              <p className="vk-stage-metric-empty">暂无阶段耗时</p>
-            </div>
-          )}
-
           {(job.progress?.model_attempts?.length ?? 0) > 0 && (
             <div className="vk-task-detail-section" data-testid="vk-model-attempts">
               <h3>模型调用记录</h3>
@@ -754,11 +981,17 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                 className="vk-task-batch-rerun"
                 data-terminal-batch={batchTerminal || undefined}
                 ref={rerunMenuRef}
-                onMouseEnter={() => setRerunMenuOpen(true)}
-                onMouseLeave={() => { if (!rerunMenuPinned) setRerunMenuOpen(false) }}
+                onMouseEnter={openRerunMenu}
+                onMouseLeave={scheduleRerunMenuClose}
               >
-                {rerunMenuOpen && (
-                  <div className="vk-task-operation-menu vk-task-batch-rerun-menu" role="menu">
+                {rerunMenuOpen && rerunMenuPosition && typeof document !== 'undefined' && createPortal(
+                  <div
+                    className="vk-task-operation-menu vk-task-batch-rerun-menu"
+                    role="menu"
+                    style={rerunMenuPosition}
+                    onMouseEnter={openRerunMenu}
+                    onMouseLeave={scheduleRerunMenuClose}
+                  >
                     {batchMembers.map((member, index) => {
                       const disabled = member.state === 'running'
                       const checked = selection.has(member.job_id)
@@ -805,7 +1038,8 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                       <RefreshCw size={15} aria-hidden="true" />
                       <span>{selectedCount === rerunable.length ? '只选失败的' : '全选'}</span>
                     </button>
-                  </div>
+                  </div>,
+                  document.body,
                 )}
                 <button
                   type="button"
@@ -813,10 +1047,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                   disabled={actionPending !== null || selectedCount === 0}
                   aria-haspopup="menu"
                   aria-expanded={rerunMenuOpen}
-                  onFocus={() => setRerunMenuOpen(true)}
+                  onFocus={openRerunMenu}
                   onKeyDown={(event) => {
                     if (event.key === 'Escape') setRerunMenuOpen(false)
-                    if (event.key === 'ArrowUp') { event.preventDefault(); setRerunMenuOpen(true) }
+                    if (event.key === 'ArrowUp') { event.preventDefault(); openRerunMenu() }
                   }}
                   onClick={() => { void rerunSelected(selection) }}
                 >
@@ -832,8 +1066,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                   disabled={actionPending !== null}
                   onClick={() => {
                     const next = !rerunMenuPinned
+                    rerunMenuPinnedRef.current = next
                     setRerunMenuPinned(next)
-                    setRerunMenuOpen(next)
+                    if (next) openRerunMenu()
+                    else setRerunMenuOpen(false)
                   }}
                 >
                   <ChevronUp size={13} aria-hidden="true" />

@@ -62,7 +62,8 @@ export default function App({
   const catalogStatus = useAppStore((s) => s.catalogStatus)
   const catalogError = useAppStore((s) => s.catalogError)
   const activeModule = useAppStore((s) => s.activeModule)
-  const [wrssVisited, setWrssVisited] = useState(() => activeModule === 'wrss')
+  // 模块页面首次访问后保持挂载,切换模块只隐藏当前页面,不丢掉输入和展开状态。
+  const [visitedModules, setVisitedModules] = useState(() => new Set([activeModule]))
   const [selectedVkJobId, setSelectedVkJobId] = useState<string | null>(null)
   const [vkRightPanelOpen, setVkRightPanelOpen] = useState(false)
   const [vkJobsRevision, setVkJobsRevision] = useState(0)
@@ -118,7 +119,9 @@ export default function App({
   useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
 
   useEffect(() => {
-    if (activeModule === 'wrss') setWrssVisited(true)
+    setVisitedModules((current) => current.has(activeModule)
+      ? current
+      : new Set([...current, activeModule]))
   }, [activeModule])
 
   // 登录检查的**并发驱动**。
@@ -309,44 +312,48 @@ export default function App({
 
   const pendingAcknowledgement = useAppStore((s) => s.pendingAcknowledgement)
 
-  const activeFullPage = activeModule === 'commands'
-    ? <InspirationPanel
-        onRun={executeSelected}
-        onCancel={onCancel}
-        onRerun={executeSelected}
-        registerSubmit={registerSubmit}
-        searchRef={searchInputRef}
-      />
-    : activeModule === 'login'
-      ? <LoginStatusPanel />
-      : activeModule === 'vk'
-        ? <VkPanel
-          baseUrl={baseUrl}
-          selectedJobId={selectedVkJobId}
-          refreshToken={vkJobsRevision}
-          onSelectJob={(jobId) => {
-            setSelectedVkJobId(jobId)
-            setVkRightPanelOpen(!!jobId)
-          }}
-        />
-        : activeModule === 'providers'
-          ? <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} /></div>
-          : activeModule === 'radar'
-            ? <RadarPanel baseUrl={baseUrl} />
-            : null
-
-  const fullPage = (wrssVisited || activeModule === 'wrss')
-    ? (
-      <div className="app-page-stack">
-        <div className="app-page-stack-panel" hidden={activeModule === 'wrss'}>
-          {activeModule !== 'wrss' ? activeFullPage : null}
-        </div>
-        <div className="app-page-stack-panel" hidden={activeModule !== 'wrss'}>
-          <WrssPanel baseUrl={baseUrl} />
-        </div>
+  const fullPage = (
+    <div className="app-page-stack">
+      <div className="app-page-stack-panel" hidden={activeModule !== 'commands'}>
+        {(visitedModules.has('commands') || activeModule === 'commands') && (
+          <InspirationPanel
+            onRun={executeSelected}
+            onCancel={onCancel}
+            onRerun={executeSelected}
+            registerSubmit={registerSubmit}
+            searchRef={searchInputRef}
+          />
+        )}
       </div>
-    )
-    : activeFullPage
+      <div className="app-page-stack-panel" hidden={activeModule !== 'login'}>
+        {(visitedModules.has('login') || activeModule === 'login') && <LoginStatusPanel />}
+      </div>
+      <div className="app-page-stack-panel" hidden={activeModule !== 'vk'}>
+        {(visitedModules.has('vk') || activeModule === 'vk') && (
+          <VkPanel
+            baseUrl={baseUrl}
+            selectedJobId={selectedVkJobId}
+            refreshToken={vkJobsRevision}
+            onSelectJob={(jobId) => {
+              setSelectedVkJobId(jobId)
+              setVkRightPanelOpen(!!jobId)
+            }}
+          />
+        )}
+      </div>
+      <div className="app-page-stack-panel" hidden={activeModule !== 'providers'}>
+        {(visitedModules.has('providers') || activeModule === 'providers') && (
+          <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} /></div>
+        )}
+      </div>
+      <div className="app-page-stack-panel" hidden={activeModule !== 'wrss'}>
+        {(visitedModules.has('wrss') || activeModule === 'wrss') && <WrssPanel baseUrl={baseUrl} />}
+      </div>
+      <div className="app-page-stack-panel" hidden={activeModule !== 'radar'}>
+        {(visitedModules.has('radar') || activeModule === 'radar') && <RadarPanel baseUrl={baseUrl} />}
+      </div>
+    </div>
+  )
 
   return (
     <div data-testid="app-root" className="h-full">
