@@ -71,7 +71,19 @@ export function vkElapsedLabel(submittedAt: string, finishedAt?: string | null):
   if (Number.isNaN(start)) return '—'
   const finish = finishedAt ? Date.parse(finishedAt) : Date.now()
   if (Number.isNaN(finish)) return '—'
-  const seconds = Math.max(0, Math.round((finish - start) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  return `${Math.floor(seconds / 60)}m${seconds % 60}s`
+  return vkDurationLabel(Math.max(0, (finish - start) / 1000))
+}
+
+export function vkDurationLabel(seconds: number | null): string {
+  if (seconds === null) return '进行中'
+  if (seconds < 1) {
+    const milliseconds = Math.round(seconds * 1000)
+    if (milliseconds < 1000) return `${milliseconds}ms`
+  }
+  const hundredths = Math.round(seconds * 100)
+  const days = Math.floor(hundredths / 8_640_000)
+  const hours = Math.floor(hundredths / 360_000) % 24
+  const minutes = Math.floor(hundredths / 6_000) % 60
+  const remainder = (hundredths % 6_000) / 100
+  return `${days ? `${days}d` : ''}${hours ? `${hours}h` : ''}${minutes ? `${minutes}m` : ''}${remainder ? `${remainder}s` : ''}` || '0s'
 }

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import WrssPanel from './WrssPanel'
 
@@ -83,7 +83,7 @@ describe('WrssPanel', () => {
     ))
   })
 
-  it('describes retry and technical-detail actions individually', async () => {
+  it('describes retry and diagnostics actions individually', async () => {
     vi.stubGlobal('fetch', vi.fn(() => response({
       ...base,
       state: 'failed',
@@ -99,10 +99,80 @@ describe('WrssPanel', () => {
     expect(retryDescription).toBeVisible()
     expect(retryDescription.textContent?.trim()).not.toBe('')
 
-    const technical = screen.getByTestId('wrss-action-description-technical')
+    const technical = screen.getByTestId('wrss-action-description-diagnostics')
     expect(technical).toBeVisible()
     expect(technical.textContent?.trim()).not.toBe('')
-    const summary = screen.getByText('查看技术详情')
-    expect(summary).toHaveAttribute('aria-describedby', 'wrss-action-description-technical')
+    const summary = screen.getByText('设置与诊断')
+    expect(summary).toHaveAttribute('aria-describedby', 'wrss-action-description-diagnostics')
   })
+})
+
+it('returns only diagnostics fields to the trusted running iframe without replacing it', async () => {
+  const origin = 'http://127.0.0.1:4567'
+  const fetchMock = vi.fn().mockImplementationOnce(() => response({ ...base, state: 'running', ui_url: origin }))
+    .mockImplementation(() => response({ ...base, state: 'failed', summary: '进程退出', reason_code: 'runtime-exit', progress_log: ['line one', 'line two'], ui_url: origin, private_value: 'not-for-frame' }))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<WrssPanel />)
+  const iframe = await screen.findByTestId('wrss-iframe') as HTMLIFrameElement
+  const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
+  fireEvent(window, new MessageEvent('message', {
+    source: iframe.contentWindow, origin, data: { type: 'pussycat-wrss-diagnostics-request' },
+  }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith({
+    type: 'pussycat-wrss-diagnostics',
+    status: { state: 'failed', summary: '进程退出', reason_code: 'runtime-exit', progress_log: ['line one', 'line two'] },
+  }, origin))
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  expect(screen.getByTestId('wrss-iframe')).toBe(iframe)
+})
+
+it('ignores diagnostics requests from another source, origin, or message type', async () => {
+  const origin = 'http://127.0.0.1:4567'
+  const fetchMock = vi.fn(() => response({ ...base, state: 'running', ui_url: origin }))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<WrssPanel />)
+  const iframe = await screen.findByTestId('wrss-iframe') as HTMLIFrameElement
+  const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
+  for (const request of [
+    { source: window, origin, data: { type: 'pussycat-wrss-diagnostics-request' } },
+    { source: iframe.contentWindow, origin: 'http://127.0.0.1:9999', data: { type: 'pussycat-wrss-diagnostics-request' } },
+    { source: iframe.contentWindow, origin, data: { type: 'other-request' } },
+  ]) fireEvent(window, new MessageEvent('message', request))
+  await act(async () => {})
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('returns a diagnostics request failure to the iframe and allows a fresh request', async () => {
+  const origin = 'http://127.0.0.1:4567'
+  const fetchMock = vi.fn().mockImplementationOnce(() => response({ ...base, state: 'running', ui_url: origin }))
+    .mockImplementationOnce(() => response({ error: '日志读取失败' }, 503))
+    .mockImplementation(() => response({ ...base, state: 'running', summary: '恢复运行', progress_log: ['ready'] }))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<WrssPanel />)
+  const iframe = await screen.findByTestId('wrss-iframe') as HTMLIFrameElement
+  const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
+  const request = () => fireEvent(window, new MessageEvent('message', {
+    source: iframe.contentWindow, origin, data: { type: 'pussycat-wrss-diagnostics-request' },
+  }))
+  request()
+  await waitFor(() => expect(post).toHaveBeenCalledWith({ type: 'pussycat-wrss-diagnostics', error: '日志读取失败' }, origin))
+  request()
+  await waitFor(() => expect(post).toHaveBeenLastCalledWith({ type: 'pussycat-wrss-diagnostics', status: {
+    state: 'running', summary: '恢复运行', reason_code: null, progress_log: ['ready'],
+  } }, origin))
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+it('keeps settings and diagnostics available for a failed runtime with no log lines', async () => {
+  vi.stubGlobal('fetch', vi.fn(() => response({ ...base, state: 'failed', summary: '启动失败' })))
+  render(<WrssPanel />)
+  await screen.findByText('启动失败')
+  const entry = screen.getByText('设置与诊断')
+  expect(entry.tagName).toBe('SUMMARY')
+  fireEvent.click(entry)
+  expect(screen.getByRole('heading', { name: '运行日志' })).toBeInTheDocument()
+  expect(screen.getByText('状态: failed')).toBeInTheDocument()
+  expect(screen.queryByText('查看技术详情')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
 })

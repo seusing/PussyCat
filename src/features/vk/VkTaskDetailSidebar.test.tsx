@@ -73,8 +73,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(body.indexOf('提交内容')).toBeLessThan(body.indexOf('模型配置'))
     expect(screen.getByTestId('vk-task-detail-metadata')).not.toHaveTextContent('执行耗时')
     expect(screen.queryByTestId('vk-task-detail-execution-elapsed')).not.toBeInTheDocument()
-    expect(screen.getByTestId('vk-run-metrics')).toHaveTextContent('输入 0')
-    expect(screen.getByTestId('vk-run-metrics')).toHaveTextContent('输出 0')
+    expect(screen.queryByTestId('vk-run-metrics')).not.toBeInTheDocument()
     const taskRow = await screen.findByTestId('vk-task-detail-task-row-source-0')
     expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
     await user.click(taskRow)
@@ -445,7 +444,7 @@ describe('VkTaskDetailSidebar', () => {
     await user.click(firstRow)
     const details = await screen.findByTestId('vk-task-detail-stage-details')
     expect(details).toHaveTextContent('采集与转写')
-    expect(details).toHaveTextContent('2.00 秒')
+    expect(details).toHaveTextContent('2s')
 
   })
 
@@ -807,7 +806,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(details).toHaveTextContent('核对关键信息')
   })
 
-  it('shows real stage timing and token usage without cost or cache clutter', async () => {
+  it('shows stage timing without token usage details', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -832,28 +831,25 @@ describe('VkTaskDetailSidebar', () => {
 
     render(<VkTaskDetailSidebar jobId="job-metrics" baseUrl={BASE} onClose={() => {}} />)
 
-    const metrics = await screen.findByTestId('vk-run-metrics')
-    expect(metrics).toHaveTextContent('输入 1,234')
-    expect(metrics).toHaveTextContent('输出 321')
-    // 费用与缓存 Token 已从详情页移除：缓存恒为 0，费用因通道普遍不提供可信价格
-    // 而长期是'未统计'，两个格子只占地方。
-    expect(metrics).not.toHaveTextContent('费用')
-    expect(metrics).not.toHaveTextContent('缓存')
     const taskRow = await screen.findByTestId('vk-task-detail-task-row-source-0')
     expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
     await user.click(taskRow)
     const stages = await screen.findByTestId('vk-task-detail-stage-details')
     expect(stages).toHaveTextContent('采集与转写')
-    expect(stages).toHaveTextContent('2.50 秒')
+    expect(stages).toHaveTextContent('2.5s')
     expect(stages).toHaveTextContent('理解视频')
-    expect(stages).toHaveTextContent('7.25 秒')
+    expect(stages).toHaveTextContent('7.25s')
     expect(stages).toHaveTextContent('custom-stage')
+    expect(stages).toHaveTextContent('500ms')
+    expect(stages.querySelectorAll('.vk-task-detail-stage-chip p')).toHaveLength(0)
+    expect(screen.queryByTestId('vk-run-metrics')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-model-attempts')).not.toBeInTheDocument()
     expect(stages.querySelectorAll('.vk-task-detail-stage-chip')).toHaveLength(6)
     expect(stages.querySelectorAll('.vk-task-detail-stage-chip span')).toHaveLength(6)
     expect(screen.queryByTestId('vk-task-detail-execution-elapsed')).not.toBeInTheDocument()
   })
 
-  it('shows every actual model attempt and explains a configured fallback switch', async () => {
+  it('keeps configured model names without displaying model attempt records', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/vk/v1/jobs/job-fallback')) {
@@ -878,20 +874,11 @@ describe('VkTaskDetailSidebar', () => {
 
     render(<VkTaskDetailSidebar jobId="job-fallback" baseUrl={BASE} onClose={() => {}} />)
 
-    const attempts = await screen.findByTestId('vk-model-attempts')
-    expect(attempts).toHaveTextContent('第 1 次 · 主站')
-    expect(attempts).toHaveTextContent('临时故障')
-    expect(attempts).toHaveTextContent('第 2 次 · 备用站')
-    expect(attempts).toHaveTextContent('已按你的备用顺序切换')
-    expect(attempts).toHaveTextContent('同步')
-    expect(attempts).toHaveTextContent('首字不可测')
-    expect(attempts).toHaveTextContent('推理强度 未记录')
-    expect(attempts).toHaveTextContent('输出上限 未记录')
-    expect(screen.getByText('主站 → 备用站')).toBeInTheDocument()
-    expect(attempts).not.toHaveTextContent('https://')
+    expect(await screen.findByText('主站 → 备用站')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-model-attempts')).not.toBeInTheDocument()
   })
 
-  it('shows streaming telemetry and an abandoned billing warning', async () => {
+  it('keeps failed task stages while omitting streaming telemetry and usage panels', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/vk/v1/jobs/job-abandoned')) return new Response(JSON.stringify({
@@ -925,24 +912,13 @@ describe('VkTaskDetailSidebar', () => {
 
     render(<VkTaskDetailSidebar jobId="job-abandoned" baseUrl={BASE} onClose={() => {}} />)
 
-    const attempts = await screen.findByTestId('vk-model-attempts')
-    expect(attempts).toHaveTextContent('已停止等待')
-    expect(attempts).toHaveTextContent('流式')
-    expect(attempts).toHaveTextContent('响应头 42 ms')
-    expect(attempts).toHaveTextContent('首事件 61 ms')
-    expect(attempts).toHaveTextContent('首字 93 ms')
-    expect(attempts).toHaveTextContent('首推理事件 71 ms')
-    expect(attempts).toHaveTextContent('最后事件 response.reasoning_summary_text.delta（30499 ms）')
-    expect(attempts).toHaveTextContent('终止事件 未记录')
-    expect(attempts).toHaveTextContent('[DONE] 未收到')
-    expect(attempts).toHaveTextContent('response.created')
-    expect(attempts).toHaveTextContent('总耗时 30500 ms')
-    expect(attempts).toHaveTextContent('推理强度 medium')
-    expect(attempts).toHaveTextContent('输出上限 2,048')
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      '上游可能仍在运行和计费；系统没有自动重试',
-    )
-    expect(screen.getByTestId('vk-run-metrics')).not.toHaveTextContent('待对账')
+    expect(await screen.findByText('主站')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('vk-task-detail-task-row-source-0'))
+    const stages = screen.getByTestId('vk-task-detail-stage-details')
+    expect(stages).toHaveTextContent('理解视频')
+    expect(stages.querySelector('[data-stage="chapter"]')).toHaveAttribute('data-stage-state', 'completed')
+    expect(screen.queryByTestId('vk-model-attempts')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-run-metrics')).not.toBeInTheDocument()
   })
 
   it('活跃任务在详情轮询返回终态后立即切换为失败界面', async () => {
@@ -1100,9 +1076,9 @@ describe('VkTaskDetailSidebar', () => {
 
   it('opens the canonical result inside the app', async () => {
     const user = userEvent.setup()
-    const opened: Array<{ outputId?: string; title?: string }> = []
+    const opened: Array<{ outputId?: string; title?: string; jobId?: string }> = []
     const listener = (event: Event) => {
-      opened.push((event as CustomEvent<{ outputId?: string; title?: string }>).detail)
+      opened.push((event as CustomEvent<{ outputId?: string; title?: string; jobId?: string }>).detail)
     }
     window.addEventListener('vk:open-output', listener)
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -1120,7 +1096,7 @@ describe('VkTaskDetailSidebar', () => {
     render(<VkTaskDetailSidebar jobId="completed-output" baseUrl={BASE} onClose={() => {}} />)
     await user.click(await screen.findByRole('button', { name: '查看解析结果' }))
 
-    expect(opened).toEqual([{ outputId: 'outputs/note.md', title: '解析结果' }])
+    expect(opened).toEqual([{ outputId: 'outputs/note.md', title: '解析结果', jobId: 'completed-output' }])
     expect(screen.queryByText('quick-summary MD')).not.toBeInTheDocument()
     window.removeEventListener('vk:open-output', listener)
   })

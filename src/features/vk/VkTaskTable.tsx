@@ -425,6 +425,13 @@ export function VkTaskTable({
           <button
             type="button"
             disabled={currentPage <= 1}
+            onClick={() => setPage(1)}
+          >
+            第一页
+          </button>
+          <button
+            type="button"
+            disabled={currentPage <= 1}
             onClick={() => setPage(currentPage - 1)}
           >
             上一页
@@ -436,6 +443,13 @@ export function VkTaskTable({
             onClick={() => setPage(currentPage + 1)}
           >
             下一页
+          </button>
+          <button
+            type="button"
+            disabled={currentPage >= pageCount}
+            onClick={() => setPage(pageCount)}
+          >
+            最后一页
           </button>
         </nav>
       )}

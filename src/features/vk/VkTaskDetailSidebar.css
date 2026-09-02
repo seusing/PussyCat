@@ -68,15 +68,20 @@
 .vk-task-detail-summary button:hover { background: #292d35; color: var(--color-fg); }
 
 .vk-task-detail-notification {
-  flex: 0 0 auto;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  left: 12px;
+  z-index: 10;
   min-width: 0;
-  padding: 10px 12px 0;
+  pointer-events: none;
 }
 
 .vk-task-detail-notification .app-alert {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
   padding: 10px 12px;
+  pointer-events: auto;
 }
 
 .vk-task-detail-body {
@@ -132,23 +137,12 @@
 .vk-task-detail-list dt { color: var(--color-fg-dim); }
 .vk-task-detail-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 
-.vk-run-metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.vk-run-metrics-grid > div,
 .vk-stage-metric-list li {
   border: 1px solid var(--color-line);
   border-radius: 7px;
   background: #171a20;
   padding: 9px 10px;
 }
-
-.vk-run-metrics-grid dt { color: var(--color-fg-dim); font-size: 11px; }
-.vk-run-metrics-grid dd { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 
 .vk-stage-metric-list {
   list-style: none;
@@ -187,34 +181,6 @@
 .vk-task-detail-section > ol:not(.vk-task-detail-batch-list):not(.vk-task-detail-task-list) { display: grid; gap: 7px; margin: 0; padding-left: 20px; }
 .vk-task-detail-section li,
 .vk-task-detail-section p { color: var(--color-fg-dim); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
-
-.vk-model-attempt-list {
-  list-style: none;
-  padding: 0 !important;
-}
-
-.vk-model-attempt-list li {
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: #171a20;
-  padding: 9px 10px;
-}
-
-.vk-model-attempt-list li > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.vk-model-attempt-list strong { color: var(--color-fg); font-size: 12px; }
-.vk-model-attempt-list p { margin: 3px 0 0; }
-.vk-model-attempt-list span { font-size: 11px; }
-.vk-model-attempt-list .is-ok { color: var(--color-success); }
-.vk-model-attempt-list .is-transient_error { color: var(--color-warning); }
-.vk-model-attempt-list .is-permanent_error,
-.vk-model-attempt-list .is-schema_error { color: var(--color-danger); }
-.vk-model-attempt-list .vk-model-switch-reason { color: #9fc2ff; }
 
 .vk-task-detail-actions,
 .vk-task-output-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
@@ -340,7 +306,6 @@
 .vk-task-detail-stage-chip > div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
 .vk-task-detail-stage-chip strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .vk-task-detail-stage-chip span { flex: 0 0 auto; border: 1px solid var(--color-line); border-radius: 999px; background: #20232a; padding: 2px 6px; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
-.vk-task-detail-stage-chip p { margin: 3px 0 0; color: var(--color-fg-dim); font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
 .vk-task-detail-stage-chip.is-active { border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-line)); }
 .vk-task-detail-stage-chip.is-active span { color: var(--color-accent); }
 .vk-task-detail-stage-chip.is-completed { border-color: color-mix(in srgb, var(--color-success) 28%, var(--color-line)); }
@@ -357,15 +322,6 @@
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
-/* 流式明细默认收起:平时是噪声,排查卡顿时才需要。 */
-.vk-model-attempt-trace > summary {
-  cursor: pointer;
-  color: var(--color-fg-dim);
-  font-size: 11px;
-  user-select: none;
-}
-.vk-model-attempt-trace[open] > summary { margin-bottom: 4px; }
 
 .vk-task-detail-actions button {
   transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease;

@@ -14,7 +14,7 @@ import { HostRequestError } from '../../host/errors'
 import { AppAlert } from '../../components/AppAlert'
 import { copyText } from '../../lib/clipboard'
 import {
-  isVkJobRerun, markVkJobAsRerun, vkElapsedLabel, vkTaskNumberFor, vkTaskNumberForBatch,
+  isVkJobRerun, markVkJobAsRerun, vkDurationLabel, vkElapsedLabel, vkTaskNumberFor, vkTaskNumberForBatch,
   VK_OPEN_OUTPUT_EVENT,
 } from './taskUiState'
 import './VkTaskDetailSidebar.css'
@@ -34,18 +34,6 @@ function detailError(error: unknown): string {
   if (error instanceof HostRequestError) return error.summary
   if (error instanceof Error) return error.message
   return '任务详情获取失败'
-}
-
-function secondsLabel(value: number | null): string {
-  if (value === null) return '进行中'
-  if (value < 1) return `${Math.round(value * 1000)} ms`
-  return `${value.toFixed(2)} 秒`
-}
-
-function tokenLabel(value: number | null | undefined): string {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? value.toLocaleString('zh-CN')
-    : '0'
 }
 
 type BatchState = 'running' | 'done' | 'failed' | 'interrupted'
@@ -313,24 +301,6 @@ function configuredModelName(job: VkJobView, settings: VkProviderSettings | null
   return '跟随默认模型配置'
 }
 
-const MODEL_ATTEMPT_STATUS: Record<string, string> = {
-  ok: '成功',
-  transient_error: '临时故障',
-  permanent_error: '配置或请求错误',
-  schema_error: '响应格式错误',
-  abandoned: '已停止等待',
-}
-
-function transportLabel(mode: string | undefined): string {
-  if (mode === 'sse') return '流式'
-  if (mode === 'sync_fallback') return '同步回退'
-  return '同步'
-}
-
-function telemetryMs(label: string, value: number | null | undefined): string {
-  return value == null ? `${label}不可测` : `${label} ${Math.max(0, value)} ms`
-}
-
 function modelAttemptName(route: string, settings: VkProviderSettings | null): string {
   const channelId = route.split(':', 1)[0]
   return settings?.channels.find((channel) => channel.id === channelId)?.name ?? route
@@ -436,12 +406,7 @@ function TaskProgressDetails({
               ? '进行中'
               : metric?.elapsed_s == null
                 ? '未记录'
-                : secondsLabel(metric.elapsed_s)
-            const detail = metric
-              ? `${metric.model_calls} 次模型调用 · 输入 ${tokenLabel(metric.input_tokens)} · 输出 ${tokenLabel(metric.output_tokens)}`
-              : entry.state === 'active'
-                ? '阶段进行中，完成后显示耗时与调用量'
-                : '阶段已完成，未返回耗时与调用量'
+                : vkDurationLabel(metric.elapsed_s)
             return (
             <div
               key={entry.stage}
@@ -454,7 +419,6 @@ function TaskProgressDetails({
                 <strong>{stageLabel(entry.stage)}</strong>
                 <span>{elapsed}</span>
               </div>
-              <p>{detail}</p>
             </div>
             )
           })}
@@ -912,64 +876,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             </div>
           </dl>
 
-          {/* 缓存 Token 恒为 0（本产品不走 prompt 缓存），费用则因通道普遍不提供可信价格
-              而长期显示"未统计"——两个格子都只是占地方，去掉。即使任务在模型调用前中断,
-              也保留 0/0 结论,让详情字段始终完整。 */}
-          <div className="vk-task-detail-section" data-testid="vk-run-metrics">
-            <h3>本次解析用量</h3>
-            <dl className="vk-run-metrics-grid">
-              <div><dt>输入 {tokenLabel(job.progress?.usage?.input_tokens)}</dt><dd>Token</dd></div>
-              <div><dt>输出 {tokenLabel(job.progress?.usage?.output_tokens)}</dt><dd>Token</dd></div>
-            </dl>
-          </div>
-          {(job.progress?.model_attempts?.length ?? 0) > 0 && (
-            <div className="vk-task-detail-section" data-testid="vk-model-attempts">
-              <h3>模型调用记录</h3>
-              <ol className="vk-model-attempt-list">
-                {job.progress!.model_attempts!.map((attempt) => (
-                  <li key={`${attempt.attempt_number}-${attempt.created_at}`}>
-                    <div>
-                      <strong>第 {attempt.attempt_number} 次 · {modelAttemptName(attempt.provider_route, providers)}</strong>
-                      <span className={`is-${attempt.status}`}>{MODEL_ATTEMPT_STATUS[attempt.status] ?? attempt.status}</span>
-                    </div>
-                    <p>{stageLabel(attempt.stage)} · {attempt.model_reported || attempt.model_requested}</p>
-                    <p>总耗时 {Math.max(0, attempt.latency_ms)} ms · {telemetryMs('首字', attempt.first_text_ms)}</p>
-                    {/* 逐事件的流式明细只有排查卡顿时才用得上,平时是噪声。收进折叠区,
-                        需要时展开——不是删掉,那些字段正是上次定位超时的依据。 */}
-                    <details className="vk-model-attempt-trace">
-                      <summary>流式明细</summary>
-                      <p>
-                        {transportLabel(attempt.transport_mode)} · {telemetryMs('响应头', attempt.response_headers_ms)} · {' '}
-                        {telemetryMs('首事件', attempt.first_event_ms)}
-                      </p>
-                      <p>
-                        {telemetryMs('首推理事件', attempt.first_reasoning_ms)} · {' '}
-                        最后事件 {attempt.last_event_type || '未记录'}{attempt.last_event_ms == null ? '' : `（${attempt.last_event_ms} ms）`} · {' '}
-                        终止事件 {attempt.terminal_event_type || '未记录'} · {' '}
-                        [DONE] {attempt.stream_done_received ? '已收到' : '未收到'}
-                      </p>
-                      {attempt.stream_event_types && attempt.stream_event_types !== '{}' && (
-                        <p>事件类型 {attempt.stream_event_types}</p>
-                      )}
-                      <p>
-                        推理强度 {attempt.reasoning_effort || '未记录'} · {' '}
-                        输出上限 {attempt.max_output_tokens == null ? '未记录' : attempt.max_output_tokens.toLocaleString('zh-CN')}
-                      </p>
-                    </details>
-                    {attempt.request_may_still_run && (
-                      <p role="alert" style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
-                        上游可能仍在运行和计费；系统没有自动重试
-                      </p>
-                    )}
-                    {attempt.switch_reason === 'previous_route_transient_error' && (
-                      <p className="vk-model-switch-reason">上一通道发生临时故障，已按你的备用顺序切换</p>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-
           {job.error && <div className="vk-task-detail-error">{job.error}</div>}
 
           <div className="vk-task-detail-actions">
@@ -1128,7 +1034,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
               <button type="button" className="vk-task-open-output-button" onClick={() => {
                 const output = primaryOutput(job)
                 if (output) window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
-                  detail: { outputId: output.id, title: '解析结果' },
+                  detail: { outputId: output.id, title: '解析结果', jobId: job.job_id },
                 }))
               }}>
                 <Eye size={14} aria-hidden="true" />

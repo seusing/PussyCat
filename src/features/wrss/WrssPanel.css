@@ -62,6 +62,7 @@
 .wrss-muted { margin-top: 24px; color: var(--color-fg-dim); }
 .wrss-details { margin-top: 18px; color: var(--color-fg-dim); font-size: 13px; }
 .wrss-details summary { cursor: pointer; }
+.wrss-details h3 { margin: 14px 0 8px; color: var(--color-fg); font-size: 14px; }
 
 .wrss-skeleton {
   position: absolute;

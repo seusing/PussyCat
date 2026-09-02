@@ -20,6 +20,7 @@ import { gunzipSync } from 'node:zlib'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
 
 import { sha256File } from './vk-runtime-install.mjs'
+import { ensureWrssSourcePatches } from './wrss-patches.mjs'
 
 export const WRSS_VERSION = '1.5.2'
 export const WRSS_SOURCE_URL = 'https://codeload.github.com/rachelos/we-mp-rss/tar.gz/refs/tags/v1.5.2'
@@ -35,6 +36,7 @@ const TAR_BLOCK_SIZE = 512
 const MAX_EXTRACTED_ARCHIVE_BYTES = 256 * 1024 * 1024
 const WRSS_BOOTSTRAP_SCRIPT = '<script src="/static/pussycat-bootstrap.js"></script>'
 const WRSS_THEME_LINK = '<link rel="stylesheet" href="/static/pussycat-theme.css">'
+const WRSS_AUTH_SCRIPT = '<script src="/static/pussycat-auth.js"></script>'
 const WRSS_UI_SCRIPT = '<script src="/static/pussycat-ui.js"></script>'
 const WRSS_THEME_CSS = `:root,
 html {
@@ -358,9 +360,30 @@ a,
   background: rgb(79 140 255 / 16%) !important;
   box-shadow: inset 3px 0 0 #4f8cff;
 }
+#pussycat-settings-panel {
+  flex: 0 0 auto;
+  margin: 20px 24px 0;
+  color: #e6e9ef;
+}
+.pussycat-settings-heading { margin: 0 0 12px; font-size: 20px; font-weight: 600; }
+.pussycat-settings-tabs { display: flex; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid rgb(38 44 56 / 88%); }
+.pussycat-settings-tab, .pussycat-diagnostics-refresh {
+  padding: 8px 14px; border: 1px solid rgb(38 44 56 / 88%); border-radius: 7px;
+  background: transparent; color: #9aa4b2; cursor: pointer;
+}
+.pussycat-settings-tab[aria-selected="true"] { background: rgb(79 140 255 / 18%); border-color: rgb(79 140 255 / 34%); color: #f6f9ff; }
+.pussycat-diagnostics { padding: 16px 0; }
+.pussycat-diagnostics[hidden] { display: none !important; }
+.pussycat-diagnostics-refresh { margin-bottom: 12px; color: #e6e9ef; }
+.pussycat-diagnostics-log {
+  max-height: 65vh; margin: 0; padding: 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid rgb(38 44 56 / 88%); border-radius: 8px; background: #0f1115; color: #b9c5d8;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+#main.is-pussycat-log-view > .arco-layout { display: none !important; }
 `
 const WRSS_UI_JS = `(() => {
-  const VERSION = 'pussycat-wrss-ui-v1'
+  const VERSION = 'pussycat-wrss-ui-v2'
   const previous = window.__PUSSYCAT_WRSS_UI__
   if (previous && previous.version === VERSION) return
   if (previous && typeof previous.destroy === 'function') previous.destroy()
@@ -371,6 +394,10 @@ const WRSS_UI_JS = `(() => {
     observer: null,
     cleanup: [],
     moreWrap: null,
+    settingsPanel: null,
+    route: window.location.pathname,
+    logsMode: false,
+    diagnosticsText: '正在读取运行日志…',
   }
   window.__PUSSYCAT_WRSS_UI__ = state
 
@@ -388,6 +415,9 @@ const WRSS_UI_JS = `(() => {
     { from: '级联管理', label: '级联管理', path: '/cascade' },
     { from: 'Access Key', label: 'Access Key', path: '/access-keys' },
     { from: '异常统计', label: '异常统计', path: '/env-exception' },
+    { from: '配置信息', label: '设置与诊断', path: '/configs' },
+  ]
+  const settingsNav = [
     { from: '配置信息', label: '配置信息', path: '/configs' },
     { from: '系统信息', label: '系统信息', path: '/sys-info' },
   ]
@@ -412,7 +442,7 @@ const WRSS_UI_JS = `(() => {
   function entryFor(item) {
     const text = normalize(item.textContent)
     const storedPath = item.dataset.pussycatPath
-    return [...primaryNav, ...moreNav].find((entry) => storedPath === entry.path || text.includes(entry.from) || text === entry.label)
+    return [...primaryNav, ...settingsNav, ...moreNav].find((entry) => storedPath === entry.path || text.includes(entry.from) || text === entry.label)
   }
 
   function closeMore() {
@@ -427,7 +457,9 @@ const WRSS_UI_JS = `(() => {
   }
 
   function navigate(path) {
+    state.logsMode = false
     closeMore()
+    schedule()
     const selector = '.arco-menu-item[data-pussycat-path="' + attrValue(path) + '"]'
     const menuItem = document.querySelector(selector)
     if (menuItem instanceof HTMLElement) {
@@ -465,7 +497,7 @@ const WRSS_UI_JS = `(() => {
     panel.replaceChildren(...moreNav.map((entry) => {
       const button = document.createElement('button')
       button.type = 'button'
-      button.className = 'pussycat-more-item' + (activePath === entry.path ? ' is-active' : '')
+      button.className = 'pussycat-more-item' + (activePath === entry.path || (entry.path === '/configs' && activePath === '/sys-info') ? ' is-active' : '')
       button.setAttribute('role', 'menuitem')
       button.textContent = entry.label
       button.addEventListener('click', () => navigate(entry.path))
@@ -482,7 +514,7 @@ const WRSS_UI_JS = `(() => {
       if (!entry) return
       item.dataset.pussycatPath = entry.path
       item.classList.toggle('pussycat-primary-nav', primaryNav.some((nav) => nav.path === entry.path))
-      item.classList.toggle('pussycat-low-nav', moreNav.some((nav) => nav.path === entry.path))
+      item.classList.toggle('pussycat-low-nav', [...moreNav, ...settingsNav].some((nav) => nav.path === entry.path))
       if (entry.order) item.style.order = entry.order
       setLastTextNode(item, entry.label)
     })
@@ -496,10 +528,114 @@ const WRSS_UI_JS = `(() => {
     })
   }
 
+  function requestDiagnostics() {
+    state.diagnosticsText = '正在读取运行日志…'
+    window.parent.postMessage({ type: 'pussycat-wrss-diagnostics-request' }, '*')
+    schedule()
+  }
+
+  function enhanceSettings() {
+    const route = window.location.pathname
+    if (state.route !== route) {
+      state.route = route
+      state.logsMode = false
+    }
+    const main = document.getElementById('main')
+    const onSettingsRoute = route === '/configs' || route === '/sys-info'
+    if (!main || !onSettingsRoute) {
+      if (state.settingsPanel) state.settingsPanel.remove()
+      state.settingsPanel = null
+      if (main) main.classList.remove('is-pussycat-log-view')
+      return
+    }
+    const content = main.querySelector(':scope > section.arco-layout')
+    if (!content) return
+    let panel = state.settingsPanel
+    if (!panel || !main.contains(panel)) {
+      panel = document.createElement('section')
+      panel.id = 'pussycat-settings-panel'
+      panel.setAttribute('aria-label', '设置与诊断')
+      const heading = document.createElement('h2')
+      heading.className = 'pussycat-settings-heading'
+      heading.textContent = '设置与诊断'
+      const tabs = document.createElement('div')
+      tabs.className = 'pussycat-settings-tabs'
+      tabs.setAttribute('role', 'tablist')
+      tabs.setAttribute('aria-label', '设置与诊断')
+      ;[
+        { id: 'configs', label: '配置信息', path: '/configs' },
+        { id: 'sys-info', label: '系统信息', path: '/sys-info' },
+        { id: 'logs', label: '运行日志' },
+      ].forEach((entry) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'pussycat-settings-tab'
+        button.dataset.settingsTab = entry.id
+        button.textContent = entry.label
+        button.setAttribute('role', 'tab')
+        button.addEventListener('click', () => {
+          if (entry.path) navigate(entry.path)
+          else {
+            state.logsMode = true
+            requestDiagnostics()
+          }
+          schedule()
+        })
+        tabs.appendChild(button)
+      })
+      const diagnostics = document.createElement('div')
+      diagnostics.className = 'pussycat-diagnostics'
+      const refresh = document.createElement('button')
+      refresh.type = 'button'
+      refresh.className = 'pussycat-diagnostics-refresh'
+      refresh.textContent = '刷新日志'
+      refresh.addEventListener('click', requestDiagnostics)
+      const log = document.createElement('pre')
+      log.className = 'pussycat-diagnostics-log'
+      log.setAttribute('aria-label', '运行日志')
+      diagnostics.append(refresh, log)
+      panel.append(heading, tabs, diagnostics)
+      main.insertBefore(panel, content)
+      state.settingsPanel = panel
+    }
+    main.classList.toggle('is-pussycat-log-view', state.logsMode)
+    const active = state.logsMode ? 'logs' : route.slice(1)
+    panel.querySelectorAll('.pussycat-settings-tab').forEach((button) => {
+      button.setAttribute('aria-selected', button.dataset.settingsTab === active ? 'true' : 'false')
+    })
+    panel.querySelector('.pussycat-diagnostics').hidden = !state.logsMode
+    const log = panel.querySelector('.pussycat-diagnostics-log')
+    if (log.textContent !== state.diagnosticsText) log.textContent = state.diagnosticsText
+  }
+
+  const onDiagnostics = (event) => {
+    if (event.source !== window.parent || event.data?.type !== 'pussycat-wrss-diagnostics') return
+    const data = event.data
+    if (typeof data.error === 'string') state.diagnosticsText = data.error
+    else if (data.status) {
+      const status = data.status
+      state.diagnosticsText = [
+        '状态: ' + String(status.state || '—'),
+        '说明: ' + String(status.summary || '—'),
+        'reason_code: ' + String(status.reason_code || '—'),
+        '',
+        '运行日志',
+        ...(Array.isArray(status.progress_log) ? status.progress_log.map(String) : []),
+      ].join('\\n')
+    }
+    schedule()
+  }
+  const onPopState = () => { state.logsMode = false; schedule() }
+  window.addEventListener('message', onDiagnostics)
+  window.addEventListener('popstate', onPopState)
+  state.cleanup.push(() => window.removeEventListener('message', onDiagnostics))
+  state.cleanup.push(() => window.removeEventListener('popstate', onPopState))
+
   function apply() {
     state.raf = 0
     enhanceHeaderLinks()
     enhanceNav()
+    enhanceSettings()
   }
 
   function schedule() {
@@ -531,6 +667,8 @@ const WRSS_UI_JS = `(() => {
     if (state.raf) window.cancelAnimationFrame(state.raf)
     if (state.observer) state.observer.disconnect()
     state.cleanup.forEach((cleanup) => cleanup())
+    if (state.settingsPanel) state.settingsPanel.remove()
+    document.getElementById('main')?.classList.remove('is-pussycat-log-view')
     if (window.__PUSSYCAT_WRSS_UI__ === state) delete window.__PUSSYCAT_WRSS_UI__
   }
 })()
@@ -547,6 +685,7 @@ export class WrssRuntimeError extends Error {
 }
 
 export function ensureWrssStaticAssets(sourceDir) {
+  ensureWrssSourcePatches(sourceDir)
   const staticDir = join(sourceDir, 'static')
   const indexPath = join(staticDir, 'index.html')
   if (!isRegularFile(indexPath)) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不存在')
@@ -555,9 +694,10 @@ export function ensureWrssStaticAssets(sourceDir) {
   if (headMatches.length !== 1) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不符合预期')
   const withoutManagedAssets = indexHtml
     .replace(/\s*<script\s+src=["']\/static\/pussycat-ui\.js["']><\/script>/gi, '')
+    .replace(/\s*<script\s+src=["']\/static\/pussycat-auth\.js["']><\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-bootstrap\.js["']><\/script>/gi, '')
     .replace(/\s*<link\s+rel=["']stylesheet["']\s+href=["']\/static\/pussycat-theme\.css["']\s*\/?>/gi, '')
-  atomicText(indexPath, withoutManagedAssets.replace(/<\/head>/i, `${WRSS_THEME_LINK}\n${WRSS_BOOTSTRAP_SCRIPT}\n${WRSS_UI_SCRIPT}\n</head>`))
+  atomicText(indexPath, withoutManagedAssets.replace(/<\/head>/i, `${WRSS_THEME_LINK}\n${WRSS_BOOTSTRAP_SCRIPT}\n${WRSS_AUTH_SCRIPT}\n${WRSS_UI_SCRIPT}\n</head>`))
   atomicText(join(staticDir, 'pussycat-theme.css'), WRSS_THEME_CSS)
   atomicText(join(staticDir, 'pussycat-ui.js'), WRSS_UI_JS)
 }

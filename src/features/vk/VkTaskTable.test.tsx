@@ -206,12 +206,21 @@ describe('VkTaskTable', () => {
 
     expect(screen.getAllByTestId('vk-job-row')).toHaveLength(10)
     expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 1 / 3 页')
+    expect(screen.getByRole('button', { name: '第一页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
 
     await userEvent.click(screen.getByRole('button', { name: '下一页' }))
     expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 2 / 3 页')
     await userEvent.click(screen.getByRole('button', { name: '下一页' }))
     expect(screen.getAllByTestId('vk-job-row')).toHaveLength(5)   // 末页只剩 5 条
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '最后一页' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: '第一页' }))
+    expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 1 / 3 页')
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(10)
+    await userEvent.click(screen.getByRole('button', { name: '最后一页' }))
+    expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 3 / 3 页')
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(5)
   })
 
   it('每页条数可切到全部,翻页条随之消失', async () => {
@@ -226,12 +235,25 @@ describe('VkTaskTable', () => {
   it('按状态筛选后回到第一页,并显示筛出条数', async () => {
     render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
 
-    await userEvent.click(screen.getByRole('button', { name: '下一页' }))
+    await userEvent.click(screen.getByRole('button', { name: '最后一页' }))
     await userEvent.selectOptions(screen.getByLabelText('按任务状态筛选'), 'failed')
 
     // 25 条里单数下标是 failed,共 12 条;筛完必须回第 1 页,否则会停在一个已不存在的页上。
     expect(screen.getByTestId('vk-task-table-count')).toHaveTextContent('筛出 12 条 / 共 25 条')
     expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 1 / 2 页')
+    expect(screen.getByRole('button', { name: '第一页' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: '最后一页' }))
+    expect(screen.getByTestId('vk-task-table-page')).toHaveTextContent('第 2 / 2 页')
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: '最后一页' })).toBeDisabled()
+  })
+
+  it('任务缩减为一页后隐藏分页', async () => {
+    const { rerender } = render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
+    await userEvent.click(screen.getByRole('button', { name: '最后一页' }))
+    rerender(<VkTaskTable {...makeProps({ jobs: manyJobs(5) })} />)
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(5)
+    expect(screen.queryByRole('navigation', { name: '任务分页' })).not.toBeInTheDocument()
   })
 
   it('筛不出任何任务时给出与"暂无任务"不同的提示', async () => {

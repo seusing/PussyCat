@@ -28,6 +28,7 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
   const [loadedFrameUrl, setLoadedFrameUrl] = useState<string | null>(null)
   const [exitedSkeletonUrl, setExitedSkeletonUrl] = useState<string | null>(null)
   const autoEnabled = useRef(false)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -72,6 +73,27 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
   const state = status?.state ?? 'not-available'
   const logs = status?.progress_log ?? []
   const runningUrl = state === 'running' && isLoopbackUrl(status?.ui_url) ? status.ui_url : null
+  useEffect(() => {
+    if (!runningUrl) return
+    const frameOrigin = new URL(runningUrl).origin
+    let active = true
+    const onDiagnosticsRequest = (event: MessageEvent) => {
+      const frameWindow = iframeRef.current?.contentWindow
+      if (!frameWindow || event.source !== frameWindow || event.origin !== frameOrigin
+        || event.data?.type !== 'pussycat-wrss-diagnostics-request') return
+      const reply = (data: object) => {
+        if (active && iframeRef.current?.contentWindow === frameWindow) {
+          frameWindow.postMessage({ type: 'pussycat-wrss-diagnostics', ...data }, frameOrigin)
+        }
+      }
+      void fetchVkWrssManagedStatus(baseUrl).then((next) => {
+        const { state, summary, reason_code, progress_log } = next
+        reply({ status: { state, summary, reason_code, progress_log } })
+      }).catch((cause) => reply({ error: errorText(cause) }))
+    }
+    window.addEventListener('message', onDiagnosticsRequest)
+    return () => { active = false; window.removeEventListener('message', onDiagnosticsRequest) }
+  }, [runningUrl, baseUrl])
   const frameReady = !!runningUrl && loadedFrameUrl === runningUrl
   const showSkeleton = !error && (
     !status
@@ -91,6 +113,7 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
     <section className="wrss-panel" data-testid="wrss-panel" aria-label="公众号">
       {runningUrl ? (
         <iframe
+          ref={iframeRef}
           className={`wrss-iframe${frameReady ? ' is-ready' : ''}`}
           data-testid="wrss-iframe"
           title="公众号 WeRSS"
@@ -146,24 +169,22 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
                 title="重新启动公众号运行环境"
                 onClick={() => { void enable() }}
               >重试</button>
-              {(logs.length > 0 || !!status?.reason_code) && (
-                <>
-                  <p
-                    id="wrss-action-description-technical"
-                    data-testid="wrss-action-description-technical"
-                    className="wrss-action-description"
-                  >
-                    展开安装原因、状态码和运行日志，便于定位启动失败。
-                  </p>
-                  <details className="wrss-details">
-                    <summary aria-describedby="wrss-action-description-technical">查看技术详情</summary>
-                  {status?.reason_code && <div>reason_code: {status.reason_code}</div>}
-                  <div className="wrss-log" aria-label="安装技术日志">
-                    {logs.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
-                  </div>
-                  </details>
-                </>
-              )}
+              <p
+                id="wrss-action-description-diagnostics"
+                data-testid="wrss-action-description-diagnostics"
+                className="wrss-action-description"
+              >
+                展开安装原因、状态码和运行日志，便于定位启动失败。
+              </p>
+              <details className="wrss-details">
+                <summary aria-describedby="wrss-action-description-diagnostics">设置与诊断</summary>
+                <h3>运行日志</h3>
+                <div>状态: {state}</div>
+                {status?.reason_code && <div>reason_code: {status.reason_code}</div>}
+                <div className="wrss-log" aria-label="运行日志">
+                  {logs.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
+                </div>
+              </details>
             </div>
           )}
 

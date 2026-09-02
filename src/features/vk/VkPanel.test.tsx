@@ -11,6 +11,7 @@ vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
 const initialState = useAppStore.getState()
 beforeEach(() => {
   vi.useRealTimers()
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   vi.mocked(saveTextFileAs).mockReset().mockResolvedValue(true)
   useAppStore.setState(initialState, true)
   const layer = document.createElement('div')
@@ -959,7 +960,7 @@ describe('VkPanel', () => {
     await user.click(await screen.findByTestId('vk-output-note'))
 
     const dialog = await screen.findByRole('dialog')
-    expect(screen.getByRole('heading', { level: 1, name: '测试笔记' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: '测试笔记' })).toBeInTheDocument()
     expect(dialog.querySelector('strong')).toHaveTextContent('加粗')
     expect(screen.getByRole('button', { name: '复制内容' })).toBeInTheDocument()
     expect(calls.some((call) => call.key === 'GET /vk/v1/outputs/notes%2Fa.md')).toBe(true)
@@ -1265,4 +1266,59 @@ describe('VkPanel', () => {
       expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('video-knowledge runtime 未配置')
     })
   })
+})
+
+it('opens all current successful batch members with stable numbering and excludes old retries', async () => {
+  const common = { kind: 'request', status: 'done', submitted_at: '2026-08-01T00:00:00Z', finished_at: '2026-08-01T00:10:00Z', parent_job_id: null, cache_bypass: false, run_id: null, cost_cny: 0 }
+  const jobs = [
+    { ...common, job_id: 'a', batch_id: 'batch', source: 'https://example.com/a' },
+    { ...common, job_id: 'failed', batch_id: 'batch', status: 'failed', source: 'https://example.com/failed', submitted_at: '2026-08-01T00:00:01Z' },
+    { ...common, job_id: 'c', batch_id: 'batch', source: 'https://example.com/c', submitted_at: '2026-08-01T00:00:02Z' },
+    { ...common, job_id: 'old', batch_id: 'other', source: 'https://example.com/old' },
+    { ...common, job_id: 'new', batch_id: 'other', source: 'https://example.com/old', parent_job_id: 'old', status: 'partial', submitted_at: '2026-08-01T00:00:03Z' },
+  ]
+  const { calls } = stubRoutes({
+    'GET /vk/v1/health': { body: HEALTH },
+    'GET /vk/v1/jobs': { body: jobs },
+    ...Object.fromEntries(jobs.map((job) => [`GET /vk/v1/jobs/${job.job_id}`, { body: { ...job, outputs: { note_path: `${job.job_id}.md` } } }])),
+    'GET /vk/v1/outputs/a.md': { body: '# Batch A' },
+    'GET /vk/v1/outputs/c.md': { body: '# Batch C' },
+    'GET /vk/v1/outputs/new.md': { body: '# New attempt' },
+    'GET /vk/v1/outputs/extra.json': { body: '{"extra": true}' },
+  })
+  render(<VkPanel baseUrl={BASE} />)
+  await userEvent.click(await screen.findByTestId('vk-job-open-a'))
+  await screen.findByRole('heading', { name: 'Batch A' })
+  await userEvent.click(screen.getByTestId('vk-output-note'))
+  const tabs = screen.getAllByRole('tab')
+  expect(tabs).toHaveLength(3)
+  expect(screen.getByRole('tab', { name: /任务 \d+ · 小任务 1$/ })).toHaveAttribute('title', 'https://example.com/a')
+  expect(screen.getByRole('tab', { name: /任务 \d+ · 小任务 3$/ })).toHaveAttribute('title', 'https://example.com/c')
+  expect(screen.queryByRole('tab', { name: /小任务 2$/ })).not.toBeInTheDocument()
+  expect(calls.filter((call) => call.key.includes('/outputs/')).map((call) => call.key)).toEqual(['GET /vk/v1/outputs/a.md'])
+  expect(calls.some((call) => call.key === 'GET /vk/v1/jobs/old')).toBe(false)
+  await userEvent.click(screen.getByRole('tab', { name: /小任务 3$/ }))
+  await screen.findByRole('heading', { name: 'Batch C' })
+  act(() => {
+    window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, { detail: { outputId: 'new.md', title: '知识笔记', jobId: 'new' } }))
+  })
+  await screen.findByRole('heading', { name: 'New attempt' })
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  expect(screen.getAllByRole('tab')).toHaveLength(3)
+  await userEvent.click(screen.getByRole('tab', { name: /小任务 1$/ }))
+  await screen.findByRole('heading', { name: 'Batch A' })
+  expect(calls.filter((call) => call.key === 'GET /vk/v1/outputs/a.md')).toHaveLength(1)
+  act(() => {
+    window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, { detail: { outputId: 'extra.json', title: 'JSON' } }))
+    window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, { detail: { outputId: 'extra.json', title: 'JSON' } }))
+  })
+  await screen.findByText('{"extra": true}')
+  expect(screen.getAllByRole('tab')).toHaveLength(4)
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  await userEvent.click(screen.getByRole('tab', { name: /小任务 1$/ }))
+  jobs.push({ ...common, job_id: 'a-retry', batch_id: 'batch', source: 'https://example.com/a', parent_job_id: 'a', status: 'running', submitted_at: '2026-08-01T00:20:00Z' })
+  await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+  await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(3))
+  expect(screen.queryByRole('tab', { name: /小任务 1$/ })).not.toBeInTheDocument()
+  expect(screen.getAllByRole('tab').filter((tab) => tab.getAttribute('aria-selected') === 'true')).toHaveLength(1)
 })

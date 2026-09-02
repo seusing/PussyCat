@@ -5,8 +5,11 @@ import { join } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { JSDOM } from 'jsdom'
+import { wrssPinBundle, wrssPinPython } from '../test-fixtures/wrss-pin.mjs'
 import {
   extractTarGzipSecure,
+  ensureWrssStaticAssets,
   WrssRuntimeManager,
   WRSS_SOURCE_FALLBACK_URL,
   WRSS_SOURCE_SHA256,
@@ -71,11 +74,33 @@ function weRssArchive({ omit = [], configName = 'config.example.yaml' } = {}) {
     { name: `${root}/${configName}`, content: 'port: 8001\n' },
     { name: `${root}/static/`, type: '5' },
     { name: `${root}/static/index.html`, content: '<html><head></head><body></body></html>' },
+    { name: `${root}/static/assets/`, type: '5' },
+    { name: `${root}/static/assets/index.a75a6e55.js`, content: wrssPinBundle },
+    { name: `${root}/driver/`, type: '5' },
+    { name: `${root}/driver/wx.py`, content: wrssPinPython },
     { name: `${root}/docs/`, type: '5' },
     { name: `${root}/docs/主界面.png`, content: Buffer.from([1, 2, 3]) },
     { name: `${root}/docs/赞赏码.jpg`, content: Buffer.from([4, 5, 6]) },
   ]
   return tarGzip(entries.filter(({ name }) => !omit.some((suffix) => name.endsWith(suffix))))
+}
+
+function writePinSource(sourceDir) {
+  mkdirSync(join(sourceDir, 'static', 'assets'), { recursive: true })
+  mkdirSync(join(sourceDir, 'driver'), { recursive: true })
+  writeFileSync(join(sourceDir, 'static', 'assets', 'index.a75a6e55.js'), wrssPinBundle)
+  writeFileSync(join(sourceDir, 'driver', 'wx.py'), wrssPinPython)
+}
+
+function expectSourcePatched(sourceDir) {
+  const bundle = readFileSync(join(sourceDir, 'static', 'assets', 'index.a75a6e55.js'), 'utf8')
+  expect(bundle).toContain('window.__PUSSYCAT_WRSS_AUTH__.qrCode')
+  expect(bundle).toContain('window.__PUSSYCAT_WRSS_AUTH__.checkStatus')
+  expect(existsSync(join(sourceDir, 'static', 'pussycat-auth.js'))).toBe(true)
+  expect(readFileSync(join(sourceDir, 'static', 'index.html'), 'utf8')).toContain('/static/pussycat-auth.js')
+  const python = readFileSync(join(sourceDir, 'driver', 'wx.py'), 'utf8')
+  expect(python).toContain('domcontentloaded')
+  expect(python).not.toContain('networkidle')
 }
 
 function writeInstalled(root) {
@@ -85,6 +110,7 @@ function writeInstalled(root) {
   mkdirSync(join(sourceDir, 'static'), { recursive: true })
   mkdirSync(join(venvDir, 'Scripts'), { recursive: true })
   writeFileSync(join(sourceDir, 'static', 'index.html'), '<html><head></head></html>')
+  writePinSource(sourceDir)
   writeFileSync(join(venvDir, 'Scripts', 'python.exe'), 'python')
   writeFileSync(join(wrss, 'receipt.json'), JSON.stringify({
     schema: 'wrss-runtime-receipt@1', version: '1.5.2', sourceDir, venvDir,
@@ -243,6 +269,7 @@ describe('WrssRuntimeManager', () => {
         writeFileSync(join(source, 'requirements.txt'), '')
         writeFileSync(join(source, 'config.example.yaml'), 'port: 8001\n')
         writeFileSync(join(source, 'static', 'index.html'), '<html><head></head><body></body></html>')
+        writePinSource(source)
       }
       if (step === 'venv') {
         const python = join(argv.at(-1), 'Scripts')
@@ -283,6 +310,7 @@ describe('WrssRuntimeManager', () => {
     expect(steps.find((step) => step.step === 'venv').options.env.UV_CACHE_DIR).toContain('wrss-install-')
     expect(manager.status().progress_log.join('\n')).not.toContain('access-token')
     const receipt = JSON.parse(readFileSync(join(root, 'wrss', 'receipt.json'), 'utf8'))
+    expectSourcePatched(receipt.sourceDir)
     const patchedMain = readFileSync(join(receipt.sourceDir, 'main.py'), 'utf8')
     const patchedIndex = readFileSync(join(receipt.sourceDir, 'static', 'index.html'), 'utf8')
     expect(patchedMain.match(/host="127\.0\.0\.1"/g)).toHaveLength(2)
@@ -402,6 +430,7 @@ describe('WrssRuntimeManager', () => {
     await manager.close()
 
     const index = readFileSync(join(installed.sourceDir, 'static', 'index.html'), 'utf8')
+    expectSourcePatched(installed.sourceDir)
     expect(occurrences(index, '/static/pussycat-theme.css')).toBe(1)
     expect(occurrences(index, '/static/pussycat-bootstrap.js')).toBe(1)
     expect(occurrences(index, '/static/pussycat-ui.js')).toBe(1)
@@ -591,6 +620,7 @@ describe('WrssRuntimeManager', () => {
       writeFileSync(join(source, 'requirements.txt'), '')
       writeFileSync(join(source, 'config.example.yaml'), '')
       writeFileSync(join(source, 'static', 'index.html'), '<head></head>')
+      writePinSource(source)
     }
     let starts = 0
     const manager = new WrssRuntimeManager({
@@ -619,4 +649,55 @@ describe('WrssRuntimeManager', () => {
     expect(manager.status().progress_log.join('\n')).not.toContain('user:pass')
     await manager.close()
   })
+})
+
+
+it('renders settings tabs beside the published nested route layout and restores routes after logs', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const css = readFileSync(join(sourceDir, 'static', 'pussycat-theme.css'), 'utf8')
+  const dom = new JSDOM(`<style>${css}</style><div id="main">
+    <header class="arco-layout-header"><div class="arco-menu">
+      <button class="arco-menu-item" data-route="/">订阅管理</button>
+      <button class="arco-menu-item" data-route="/configs">配置信息</button>
+      <button class="arco-menu-item" data-route="/sys-info">系统信息</button>
+    </div></header>
+    <section class="arco-layout"><main class="arco-layout-content">配置页面内容</main></section>
+  </div>`, { url: 'http://127.0.0.1:43202/configs', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const window = dom.window
+  const document = window.document
+  try {
+    document.querySelectorAll('[data-route]').forEach((button) => button.addEventListener('click', () => {
+      window.history.pushState({}, '', button.dataset.route)
+    }))
+    window.eval(script)
+    await vi.waitFor(() => expect(document.querySelectorAll('.pussycat-settings-tab')).toHaveLength(3))
+    const panel = document.getElementById('pussycat-settings-panel')
+    const route = document.querySelector('#main > section.arco-layout')
+    expect(panel.nextElementSibling).toBe(route)
+    expect([...panel.querySelectorAll('.pussycat-settings-tab')].map((tab) => tab.textContent))
+      .toEqual(['配置信息', '系统信息', '运行日志'])
+
+    panel.querySelector('[data-settings-tab="logs"]').click()
+    await vi.waitFor(() => expect(window.getComputedStyle(route).display).toBe('none'))
+    expect(window.getComputedStyle(panel).display).not.toBe('none')
+    expect(panel.querySelector('.pussycat-diagnostics').hidden).toBe(false)
+
+    panel.querySelector('[data-settings-tab="configs"]').click()
+    await vi.waitFor(() => expect(window.getComputedStyle(route).display).not.toBe('none'))
+    expect(window.getComputedStyle(panel).display).not.toBe('none')
+    expect(panel.querySelector('.pussycat-diagnostics').hidden).toBe(true)
+    expect(document.querySelector('.arco-layout-content').textContent).toBe('配置页面内容')
+
+    document.querySelector('[data-route="/"]').click()
+    document.querySelector('.arco-layout-content').textContent = '订阅页面内容'
+    await vi.waitFor(() => expect(document.getElementById('pussycat-settings-panel')).toBeNull())
+    expect(window.getComputedStyle(route).display).not.toBe('none')
+    expect(document.querySelector('.arco-layout-content').textContent).toBe('订阅页面内容')
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
 })
