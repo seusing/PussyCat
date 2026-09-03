@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import { CheckCircle2, CircleAlert, Info, RotateCw, TriangleAlert, X } from 'lucide-react'
 import './AppAlert.css'
 
@@ -17,6 +17,7 @@ type AppAlertProps = {
   ariaLive?: 'off' | 'polite' | 'assertive'
   progress?: number
   durationMs?: number
+  onExpire?: () => void
   progressTestId?: string
   progressLabel?: string
   progressClassName?: string
@@ -54,11 +55,21 @@ export function AppAlert({
   ariaLive,
   progress,
   durationMs,
+  onExpire,
   progressTestId,
   progressLabel = '通知剩余时间',
   progressClassName,
   dataTone,
 }: AppAlertProps) {
+  const onExpireRef = useRef(onExpire)
+  onExpireRef.current = onExpire
+  const expires = typeof onExpire === 'function'
+  useEffect(() => {
+    if (durationMs === undefined || !expires) return
+    const timer = window.setTimeout(() => onExpireRef.current?.(), durationMs)
+    return () => window.clearTimeout(timer)
+  }, [durationMs, expires])
+
   const Icon = toneIcons[tone]
   const rootRole = role ?? (tone === 'error' ? 'alert' : 'status')
   const controlledProgress = typeof progress === 'number'

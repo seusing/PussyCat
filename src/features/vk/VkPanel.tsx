@@ -41,7 +41,7 @@ import { runtimeToAdopt } from './runtimePick'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
-import { VkOutputViewer, type VkOutputTab } from './VkOutputViewer'
+import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { vkJobRowFromView, vkPrimaryOutput as primaryOutput, vkTaskResultGroups } from './taskResults'
 import { DEFAULT_BASE_URL } from '../../host/nodeBridgeHost'
 import { saveTextFileAs } from '../../lib/saveTextFile'
@@ -622,8 +622,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   }, [])
   const addTaskBanners = useCallback((banners: TaskBanner[]) => {
     setTaskBanners((current) => [
-      ...current,
       ...banners.filter((banner) => !current.some((item) => item.id === banner.id)),
+      ...current,
     ])
   }, [])
 
@@ -718,6 +718,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [actionError, setActionError] = useState<string | null>(null)
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [outputTabs, setOutputTabs] = useState<VkOutputTab[]>([])
+  const outputCache = useRef<VkOutputCache>(new Map())
   const visibleJobs = useMemo(() => latestLogicalTasks(jobs).filter((row) => !hiddenJobs[row.job_id]), [jobs, hiddenJobs])
   const resultTaskIds = useMemo(() => new Set(jobs.filter((row) => SUCCESS_STATUSES.has(row.status))
     .map((row) => row.logicalTaskId ?? row.job_id)), [jobs])
@@ -808,8 +809,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           })
           if (notices.length) {
             setTaskBanners((current) => [
-              ...current,
               ...notices.filter((notice) => !current.some((item) => item.id === notice.id)),
+              ...current,
             ])
           }
         }
@@ -1464,7 +1465,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       </div>
 
       {activeTabId && (
-        <VkOutputViewer tabs={outputTabs} activeTabId={activeTabId} onSelectTab={setActiveTabId}
+        <VkOutputViewer tabs={outputTabs} activeTabId={activeTabId} onSelectTab={setActiveTabId} cache={outputCache.current}
           onSelectVersion={(tabId, jobId) => setOutputTabs((tabs) => tabs.map((tab) => {
             if (tab.id !== tabId) return tab
             const version = tab.versions?.find((item) => item.jobId === jobId)

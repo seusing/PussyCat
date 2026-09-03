@@ -34,6 +34,7 @@ type Notice = {
   message: string
   tone: 'success' | 'error'
   location: AlertLocation
+  dismissible?: boolean
 }
 
 type ChannelBusyState = {
@@ -512,23 +513,25 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [saving, setSaving] = useState(false)
   const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
   const [error, setError] = useState<ScopedError | null>(null)
-  const [notice, setNotice] = useState<Notice | null>(null)
+  const [notices, setNotices] = useState<Notice[]>([])
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
   const savingRef = useRef(false)
   const noticeSeq = useRef(0)
+  const settingsLoaded = useRef(false)
   const ccSwitchPickerRef = useRef<HTMLDivElement>(null)
   const modalId = modalSession?.id ?? null
   useDismissOnOutside(ccSwitchPickerRef, ccSwitchPickerOpen, () => setCcSwitchPickerOpen(false))
 
-  const showNotice = useCallback((tone: Notice['tone'], message: string, location: AlertLocation) => {
-    noticeSeq.current += 1
-    setNotice({ id: noticeSeq.current, tone, message, location })
+  const showNotice = useCallback((tone: Notice['tone'], message: string, location: AlertLocation, dismissible = false) => {
+    const notice = { id: ++noticeSeq.current, tone, message, location, dismissible }
+    setNotices((current) => [notice, ...current])
   }, [])
 
   const load = useCallback(async () => {
     try {
       const loaded = await fetchVkProviderSettings(baseUrl)
+      settingsLoaded.current = true
       setSettings(loaded)
       setDrafts(loaded.channels.map(toDraft))
       setRoles({ ...loaded.role_assignments })
@@ -536,9 +539,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         Object.entries(loaded.role_fallbacks ?? {}).map(([role, ids]) => [role, [...ids]]),
       ))
     } catch (err) {
-      setError({ message: err instanceof Error ? err.message : '模型配置读取失败', location: 'form' })
+      const message = err instanceof Error ? err.message : '模型配置读取失败'
+      if (settingsLoaded.current) showNotice('error', message, 'form', true)
+      else setError({ message, location: 'form' })
     }
-  }, [baseUrl])
+  }, [baseUrl, showNotice])
   useEffect(() => { void load() }, [load])
 
   const patch = (id: string, next: Partial<Draft>) =>
@@ -567,8 +572,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const closeModal = (commit: boolean) => {
     if (!modalSession) return
-    setNotice((current) => current?.location === 'modal' ? null : current)
-    setError((current) => current?.location === 'modal' ? null : current)
+    setNotices((current) => current.filter((notice) => notice.location !== 'modal'))
     if (!commit) {
       setDrafts((list) => modalSession.original
         ? list.map((draft) => draft.id === modalSession.id ? cloneDraft(modalSession.original!) : draft)
@@ -584,12 +588,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setValidationErrors((current) => { const next = { ...current }; delete next[modalSession.id]; return next })
     setModalSession(null)
   }
-
-  useEffect(() => {
-    if (!notice) return
-    const timer = window.setTimeout(() => setNotice(null), NOTICE_DURATION_MS)
-    return () => window.clearTimeout(timer)
-  }, [notice?.id])
 
   useEffect(() => {
     if (!error) return
@@ -626,7 +624,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const importFromCcSwitch = async (candidate: VkProviderSettings['cc_switch']['candidates'][number]) => {
     setCcSwitchPickerOpen(false)
     setBusy(`ccswitch:${candidate.ref}`)
-    setError((current) => current?.location === 'form' ? null : current)
     try {
       const { channel, api_key } = await importVkCcSwitchChannel(
         candidate.ref, drafts.map((d) => d.id), baseUrl,
@@ -639,7 +636,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       }
       openNewDraft(imported)
     } catch (err) {
-      setError({ message: err instanceof Error ? err.message : '从 cc-switch 导入失败', location: 'form' })
+      showNotice('error', err instanceof Error ? err.message : '从 cc-switch 导入失败', 'form', true)
     } finally {
       setBusy(null)
     }
@@ -665,8 +662,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     if (savingRef.current) return { ok: false }
     savingRef.current = true
     setSaving(true)
-    setError((current) => current?.location === errorLocation ? null : current)
-    setNotice((current) => current?.location === errorLocation ? null : current)
     try {
       const result = await saveVkProviderSettings({
         channels: channelPayload(nextDrafts), roles: nextRoles, role_fallbacks: nextRoleFallbacks,
@@ -687,7 +682,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       onSaved?.()
       return { ok: true, noticeMessage }
     } catch (err) {
-      setError({ message: err instanceof Error ? err.message : '模型配置保存失败', location: errorLocation })
+      showNotice('error', err instanceof Error ? err.message : '模型配置保存失败', errorLocation, true)
       void load()
       return { ok: false }
     } finally {
@@ -776,7 +771,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const reveal = async (draft: Draft) => {
     const location: AlertLocation = modalId === draft.id ? 'modal' : 'form'
     setChannelBusy((current) => ({ ...current, [draft.id]: { ...current[draft.id], reveal: true } }))
-    setError((current) => current?.location === location ? null : current)
     try {
       const result = await revealVkProviderKey(draft.key_env, baseUrl)
       patch(draft.id, {
@@ -786,7 +780,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         key_touched: false,
       })
     } catch (err) {
-      setError({ message: err instanceof Error ? err.message : '读取 key 失败', location })
+      showNotice('error', err instanceof Error ? err.message : '读取 key 失败', location, true)
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
@@ -805,7 +799,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       ...current,
       [draft.id]: { ...current[draft.id], [operation]: true },
     }))
-    setError((current) => current?.location === location ? null : current)
     try {
       const startedAt = performance.now()
       const result = await testVkProvider({
@@ -896,33 +889,26 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const roleKeys = Object.keys(settings.role_labels)
   const alertSlot = (location: AlertLocation) => {
-    const scopedNotice = notice?.location === location ? notice : null
-    const scopedError = error?.location === location ? error : null
-    if (!scopedNotice && !scopedError) return null
+    const scopedNotices = notices.filter((notice) => notice.location === location)
+    if (!scopedNotices.length) return null
     const alerts = (
       <div className={`vk-provider-alert-slot vk-provider-alert-slot--${location}`}>
-        {scopedNotice && (
+        {scopedNotices.map((scopedNotice) => (
           <AppAlert
             key={scopedNotice.id}
-            testId="vk-provider-notice"
+            testId={scopedNotice.dismissible ? 'vk-provider-error' : 'vk-provider-notice'}
             tone={scopedNotice.tone}
             title={scopedNotice.message}
-            role="status"
+            role={scopedNotice.dismissible ? 'alert' : 'status'}
             className={`vk-provider-alert vk-provider-alert--${scopedNotice.tone}`}
             durationMs={NOTICE_DURATION_MS}
-            progressTestId="vk-provider-notice-progress"
+            onExpire={() => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))}
+            onClose={scopedNotice.dismissible
+              ? () => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))
+              : undefined}
+            progressTestId={scopedNotice.dismissible ? undefined : 'vk-provider-notice-progress'}
           />
-        )}
-        {scopedError && (
-          <AppAlert
-            testId="vk-provider-error"
-            tone="error"
-            title={scopedError.message}
-            className="vk-provider-alert vk-provider-alert--error"
-            durationMs={NOTICE_DURATION_MS}
-            onClose={() => setError((current) => current?.location === location ? null : current)}
-          />
-        )}
+        ))}
       </div>
     )
     return location === 'form'

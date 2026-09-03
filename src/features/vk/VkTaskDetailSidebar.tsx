@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, ChevronDown, ChevronUp, RefreshCw, Send, Square, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Pause, RefreshCw, Send, Square, X } from 'lucide-react'
 import {
   fetchVkJob,
   fetchVkJobs,
@@ -221,7 +221,7 @@ function stageProgress(job: VkJobView, successful: boolean): {
 type StageDisplay = {
   stage: string
   metric: VkStageMetric | null
-  state: 'completed' | 'active'
+  state: 'completed' | 'active' | 'interrupted' | 'failed' | 'recorded'
 }
 
 /**
@@ -260,17 +260,22 @@ function stageDisplayEntries(job: VkJobView): StageDisplay[] {
   ]
   const latestMetricStage = metrics.at(-1)?.stage
   const latestAttemptStage = progress?.model_attempts?.at(-1)?.stage
-  const activeStage = ACTIVE_STATUSES.has(job.status)
-    ? currentStage ?? latestAttemptStage ?? latestMetricStage
-    : undefined
+  const isCompleted = (stage: string) => completedStages.has(stage)
+    || /^(done|success|ok)$/i.test(metricByStage.get(stage)?.status ?? '')
+  const unfinishedStages = orderedStages.filter((stage) => !isCompleted(stage))
+  const latestStage = [currentStage, latestAttemptStage, latestMetricStage]
+    .find((stage) => stage && !isCompleted(stage)) ?? unfinishedStages.at(-1)
+  const status = job.status.toLowerCase()
 
   return orderedStages.map((stage) => {
     const metric = metricByStage.get(stage) ?? null
-    const metricStillRunning = !!metric && /running|active|progress|started/i.test(metric.status)
-    const isActive = ACTIVE_STATUSES.has(job.status)
-      && !completedStages.has(stage)
-      && (stage === activeStage || metricStillRunning)
-    return { stage, metric, state: isActive ? 'active' : 'completed' }
+    let state: StageDisplay['state'] = isCompleted(stage) ? 'completed' : 'recorded'
+    if (stage === latestStage && state !== 'completed') {
+      if (ACTIVE_STATUSES.has(status)) state = 'active'
+      else if (INTERRUPTED_STATUSES.has(status)) state = 'interrupted'
+      else if (batchState(status) === 'failed') state = 'failed'
+    }
+    return { stage, metric, state }
   })
 }
 
@@ -321,7 +326,6 @@ const TaskDisclosureContext = createContext(true)
 function TaskRow({
   id, label, source, state, elapsed, current, expanded, onToggle, onCopy, children,
 }: TaskRowProps) {
-  const copiedFromClickRef = useRef(false)
   const reduceMotion = useReducedMotion()
   return (
     <li
@@ -338,20 +342,10 @@ function TaskRow({
         aria-expanded={expanded}
         onClick={(event) => {
           // A double click is a copy gesture; do not immediately collapse the row on its second click.
-          if (event.detail > 1) {
-            if (event.detail === 2) {
-              copiedFromClickRef.current = true
-              onCopy(source)
-            }
-            return
-          }
+          if (event.detail > 1) return
           onToggle()
         }}
         onDoubleClick={(event) => {
-          if (copiedFromClickRef.current) {
-            copiedFromClickRef.current = false
-            return
-          }
           event.preventDefault()
           event.stopPropagation()
           onCopy(source)
@@ -421,30 +415,43 @@ function TaskProgressDetails({
         <strong>{stageCountLabel}</strong>
       </div>
       {entries.length > 0 ? (
-        <div className="vk-task-detail-stage-chips">
+        <ol className="vk-task-detail-steps" aria-label="解析阶段">
           {entries.map((entry, index) => {
             const metric = entry.metric
             const elapsed = entry.state === 'active'
-              ? '进行中'
+              ? metric?.elapsed_s == null ? '进行中' : `${vkDurationLabel(metric.elapsed_s)} · 进行中`
               : metric?.elapsed_s == null
                 ? '未记录'
                 : vkDurationLabel(metric.elapsed_s)
             return (
-            <div
+            <li
               key={entry.stage}
-              className={`vk-task-detail-stage-chip${entry.state === 'active' ? ' is-active' : ' is-completed'}`}
+              className={`vk-task-detail-step is-${entry.state}`}
               data-stage={entry.stage}
               data-stage-state={entry.state}
+              aria-current={entry.state === 'active' ? 'step' : undefined}
               style={{ animationDelay: `${index * 55}ms` }}
             >
-              <div>
+              <span className="vk-task-detail-step-indicator">
+                {entry.state === 'completed' ? <Check size={13} aria-label="已完成" />
+                  : entry.state === 'interrupted' ? <Pause size={12} aria-label="已中断" />
+                    : entry.state === 'failed' ? <X size={13} aria-label="失败" />
+                      : index + 1}
+                {entry.state === 'active' && (
+                  <span className="vk-task-detail-step-spinner" role="progressbar" aria-label={`${stageLabel(entry.stage)}进行中`} />
+                )}
+              </span>
+              {index < entries.length - 1 && (
+                <span className={`vk-task-detail-step-connector is-${entries[index + 1].state}`} aria-hidden="true" />
+              )}
+              <div className="vk-task-detail-step-content">
                 <strong>{stageLabel(entry.stage)}</strong>
                 <span>{elapsed}</span>
               </div>
-            </div>
+            </li>
             )
           })}
-        </div>
+        </ol>
       ) : (
         <p className="vk-task-detail-stage-empty">
           {ACTIVE_STATUSES.has(job.status) ? '等待阶段数据' : '尚未返回阶段数据'}
@@ -538,7 +545,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(() => new Set())
   const expandedScopeRef = useRef<string | null>(null)
   const expandedScope = job?.job_id === jobId ? job?.batch_id ?? job?.job_id : null
-  const [copyNoticeKey, setCopyNoticeKey] = useState(0)
+  const [copyNotices, setCopyNotices] = useState<number[]>([])
+  const copyNoticeId = useRef(0)
+  const reduceMotion = useReducedMotion()
   // 编号先按 job_id 查;查不到再按批次查 —— 列表把一批折成一行、只记得住那一行的
   // job_id,而详情页打开的往往是批里的某个成员,直查必然落空,标题就退回一串 UUID。
   const taskNumber = useMemo(
@@ -596,12 +605,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     })
   }
 
-  useEffect(() => {
-    if (!copyNoticeKey) return undefined
-    const timer = window.setTimeout(() => setCopyNoticeKey(0), 1_800)
-    return () => window.clearTimeout(timer)
-  }, [copyNoticeKey])
-
   const clearRerunMenuClose = useCallback(() => {
     if (rerunMenuCloseTimer.current !== null) {
       window.clearTimeout(rerunMenuCloseTimer.current)
@@ -651,7 +654,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const copyLink = useCallback(async (source: string) => {
     const link = source.trim()
     if (!link) return
-    if (await copyText(link)) setCopyNoticeKey((key) => key + 1)
+    if (await copyText(link)) {
+      const id = ++copyNoticeId.current
+      setCopyNotices((notices) => [id, ...notices])
+    }
   }, [])
   // 钉住之后点别处要能收起来。原先只有再点一次箭头才收,菜单于是一直挂在那儿挡着下面
   // 的内容 —— 用户的原话是「点击菜单以外的地方时不会自动收回」。Esc 一并收。
@@ -875,14 +881,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
 
   return (
     <section className="vk-task-detail-sidebar" data-testid="vk-task-detail-sidebar" aria-label="任务执行详情">
-      {copyNoticeKey > 0 && (
+      {copyNotices.length > 0 && (
         <div className="vk-task-detail-notification" data-testid="vk-task-detail-notification">
-          <AppAlert
+          {copyNotices.map((id) => <AppAlert
+            key={id}
             testId="vk-copy-notice"
             tone="success"
             title="已复制链接"
-            durationMs={1_800}
-          />
+            durationMs={1_000}
+            onExpire={() => setCopyNotices((notices) => notices.filter((notice) => notice !== id))}
+          />)}
         </div>
       )}
       <header>
@@ -941,10 +949,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     elapsed={`耗时 ${vkElapsedLabel(member.submitted_at, member.finished_at)}`}
                     current={member.job_id === jobId}
                     expanded={expandedTaskIds.has(member.job_id)}
-                    onToggle={() => {
-                      toggleTask(member.job_id)
-                      if (member.job_id !== jobId) onJobChange?.(member.job_id)
-                    }}
+                    onToggle={() => toggleTask(member.job_id)}
                     onCopy={copyLink}
                     contentVersion={baseUrl}
                   >
@@ -1007,19 +1012,28 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                 onMouseEnter={openRerunMenu}
                 onMouseLeave={scheduleRerunMenuClose}
               >
-                {rerunMenuOpen && rerunMenuPosition && typeof document !== 'undefined' && createPortal(
-                  <div
+                {rerunMenuPosition && typeof document !== 'undefined' && createPortal(
+                  <AnimatePresence>
+                  {rerunMenuOpen && <motion.div
+                    key="rerun-menu"
                     className="vk-task-operation-menu vk-task-batch-rerun-menu"
                     role="menu"
-                    style={rerunMenuPosition}
+                    style={{ ...rerunMenuPosition, originY: 1 }}
                     onMouseEnter={openRerunMenu}
                     onMouseLeave={scheduleRerunMenuClose}
+                    variants={{
+                      hidden: { opacity: 0, y: 5, scaleY: 0.96, transition: { duration: reduceMotion ? 0 : 0.2, staggerChildren: reduceMotion ? 0 : 0.04, staggerDirection: -1, when: 'afterChildren' } },
+                      visible: { opacity: 1, y: 0, scaleY: 1, transition: { duration: reduceMotion ? 0 : 0.2, staggerChildren: reduceMotion ? 0 : 0.04 } },
+                    }}
+                    initial="hidden"
+                    animate="visible"
+                    exit="hidden"
                   >
                     {batchMembers.map((member, index) => {
                       const disabled = member.state === 'running'
                       const checked = selection.has(member.job_id)
                       return (
-                        <button
+                        <motion.button
                           key={member.job_id}
                           type="button"
                           role="menuitemcheckbox"
@@ -1028,7 +1042,11 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                           data-color={BATCH_STATE_COLORS[member.state]}
                           aria-checked={checked}
                           disabled={disabled}
-                          style={{ animationDelay: `${30 + index * 40}ms` }}
+                          variants={{
+                            hidden: { opacity: 0, y: 5 },
+                            visible: { opacity: 1, y: 0 },
+                          }}
+                          transition={{ duration: reduceMotion ? 0 : 0.18 }}
                           onClick={() => {
                             const next = new Set(selection)
                             if (next.has(member.job_id)) next.delete(member.job_id)
@@ -1045,13 +1063,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                           <span className={`vk-task-detail-batch-status is-${member.state}`} data-state={member.state}>
                             {member.state === 'done' ? '已完成 · 再计费' : BATCH_STATE_LABELS[member.state]}
                           </span>
-                        </button>
+                        </motion.button>
                       )
                     })}
-                    <button
+                    <motion.button
                       type="button"
                       role="menuitem"
                       className="vk-task-batch-rerun-all"
+                      variants={{ hidden: { opacity: 0, y: 5 }, visible: { opacity: 1, y: 0 } }}
+                      transition={{ duration: reduceMotion ? 0 : 0.18 }}
                       onClick={() => setRerunPicked(
                         selectedCount === rerunable.length
                           ? new Set(failedIds)
@@ -1060,8 +1080,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     >
                       <RefreshCw size={15} aria-hidden="true" />
                       <span>{selectedCount === rerunable.length ? '只选失败的' : '全选'}</span>
-                    </button>
-                  </div>,
+                    </motion.button>
+                  </motion.div>}
+                  </AnimatePresence>,
                   document.body,
                 )}
                 <button

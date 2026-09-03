@@ -75,13 +75,16 @@
   z-index: 10;
   min-width: 0;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .vk-task-detail-notification .app-alert {
   width: 100%;
   max-width: 100%;
   padding: 10px 12px;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .vk-task-detail-body {
@@ -300,22 +303,31 @@
 .vk-task-detail-stage-details { min-width: 0; margin: 6px 0 2px 14px; border-left: 1px solid var(--color-line); padding: 2px 0 2px 12px; }
 .vk-task-detail-stage-progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--color-fg-dim); font-size: 11px; }
 .vk-task-detail-stage-progress-meta strong { color: var(--color-fg); font-variant-numeric: tabular-nums; }
-.vk-task-detail-stage-chips { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.vk-task-detail-stage-chip { min-width: 0; border: 1px solid var(--color-line); border-radius: 7px; background: #171a20; padding: 7px 8px; opacity: 0; transform: translateY(6px); animation: vk-task-stage-chip-in 280ms cubic-bezier(.23,1,.32,1) both; transition: border-color 180ms ease, background-color 180ms ease; }
-.vk-task-detail-stage-chip > div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
-.vk-task-detail-stage-chip strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.vk-task-detail-stage-chip span { flex: 0 0 auto; border: 1px solid var(--color-line); border-radius: 999px; background: #20232a; padding: 2px 6px; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
-.vk-task-detail-stage-chip.is-active { border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-line)); }
-.vk-task-detail-stage-chip.is-active span { color: var(--color-accent); }
-.vk-task-detail-stage-chip.is-completed { border-color: color-mix(in srgb, var(--color-success) 28%, var(--color-line)); }
-.vk-task-detail-stage-chip.is-completed span { color: var(--color-success); }
+.vk-task-detail-steps { display: flex; min-width: 0; flex-direction: column; gap: 0; margin: 0; padding: 0; list-style: none; }
+.vk-task-detail-step { position: relative; display: grid; min-width: 0; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding-bottom: 12px; opacity: 0; transform: translateY(6px); animation: vk-task-stage-step-in 280ms cubic-bezier(.23,1,.32,1) both; }
+.vk-task-detail-step:last-child { padding-bottom: 0; }
+.vk-task-detail-step-indicator { position: relative; z-index: 1; display: inline-grid; width: 22px; height: 22px; place-items: center; border: 2px solid var(--color-line); border-radius: 50%; background: #171a20; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.vk-task-detail-step.is-completed .vk-task-detail-step-indicator { border-color: var(--color-success); color: var(--color-success); }
+.vk-task-detail-step.is-active .vk-task-detail-step-indicator { border-color: var(--color-accent); color: var(--color-accent); }
+.vk-task-detail-step.is-interrupted .vk-task-detail-step-indicator { border-color: var(--color-warning); color: var(--color-warning); }
+.vk-task-detail-step.is-failed .vk-task-detail-step-indicator { border-color: var(--color-danger); color: var(--color-danger); }
+.vk-task-detail-step-spinner { position: absolute; inset: -5px; border: 2px solid transparent; border-top-color: var(--color-accent); border-right-color: var(--color-accent); border-radius: 50%; animation: vk-task-step-spin 800ms linear infinite; }
+.vk-task-detail-step-connector { position: absolute; top: 22px; bottom: 0; left: 10px; width: 2px; background: var(--color-line); }
+.vk-task-detail-step-connector.is-completed { background: var(--color-success); }
+.vk-task-detail-step-connector.is-active { background: var(--color-accent); }
+.vk-task-detail-step-connector.is-interrupted { background: var(--color-warning); }
+.vk-task-detail-step-connector.is-failed { background: var(--color-danger); }
+.vk-task-detail-step-content { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; padding-top: 3px; }
+.vk-task-detail-step-content strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.vk-task-detail-step-content > span { flex: 0 0 auto; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
 .vk-task-detail-stage-empty { margin: 0; color: var(--color-fg-dim); font-size: 11px; }
 .vk-task-detail-task-empty { list-style: none; color: var(--color-fg-dim); font-size: 12px; }
 
-@keyframes vk-task-stage-chip-in {
+@keyframes vk-task-stage-step-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@keyframes vk-task-step-spin { to { transform: rotate(360deg); } }
 
 .vk-task-detail-actions button {
   transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease;
@@ -357,7 +369,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .vk-task-detail-task-disclosure,
-  .vk-task-detail-stage-chip { animation: none; opacity: 1; transform: none; }
+  .vk-task-detail-step { animation: none; opacity: 1; transform: none; }
+  .vk-task-detail-step-spinner { animation: none; }
 }
 
 /* 批量重跑:菜单通过 portal 挂到 body,不受详情滚动容器的 overflow 裁切。 */
@@ -373,6 +386,7 @@
   background: #171a20;
   box-shadow: 0 18px 44px rgb(0 0 0 / 38%);
   padding: 6px;
+  transform-origin: bottom;
 }
 .vk-task-batch-rerun-menu button {
   display: flex;
@@ -387,9 +401,6 @@
   padding: 6px 8px;
   font-size: 12px;
   text-align: left;
-  opacity: 0;
-  transform: translateY(5px);
-  animation: vk-rerun-item-in 180ms ease forwards;
 }
 .vk-task-batch-rerun-menu button:hover:not(:disabled),
 .vk-task-batch-rerun-menu button:focus-visible:not(:disabled) { background: #292d35; }
@@ -402,7 +413,6 @@
 .vk-task-batch-rerun-option:focus-visible:not(:disabled) {
   background: color-mix(in srgb, var(--batch-state-color) 16%, #292d35) !important;
 }
-@keyframes vk-rerun-item-in { to { opacity: 1; transform: translateY(0); } }
 
 /* 没勾选时占住勾的位置,免得条目左右跳动 */
 .vk-task-batch-rerun-blank { display: inline-block; width: 15px; flex: 0 0 auto; }
@@ -433,8 +443,4 @@
   .vk-task-detail-task-row > button { gap: 5px; padding-inline: 6px; }
   .vk-task-detail-task-main { align-items: flex-start; flex-direction: column; gap: 2px; }
   .vk-task-detail-batch-status { font-size: 10px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vk-task-batch-rerun-menu button { animation: none; opacity: 1; transform: none; }
 }

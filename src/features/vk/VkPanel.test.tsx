@@ -1231,6 +1231,35 @@ describe('VkPanel', () => {
     ]))
   })
 
+  it('puts a newer terminal notice before the still-active submission notice', async () => {
+    const running = {
+      job_id: 'job-order', kind: 'request', status: 'running',
+      submitted_at: '2026-08-11T00:01:00+00:00', finished_at: null,
+      parent_job_id: null, cache_bypass: false,
+    }
+    const jobsRoute: Route = { body: [running] }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': jobsRoute,
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-new', kind: 'request' } },
+    })
+    const user = userEvent.setup()
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-order')
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/new')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await screen.findByText('\u4efb\u52a1\u5df2\u63d0\u4ea4')
+
+    jobsRoute.body = [{ ...running, status: 'done', finished_at: '2026-08-11T00:10:00+00:00' }]
+    await user.click(screen.getByTestId('vk-jobs-refresh'))
+
+    const banners = await screen.findAllByTestId('vk-task-banner')
+    expect(banners).toHaveLength(2)
+    expect(banners[0]).toHaveTextContent(/\u4efb\u52a1\d+\u5df2\u5b8c\u6210/)
+    expect(banners[1]).toHaveTextContent('\u4efb\u52a1\u5df2\u63d0\u4ea4')
+  })
+
   it('does not poll-loop when an installed runtime is displayed', async () => {
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },

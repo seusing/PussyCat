@@ -1,5 +1,6 @@
 import userEvent from '@testing-library/user-event'
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -82,11 +83,88 @@ vi.mock('thinking-orbs', () => ({
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
 describe('VkTaskDetailSidebar', () => {
+  it('连续三次双击生成独立提示,新提示在顶部且各自一秒后消失', async () => {
+    memberProgressFixture()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    const row = await screen.findByTestId('vk-task-detail-task-row-member-a')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const notices: HTMLElement[] = []
+    for (let index = 0; index < 3; index += 1) {
+      await act(async () => { fireEvent.doubleClick(row) })
+      notices.unshift(screen.getAllByTestId('vk-copy-notice')[0])
+      expect(screen.getAllByTestId('vk-copy-notice')).toEqual(notices)
+      if (index < 2) await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+    }
+    expect(writeText).toHaveBeenCalledTimes(3)
+    await act(async () => { await vi.advanceTimersByTimeAsync(599) })
+    expect(screen.getAllByTestId('vk-copy-notice')).toHaveLength(3)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(screen.getAllByTestId('vk-copy-notice')).toEqual(notices.slice(0, 2))
+    await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+    expect(screen.getAllByTestId('vk-copy-notice')).toEqual(notices.slice(0, 1))
+    await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+    expect(screen.queryByTestId('vk-copy-notice')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-task-detail-notification')).not.toBeInTheDocument()
+  })
+
+  it('鼠标离开批量菜单后保留退出节点,动画结束再卸载', async () => {
+    memberProgressFixture()
+    const user = userEvent.setup()
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    const button = await screen.findByRole('button', { name: '重新提交全部任务' })
+    await user.hover(button)
+    const menu = await screen.findByRole('menu')
+    await user.hover(menu)
+    await user.unhover(menu)
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 180)) })
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(menu).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+  })
+
+  it.each([
+    ['done', 'completed'], ['running', 'active'], ['cancelled', 'interrupted'], ['failed', 'failed'],
+  ])('%s 任务只显示真实阶段并以 %s 标记最后阶段', async (status, lastState) => {
+    const { details } = memberProgressFixture()
+    const detail = details.get('member-a')!
+    detail.status = status
+    detail.progress = {
+      completed_stages: ['acquire'], current_stage: 'chapter',
+      stage_metrics: ['acquire', 'normalize', 'chapter'].map((stage) => ({
+        stage, status: stage === 'chapter' ? status === 'done' ? 'ok' : 'running' : 'success',
+        elapsed_s: 2, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0,
+      })),
+    }
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
+    const steps = screen.getByRole('list', { name: '解析阶段' })
+    expect(steps.tagName).toBe('OL')
+    expect(within(steps).getAllByRole('listitem')).toHaveLength(3)
+    expect(steps.querySelector('[data-stage="acquire"]')).toHaveAttribute('data-stage-state', 'completed')
+    expect(steps.querySelector('[data-stage="normalize"]')).toHaveAttribute('data-stage-state', 'completed')
+    const last = steps.querySelector('[data-stage="chapter"]')!
+    expect(last).toHaveAttribute('data-stage-state', lastState)
+    expect(last.querySelector('.vk-task-detail-step-connector')).toBeNull()
+    expect(steps.querySelectorAll('.vk-task-detail-step-connector')).toHaveLength(2)
+    expect(steps.querySelector('[data-stage="note"]')).toBeNull()
+    if (status === 'running') {
+      expect(last).toHaveAttribute('aria-current', 'step')
+      expect(within(steps).getByRole('progressbar', { name: '理解视频进行中' })).toBeInTheDocument()
+      expect(steps.querySelectorAll('[data-stage-state="active"]')).toHaveLength(1)
+    } else {
+      expect(steps.querySelector('[aria-current="step"]')).toBeNull()
+      expect(within(steps).queryByRole('progressbar', { name: '理解视频进行中' })).not.toBeInTheDocument()
+    }
+  })
+
   it.each(['failed', 'cancelled', 'running'])('最新尝试为 %s 时仍能打开单任务parent链的历史结果', async (status) => {
     resultHistoryFixture(status)
     const dispatched = vi.spyOn(window, 'dispatchEvent')
@@ -181,25 +259,39 @@ describe('VkTaskDetailSidebar', () => {
   it('同批多个成员各自展开并保留真实进度,收起一行不影响另一行', async () => {
     const { fetchMock } = memberProgressFixture()
     const onJobChange = vi.fn()
-    const props = { baseUrl: BASE, onClose: () => {}, onJobChange }
-    const { rerender } = render(<VkTaskDetailSidebar {...props} jobId="member-a" />)
+    function ControlledSidebar() {
+      const [jobId, setJobId] = useState('member-a')
+      return <VkTaskDetailSidebar baseUrl={BASE} onClose={() => {}} jobId={jobId} onJobChange={(next) => {
+        onJobChange(next)
+        setJobId(next)
+      }} />
+    }
+    render(<ControlledSidebar />)
     const first = await screen.findByTestId('vk-task-detail-task-row-member-a')
     await userEvent.click(first)
     const second = screen.getByTestId('vk-task-detail-task-row-member-b')
     await userEvent.click(second)
-    rerender(<VkTaskDetailSidebar {...props} jobId="member-b" />)
     await waitFor(() => expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('理解视频'))
     expect(within(first.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('采集与转写')
     expect(within(first.closest('li')!).getByTestId('vk-task-detail-stage-details')).not.toHaveTextContent('理解视频')
     expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).not.toHaveTextContent('采集与转写')
     expect(first).toHaveAttribute('aria-expanded', 'true')
     expect(second).toHaveAttribute('aria-expanded', 'true')
-    expect(onJobChange).toHaveBeenLastCalledWith('member-b')
+    expect(onJobChange).not.toHaveBeenCalled()
+    expect(screen.queryByText('正在读取任务详情…')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vk-task-detail-task-row-member-a')).toBe(first)
+    expect(screen.getByTestId('vk-task-detail-task-row-member-b')).toBe(second)
     const firstAfterReload = screen.getByTestId('vk-task-detail-task-row-member-a')
     await userEvent.click(firstAfterReload)
     expect(firstAfterReload).toHaveAttribute('aria-expanded', 'false')
     expect(second).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() => expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(1))
+    await userEvent.click(first)
+    await userEvent.click(second)
+    expect(first).toHaveAttribute('aria-expanded', 'true')
+    expect(second).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('正在读取任务详情…')).not.toBeInTheDocument()
+    expect(onJobChange).not.toHaveBeenCalled()
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/member-d'))).toBe(false)
   })
 
@@ -220,6 +312,7 @@ describe('VkTaskDetailSidebar', () => {
     details.get('member-b')!.status = 'running'
     details.get('member-b')!.progress!.current_stage = 'chapter'
     details.get('member-b')!.progress!.completed_stages = []
+    details.get('member-b')!.progress!.stage_metrics![0].status = 'running'
     render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
     await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
     const second = screen.getByTestId('vk-task-detail-task-row-member-b')
@@ -295,7 +388,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(css).toMatch(/\.vk-task-detail-batch-list button\s*\{[^}]*min-width:\s*0/)
     expect(css).toContain('.vk-task-detail-batch-member[data-state=')
     expect(css).toContain('data-current')
-    expect(css).toContain('@keyframes vk-rerun-item-in')
+    expect(css).not.toContain('@keyframes vk-rerun-item-in')
     expect(css).toContain('max-width: calc(100vw - 24px)')
     expect(css).toContain('.vk-task-batch-rerun-option.is-done')
     expect(css).toContain('.vk-stage-metric-chip')
@@ -342,7 +435,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
     await user.click(taskRow)
     const stageDetails = await screen.findByTestId('vk-task-detail-stage-details')
-    expect(stageDetails.querySelectorAll('.vk-task-detail-stage-chip')).toHaveLength(0)
+    expect(stageDetails.querySelectorAll('.vk-task-detail-step')).toHaveLength(0)
     // 「查看解析结果」和「再次提交任务」是同一时刻的两个选择,并排放在操作区。
     const actions = panel.querySelector('.vk-task-detail-actions')
     expect(actions?.textContent).toContain('查看解析结果')
@@ -587,7 +680,8 @@ describe('VkTaskDetailSidebar', () => {
     expect(panel).toHaveTextContent('https://example.com/two')
     expect(screen.getByTestId('vk-task-detail-task-row-b-3')).toBeInTheDocument()
     await user.click(screen.getByTestId('vk-task-detail-task-row-b-3'))
-    expect(onJobChange).toHaveBeenCalledWith('b-3')
+    expect(onJobChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('vk-task-detail-task-row-b-3')).toHaveAttribute('aria-expanded', 'true')
   })
 
   it('双击任务卡复制链接并显示已复制提示', async () => {
@@ -638,6 +732,7 @@ describe('VkTaskDetailSidebar', () => {
     await user.dblClick(taskRow)
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(members[0].source))
+    expect(writeText).toHaveBeenCalledTimes(1)
     const notice = await screen.findByText('已复制链接')
     expect(notice).toBeInTheDocument()
     expect(screen.getByTestId('vk-task-detail-notification')).toContainElement(notice)
@@ -741,7 +836,7 @@ describe('VkTaskDetailSidebar', () => {
 
     const details = await screen.findByTestId('vk-task-detail-stage-details')
     expect(details).toHaveAttribute('data-testid', 'vk-task-detail-stage-details')
-    expect(details.querySelectorAll('.vk-task-detail-stage-chip')).toHaveLength(1)
+    expect(details.querySelectorAll('.vk-task-detail-step')).toHaveLength(1)
     expect(details).toHaveTextContent('采集与转写')
     expect(details).not.toHaveTextContent('理解视频')
   })
@@ -909,7 +1004,7 @@ describe('VkTaskDetailSidebar', () => {
     await waitFor(() => expect(actions).toEqual(['refresh:mixed-done', 'retry:mixed-failed']))
   })
 
-  it('批量重跑菜单按实际条目索引递进出现,并把状态映射成语义颜色', async () => {
+  it('批量重跑菜单保持条目顺序并映射语义颜色', async () => {
     const members = Array.from({ length: 5 }, (_, index) => ({
       job_id: `stagger-${index + 1}`,
       status: index === 1 ? 'interrupted' : 'done',
@@ -936,8 +1031,8 @@ describe('VkTaskDetailSidebar', () => {
     const menu = await screen.findByRole('menu')
     const options = within(menu).getAllByRole('menuitemcheckbox')
     expect(options).toHaveLength(5)
-    expect(options[0]).toHaveStyle({ animationDelay: '30ms' })
-    expect(options[4]).toHaveStyle({ animationDelay: '190ms' })
+    expect(options[0]).toHaveTextContent('小任务1')
+    expect(options[4]).toHaveTextContent('小任务5')
     expect(options[0]).toHaveAttribute('data-color', 'success')
     expect(options[1]).toHaveAttribute('data-color', 'warning')
   })
@@ -1105,11 +1200,11 @@ describe('VkTaskDetailSidebar', () => {
     expect(stages).toHaveTextContent('7.25s')
     expect(stages).toHaveTextContent('custom-stage')
     expect(stages).toHaveTextContent('500ms')
-    expect(stages.querySelectorAll('.vk-task-detail-stage-chip p')).toHaveLength(0)
+    expect(stages.querySelectorAll('.vk-task-detail-step p')).toHaveLength(0)
     expect(screen.queryByTestId('vk-run-metrics')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-model-attempts')).not.toBeInTheDocument()
-    expect(stages.querySelectorAll('.vk-task-detail-stage-chip')).toHaveLength(6)
-    expect(stages.querySelectorAll('.vk-task-detail-stage-chip span')).toHaveLength(6)
+    expect(stages.querySelectorAll('.vk-task-detail-step')).toHaveLength(6)
+    expect(stages.querySelectorAll('.vk-task-detail-step-content > span')).toHaveLength(6)
     expect(screen.queryByTestId('vk-task-detail-execution-elapsed')).not.toBeInTheDocument()
   })
 
@@ -1180,7 +1275,7 @@ describe('VkTaskDetailSidebar', () => {
     await userEvent.click(screen.getByTestId('vk-task-detail-task-row-source-0'))
     const stages = screen.getByTestId('vk-task-detail-stage-details')
     expect(stages).toHaveTextContent('理解视频')
-    expect(stages.querySelector('[data-stage="chapter"]')).toHaveAttribute('data-stage-state', 'completed')
+    expect(stages.querySelector('[data-stage="chapter"]')).toHaveAttribute('data-stage-state', 'failed')
     expect(screen.queryByTestId('vk-model-attempts')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-run-metrics')).not.toBeInTheDocument()
   })

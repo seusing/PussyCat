@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AppAlert } from './AppAlert'
 
@@ -47,4 +47,31 @@ test('duration 进度条使用倒计时动画', () => {
   expect(progress).toHaveAttribute('aria-valuetext', '3 秒后自动关闭')
   expect(progress).toHaveClass('is-duration')
   expect(progress).toHaveStyle({ animationDuration: '3000ms' })
+})
+
+test('错开出现的通知各自到期，父级更新使用最新回调但不延长计时', () => {
+  vi.useFakeTimers()
+  try {
+    const first = vi.fn()
+    const latestFirst = vi.fn()
+    const second = vi.fn()
+    const { rerender, unmount } = render(<AppAlert key="first" title="第一条" durationMs={2000} onExpire={first} />)
+    act(() => vi.advanceTimersByTime(1000))
+    rerender([
+      <AppAlert key="second" title="第二条" durationMs={2000} onExpire={second} />,
+      <AppAlert key="first" title="第一条" durationMs={2000} onExpire={latestFirst} />,
+    ])
+    act(() => vi.advanceTimersByTime(1000))
+    expect(first).not.toHaveBeenCalled()
+    expect(latestFirst).toHaveBeenCalledTimes(1)
+    expect(second).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(1000))
+    expect(second).toHaveBeenCalledTimes(1)
+    rerender(<AppAlert title="已卸载" durationMs={2000} onExpire={first} />)
+    unmount()
+    act(() => vi.advanceTimersByTime(2000))
+    expect(first).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
 })

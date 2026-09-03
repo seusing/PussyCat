@@ -11,6 +11,7 @@ import './VkOutputViewer.css'
 
 export type VkOutputTab = { id: string; label: string; source?: string; jobId?: string; outputId?: string; versions?: VkResultVersion[] }
 type LoadedOutput = { outputId: string; content: string }
+export type VkOutputCache = Map<string, LoadedOutput>
 
 function outputFileName(outputId: string): string {
   const name = outputId.split(/[\\/]/).filter(Boolean).at(-1)
@@ -22,16 +23,17 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message || fallback : fallback
 }
 
-export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion, baseUrl, onClose }: {
+export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion, baseUrl, onClose, cache }: {
   tabs: VkOutputTab[]
   activeTabId: string
   onSelectTab: (id: string) => void
   onSelectVersion?: (tabId: string, jobId: string) => void
   baseUrl: string
   onClose: () => void
+  cache?: VkOutputCache
 }) {
-  const cache = useRef(new Map<string, LoadedOutput>())
-  const outputCache = useRef(new Map<string, LoadedOutput>())
+  const localCache = useRef<VkOutputCache>(new Map())
+  const resultCache = cache ?? localCache.current
   const [loadedState, setLoadedState] = useState<{ key: string; value: LoadedOutput } | null>(null)
   const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null)
   const [retry, setRetry] = useState(0)
@@ -49,9 +51,9 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const domId = useId()
   const verticalTabs = tabs.length > 15
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
-  const outputKey = JSON.stringify([activeTabId, activeTab?.jobId, activeTab?.outputId])
-  const loaded = (activeTab?.outputId ? outputCache.current.get(activeTab.outputId) : undefined)
-    ?? cache.current.get(outputKey)
+  const outputKey = JSON.stringify([baseUrl, activeTabId, activeTab?.jobId, activeTab?.outputId])
+  const requestKey = JSON.stringify([baseUrl, activeTab?.outputId ? 'output' : 'job', activeTab?.outputId ?? activeTab?.jobId])
+  const loaded = resultCache.get(requestKey)
     ?? (loadedState?.key === outputKey ? loadedState.value : undefined)
   const error = loadError?.key === outputKey ? loadError.message : null
   const dragControls = useDragControls()
@@ -101,7 +103,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   useEffect(() => { sectionRef.current?.focus() }, [])
 
   useEffect(() => {
-    if (!activeTab || cache.current.has(outputKey) || (activeTab.outputId && outputCache.current.has(activeTab.outputId))) return
+    if (!activeTab || resultCache.has(requestKey)) return
     let current = true
     setLoadError(null)
     void (async () => {
@@ -112,17 +114,18 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
           outputId = vkPrimaryOutput(job)?.id
         }
         if (!outputId) throw new Error('任务尚未生成可用结果')
-        const value = { outputId, content: await fetchVkOutputText(outputId, baseUrl) }
+        const resolvedOutputKey = JSON.stringify([baseUrl, 'output', outputId])
+        const value = resultCache.get(resolvedOutputKey) ?? { outputId, content: await fetchVkOutputText(outputId, baseUrl) }
         if (!current) return
-        cache.current.set(outputKey, value)
-        outputCache.current.set(outputId, value)
+        resultCache.set(requestKey, value)
+        resultCache.set(resolvedOutputKey, value)
         setLoadedState({ key: outputKey, value })
       } catch (error) {
         if (current) setLoadError({ key: outputKey, message: errorText(error, '结果读取失败') })
       }
     })()
     return () => { current = false }
-  }, [outputKey, activeTab?.id, activeTab?.jobId, activeTab?.outputId, baseUrl, retry])
+  }, [outputKey, requestKey, resultCache, activeTab?.id, activeTab?.jobId, activeTab?.outputId, baseUrl, retry])
 
   const resetOutputDownload = useCallback(() => {
     outputDownloadController.current?.abort()

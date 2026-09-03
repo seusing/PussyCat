@@ -1043,9 +1043,11 @@ test('获取模型列表与测试连接独立发送请求，连接测试不覆�
     reasoning_effort: 'medium',
     extra_headers: { 'x-actor': 'desktop' },
   })
-  expect(await screen.findByTestId('vk-provider-notice')).toHaveTextContent(
-    '连接成功 · 同步 · 总耗时 88 ms',
-  )
+  await screen.findByText('连接成功 · 同步 · 总耗时 88 ms')
+  const notices = screen.getAllByTestId('vk-provider-notice')
+  expect(notices).toHaveLength(2)
+  expect(notices[0]).toHaveTextContent('连接成功 · 同步 · 总耗时 88 ms')
+  expect(notices[1]).toHaveTextContent('获取到 1 个模型')
   await waitFor(() => expect(document.querySelector('#vk-models-cheap option')?.getAttribute('value'))
     .toBe('listed-model'))
 })
@@ -1355,4 +1357,62 @@ test('不可导入原因收进 cc-switch 候选菜单', async () => {
 
   await userEvent.click(await screen.findByTestId('vk-ccswitch-import'))
   expect(screen.getByTestId('vk-ccswitch-skipped')).toHaveTextContent('AUTH_TOKEN')
+})
+
+test('两次连接通知最新在前并各自独立移除', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers/test': { body: {
+      ok: true, reason_code: 'ok', message: '连接正常', models: ['gpt-5.6-luna'],
+      base_url: 'https://api.example.com/v1', normalization_notes: [],
+    } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const button = await screen.findByTestId('vk-channel-test-cheap')
+  vi.useFakeTimers()
+  try {
+    await act(async () => { button.click() })
+    expect(screen.getAllByTestId('vk-provider-notice')).toHaveLength(1)
+    const firstNotice = screen.getByTestId('vk-provider-notice')
+    act(() => vi.advanceTimersByTime(1000))
+    await act(async () => { button.click() })
+    const notices = screen.getAllByTestId('vk-provider-notice')
+    expect(notices).toHaveLength(2)
+    expect(notices[1]).toBe(firstNotice)
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.getAllByTestId('vk-provider-notice')).toHaveLength(1)
+    expect(firstNotice).not.toBeInTheDocument()
+    expect(notices[0]).toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.queryByTestId('vk-provider-notice')).not.toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('连续保存错误叠加且只关闭选中的错误', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { status: 500, body: { error: '保存失败' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await screen.findByTestId('vk-channel-toggle-cheap')
+  vi.useFakeTimers()
+  try {
+    await act(async () => { screen.getByTestId('vk-channel-toggle-cheap').click() })
+    const firstError = screen.getByTestId('vk-provider-error')
+    act(() => vi.advanceTimersByTime(1000))
+    await act(async () => { screen.getByTestId('vk-channel-toggle-cheap').click() })
+    const errors = screen.getAllByTestId('vk-provider-error')
+    expect(errors).toHaveLength(2)
+    expect(errors[1]).toBe(firstError)
+    act(() => { within(firstError).getByRole('button', { name: '关闭通知' }).click() })
+    expect(screen.getByTestId('vk-provider-error')).toBe(errors[0])
+    act(() => vi.advanceTimersByTime(1999))
+    expect(errors[0]).toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(1))
+    expect(screen.queryByTestId('vk-provider-error')).not.toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+  }
 })

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { VkOutputViewer, type VkOutputTab } from './VkOutputViewer'
+import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { fetchVkJob, fetchVkOutputText, type VkJobView } from '../../host/vkClient'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
@@ -17,6 +17,15 @@ const tabs: VkOutputTab[] = [
 function Harness({ items = tabs }: { items?: VkOutputTab[] }) {
   const [active, setActive] = useState<string | null>(items[0].id)
   return active && <VkOutputViewer tabs={items} activeTabId={active} onSelectTab={setActive} baseUrl="http://host" onClose={() => setActive(null)} />
+}
+function ReopenHarness({ item }: { item: VkOutputTab }) {
+  const cache = useRef<VkOutputCache>(new Map())
+  const [open, setOpen] = useState(true)
+  return <>
+    <button onClick={() => setOpen(true)}>查看结果</button>
+    {open && <VkOutputViewer tabs={[item]} activeTabId={item.id} onSelectTab={() => {}} baseUrl="http://host"
+      cache={cache.current} onClose={() => setOpen(false)} />}
+  </>
 }
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -54,6 +63,48 @@ it('loads only selected tasks, caches contents, and copies and saves the selecte
   expect(saveTextFileAs).toHaveBeenLastCalledWith('a.md', '# a.md\n\n正文 a.md', expect.any(Object))
   expect(fetchVkJob).toHaveBeenCalledTimes(2)
   expect(fetchVkOutputText).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  { item: { id: 'job:a', jobId: 'a', label: '任务 1' }, jobRequests: 1 },
+  { item: { id: 'output:a', outputId: 'a.md', label: '任务 1' }, jobRequests: 0 },
+])('immediately reopens a completed $item.id result from the parent cache', async ({ item, jobRequests }) => {
+  render(<ReopenHarness item={item} />)
+  await screen.findByRole('heading', { name: 'a.md' })
+  fireEvent.click(screen.getByTestId('vk-output-viewer-close'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '查看结果' }))
+  expect(screen.getByRole('heading', { name: 'a.md' })).toBeInTheDocument()
+  expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-busy', 'false')
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(fetchVkJob).toHaveBeenCalledTimes(jobRequests)
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(1)
+})
+
+it('loads changed output versions and keeps cached content separate for each host', async () => {
+  const cache: VkOutputCache = new Map()
+  vi.mocked(fetchVkOutputText).mockImplementation(async (id, baseUrl) => `# ${baseUrl}/${id}`)
+  const viewer = (baseUrl: string, outputId: string) => <VkOutputViewer
+    tabs={[{ id: 'task:one', jobId: 'one', outputId, label: '任务 1' }]} activeTabId="task:one"
+    onSelectTab={() => {}} onClose={() => {}} baseUrl={baseUrl} cache={cache} />
+  const { rerender } = render(viewer('http://host', 'latest.md'))
+  await screen.findByRole('heading', { name: 'http://host/latest.md' })
+
+  rerender(viewer('http://host', 'previous.md'))
+  expect(screen.queryByRole('heading', { name: 'http://host/latest.md' })).not.toBeInTheDocument()
+  await screen.findByRole('heading', { name: 'http://host/previous.md' })
+  rerender(viewer('http://other-host', 'previous.md'))
+  expect(screen.queryByRole('heading', { name: 'http://host/previous.md' })).not.toBeInTheDocument()
+  await screen.findByRole('heading', { name: 'http://other-host/previous.md' })
+
+  rerender(viewer('http://host', 'previous.md'))
+  expect(screen.getByRole('heading', { name: 'http://host/previous.md' })).toBeInTheDocument()
+  expect(fetchVkJob).not.toHaveBeenCalled()
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(3)
+  expect(fetchVkOutputText).toHaveBeenNthCalledWith(1, 'latest.md', 'http://host')
+  expect(fetchVkOutputText).toHaveBeenNthCalledWith(2, 'previous.md', 'http://host')
+  expect(fetchVkOutputText).toHaveBeenNthCalledWith(3, 'previous.md', 'http://other-host')
 })
 
 it('does not let an earlier response overwrite the active tab or revive a closed viewer', async () => {
@@ -146,6 +197,7 @@ it('prefers an explicit outputId over the job lookup and reuses its content imme
   const items: VkOutputTab[] = [
     { id: 'direct:one', label: '结果 1', jobId: 'job-ignored', outputId: 'shared.md' },
     { id: 'direct:two', label: '结果 2', outputId: 'shared.md' },
+    { id: 'job:shared', label: '结果 3', jobId: 'shared' },
   ]
   render(<Harness items={items} />)
   await screen.findByRole('heading', { name: 'shared.md' })
@@ -155,6 +207,12 @@ it('prefers an explicit outputId over the job lookup and reuses its content imme
   await userEvent.click(screen.getByRole('tab', { name: '结果 2' }))
   expect(screen.getByRole('heading', { name: 'shared.md' })).toBeInTheDocument()
   expect(fetchVkJob).not.toHaveBeenCalled()
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(1)
+
+  await userEvent.click(screen.getByRole('tab', { name: '结果 3' }))
+  await screen.findByRole('heading', { name: 'shared.md' })
+  expect(fetchVkJob).toHaveBeenCalledTimes(1)
+  expect(fetchVkJob).toHaveBeenCalledWith('shared', 'http://host')
   expect(fetchVkOutputText).toHaveBeenCalledTimes(1)
 })
 
