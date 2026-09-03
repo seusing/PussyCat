@@ -127,6 +127,9 @@ describe('VkTaskDetailSidebar', () => {
     await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 180)) })
     expect(button).toHaveAttribute('aria-expanded', 'false')
     expect(menu).toBeInTheDocument()
+    fireEvent.mouseEnter(button.closest('.vk-task-batch-rerun')!)
+    expect(screen.getByRole('menu')).toBe(menu)
+    fireEvent.mouseLeave(button.closest('.vk-task-batch-rerun')!)
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
   })
 
@@ -285,7 +288,8 @@ describe('VkTaskDetailSidebar', () => {
     await userEvent.click(firstAfterReload)
     expect(firstAfterReload).toHaveAttribute('aria-expanded', 'false')
     expect(second).toHaveAttribute('aria-expanded', 'true')
-    await waitFor(() => expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(1))
+    expect(first.closest('li')!.querySelector('.vk-task-detail-task-disclosure')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(2)
     await userEvent.click(first)
     await userEvent.click(second)
     expect(first).toHaveAttribute('aria-expanded', 'true')
@@ -295,15 +299,28 @@ describe('VkTaskDetailSidebar', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/member-d'))).toBe(false)
   })
 
-  it('收起阶段详情保留退出生命周期后再卸载内容', async () => {
-    memberProgressFixture()
+  it('小任务后台预读完成后首次展开和完整收起再展开都复用终态详情', async () => {
+    const { fetchMock } = memberProgressFixture()
     render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
-    const row = await screen.findByTestId('vk-task-detail-task-row-member-a')
+    const row = await screen.findByTestId('vk-task-detail-task-row-member-b')
+    const card = within(row.closest('li')!)
+    const detail = await card.findByTestId('vk-task-detail-stage-details')
+    const disclosure = row.closest('li')!.querySelector('.vk-task-detail-task-disclosure')!
+    expect(disclosure).toHaveAttribute('aria-hidden', 'true')
+    const count = fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b')).length
+    expect(count).toBe(1)
     await userEvent.click(row)
-    await screen.findByTestId('vk-task-detail-stage-details')
+    expect(card.queryByText('正在读取小任务进度…')).not.toBeInTheDocument()
+    expect(card.getByTestId('vk-task-detail-stage-details')).toBe(detail)
     await userEvent.click(row)
-    expect(screen.getByTestId('vk-task-detail-stage-details')).toBeInTheDocument()
-    await waitFor(() => expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument())
+    expect(disclosure).toHaveAttribute('aria-hidden', 'true')
+    await waitFor(() => expect(disclosure).toHaveStyle({ gridTemplateRows: '0fr' }))
+    expect(detail).toBeInTheDocument()
+    await userEvent.click(row)
+    expect(disclosure).toHaveAttribute('aria-hidden', 'false')
+    expect(card.getByTestId('vk-task-detail-stage-details')).toBe(detail)
+    expect(card.queryByText('正在读取小任务进度…')).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b'))).toHaveLength(count)
   })
 
   it('批次轮询进入终态保持已展开成员,收起后停止该成员进度轮询', async () => {
@@ -316,9 +333,13 @@ describe('VkTaskDetailSidebar', () => {
     render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
     await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
     const second = screen.getByTestId('vk-task-detail-task-row-member-b')
+    await within(second.closest('li')!).findByTestId('vk-task-detail-stage-details')
+    expect(polls.size).toBe(1)
     await userEvent.click(second)
     await waitFor(() => expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('进行中'))
+    expect(polls.size).toBe(2)
     await userEvent.click(second)
+    expect(polls.size).toBe(1)
     const count = fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b')).length
     await act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b'))).toHaveLength(count))
@@ -343,38 +364,45 @@ describe('VkTaskDetailSidebar', () => {
     await waitFor(() => expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(2))
     rerender(<VkTaskDetailSidebar {...props} jobId="member-c" />)
     expect(await screen.findByTestId('vk-task-detail-task-row-member-c')).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: '解析阶段' })).not.toBeInTheDocument()
     rerender(<VkTaskDetailSidebar {...props} jobId="member-a" />)
     expect(await screen.findByTestId('vk-task-detail-task-row-member-a')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByTestId('vk-task-detail-task-row-member-b')).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('成员懒加载明确显示错误,关闭后的迟到结果不会启动轮询或串进度', async () => {
+  it('成员读取失败后重开可重试,收起后的迟到结果不会启动轮询', async () => {
     const polls = captureMemberPolling()
     const { details, fetchMock } = memberProgressFixture()
     const originalFetch = fetchMock.getMockImplementation()!
+    let failFirst: ((response: Response) => void) | undefined
     let finish: ((response: Response) => void) | undefined
-    let attempt = 0
+    let attempts = 0
     fetchMock.mockImplementation(async (input) => {
       if (!String(input).endsWith('/member-b')) return originalFetch(input)
-      attempt += 1
-      if (attempt === 1) return new Response(JSON.stringify({ error: '进度暂不可用' }), { status: 503 })
-      return new Promise<Response>((resolveResponse) => { finish = resolveResponse })
+      attempts += 1
+      return new Promise<Response>((resolve) => {
+        if (attempts === 1) failFirst = resolve
+        else finish = resolve
+      })
     })
     render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
     await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
     const second = screen.getByTestId('vk-task-detail-task-row-member-b')
     await userEvent.click(second)
+    await act(async () => { failFirst?.(new Response(JSON.stringify({ error: '进度暂不可用' }), { status: 503 })) })
     expect(await within(second.closest('li')!).findByRole('alert')).toHaveTextContent('读取小任务进度失败')
     expect(within(second.closest('li')!).queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
     await userEvent.click(second)
     await userEvent.click(second)
-    await waitFor(() => expect(within(second.closest('li')!).getByRole('status')).toHaveTextContent('正在读取小任务进度'))
+    expect(within(second.closest('li')!).getByRole('status')).toHaveTextContent('正在读取小任务进度')
+    expect(within(second.closest('li')!).queryByRole('alert')).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b'))).toHaveLength(2)
     await userEvent.click(second)
     await act(async () => { finish?.(new Response(JSON.stringify({ ...details.get('member-b'), status: 'running' }))) })
     expect(polls.size).toBe(0)
-    expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(1)
-    expect(screen.getByTestId('vk-task-detail-stage-details')).toHaveTextContent('采集与转写')
+    expect(second.closest('li')!.querySelector('.vk-task-detail-task-disclosure')).toHaveAttribute('aria-hidden', 'true')
+    expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('理解视频')
+    expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(2)
   })
 
   it('批量来源列表保持 flex 且窄侧栏下允许链接让位给状态', () => {
@@ -432,7 +460,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.queryByTestId('vk-task-detail-execution-elapsed')).not.toBeInTheDocument()
     expect(screen.queryByTestId('vk-run-metrics')).not.toBeInTheDocument()
     const taskRow = await screen.findByTestId('vk-task-detail-task-row-source-0')
-    expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
+    expect(taskRow.closest('li')!.querySelector('.vk-task-detail-task-disclosure')).toHaveAttribute('aria-hidden', 'true')
     await user.click(taskRow)
     const stageDetails = await screen.findByTestId('vk-task-detail-stage-details')
     expect(stageDetails.querySelectorAll('.vk-task-detail-step')).toHaveLength(0)
@@ -799,9 +827,9 @@ describe('VkTaskDetailSidebar', () => {
     render(<VkTaskDetailSidebar jobId="stage-1" baseUrl={BASE} onClose={() => {}} />)
 
     const firstRow = await screen.findByTestId('vk-task-detail-task-row-stage-1')
-    expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
+    expect(firstRow.closest('li')!.querySelector('.vk-task-detail-task-disclosure')).toHaveAttribute('aria-hidden', 'true')
     await user.click(firstRow)
-    const details = await screen.findByTestId('vk-task-detail-stage-details')
+    const details = within(firstRow.closest('li')!).getByTestId('vk-task-detail-stage-details')
     expect(details).toHaveTextContent('采集与转写')
     expect(details).toHaveTextContent('2s')
 
@@ -831,7 +859,7 @@ describe('VkTaskDetailSidebar', () => {
     render(<VkTaskDetailSidebar jobId="no-stage-metrics" baseUrl={BASE} onClose={() => {}} />)
 
     const row = await screen.findByTestId('vk-task-detail-task-row-source-0')
-    expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
+    expect(row.closest('li')!.querySelector('.vk-task-detail-task-disclosure')).toHaveAttribute('aria-hidden', 'true')
     await user.click(row)
 
     const details = await screen.findByTestId('vk-task-detail-stage-details')
@@ -1126,7 +1154,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.queryByText('处理进度')).not.toBeInTheDocument()
     const taskRow = await screen.findByTestId('vk-task-detail-task-row-source-0')
     await user.click(taskRow)
-    const details = await screen.findByTestId('vk-task-detail-stage-details')
+    const details = await within(taskRow.closest('li')!).findByTestId('vk-task-detail-stage-details')
     expect(details).toHaveTextContent('阶段 2 / 4')
     expect(details).toHaveTextContent('理解视频重点')
     expect(screen.getByText('我的总结模型')).toBeInTheDocument()
@@ -1191,7 +1219,7 @@ describe('VkTaskDetailSidebar', () => {
     render(<VkTaskDetailSidebar jobId="job-metrics" baseUrl={BASE} onClose={() => {}} />)
 
     const taskRow = await screen.findByTestId('vk-task-detail-task-row-source-0')
-    expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
+    expect(taskRow.closest('li')!.querySelector('.vk-task-detail-task-disclosure')).toHaveAttribute('aria-hidden', 'true')
     await user.click(taskRow)
     const stages = await screen.findByTestId('vk-task-detail-stage-details')
     expect(stages).toHaveTextContent('采集与转写')

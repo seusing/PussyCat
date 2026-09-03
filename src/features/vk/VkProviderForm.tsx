@@ -8,6 +8,7 @@ import {
 import './VkProviderForm.css'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
+import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
 import {
   fetchVkProviderSettings,
@@ -893,22 +894,24 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     if (!scopedNotices.length) return null
     const alerts = (
       <div className={`vk-provider-alert-slot vk-provider-alert-slot--${location}`}>
-        {scopedNotices.map((scopedNotice) => (
-          <AppAlert
-            key={scopedNotice.id}
-            testId={scopedNotice.dismissible ? 'vk-provider-error' : 'vk-provider-notice'}
-            tone={scopedNotice.tone}
-            title={scopedNotice.message}
-            role={scopedNotice.dismissible ? 'alert' : 'status'}
-            className={`vk-provider-alert vk-provider-alert--${scopedNotice.tone}`}
-            durationMs={NOTICE_DURATION_MS}
-            onExpire={() => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))}
-            onClose={scopedNotice.dismissible
-              ? () => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))
-              : undefined}
-            progressTestId={scopedNotice.dismissible ? undefined : 'vk-provider-notice-progress'}
-          />
-        ))}
+        <AppNotificationStack>
+          {scopedNotices.map((scopedNotice) => (
+            <AppAlert
+              key={scopedNotice.id}
+              testId={scopedNotice.dismissible ? 'vk-provider-error' : 'vk-provider-notice'}
+              tone={scopedNotice.tone}
+              title={scopedNotice.message}
+              role={scopedNotice.dismissible ? 'alert' : 'status'}
+              className={`vk-provider-alert vk-provider-alert--${scopedNotice.tone}`}
+              durationMs={NOTICE_DURATION_MS}
+              onExpire={() => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))}
+              onClose={scopedNotice.dismissible
+                ? () => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))
+                : undefined}
+              progressTestId={scopedNotice.dismissible ? undefined : 'vk-provider-notice-progress'}
+            />
+          ))}
+        </AppNotificationStack>
       </div>
     )
     return location === 'form'

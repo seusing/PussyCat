@@ -1,0 +1,27 @@
+.app-notification-stack {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  padding-top: 24px;
+  perspective: 800px;
+  transform-style: preserve-3d;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.app-notification-stack__card {
+  grid-area: 1 / 1;
+  align-self: start;
+  min-width: 0;
+  transform-origin: center top;
+  pointer-events: none;
+}
+
+.app-notification-stack .app-alert {
+  background: var(--color-panel);
+  backdrop-filter: none;
+}
+
+.app-notification-stack [data-front='false'] .app-alert {
+  pointer-events: none;
+}

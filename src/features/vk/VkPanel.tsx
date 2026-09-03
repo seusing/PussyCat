@@ -10,6 +10,7 @@ import { LoaderCircle, RefreshCw, Upload } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
+import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { HostRequestError } from '../../host/errors'
 import {
   fetchVkHealth,
@@ -399,11 +400,12 @@ const fieldStyle = { background: 'var(--color-canvas)', border: '1px solid var(-
 const outlineButton = 'rounded-lg px-2 py-1 text-xs disabled:opacity-50'
 const outlineStyle = { border: '1px solid var(--color-line)', color: 'var(--color-fg)' } as const
 
-export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
+export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, providerRevision = 0 }: {
   baseUrl?: string
   selectedJobId?: string | null
   onSelectJob?: (jobId: string | null) => void
   refreshToken?: number
+  providerRevision?: number
 }) {
   const base = baseUrl
   // —— 健康(BrowserBridgeStatus 姿势:进入时查一次 + 手动重检;前端只渲染不解释)——
@@ -484,12 +486,14 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       const settings = await fetchVkProviderSettings(base)
       setProviderConfigured(settings.configured)
       setCostTracking(settings.cost_tracking ?? false)
+      return settings.configured
     } catch {
       setProviderConfigured(null)   // 问不到就别下结论,不冒充已配置
       setCostTracking(null)
+      return null
     }
   }, [base])
-  useEffect(() => { void refreshProviders() }, [refreshProviders])
+  useEffect(() => { void refreshProviders() }, [refreshProviders, providerRevision])
 
   const discoverTaskReasoningEfforts = async () => {
     setReasoningDiscovering(true)
@@ -660,15 +664,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     if (submitInFlight.current) return
     const sources = sourceLines(source)
     if (sources.length === 0) return
-    if (providerConfigured === false) {
-      addTaskBanners([{
-        id: `provider-required:${crypto.randomUUID()}`,
-        message: '请先完成模型配置选择',
-        tone: 'warning',
-        createdAt: Date.now(),
-      }])
-      return
-    }
     submitInFlight.current = true
     setSubmitError(null)
     setPreviewing(true)
@@ -679,6 +674,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     // 单个视频也带上：批量与否是提交时的事实，不该让下游去猜。
     const batchId = crypto.randomUUID()
     try {
+      if (await refreshProviders() === false) {
+        addTaskBanners([{
+          id: `provider-required:${crypto.randomUUID()}`,
+          message: '请先完成模型配置选择',
+          tone: 'warning',
+          createdAt: Date.now(),
+        }])
+        return
+      }
       for (const sourceValue of sources) {
         const previewedRequest = await postVkPreview(buildProjection(sourceValue), base)
         const request = { ...previewedRequest, source: sourceValue }
@@ -1072,9 +1076,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
       {taskBanners.length > 0 && (
         <AppNotificationPortal>
           <div className="vk-task-banners" aria-live="polite">
-            {taskBanners.map((banner) => (
-              <TaskBannerNotice key={banner.id} banner={banner} onDismiss={dismissTaskBanner} />
-            ))}
+            <AppNotificationStack>
+              {taskBanners.map((banner) => (
+                <TaskBannerNotice key={banner.id} banner={banner} onDismiss={dismissTaskBanner} />
+              ))}
+            </AppNotificationStack>
           </div>
         </AppNotificationPortal>
       )}

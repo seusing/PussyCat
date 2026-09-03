@@ -173,10 +173,6 @@
 
 .vk-task-banners {
   width: min(620px, calc(100vw - 24px));
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
   margin: 0;
   pointer-events: none;
 }

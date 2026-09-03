@@ -250,6 +250,63 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('请选择基础处理和深度分析使用的模型配置。')
   })
 
+  it.each([0, 1])('模型配置变更后保活页面使用最新配置提交，revision=%s', async (revision) => {
+    let configured = false
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: () => ({ configured, cost_tracking: configured }) },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-configured', kind: 'request' } },
+    })
+    const { rerender } = render(<VkPanel baseUrl={BASE} providerRevision={0} />)
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('请完成模型配置选择'))
+    const source = screen.getByTestId('vk-source')
+    fireEvent.change(source, { target: { value: 'https://example.com/a\nhttps://example.com/b' } })
+
+    configured = true
+    rerender(<VkPanel baseUrl={BASE} providerRevision={revision} />)
+    if (revision) await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
+    expect(screen.getByTestId('vk-source')).toBe(source)
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/jobs')).toHaveLength(2))
+    await waitFor(() => expect(screen.getByTestId('vk-submit-button')).toBeEnabled())
+    expect(calls.filter((call) => call.key === 'GET /vk/v1/providers')).toHaveLength(2 + revision)
+
+    configured = false
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await screen.findByText('请先完成模型配置选择')
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/preview')).toHaveLength(2)
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/jobs')).toHaveLength(2)
+    expect(screen.getByTestId('vk-submit-button')).toBeEnabled()
+  })
+
+  it('模型配置预检等待期间连续点击只提交一次', async () => {
+    const providerGate: { resolve?: (value: unknown) => void } = {}
+    let providerReads = 0
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/providers': { body: () => ++providerReads === 1
+        ? { configured: true }
+        : new Promise((resolve) => { providerGate.resolve = resolve }) },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-once', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(providerReads).toBe(1))
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: 'https://example.com/a' } })
+    const submit = screen.getByTestId('vk-submit-button')
+    act(() => { submit.click(); submit.click() })
+    expect(providerReads).toBe(2)
+    expect(calls.some((call) => call.key === 'POST /vk/v1/preview')).toBe(false)
+    await act(async () => { providerGate.resolve?.({ configured: true }) })
+    await waitFor(() => expect(screen.getByTestId('vk-submit-button')).toBeEnabled())
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/jobs')).toHaveLength(1)
+  })
+
   it('配好之后回到一句就绪,视频页不再渲染模型配置入口或表单', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },

@@ -67,6 +67,7 @@ export default function App({
   const [selectedVkJobId, setSelectedVkJobId] = useState<string | null>(null)
   const [vkRightPanelOpen, setVkRightPanelOpen] = useState(false)
   const [vkJobsRevision, setVkJobsRevision] = useState(0)
+  const [providerRevision, setProviderRevision] = useState(0)
   const [refresh, setRefresh] = useState<{ state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }>({ state: 'idle' })
   const loadGen = useRef(0)   // 请求世代:latest-wins,过期响应(首载或刷新)一律丢弃(三轮复审 F1)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -334,6 +335,7 @@ export default function App({
             baseUrl={baseUrl}
             selectedJobId={selectedVkJobId}
             refreshToken={vkJobsRevision}
+            providerRevision={providerRevision}
             onSelectJob={(jobId) => {
               setSelectedVkJobId(jobId)
               setVkRightPanelOpen(!!jobId)
@@ -343,7 +345,7 @@ export default function App({
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'providers'}>
         {(visitedModules.has('providers') || activeModule === 'providers') && (
-          <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} /></div>
+          <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} onSaved={() => setProviderRevision((value) => value + 1)} /></div>
         )}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'wrss'}>

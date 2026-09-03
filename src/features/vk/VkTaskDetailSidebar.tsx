@@ -11,6 +11,7 @@ import {
 import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
 import { AppAlert } from '../../components/AppAlert'
+import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { copyText } from '../../lib/clipboard'
 import {
   isVkJobRerun, markVkJobAsRerun, vkDurationLabel, vkElapsedLabel, vkTaskNumberFor, vkTaskNumberForBatch,
@@ -361,14 +362,14 @@ function TaskRow({
         <ChevronDown className="vk-task-detail-task-chevron" size={14} aria-hidden="true" />
       </button>
       <TaskDisclosureContext.Provider value={expanded}>
-        <AnimatePresence initial={false}>
-          {expanded && children ? (
+          {children ? (
           <motion.div
             key="task-disclosure"
             className="vk-task-detail-task-disclosure"
-            initial={reduceMotion ? false : { gridTemplateRows: '0fr', opacity: 0, y: -4 }}
-            animate={{ gridTemplateRows: '1fr', opacity: 1, y: 0 }}
-            exit={reduceMotion ? { opacity: 0 } : { gridTemplateRows: '0fr', opacity: 0, y: -4 }}
+            aria-hidden={!expanded}
+            style={{ pointerEvents: expanded ? 'auto' : 'none' }}
+            initial={false}
+            animate={expanded ? { gridTemplateRows: '1fr', opacity: 1, y: 0 } : { gridTemplateRows: '0fr', opacity: 0, y: -4 }}
             transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
           >
             <div className="vk-task-detail-task-disclosure-inner">
@@ -376,7 +377,6 @@ function TaskRow({
             </div>
           </motion.div>
           ) : null}
-        </AnimatePresence>
       </TaskDisclosureContext.Provider>
     </li>
   )
@@ -471,16 +471,42 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
     () => currentJob?.job_id === jobId ? currentJob : null,
   )
   const [error, setError] = useState<string | null>(null)
+  const currentJobRef = useRef(currentJob)
+  const [retryVersion, setRetryVersion] = useState(0)
+  const wasExpandedRef = useRef(pollingEnabled)
 
   useEffect(() => {
-    if (pollingEnabled) setError(null)
-  }, [pollingEnabled])
+    if (pollingEnabled && !wasExpandedRef.current && error) {
+      setRetryVersion((version) => version + 1)
+    }
+    wasExpandedRef.current = pollingEnabled
+  }, [pollingEnabled, error])
 
   useEffect(() => {
-    if (!pollingEnabled) return undefined
+    currentJobRef.current = currentJob
+    if (currentJob?.job_id === jobId) setMemberJob(currentJob)
+  }, [currentJob, jobId])
+
+  useEffect(() => {
+    const seed = currentJobRef.current
+    if (seed?.job_id === jobId) return undefined
+    let disposed = false
+    setError(null)
+    void fetchVkJob(jobId, baseUrl).then((nextJob) => {
+      if (disposed) return
+      setMemberJob(nextJob)
+      setError(null)
+    }).catch((loadError) => {
+      if (!disposed) setError(detailError(loadError))
+    })
+    return () => { disposed = true }
+  }, [jobId, baseUrl, retryVersion])
+
+  const active = !!memberJob && ACTIVE_STATUSES.has(memberJob.status)
+  useEffect(() => {
+    if (!pollingEnabled || !active) return undefined
     let disposed = false
     let loading = false
-    let timer: number | undefined
     const load = async () => {
       if (loading || disposed) return
       loading = true
@@ -489,24 +515,18 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
         if (disposed) return
         setMemberJob(nextJob)
         setError(null)
-        if (ACTIVE_STATUSES.has(nextJob.status)) {
-          timer ??= window.setInterval(load, 1500)
-        } else if (timer !== undefined) {
-          window.clearInterval(timer)
-          timer = undefined
-        }
       } catch (loadError) {
         if (!disposed) setError(detailError(loadError))
       } finally {
         loading = false
       }
     }
-    void load()
+    const timer = window.setInterval(load, 1500)
     return () => {
       disposed = true
-      if (timer !== undefined) window.clearInterval(timer)
+      window.clearInterval(timer)
     }
-  }, [jobId, baseUrl, pollingEnabled])
+  }, [jobId, baseUrl, pollingEnabled, active])
 
   const detail = memberJob?.job_id === jobId ? memberJob : null
   return (
@@ -520,11 +540,7 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
   )
 }
 
-const MemoTaskMemberProgress = memo(TaskMemberProgress, (previous, next) => (
-  previous.jobId === next.jobId
-  && previous.baseUrl === next.baseUrl
-  && previous.currentJob?.job_id === next.currentJob?.job_id
-))
+const MemoTaskMemberProgress = memo(TaskMemberProgress)
 
 export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJobRefresh }: {
   jobId: string | null
@@ -883,14 +899,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     <section className="vk-task-detail-sidebar" data-testid="vk-task-detail-sidebar" aria-label="任务执行详情">
       {copyNotices.length > 0 && (
         <div className="vk-task-detail-notification" data-testid="vk-task-detail-notification">
-          {copyNotices.map((id) => <AppAlert
-            key={id}
-            testId="vk-copy-notice"
-            tone="success"
-            title="已复制链接"
-            durationMs={1_000}
-            onExpire={() => setCopyNotices((notices) => notices.filter((notice) => notice !== id))}
-          />)}
+          <AppNotificationStack>
+            {copyNotices.map((id) => <AppAlert
+              key={id}
+              testId="vk-copy-notice"
+              tone="success"
+              title="已复制链接"
+              durationMs={1_000}
+              onExpire={() => setCopyNotices((notices) => notices.filter((notice) => notice !== id))}
+            />)}
+          </AppNotificationStack>
         </div>
       )}
       <header>
@@ -951,9 +969,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     expanded={expandedTaskIds.has(member.job_id)}
                     onToggle={() => toggleTask(member.job_id)}
                     onCopy={copyLink}
-                    contentVersion={baseUrl}
+                    contentVersion={member.job_id === jobId ? job : baseUrl}
                   >
-                    <MemoTaskMemberProgress jobId={member.job_id} baseUrl={baseUrl} currentJob={job} />
+                    <MemoTaskMemberProgress jobId={member.job_id} baseUrl={baseUrl} currentJob={member.job_id === jobId ? job : null} />
                   </MemoTaskRow>
                 ))
                 : sources.length > 0
@@ -1021,19 +1039,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     style={{ ...rerunMenuPosition, originY: 1 }}
                     onMouseEnter={openRerunMenu}
                     onMouseLeave={scheduleRerunMenuClose}
-                    variants={{
-                      hidden: { opacity: 0, y: 5, scaleY: 0.96, transition: { duration: reduceMotion ? 0 : 0.2, staggerChildren: reduceMotion ? 0 : 0.04, staggerDirection: -1, when: 'afterChildren' } },
-                      visible: { opacity: 1, y: 0, scaleY: 1, transition: { duration: reduceMotion ? 0 : 0.2, staggerChildren: reduceMotion ? 0 : 0.04 } },
-                    }}
-                    initial="hidden"
-                    animate="visible"
-                    exit="hidden"
+                    initial={{ opacity: 0, y: 5, scaleY: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scaleY: 1, pointerEvents: 'auto' }}
+                    exit={{ opacity: 0, y: 5, scaleY: 0.96, pointerEvents: 'none' }}
+                    transition={{ duration: reduceMotion ? 0 : 0.2 }}
                   >
                     {batchMembers.map((member, index) => {
                       const disabled = member.state === 'running'
                       const checked = selection.has(member.job_id)
                       return (
-                        <motion.button
+                        <button
                           key={member.job_id}
                           type="button"
                           role="menuitemcheckbox"
@@ -1042,11 +1057,6 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                           data-color={BATCH_STATE_COLORS[member.state]}
                           aria-checked={checked}
                           disabled={disabled}
-                          variants={{
-                            hidden: { opacity: 0, y: 5 },
-                            visible: { opacity: 1, y: 0 },
-                          }}
-                          transition={{ duration: reduceMotion ? 0 : 0.18 }}
                           onClick={() => {
                             const next = new Set(selection)
                             if (next.has(member.job_id)) next.delete(member.job_id)
@@ -1063,15 +1073,13 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                           <span className={`vk-task-detail-batch-status is-${member.state}`} data-state={member.state}>
                             {member.state === 'done' ? '已完成 · 再计费' : BATCH_STATE_LABELS[member.state]}
                           </span>
-                        </motion.button>
+                        </button>
                       )
                     })}
-                    <motion.button
+                    <button
                       type="button"
                       role="menuitem"
                       className="vk-task-batch-rerun-all"
-                      variants={{ hidden: { opacity: 0, y: 5 }, visible: { opacity: 1, y: 0 } }}
-                      transition={{ duration: reduceMotion ? 0 : 0.18 }}
                       onClick={() => setRerunPicked(
                         selectedCount === rerunable.length
                           ? new Set(failedIds)
@@ -1080,7 +1088,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     >
                       <RefreshCw size={15} aria-hidden="true" />
                       <span>{selectedCount === rerunable.length ? '只选失败的' : '全选'}</span>
-                    </motion.button>
+                    </button>
                   </motion.div>}
                   </AnimatePresence>,
                   document.body,

@@ -5,6 +5,10 @@ import App from './App'
 import type { CatalogSource } from './host'
 import { useAppStore } from './store/appStore'
 
+vi.mock('./features/vk/VkProviderForm', () => ({
+  VkProviderForm: ({ onSaved }: { onSaved?: () => void }) => <button onClick={onSaved}>保存模型配置</button>,
+}))
+
 const initialState = useAppStore.getState()
 
 const snapshot = {
@@ -80,5 +84,21 @@ describe('module page state', () => {
     await waitFor(() => expect(useAppStore.getState().activeModule).toBe('vk'))
 
     expect(screen.getByTestId('vk-source')).toHaveValue(link)
+  })
+
+  it('refreshes the retained video panel after model settings are saved', async () => {
+    render(<App catalogSource={catalogSource} mode="connected" baseUrl="http://127.0.0.1:43117" />)
+    const source = await screen.findByTestId('vk-source')
+    await userEvent.type(source, 'https://example.com/video')
+    await userEvent.click(screen.getByTestId('module-tab-providers'))
+    const providerReads = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/vk/v1/providers')).length
+    const readsBeforeSave = providerReads()
+
+    await userEvent.click(screen.getByRole('button', { name: '保存模型配置' }))
+    await waitFor(() => expect(providerReads()).toBe(readsBeforeSave + 1))
+    await userEvent.click(screen.getByTestId('module-tab-vk'))
+
+    expect(screen.getByTestId('vk-source')).toBe(source)
+    expect(source).toHaveValue('https://example.com/video')
   })
 })
