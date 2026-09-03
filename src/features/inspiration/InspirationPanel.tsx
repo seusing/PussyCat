@@ -86,10 +86,15 @@ export function InspirationPanel({
   const lastSelectedCommand = useRef(selected?.command)
 
   useEffect(() => {
-    if (!selected || selected.command === lastSelectedCommand.current) return
+    if (!selected) {
+      lastSelectedCommand.current = undefined
+      return
+    }
+    if (selected.command === lastSelectedCommand.current) return
     lastSelectedCommand.current = selected.command
     const nextSite = sites.find((candidate) => candidate.keys.includes(selected.site))
     if (nextSite) setSite(nextSite)
+    setWorkspace('sources')
     setStage('execute')
   }, [selected, sites])
 
@@ -152,7 +157,7 @@ export function InspirationPanel({
   }
 
   if (workspace === 'library') {
-    return <InspirationLibraryPanel onOpenSources={openSources} />
+    return <InspirationLibraryPanel onOpenSources={openSources} searchRef={searchRef} />
   }
 
   if (stage === 'execute' && selected) {

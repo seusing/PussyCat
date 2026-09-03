@@ -65,7 +65,7 @@ describe('灵感库', () => {
     expect(screen.getByTestId(`inspiration-item-${video.id}`)).toHaveTextContent('视频解析')
     await userEvent.click(screen.getByTestId(`inspiration-item-${video.id}`))
     expect(screen.getByText('来源：视频解析任务')).toBeInTheDocument()
-    await userEvent.type(screen.getByTestId('inspiration-library-search'), '不存在')
+    await userEvent.type(screen.getByTestId('nav-search'), '不存在')
     expect(screen.getByText('没有匹配的灵感')).toBeInTheDocument()
   })
 })

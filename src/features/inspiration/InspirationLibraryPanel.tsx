@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type Ref } from 'react'
 import {
   BookOpen, Check, Download, Eye, FilePlus2, FileText, Folder, FolderOpen,
   FolderPlus, Pencil, Search, Trash2, Video, X,
@@ -46,7 +46,7 @@ function updateItem(library: InspirationLibrary, itemId: string, patch: Partial<
   }
 }
 
-export function InspirationLibraryPanel({ onOpenSources }: { onOpenSources: () => void }) {
+export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSources: () => void; searchRef?: Ref<HTMLInputElement> }) {
   const [library, setLibrary] = useState<InspirationLibrary>(() => loadInspirationLibrary())
   const [folderFilter, setFolderFilter] = useState<FolderFilter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -192,7 +192,7 @@ export function InspirationLibraryPanel({ onOpenSources }: { onOpenSources: () =
           </div>
           <label className="inspiration-library-search">
             <Search size={16} aria-hidden="true" />
-            <input data-testid="inspiration-library-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索灵感" aria-label="搜索灵感" />
+            <input ref={searchRef} data-testid="nav-search" data-library-search value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索灵感" aria-label="搜索灵感" />
             {query && <button type="button" aria-label="清除搜索" title="清除搜索" onClick={() => setQuery('')}><X size={14} /></button>}
           </label>
         </div>
