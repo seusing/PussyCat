@@ -228,6 +228,22 @@ test('悬浮即展开、移开即收起 —— 瞄一眼状态不该花掉两次
   expect(screen.queryByTestId('health-details')).not.toBeInTheDocument()
 })
 
+test('窄侧栏浮层从胶囊左上方展开并保持独立阅读宽度', async () => {
+  routeFetch({ bridgeHealth: bridge({ opencliVersion: '1.8.6-long-version-without-spaces' }) })
+  connected()
+  render(<div style={{ width: 48 }}><SystemHealthPill baseUrl={BASE} /></div>)
+  await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+  await userEvent.hover(screen.getByTestId('health-pill'))
+
+  const details = screen.getByTestId('health-details')
+  expect(details.parentElement).toHaveClass('absolute', 'left-0', 'bottom-full', 'pb-2')
+  expect(details.parentElement).not.toHaveClass('right-0')
+  expect(details).toHaveClass('w-64')
+  expect(details).toHaveStyle({ maxWidth: 'calc(100vw - 2rem)' })
+  expect(screen.getByTestId('health-version')).toHaveClass('min-w-0')
+  expect(screen.getByTestId('health-version')).toHaveStyle({ overflowWrap: 'anywhere' })
+})
+
 test('浮层只给版本号与最后检查 —— 逐路结论已经写在灯上,不复述第二遍', async () => {
   routeFetch()
   connected()

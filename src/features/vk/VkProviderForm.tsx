@@ -45,7 +45,7 @@ type ChannelBusyState = {
 }
 
 type ScopedError = { message: string; location: AlertLocation }
-type PersistResult = { ok: boolean; noticeMessage?: string }
+type PersistResult = { ok: boolean; noticeMessage?: string; error?: string }
 
 const NOTICE_DURATION_MS = 2000
 
@@ -511,6 +511,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [busy, setBusy] = useState<string | null>(null)
   const [channelBusy, setChannelBusy] = useState<Record<string, ChannelBusyState>>({})
   const [modalSession, setModalSession] = useState<{ id: string; original: Draft | null } | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<Draft | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const deleteDialogRef = useRef<HTMLDialogElement>(null)
+  const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const [saving, setSaving] = useState(false)
   const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
   const [error, setError] = useState<ScopedError | null>(null)
@@ -523,6 +527,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const ccSwitchPickerRef = useRef<HTMLDivElement>(null)
   const modalId = modalSession?.id ?? null
   useDismissOnOutside(ccSwitchPickerRef, ccSwitchPickerOpen, () => setCcSwitchPickerOpen(false))
+
+  useEffect(() => {
+    if (!pendingDelete) return
+    deleteDialogRef.current?.showModal()
+    deleteCancelRef.current?.focus()
+  }, [pendingDelete])
 
   const showNotice = useCallback((tone: Notice['tone'], message: string, location: AlertLocation, dismissible = false) => {
     const notice = { id: ++noticeSeq.current, tone, message, location, dismissible }
@@ -658,7 +668,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     nextRoles: Record<string, string>,
     nextRoleFallbacks: Record<string, string[]>,
     withNotice = false,
-    errorLocation: AlertLocation = 'form',
+    errorLocation: AlertLocation | null = 'form',
   ): Promise<PersistResult> => {
     if (savingRef.current) return { ok: false }
     savingRef.current = true
@@ -676,16 +686,17 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         ].filter(Boolean).join('；')
         if (errorLocation === 'form') showNotice('success', noticeMessage, 'form')
       }
-      // 角色选择、启停、删除和备用顺序采用乐观更新。服务端保存响应不含完整
+      // 角色选择、启停和备用顺序采用乐观更新。服务端保存响应不含完整
       // settings，立即重新读取会把尚未刷新的旧快照覆盖回页面。弹窗保存仍回读，
       // 以接收服务端的规范化结果。
       if (withNotice) await load()
       onSaved?.()
       return { ok: true, noticeMessage }
     } catch (err) {
-      showNotice('error', err instanceof Error ? err.message : '模型配置保存失败', errorLocation, true)
+      const message = err instanceof Error ? err.message : '模型配置保存失败'
+      if (errorLocation !== null) showNotice('error', message, errorLocation, true)
       void load()
-      return { ok: false }
+      return { ok: false, error: message }
     } finally {
       savingRef.current = false
       setSaving(false)
@@ -694,17 +705,24 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const save = (errorLocation: AlertLocation) => persist(drafts, roles, roleFallbacks, true, errorLocation)
 
-  const removeChannel = (id: string) => {
+  const removeChannel = async (id: string) => {
+    if (savingRef.current) return
+    setDeleteError(null)
     const nextDrafts = drafts.filter((draft) => draft.id !== id)
     const nextRoles = Object.fromEntries(Object.entries(roles).filter(([, value]) => value !== id))
     const nextRoleFallbacks = Object.fromEntries(
       Object.entries(roleFallbacks).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
     )
+    const result = await persist(nextDrafts, nextRoles, nextRoleFallbacks, false, null)
+    if (!result.ok) {
+      setDeleteError(result.error ?? '模型配置保存失败')
+      return
+    }
     setDrafts(nextDrafts)
     setModalSession((current) => current?.id === id ? null : current)
     setRoles(nextRoles)
     setRoleFallbacks(nextRoleFallbacks)
-    void persist(nextDrafts, nextRoles, nextRoleFallbacks)
+    deleteDialogRef.current?.close()
   }
 
   const reuseChannel = (draft: Draft) => {
@@ -1046,7 +1064,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                       </ActionIconButton>
                     )}
                     <EditActionButton testId={`vk-channel-edit-${draft.id}`} onClick={() => openEditor(draft)} disabled={saving} />
-                    <DeleteActionButton testId={`vk-channel-remove-${draft.id}`} onClick={() => removeChannel(draft.id)} disabled={saving} />
+                    <DeleteActionButton testId={`vk-channel-remove-${draft.id}`} onClick={() => setPendingDelete(draft)} disabled={saving} />
                     <EnableActionButton testId={`vk-channel-toggle-${draft.id}`} enabled={draft.enabled} onClick={() => setChannelEnabled(draft.id, !draft.enabled)} disabled={saving} />
                   </div>
                 </div>
@@ -1058,6 +1076,35 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       </div>
 
       </section>
+
+      {pendingDelete && (
+        <dialog
+          ref={deleteDialogRef}
+          className="vk-provider-delete-dialog"
+          aria-labelledby="vk-provider-delete-title"
+          aria-describedby="vk-provider-delete-description"
+          onCancel={(event) => { if (savingRef.current) event.preventDefault() }}
+          onClose={() => { setPendingDelete(null); setDeleteError(null) }}
+        >
+          <header className="vk-provider-delete-header">
+            <h3 id="vk-provider-delete-title">删除模型配置？</h3>
+            <button type="button" aria-label="关闭删除确认" disabled={saving} className="vk-provider-delete-close" onClick={() => deleteDialogRef.current?.close()}>
+              <X size={18} aria-hidden="true" />
+            </button>
+          </header>
+          <div id="vk-provider-delete-description" className="vk-provider-delete-description">
+            <p>将删除配置「<strong>{pendingDelete.name.trim() || '未命名配置'}</strong>」。</p>
+            <p>删除将解除对应的模型选择和备用设置，已有任务和解析结果保留。</p>
+          </div>
+          {deleteError && <p className="vk-provider-delete-error" role="alert">{deleteError}</p>}
+          <footer className="vk-provider-delete-actions">
+            <button ref={deleteCancelRef} type="button" disabled={saving} className={outlineButton} style={outlineStyle} onClick={() => deleteDialogRef.current?.close()}>取消</button>
+            <button type="button" disabled={saving} className="vk-provider-delete-confirm rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-50" onClick={() => { void removeChannel(pendingDelete.id) }}>
+              {saving ? '删除中…' : '删除配置'}
+            </button>
+          </footer>
+        </dialog>
+      )}
 
       {modalId && (() => {
         const modalDraft = drafts.find((draft) => draft.id === modalId)

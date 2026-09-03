@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkProviderForm } from './VkProviderForm'
 
@@ -8,6 +8,31 @@ const providerCss = readFileSync(resolve(process.cwd(), 'src/features/vk/VkProvi
 
 const BASE = 'http://127.0.0.1:9999'
 const SECRET = 'sk-relay-DO-NOT-LEAK-0123456789'
+const dialogMethods = {
+  showModal: Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal'),
+  close: Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close'),
+}
+
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+    configurable: true,
+    value(this: HTMLDialogElement) { this.setAttribute('open', '') },
+  })
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.removeAttribute('open')
+      this.dispatchEvent(new Event('close'))
+    },
+  })
+})
+
+afterAll(() => {
+  for (const [name, descriptor] of Object.entries(dialogMethods)) {
+    if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, name, descriptor)
+    else Reflect.deleteProperty(HTMLDialogElement.prototype, name)
+  }
+})
 
 beforeEach(() => {
   const layer = document.createElement('div')
@@ -359,11 +384,12 @@ test('角色选择不再依赖页面底部的全局保存按钮', async () => {
 })
 
 
-test('删掉一条通道,指到它的角色一并解绑', async () => {
+test('确认删除模型配置后才保存,并解绑主角色和备用设置', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings({
       channels: [channel(), channel({ id: 'smart', name: 'Sol' })],
       role_assignments: { deep_analysis: 'cheap', basic: 'smart' },
+      role_fallbacks: { deep_analysis: ['smart'], basic: ['cheap'] },
     }) },
     'POST /vk/v1/providers': { body: SAVE_OK },
   })
@@ -371,11 +397,93 @@ test('删掉一条通道,指到它的角色一并解绑', async () => {
   await waitFor(() => expect(screen.getByTestId('vk-channel-remove-cheap')).toBeInTheDocument())
 
   await userEvent.click(screen.getByTestId('vk-channel-remove-cheap'))
-  expect(screen.queryByTestId('vk-channel-cheap')).not.toBeInTheDocument()
+  const dialog = screen.getByRole('dialog', { name: '删除模型配置？' })
+  expect(dialog).toHaveTextContent('GPT 5.6 Luna')
+  expect(dialog).toHaveTextContent('已有任务和解析结果保留')
+  expect(within(dialog).getByRole('button', { name: '取消' })).toHaveFocus()
+  expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
+  expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(0)
+  await userEvent.click(within(dialog).getByRole('button', { name: '删除配置' }))
 
+  await waitFor(() => expect(screen.queryByTestId('vk-channel-cheap')).not.toBeInTheDocument())
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
-  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string> }
+  const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string>; role_fallbacks: Record<string, string[]> }
   expect(body.roles).toEqual({ basic: 'smart' })
+  expect(body.role_fallbacks).toEqual({ deep_analysis: ['smart'], basic: [] })
+})
+
+test('删除确认取消或接收 cancel 事件不写入,点击背景保持弹窗', async () => {
+  const { calls } = stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const remove = await screen.findByTestId('vk-channel-remove-cheap')
+  await userEvent.click(remove)
+  const dialog = screen.getByRole('dialog', { name: '删除模型配置？' }) as HTMLDialogElement
+  await userEvent.click(dialog)
+  expect(dialog).toBeInTheDocument()
+  await userEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  await userEvent.click(remove)
+  const reopened = screen.getByRole('dialog', { name: '删除模型配置？' }) as HTMLDialogElement
+  act(() => {
+    const event = new Event('cancel', { cancelable: true })
+    reopened.dispatchEvent(event)
+    if (!event.defaultPrevented) reopened.close()
+  })
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
+  expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(0)
+})
+
+test('删除保存失败保留配置和确认弹窗,错误留在弹窗内且可重试', async () => {
+  const routes = {
+    'GET /vk/v1/providers': { body: settings({ role_assignments: { basic: 'cheap' } }) },
+    'POST /vk/v1/providers': { status: 500, body: { error: '删除保存失败' } as unknown },
+  }
+  const { calls } = stubRoutes(routes)
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByTestId('vk-channel-remove-cheap'))
+  const dialog = screen.getByRole('dialog', { name: '删除模型配置？' })
+  await userEvent.click(within(dialog).getByRole('button', { name: '删除配置' }))
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('删除保存失败')
+  expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
+  expect(screen.getByTestId('vk-role-basic')).toHaveValue('cheap')
+  expect(screen.queryByTestId('vk-provider-error')).not.toBeInTheDocument()
+  routes['POST /vk/v1/providers'] = { status: 200, body: SAVE_OK }
+  await userEvent.click(within(dialog).getByRole('button', { name: '删除配置' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(screen.queryByTestId('vk-channel-cheap')).not.toBeInTheDocument()
+  expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(2)
+})
+
+test('删除保存期间重复确认仅发一次请求且禁止取消', async () => {
+  const saved = deferred<typeof SAVE_OK>()
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      posts += 1
+      const body = await saved.promise
+      return { ok: true, status: 200, json: async () => body }
+    }
+    return { ok: true, status: 200, json: async () => settings() }
+  }))
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByTestId('vk-channel-remove-cheap'))
+  const dialog = screen.getByRole('dialog', { name: '删除模型配置？' })
+  const confirm = within(dialog).getByRole('button', { name: '删除配置' })
+  act(() => { fireEvent.click(confirm); fireEvent.click(confirm) })
+  expect(posts).toBe(1)
+  expect(confirm).toBeDisabled()
+  expect(confirm).toHaveTextContent('删除中…')
+  expect(within(dialog).getByRole('button', { name: '取消' })).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: '关闭删除确认' })).toBeDisabled()
+  const cancel = new Event('cancel', { cancelable: true })
+  fireEvent(dialog, cancel)
+  expect(cancel.defaultPrevented).toBe(true)
+  expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
+  await act(async () => { saved.resolve(SAVE_OK) })
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('vk-channel-cheap')).not.toBeInTheDocument()
 })
 
 

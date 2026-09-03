@@ -423,11 +423,11 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       {/* 外面这层是「桥」,不可见,只负责把胶囊与卡片之间那 8px 缝盖住。
           浮层从胶囊上方展开,避免贴近视口底部时被裁掉; pb-2 让鼠标经过间隙时仍命中根节点。 */}
       {detailsOpen && (
-        <div className="absolute right-0 bottom-full z-50 pb-2">
+        <div className="absolute left-0 bottom-full z-50 pb-2">
         <div
           data-testid="health-details"
           className="w-64 rounded-lg p-3 text-xs shadow-xl"
-          style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+          style={{ maxWidth: 'calc(100vw - 2rem)', background: 'var(--color-panel)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
         >
           {/* 三路明细(爪爪服务/浏览器连接/视频解析)撤掉:结论已经写在上面那颗灯的标签里,
               浮层再逐路复述一遍,是把同一件事说了两遍。真正只有这里才有、别处看不到的,
@@ -436,13 +436,13 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
           <div className="mb-2 font-medium">连接状态</div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
             <dt style={{ color: 'var(--color-fg-dim)' }}>OpenCLI 版本</dt>
-            <dd data-testid="health-version">{bridge?.opencliVersion ?? '未知'}</dd>
+            <dd data-testid="health-version" className="min-w-0" style={{ overflowWrap: 'anywhere' }}>{bridge?.opencliVersion ?? '未知'}</dd>
             <dt style={{ color: 'var(--color-fg-dim)' }}>最后检查</dt>
-            <dd>{lastCheckedAt ? new Date(lastCheckedAt).toLocaleTimeString() : '尚未完成'}</dd>
+            <dd className="min-w-0" style={{ overflowWrap: 'anywhere' }}>{lastCheckedAt ? new Date(lastCheckedAt).toLocaleTimeString() : '尚未完成'}</dd>
           </dl>
           {/* nextStep 留着:它不是报错,是「你接下来该做什么」,只在修复没成时出现。 */}
           {nextStep && (
-            <div data-testid="health-next-step" className="mt-3" style={{ color: 'var(--color-fg-dim)' }}>
+            <div data-testid="health-next-step" className="mt-3 min-w-0" style={{ color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
               {nextStep}
             </div>
           )}

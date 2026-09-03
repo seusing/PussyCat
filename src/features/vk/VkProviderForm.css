@@ -146,6 +146,31 @@
   pointer-events: auto;
 }
 
+.vk-provider-delete-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-panel);
+  color: var(--color-fg);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 40%);
+}
+
+.vk-provider-delete-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.vk-provider-delete-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.vk-provider-delete-header h3 { margin: 0; font-size: 18px; font-weight: 600; }
+.vk-provider-delete-close { display: inline-flex; flex: 0 0 auto; padding: 6px; border: 1px solid var(--color-line); border-radius: 8px; color: var(--color-fg); }
+.vk-provider-delete-close:disabled { opacity: .5; }
+.vk-provider-delete-description { margin-top: 16px; color: var(--color-fg-dim); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.vk-provider-delete-description p { margin: 0 0 8px; }
+.vk-provider-delete-description strong { color: var(--color-fg); font-weight: 600; }
+.vk-provider-delete-error { margin: 12px 0 0; color: var(--color-danger); font-size: 13px; overflow-wrap: anywhere; }
+.vk-provider-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-line); }
+.vk-provider-delete-confirm { background: var(--color-danger); color: var(--color-on-accent); }
+
 .vk-provider-icon--busy,
 .vk-test-icon--busy {
   animation: vk-test-icon-pulse 850ms ease-in-out infinite;
