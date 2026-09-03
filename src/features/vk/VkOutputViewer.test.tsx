@@ -150,3 +150,123 @@ it('falls back to the first available Markdown artifact and then to audit', asyn
   await userEvent.click(screen.getByRole('tab', { name: '任务 2' }))
   await screen.findByRole('heading', { name: 'audit.md' })
 })
+
+it.each([
+  { count: 15, orientation: 'horizontal', nextKey: 'ArrowRight', previousKey: 'ArrowLeft', ignoredKey: 'ArrowDown' },
+  { count: 16, orientation: 'vertical', nextKey: 'ArrowDown', previousKey: 'ArrowUp', ignoredKey: 'ArrowRight' },
+])('uses $orientation tab navigation for $count results', async ({ count, orientation, nextKey, previousKey, ignoredKey }) => {
+  const items = Array.from({ length: count }, (_, index) => ({ id: `output:${index}`, label: `任务 ${index + 1}`, outputId: `${index}.md` }))
+  render(<Harness items={items} />)
+  await screen.findByRole('heading', { name: '0.md' })
+  expect(screen.getByRole('tablist')).toHaveAttribute('aria-orientation', orientation)
+  const first = screen.getByRole('tab', { name: '任务 1' })
+  const second = screen.getByRole('tab', { name: '任务 2' })
+  const last = screen.getByRole('tab', { name: `任务 ${count}` })
+  first.focus()
+  fireEvent.keyDown(first, { key: ignoredKey })
+  expect(first).toHaveAttribute('aria-selected', 'true')
+  fireEvent.keyDown(first, { key: nextKey })
+  expect(second).toHaveFocus()
+  expect(second).toHaveAttribute('aria-selected', 'true')
+  await screen.findByRole('heading', { name: '1.md' })
+  fireEvent.keyDown(second, { key: previousKey })
+  expect(first).toHaveFocus()
+  fireEvent.keyDown(first, { key: 'End' })
+  expect(last).toHaveFocus()
+  expect(last).toHaveAttribute('aria-selected', 'true')
+  await screen.findByRole('heading', { name: `${count - 1}.md` })
+  fireEvent.keyDown(last, { key: 'Home' })
+  expect(first).toHaveFocus()
+  expect(first).toHaveAttribute('aria-selected', 'true')
+})
+
+it('keeps the active result when sixteen vertical tabs become fifteen horizontal tabs', async () => {
+  const items = Array.from({ length: 16 }, (_, index) => ({ id: `output:${index}`, label: `任务 ${index + 1}`, outputId: `${index}.md` }))
+  const { rerender } = render(<Harness items={items} />)
+  await screen.findByRole('heading', { name: '0.md' })
+  await userEvent.click(screen.getByRole('tab', { name: '任务 15' }))
+  await screen.findByRole('heading', { name: '14.md' })
+  expect(screen.getByRole('tablist')).toHaveAttribute('aria-orientation', 'vertical')
+  const requests = vi.mocked(fetchVkOutputText).mock.calls.length
+  rerender(<Harness items={items.slice(0, 15)} />)
+  expect(screen.getByRole('tablist')).toHaveAttribute('aria-orientation', 'horizontal')
+  expect(screen.getByRole('tab', { name: '任务 15' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('tabpanel')).toHaveTextContent('正文 14.md')
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(requests)
+})
+
+function VersionHarness() {
+  const [jobId, setJobId] = useState('latest')
+  const versions = [
+    { jobId: 'latest', attempt: 2, submittedAt: '2026-09-03T08:00:00Z', status: 'done' },
+    { jobId: 'previous', attempt: 1, submittedAt: '2026-09-02T08:00:00Z', status: 'done' },
+  ]
+  return <VkOutputViewer tabs={[{ id: 'task:one', label: '任务 1', jobId, versions }]}
+    activeTabId="task:one" onSelectTab={() => {}} onSelectVersion={(_tabId, nextJobId) => setJobId(nextJobId)}
+    baseUrl="http://host" onClose={() => {}} />
+}
+
+it('selects versions within one tab and caches, copies, and downloads each version independently', async () => {
+  render(<VersionHarness />)
+  await screen.findByRole('heading', { name: 'latest.md' })
+  const version = screen.getByRole('combobox', { name: '选择结果版本' })
+  expect(version).toHaveValue('latest')
+  expect(screen.getByRole('option', { name: /第 2 次.*最新结果/ })).toHaveValue('latest')
+  expect(screen.getAllByRole('tab')).toHaveLength(1)
+  await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
+  expect(copyText).toHaveBeenLastCalledWith('# latest.md\n\n正文 latest.md')
+  await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
+  expect(saveTextFileAs).toHaveBeenLastCalledWith('latest.md', '# latest.md\n\n正文 latest.md', expect.any(Object))
+  const content = screen.getByRole('tabpanel')
+  content.scrollTop = 150
+  await userEvent.selectOptions(version, 'previous')
+  expect(content.scrollTop).toBe(0)
+  await screen.findByRole('heading', { name: 'previous.md' })
+  expect(screen.getByTestId('vk-output-viewer-copy')).toHaveAccessibleName('复制内容')
+  await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
+  expect(copyText).toHaveBeenLastCalledWith('# previous.md\n\n正文 previous.md')
+  await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
+  expect(saveTextFileAs).toHaveBeenLastCalledWith('previous.md', '# previous.md\n\n正文 previous.md', expect.any(Object))
+  content.scrollTop = 80
+  await userEvent.selectOptions(version, 'latest')
+  expect(content.scrollTop).toBe(0)
+  await screen.findByRole('heading', { name: 'latest.md' })
+  await userEvent.selectOptions(version, 'previous')
+  await screen.findByRole('heading', { name: 'previous.md' })
+  expect(fetchVkJob).toHaveBeenCalledTimes(2)
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(2)
+  expect(screen.getAllByRole('tab')).toHaveLength(1)
+})
+
+it('ignores a slow old version and aborts a version download when selecting another version', async () => {
+  const oldVersion = deferred<string>()
+  const saving = deferred<boolean>()
+  vi.mocked(fetchVkOutputText).mockImplementation((id) => id === 'previous.md' ? oldVersion.promise : Promise.resolve('# Latest'))
+  render(<VersionHarness />)
+  await screen.findByRole('heading', { name: 'Latest' })
+  const version = screen.getByRole('combobox', { name: '选择结果版本' })
+  await userEvent.selectOptions(version, 'previous')
+  await waitFor(() => expect(fetchVkOutputText).toHaveBeenCalledWith('previous.md', 'http://host'))
+  expect(screen.getByTestId('vk-output-viewer-copy')).toBeDisabled()
+  expect(screen.queryByRole('heading', { name: 'Latest' })).not.toBeInTheDocument()
+  await userEvent.selectOptions(version, 'latest')
+  await act(async () => { oldVersion.resolve('# Previous') })
+  expect(screen.getByRole('heading', { name: 'Latest' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Previous' })).not.toBeInTheDocument()
+  vi.mocked(fetchVkOutputText).mockResolvedValueOnce('# Previous')
+  await userEvent.selectOptions(version, 'previous')
+  await screen.findByRole('heading', { name: 'Previous' })
+  vi.mocked(saveTextFileAs).mockImplementation((_name, _content, options) => {
+    options?.onProgress?.(37)
+    return saving.promise
+  })
+  await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
+  const signal = vi.mocked(saveTextFileAs).mock.calls[0][2]?.signal
+  expect(signal?.aborted).toBe(false)
+  await userEvent.selectOptions(version, 'latest')
+  expect(signal?.aborted).toBe(true)
+  await act(async () => { saving.reject(new Error('旧版本下载失败')) })
+  expect(screen.getByRole('heading', { name: 'Latest' })).toBeInTheDocument()
+  expect(screen.getByTestId('vk-output-viewer-download')).toHaveAttribute('data-state', 'idle')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})

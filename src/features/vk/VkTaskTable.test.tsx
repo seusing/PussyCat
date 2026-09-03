@@ -137,6 +137,19 @@ describe('VkTaskTable', () => {
     expect(onSave).not.toHaveBeenCalled()
   })
 
+  it('saves a failed task when an earlier result is available', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    const canSaveResult = vi.fn((row: VkJobRow) => row.job_id === 'job-failed')
+    render(<VkTaskTable {...makeProps({ onSave, canSaveResult })} />)
+
+    await user.click(screen.getByRole('button', { name: '任务 3 更多操作' }))
+    const save = within(screen.getByRole('menu')).getByRole('menuitem', { name: '存到本地' })
+    expect(save).toBeEnabled()
+    await user.click(save)
+    expect(onSave).toHaveBeenCalledWith(JOBS[2])
+  })
+
   it('toggles an individual notification without selecting its row', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()

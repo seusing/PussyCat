@@ -42,6 +42,7 @@ import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { VkOutputViewer, type VkOutputTab } from './VkOutputViewer'
+import { vkJobRowFromView, vkPrimaryOutput as primaryOutput, vkTaskResultGroups } from './taskResults'
 import { DEFAULT_BASE_URL } from '../../host/nodeBridgeHost'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import {
@@ -291,14 +292,6 @@ function latestLogicalTasks(rows: VkJobRow[]): VkJobRow[] {
   })
 
   return collapsed.sort((left, right) => Date.parse(right.submitted_at) - Date.parse(left.submitted_at))
-}
-
-function primaryOutput(job: VkJobView): { id: string; title: string } | null {
-  if (job.outputs?.note_path) return { id: job.outputs.note_path, title: '知识笔记' }
-  const product = job.outputs?.product_artifacts?.find((artifact) => artifact.markdown)
-  if (product?.markdown) return { id: product.markdown, title: `${product.preset} MD` }
-  if (job.outputs?.audit_path) return { id: job.outputs.audit_path, title: '证据审计' }
-  return null
 }
 
 function outputFileName(outputId: string): string {
@@ -724,22 +717,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const [hiddenJobs, setHiddenJobs] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_HIDDEN_JOBS_KEY))
   const [actionError, setActionError] = useState<string | null>(null)
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
-  const [documentTabs, setDocumentTabs] = useState<VkOutputTab[]>([])
+  const [outputTabs, setOutputTabs] = useState<VkOutputTab[]>([])
   const visibleJobs = useMemo(() => latestLogicalTasks(jobs).filter((row) => !hiddenJobs[row.job_id]), [jobs, hiddenJobs])
-  const outputTabs = useMemo(() => {
-    const taskTabs = visibleJobs.flatMap((row) => (row.batchMembers ?? [row]).flatMap((member, index) =>
-      SUCCESS_STATUSES.has(member.status) ? [{
-        id: `job:${member.job_id}`, jobId: member.job_id, source: member.source ?? undefined,
-        label: `任务 ${row.taskNumber ?? member.taskNumber ?? '—'}${row.batchMembers ? ` · 小任务 ${index + 1}` : ''}`,
-      }] : []))
-    return [...taskTabs, ...documentTabs.filter((tab) => !taskTabs.some((task) => task.id === tab.id)
-      && (!tab.jobId || !jobs.some((job) => job.job_id === tab.jobId)))]
-  }, [visibleJobs, documentTabs, jobs])
-  useEffect(() => {
-    if (activeTabId && !outputTabs.some((tab) => tab.id === activeTabId)) {
-      setActiveTabId(outputTabs[0]?.id ?? null)
-    }
-  }, [activeTabId, outputTabs])
+  const resultTaskIds = useMemo(() => new Set(jobs.filter((row) => SUCCESS_STATUSES.has(row.status))
+    .map((row) => row.logicalTaskId ?? row.job_id)), [jobs])
   const jobsGen = useRef(0)
   const notificationPrefsRef = useRef(notifications)
   const previousStatusesRef = useRef<Map<string, string> | null>(null)
@@ -927,35 +908,61 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     }
   }
 
+  const openTaskOutputs = useCallback((jobId: string, versionJobId?: string, fallback?: { outputId: string; title: string }) => {
+    const rows = selectedJob?.job_id === jobId && !jobs.some((row) => row.job_id === jobId)
+      ? [...jobs, vkJobRowFromView(selectedJob)] : jobs
+    const groups = vkTaskResultGroups(rows, jobId)
+    const selected = groups.find((group) => group.jobIds.includes(versionJobId ?? jobId))
+    const tabs: VkOutputTab[] = groups.flatMap((group) => {
+      const version = group.versions.find((item) => item.jobId === versionJobId) ?? group.versions[0]
+      return version ? [{
+        id: group.id, jobId: version.jobId, source: group.source,
+        label: `任务 ${group.taskNumber ?? '—'}${groups.length > 1 ? ` · 小任务 ${group.ordinal}` : ''}`,
+        versions: group.versions,
+      }] : []
+    })
+    if (!tabs.length && fallback) tabs.push({ id: `output:${fallback.outputId}`, label: fallback.title, outputId: fallback.outputId })
+    setOutputTabs(tabs)
+    setActiveTabId(tabs.find((tab) => tab.id === selected?.id)?.id ?? tabs[0]?.id ?? null)
+  }, [jobs, selectedJob])
+
   const openOutput = useCallback((outputId: string, title: string, jobId?: string) => {
-    const id = jobId ? `job:${jobId}` : `output:${outputId}`
-    setDocumentTabs((current) => current.some((tab) => tab.id === id) ? current : [...current, {
-      id, label: title, outputId, ...(jobId ? { jobId } : {}),
-    }])
+    if (jobId) {
+      openTaskOutputs(jobId, undefined, { outputId, title })
+      return
+    }
+    const id = `output:${outputId}`
+    setOutputTabs([{ id, label: title, outputId }])
     setActiveTabId(id)
-  }, [])
+  }, [openTaskOutputs])
 
   useEffect(() => {
     const openRequestedOutput = (event: Event) => {
-      const detail = (event as CustomEvent<{ outputId?: string; title?: string; jobId?: string }>).detail
-      if (detail?.outputId) openOutput(detail.outputId, detail.title || '解析结果', detail.jobId)
+      const detail = (event as CustomEvent<{ outputId?: string; title?: string; jobId?: string; versionJobId?: string }>).detail
+      if (detail?.jobId) openTaskOutputs(detail.jobId, detail.versionJobId,
+        detail.outputId ? { outputId: detail.outputId, title: detail.title || '解析结果' } : undefined)
+      else if (detail?.outputId) openOutput(detail.outputId, detail.title || '解析结果')
     }
     window.addEventListener(VK_OPEN_OUTPUT_EVENT, openRequestedOutput)
     return () => window.removeEventListener(VK_OPEN_OUTPUT_EVENT, openRequestedOutput)
-  }, [openOutput])
+  }, [openOutput, openTaskOutputs])
 
   const openTaskResult = (row: VkJobRow) => {
-    const member = (row.batchMembers ?? [row]).find((item) => SUCCESS_STATUSES.has(item.status))
-    if (!member) return
-    setActiveTabId(`job:${member.job_id}`)
-    void openJob(member.job_id)
+    openTaskOutputs(row.job_id)
+    void openJob(row.job_id)
   }
 
   const saveTaskOutput = async (row: VkJobRow) => {
     setActionError(null)
     try {
-      const detail = await fetchVkJob(row.job_id, base)
-      const output = primaryOutput(detail)
+      const groups = vkTaskResultGroups(jobs, row.job_id)
+      const group = groups.find((item) => item.jobIds.includes(row.job_id) && item.versions.length)
+        ?? groups.find((item) => item.versions.length)
+      let output: ReturnType<typeof primaryOutput> = null
+      for (const version of group?.versions ?? []) {
+        output = primaryOutput(await fetchVkJob(version.jobId, base))
+        if (output) break
+      }
       if (!output) throw new Error('任务尚未生成可用结果')
       const content = await fetchVkOutputText(output.id, base)
       await saveTextFileAs(outputFileName(output.id), content)
@@ -1347,6 +1354,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
           onOpen={(row) => { void openTaskResult(row) }}
           onToggleNotification={toggleTaskNotification}
           onSave={(row) => { void saveTaskOutput(row) }}
+          canSaveResult={(row) => resultTaskIds.has(row.logicalTaskId ?? row.job_id)}
           onDelete={hideTaskRecord}
         />
       </div>
@@ -1445,6 +1453,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
 
       {activeTabId && (
         <VkOutputViewer tabs={outputTabs} activeTabId={activeTabId} onSelectTab={setActiveTabId}
+          onSelectVersion={(tabId, jobId) => setOutputTabs((tabs) => tabs.map((tab) => tab.id === tabId ? { ...tab, jobId, outputId: undefined } : tab))}
           baseUrl={base ?? DEFAULT_BASE_URL} onClose={() => setActiveTabId(null)} />
       )}
     </div>

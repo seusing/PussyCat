@@ -18,6 +18,7 @@ export interface VkTaskTableProps {
   onOpen: (row: VkJobRow) => void
   onToggleNotification: (id: string, enabled: boolean) => void
   onSave: (row: VkJobRow) => void
+  canSaveResult?: (row: VkJobRow) => boolean
   onDelete: (row: VkJobRow) => void
 }
 
@@ -113,6 +114,7 @@ export function VkTaskTable({
   onOpen,
   onToggleNotification,
   onSave,
+  canSaveResult,
   onDelete,
 }: VkTaskTableProps) {
   const [statusFilter, setStatusFilter] = useState('all')
@@ -296,7 +298,7 @@ export function VkTaskTable({
             const taskNumber = row.taskNumber ?? index + 1
             const notificationEnabled = notifications[row.job_id] ?? false
             const status = normalizeStatus(row)
-            const canSaveOutput = OUTPUT_STATUSES.has(row.status.trim().toLowerCase())
+            const canSaveOutput = canSaveResult?.(row) ?? OUTPUT_STATUSES.has(row.status.trim().toLowerCase())
             const selected = row.job_id === selectedJobId
             const menuOpen = row.job_id === menuJobId
             return (

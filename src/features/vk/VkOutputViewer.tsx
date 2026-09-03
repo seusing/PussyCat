@@ -2,22 +2,15 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { AnimatePresence, motion, useDragControls, useMotionValue } from 'motion/react'
 import { Check, Copy, Download } from 'lucide-react'
 import Markdown from 'react-markdown'
-import { fetchVkJob, fetchVkOutputText, type VkJobView } from '../../host/vkClient'
+import { fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
+import { vkPrimaryOutput, vkResultVersionLabel, type VkResultVersion } from './taskResults'
 import './VkOutputViewer.css'
 
-export type VkOutputTab = { id: string; label: string; source?: string; jobId?: string; outputId?: string }
+export type VkOutputTab = { id: string; label: string; source?: string; jobId?: string; outputId?: string; versions?: VkResultVersion[] }
 type LoadedOutput = { outputId: string; content: string }
-
-function primaryOutput(job: VkJobView): { id: string; title: string } | null {
-  if (job.outputs?.note_path) return { id: job.outputs.note_path, title: '知识笔记' }
-  const product = job.outputs?.product_artifacts?.find((artifact) => artifact.markdown)
-  if (product?.markdown) return { id: product.markdown, title: `${product.preset} MD` }
-  if (job.outputs?.audit_path) return { id: job.outputs.audit_path, title: '证据审计' }
-  return null
-}
 
 function outputFileName(outputId: string): string {
   const name = outputId.split(/[\\/]/).filter(Boolean).at(-1)
@@ -29,16 +22,17 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message || fallback : fallback
 }
 
-export function VkOutputViewer({ tabs, activeTabId, onSelectTab, baseUrl, onClose }: {
+export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion, baseUrl, onClose }: {
   tabs: VkOutputTab[]
   activeTabId: string
   onSelectTab: (id: string) => void
+  onSelectVersion?: (tabId: string, jobId: string) => void
   baseUrl: string
   onClose: () => void
 }) {
   const cache = useRef(new Map<string, LoadedOutput>())
-  const [loadedState, setLoadedState] = useState<{ tabId: string; value: LoadedOutput } | null>(null)
-  const [loadError, setLoadError] = useState<{ tabId: string; message: string } | null>(null)
+  const [loadedState, setLoadedState] = useState<{ key: string; value: LoadedOutput } | null>(null)
+  const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null)
   const [retry, setRetry] = useState(0)
   const [actionError, setActionError] = useState<string | null>(null)
   const [outputCopied, setOutputCopied] = useState(false)
@@ -49,11 +43,14 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, baseUrl, onClos
   const outputDownloadResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const interactionGeneration = useRef(0)
   const sectionRef = useRef<HTMLElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const domId = useId()
+  const verticalTabs = tabs.length > 15
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
-  const loaded = cache.current.get(activeTabId) ?? (loadedState?.tabId === activeTabId ? loadedState.value : undefined)
-  const error = loadError?.tabId === activeTabId ? loadError.message : null
+  const outputKey = JSON.stringify([activeTabId, activeTab?.jobId, activeTab?.outputId])
+  const loaded = cache.current.get(outputKey) ?? (loadedState?.key === outputKey ? loadedState.value : undefined)
+  const error = loadError?.key === outputKey ? loadError.message : null
   const dragControls = useDragControls()
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
   const [size, setSize] = useState(() => ({ width: Math.min(960, window.innerWidth - 24), height: Math.min(700, window.innerHeight - 24) }))
@@ -83,16 +80,25 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, baseUrl, onClos
     if (!tab || !tablist) return
     const tabBounds = tab.getBoundingClientRect()
     const listBounds = tablist.getBoundingClientRect()
-    const left = listBounds.left + tablist.clientLeft
-    const right = left + tablist.clientWidth
-    if (tabBounds.left < left) tablist.scrollLeft += tabBounds.left - left
-    else if (tabBounds.right > right) tablist.scrollLeft += tabBounds.right - right
-  }, [activeTabId, tabs.length, size.width, viewport.width])
+    if (verticalTabs) {
+      tablist.scrollLeft = 0
+      const top = listBounds.top + tablist.clientTop
+      const bottom = top + tablist.clientHeight
+      if (tabBounds.top < top) tablist.scrollTop += tabBounds.top - top
+      else if (tabBounds.bottom > bottom) tablist.scrollTop += tabBounds.bottom - bottom
+    } else {
+      tablist.scrollTop = 0
+      const left = listBounds.left + tablist.clientLeft
+      const right = left + tablist.clientWidth
+      if (tabBounds.left < left) tablist.scrollLeft += tabBounds.left - left
+      else if (tabBounds.right > right) tablist.scrollLeft += tabBounds.right - right
+    }
+  }, [activeTabId, tabs.length, verticalTabs, size.width, size.height, viewport.width, viewport.height])
 
   useEffect(() => { sectionRef.current?.focus() }, [])
 
   useEffect(() => {
-    if (!activeTab || cache.current.has(activeTab.id)) return
+    if (!activeTab || cache.current.has(outputKey)) return
     let current = true
     setLoadError(null)
     void (async () => {
@@ -100,19 +106,19 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, baseUrl, onClos
         let outputId = activeTab.outputId
         if (!outputId && activeTab.jobId) {
           const job = await fetchVkJob(activeTab.jobId, baseUrl)
-          outputId = primaryOutput(job)?.id
+          outputId = vkPrimaryOutput(job)?.id
         }
         if (!outputId) throw new Error('任务尚未生成可用结果')
         const value = { outputId, content: await fetchVkOutputText(outputId, baseUrl) }
         if (!current) return
-        cache.current.set(activeTab.id, value)
-        setLoadedState({ tabId: activeTab.id, value })
+        cache.current.set(outputKey, value)
+        setLoadedState({ key: outputKey, value })
       } catch (error) {
-        if (current) setLoadError({ tabId: activeTab.id, message: errorText(error, '结果读取失败') })
+        if (current) setLoadError({ key: outputKey, message: errorText(error, '结果读取失败') })
       }
     })()
     return () => { current = false }
-  }, [activeTab?.id, activeTab?.jobId, activeTab?.outputId, baseUrl, retry])
+  }, [outputKey, activeTab?.id, activeTab?.jobId, activeTab?.outputId, baseUrl, retry])
 
   const resetOutputDownload = useCallback(() => {
     outputDownloadController.current?.abort()
@@ -126,6 +132,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, baseUrl, onClos
 
   useLayoutEffect(() => {
     interactionGeneration.current += 1
+    if (contentRef.current) contentRef.current.scrollTop = 0
     setOutputCopied(false)
     setActionError(null)
     resetOutputDownload()
@@ -134,7 +141,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, baseUrl, onClos
       outputDownloadController.current?.abort()
       if (outputDownloadResetTimer.current) clearTimeout(outputDownloadResetTimer.current)
     }
-  }, [activeTabId, resetOutputDownload])
+  }, [outputKey, resetOutputDownload])
 
   const downloadOutput = useCallback(async () => {
     if (!loaded) return
@@ -260,29 +267,42 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, baseUrl, onClos
           </motion.button>
           <button type="button" data-testid="vk-output-viewer-close" aria-label="关闭结果" title="关闭" onClick={onClose} className="vk-output-close">×</button>
         </header>
-        <div role="tablist" aria-label="任务结果" className="vk-output-tabs">
-          {tabs.map((tab, index) => (
-            <button key={tab.id} id={`${domId}-tab-${index}`} role="tab" aria-selected={tab.id === activeTabId}
-              aria-controls={`${domId}-panel`} tabIndex={tab.id === activeTabId ? 0 : -1}
-              ref={(element) => { if (element) tabRefs.current.set(tab.id, element); else tabRefs.current.delete(tab.id) }}
-              title={tab.source || tab.label} onClick={() => onSelectTab(tab.id)}
-              onKeyDown={(event) => {
-                const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-                  : event.key === 'ArrowRight' ? (index + 1) % tabs.length
-                    : event.key === 'ArrowLeft' ? (index - 1 + tabs.length) % tabs.length : null
-                if (next === null) return
-                event.preventDefault()
-                onSelectTab(tabs[next].id)
-                tabRefs.current.get(tabs[next].id)?.focus()
-              }}
-            >{tab.label}</button>
-          ))}
-        </div>
-        <div id={`${domId}-panel`} role="tabpanel" aria-labelledby={`${domId}-tab-${tabs.findIndex((tab) => tab.id === activeTabId)}`}
-          data-testid="vk-output-viewer-content" className="vk-output-viewer-content" aria-busy={!loaded && !error}>
-          {actionError && <p role="alert">{actionError}</p>}
-          {error ? <div role="alert">{error}<button type="button" onClick={() => setRetry((value) => value + 1)}>重试</button></div>
-            : loaded ? <Markdown>{loaded.content}</Markdown> : <p role="status">正在读取结果…</p>}
+        {onSelectVersion && activeTab?.versions && activeTab.versions.length > 1 && (
+          <label className="vk-output-version-bar">
+            <span>结果版本</span>
+            <select aria-label="选择结果版本" value={activeTab.jobId}
+              onChange={(event) => onSelectVersion(activeTab.id, event.target.value)}>
+              {activeTab.versions.map((version, index) => (
+                <option key={version.jobId} value={version.jobId}>{vkResultVersionLabel(version, index === 0)}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className={`vk-output-body${verticalTabs ? ' is-vertical' : ''}`}>
+          <div role="tablist" aria-label="任务结果" aria-orientation={verticalTabs ? 'vertical' : 'horizontal'} className="vk-output-tabs">
+            {tabs.map((tab, index) => (
+              <button key={tab.id} id={`${domId}-tab-${index}`} role="tab" aria-selected={tab.id === activeTabId}
+                aria-controls={`${domId}-panel`} tabIndex={tab.id === activeTabId ? 0 : -1}
+                ref={(element) => { if (element) tabRefs.current.set(tab.id, element); else tabRefs.current.delete(tab.id) }}
+                title={tab.source || tab.label} onClick={() => onSelectTab(tab.id)}
+                onKeyDown={(event) => {
+                  const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                    : event.key === (verticalTabs ? 'ArrowDown' : 'ArrowRight') ? (index + 1) % tabs.length
+                      : event.key === (verticalTabs ? 'ArrowUp' : 'ArrowLeft') ? (index - 1 + tabs.length) % tabs.length : null
+                  if (next === null) return
+                  event.preventDefault()
+                  onSelectTab(tabs[next].id)
+                  tabRefs.current.get(tabs[next].id)?.focus({ preventScroll: true })
+                }}
+              >{tab.label}</button>
+            ))}
+          </div>
+          <div ref={contentRef} id={`${domId}-panel`} role="tabpanel" aria-labelledby={`${domId}-tab-${tabs.findIndex((tab) => tab.id === activeTabId)}`}
+            data-testid="vk-output-viewer-content" className="vk-output-viewer-content" aria-busy={!loaded && !error}>
+            {actionError && <p role="alert">{actionError}</p>}
+            {error ? <div role="alert">{error}<button type="button" onClick={() => setRetry((value) => value + 1)}>重试</button></div>
+              : loaded ? <Markdown>{loaded.content}</Markdown> : <p role="status">正在读取结果…</p>}
+          </div>
         </div>
         <span className="vk-output-resize-hint" aria-hidden="true">◢</span>
       </motion.section>

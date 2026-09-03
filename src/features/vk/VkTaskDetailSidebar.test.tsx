@@ -4,8 +4,75 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkTaskDetailSidebar } from './VkTaskDetailSidebar'
+import type { VkJobView } from '../../host/vkClient'
 
 const BASE = 'http://127.0.0.1:17373'
+
+function memberProgressFixture() {
+  const details = new Map<string, VkJobView>([
+    ['member-a', 'batch-one', 'acquire'],
+    ['member-b', 'batch-one', 'chapter'],
+    ['member-c', 'batch-two', 'note'],
+    ['member-d', 'batch-two', 'product'],
+  ].map(([jobId, batchId, stage]) => [jobId, {
+    job_id: jobId, kind: 'run', status: 'done', batch_id: batchId,
+    submitted_at: '2026-09-03T00:00:00Z', finished_at: '2026-09-03T00:01:00Z',
+    parent_job_id: null, cache_bypass: false,
+    request: { source: `https://example.com/${jobId}`, preset: 'quick-summary' },
+    progress: {
+      completed_stages: [stage],
+      stage_metrics: [{ stage, status: 'done', elapsed_s: 2, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0 }],
+    },
+  }]))
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input)).pathname
+    if (path === '/vk/v1/providers') return new Response(JSON.stringify({ channels: [], roles: {} }))
+    if (path === '/vk/v1/jobs') return new Response(JSON.stringify(
+      [...details.values()].map((detail) => ({ ...detail, source: detail.request?.source })),
+    ))
+    const detail = details.get(path.split('/').at(-1) ?? '')
+    return new Response(JSON.stringify(detail ?? {}), { status: detail ? 200 : 404 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return { details, fetchMock }
+}
+
+function captureMemberPolling() {
+  const polls = new Map<number, () => Promise<void>>()
+  let timerId = 100_000
+  vi.spyOn(window, 'setInterval').mockImplementation((callback: TimerHandler, delay?: number) => {
+    const id = timerId++
+    if (delay === 1500) polls.set(id, callback as () => Promise<void>)
+    return id as unknown as ReturnType<typeof window.setInterval>
+  })
+  vi.spyOn(window, 'clearInterval').mockImplementation((id) => {
+    if (typeof id === 'number') polls.delete(id)
+  })
+  return polls
+}
+
+function resultHistoryFixture(status: string) {
+  const fixture = memberProgressFixture()
+  const original = {
+    ...fixture.details.get('member-a')!, job_id: 'result-original', batch_id: null,
+    outputs: { note_path: 'notes/original.md' },
+  }
+  fixture.details.clear()
+  fixture.details.set(original.job_id, original)
+  fixture.details.set('result-middle', {
+    ...original, job_id: 'result-middle', parent_job_id: original.job_id,
+    submitted_at: '2026-09-03T00:02:00Z', outputs: { note_path: 'notes/middle.md' },
+  })
+  fixture.details.set('result-current', {
+    ...original, job_id: 'result-current', parent_job_id: 'result-middle', status,
+    submitted_at: '2026-09-03T00:04:00Z', outputs: {},
+  })
+  fixture.details.set('result-unrelated', {
+    ...original, job_id: 'result-unrelated', batch_id: 'another-batch',
+    submitted_at: '2026-09-03T00:06:00Z',
+  })
+  return fixture
+}
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: (props: { 'aria-label'?: string; state?: string; speed?: number }) => (
@@ -20,6 +87,168 @@ afterEach(() => {
 })
 
 describe('VkTaskDetailSidebar', () => {
+  it.each(['failed', 'cancelled', 'running'])('最新尝试为 %s 时仍能打开单任务parent链的历史结果', async (status) => {
+    resultHistoryFixture(status)
+    const dispatched = vi.spyOn(window, 'dispatchEvent')
+    render(<VkTaskDetailSidebar jobId="result-current" baseUrl={BASE} onClose={() => {}} />)
+    const open = await screen.findByRole('button', { name: '查看解析结果' })
+    await userEvent.click(open)
+    const resultEvent = () => dispatched.mock.calls.map(([event]) => event as CustomEvent)
+      .filter((event) => event.type === 'vk:open-output').at(-1)!
+    expect(resultEvent().detail).toMatchObject({ jobId: 'result-current', title: '解析结果' })
+    expect(resultEvent().detail.versionJobId).toBeUndefined()
+    const versions = screen.getByRole('combobox', { name: '查看历史结果' })
+    expect(versions.querySelector('option[value="result-unrelated"]')).toBeNull()
+    await userEvent.selectOptions(versions, 'result-original')
+    expect(resultEvent().detail).toEqual({ jobId: 'result-current', versionJobId: 'result-original', title: '解析结果' })
+    expect(resultEvent().detail).not.toHaveProperty('outputId')
+    expect(versions).toHaveValue('')
+  })
+
+  it('当前完成记录明确没有输出时剔除该版本并保留历史版本', async () => {
+    resultHistoryFixture('done')
+    render(<VkTaskDetailSidebar jobId="result-current" baseUrl={BASE} onClose={() => {}} />)
+    const versions = await screen.findByRole('combobox', { name: '查看历史结果' })
+    expect(versions.querySelector('option[value="result-current"]')).toBeNull()
+    expect(versions.querySelector('option[value="result-middle"]')).not.toBeNull()
+    expect(versions.querySelector('option[value="result-original"]')).not.toBeNull()
+  })
+
+  it('主按钮兼容当前输出路径,历史选择不携带当前输出路径', async () => {
+    const { details } = resultHistoryFixture('done')
+    details.get('result-current')!.outputs = { note_path: 'notes/current.md' }
+    const dispatched = vi.spyOn(window, 'dispatchEvent')
+    render(<VkTaskDetailSidebar jobId="result-current" baseUrl={BASE} onClose={() => {}} />)
+    await userEvent.click(await screen.findByRole('button', { name: '查看解析结果' }))
+    const events = () => dispatched.mock.calls.map(([event]) => event as CustomEvent)
+      .filter((event) => event.type === 'vk:open-output')
+    expect(events().at(-1)!.detail).toMatchObject({ jobId: 'result-current', outputId: 'notes/current.md' })
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '查看历史结果' }), 'result-original')
+    expect(events().at(-1)!.detail).toEqual({ jobId: 'result-current', versionJobId: 'result-original', title: '解析结果' })
+  })
+
+  it('同来源的不同批次不能借用另一批的历史结果入口', async () => {
+    const { details } = resultHistoryFixture('failed')
+    const current = details.get('result-current')!
+    current.parent_job_id = null
+    current.batch_id = 'separate-batch'
+    render(<VkTaskDetailSidebar jobId="result-current" baseUrl={BASE} onClose={() => {}} />)
+    expect(await screen.findByRole('button', { name: '重试' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看解析结果' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '查看历史结果' })).not.toBeInTheDocument()
+  })
+
+  it('切换详情加载期间不展示上一任务的结果入口', async () => {
+    const { details, fetchMock } = resultHistoryFixture('failed')
+    const originalFetch = fetchMock.getMockImplementation()!
+    let finish: ((response: Response) => void) | undefined
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).endsWith('/result-current')) return new Promise<Response>((resolveResponse) => { finish = resolveResponse })
+      return originalFetch(input)
+    })
+    const props = { baseUrl: BASE, onClose: () => {} }
+    const { rerender } = render(<VkTaskDetailSidebar {...props} jobId="result-original" />)
+    expect(await screen.findByRole('button', { name: '查看解析结果' })).toBeInTheDocument()
+    rerender(<VkTaskDetailSidebar {...props} jobId="result-current" />)
+    expect(screen.queryByRole('button', { name: '查看解析结果' })).not.toBeInTheDocument()
+    await act(async () => { finish?.(new Response(JSON.stringify(details.get('result-current')))) })
+    expect(await screen.findByRole('button', { name: '查看解析结果' })).toBeInTheDocument()
+  })
+
+  it('同批多个成员各自展开并保留真实进度,收起一行不影响另一行', async () => {
+    const { fetchMock } = memberProgressFixture()
+    const onJobChange = vi.fn()
+    const props = { baseUrl: BASE, onClose: () => {}, onJobChange }
+    const { rerender } = render(<VkTaskDetailSidebar {...props} jobId="member-a" />)
+    const first = await screen.findByTestId('vk-task-detail-task-row-member-a')
+    await userEvent.click(first)
+    const second = screen.getByTestId('vk-task-detail-task-row-member-b')
+    await userEvent.click(second)
+    rerender(<VkTaskDetailSidebar {...props} jobId="member-b" />)
+    await waitFor(() => expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('理解视频'))
+    expect(within(first.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('采集与转写')
+    expect(within(first.closest('li')!).getByTestId('vk-task-detail-stage-details')).not.toHaveTextContent('理解视频')
+    expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).not.toHaveTextContent('采集与转写')
+    expect(first).toHaveAttribute('aria-expanded', 'true')
+    expect(second).toHaveAttribute('aria-expanded', 'true')
+    expect(onJobChange).toHaveBeenLastCalledWith('member-b')
+    await userEvent.click(first)
+    expect(first).toHaveAttribute('aria-expanded', 'false')
+    expect(second).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(1)
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/member-d'))).toBe(false)
+  })
+
+  it('批次轮询进入终态保持已展开成员,收起后停止该成员进度轮询', async () => {
+    const polls = captureMemberPolling()
+    const { details, fetchMock } = memberProgressFixture()
+    details.get('member-b')!.status = 'running'
+    details.get('member-b')!.progress!.current_stage = 'chapter'
+    details.get('member-b')!.progress!.completed_stages = []
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
+    const second = screen.getByTestId('vk-task-detail-task-row-member-b')
+    await userEvent.click(second)
+    await waitFor(() => expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('进行中'))
+    await userEvent.click(second)
+    const count = fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b')).length
+    await act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b'))).toHaveLength(count)
+    await userEvent.click(second)
+    await waitFor(() => expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('进行中'))
+    details.get('member-b')!.status = 'done'
+    details.get('member-b')!.progress!.completed_stages = ['chapter']
+    await act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
+    expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 2/2')
+    expect(screen.getByTestId('vk-task-detail-task-row-member-a')).toHaveAttribute('aria-expanded', 'true')
+    expect(second).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(2)
+    expect(polls.size).toBe(0)
+  })
+
+  it('切换另一批次后重置展开集合,回到原批次也保持收起', async () => {
+    memberProgressFixture()
+    const props = { baseUrl: BASE, onClose: () => {} }
+    const { rerender } = render(<VkTaskDetailSidebar {...props} jobId="member-a" />)
+    await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
+    await userEvent.click(screen.getByTestId('vk-task-detail-task-row-member-b'))
+    await waitFor(() => expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(2))
+    rerender(<VkTaskDetailSidebar {...props} jobId="member-c" />)
+    expect(await screen.findByTestId('vk-task-detail-task-row-member-c')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
+    rerender(<VkTaskDetailSidebar {...props} jobId="member-a" />)
+    expect(await screen.findByTestId('vk-task-detail-task-row-member-a')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('vk-task-detail-task-row-member-b')).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('成员懒加载明确显示错误,关闭后的迟到结果不会启动轮询或串进度', async () => {
+    const polls = captureMemberPolling()
+    const { details, fetchMock } = memberProgressFixture()
+    const originalFetch = fetchMock.getMockImplementation()!
+    let finish: ((response: Response) => void) | undefined
+    let attempt = 0
+    fetchMock.mockImplementation(async (input) => {
+      if (!String(input).endsWith('/member-b')) return originalFetch(input)
+      attempt += 1
+      if (attempt === 1) return new Response(JSON.stringify({ error: '进度暂不可用' }), { status: 503 })
+      return new Promise<Response>((resolveResponse) => { finish = resolveResponse })
+    })
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
+    const second = screen.getByTestId('vk-task-detail-task-row-member-b')
+    await userEvent.click(second)
+    expect(await within(second.closest('li')!).findByRole('alert')).toHaveTextContent('读取小任务进度失败')
+    expect(within(second.closest('li')!).queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
+    await userEvent.click(second)
+    await userEvent.click(second)
+    expect(within(second.closest('li')!).getByRole('status')).toHaveTextContent('正在读取小任务进度')
+    await userEvent.click(second)
+    await act(async () => { finish?.(new Response(JSON.stringify({ ...details.get('member-b'), status: 'running' }))) })
+    expect(polls.size).toBe(0)
+    expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(1)
+    expect(screen.getByTestId('vk-task-detail-stage-details')).toHaveTextContent('采集与转写')
+  })
+
   it('批量来源列表保持 flex 且窄侧栏下允许链接让位给状态', () => {
     const css = readFileSync(resolve(import.meta.dirname, 'VkTaskDetailSidebar.css'), 'utf8')
 
@@ -1034,27 +1263,71 @@ describe('VkTaskDetailSidebar', () => {
     window.removeEventListener('vk:job-retry-submitted', onRetrySubmitted)
   })
 
-  it('resubmits a completed task as a new job and marks the fresh execution as rerunning', async () => {
+  it.each(['done', 'partial'])('refreshes a %s task and preserves its result after the child fails', async (status) => {
     const user = userEvent.setup()
     const onJobChange = vi.fn()
-    let submitBody = ''
+    const dispatched = vi.spyOn(window, 'dispatchEvent')
+    const original = {
+      job_id: 'completed', kind: 'run', status, submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:01:00Z',
+      parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      outputs: { note_path: 'notes/original.md' },
+    }
+    const child = {
+      ...original, job_id: 'fresh-job', status: 'failed', parent_job_id: original.job_id,
+      submitted_at: '2026-08-07T10:02:00Z', outputs: {},
+    }
+    const posts: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.endsWith('/vk/v1/jobs/completed')) return new Response(JSON.stringify({
-        job_id: 'completed', kind: 'run', status: 'done', submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:01:00Z',
-        parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
-      }), { status: 200 })
+      if (init?.method === 'POST') posts.push(url)
+      if (url.endsWith('/vk/v1/jobs/completed')) return new Response(JSON.stringify(original))
+      if (url.endsWith('/vk/v1/jobs/fresh-job')) return new Response(JSON.stringify(child))
       if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
-      if (url.endsWith('/vk/v1/jobs') && init?.method === 'POST') {
-        submitBody = String(init.body)
-        return new Response(JSON.stringify({ job_id: 'fresh-job', kind: 'request' }), { status: 201 })
+      if (url.endsWith('/vk/v1/jobs/completed/refresh') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ job_id: child.job_id, parent_job_id: original.job_id }))
       }
+      if (url.endsWith('/vk/v1/jobs')) return new Response(JSON.stringify(
+        [original, child].map((job) => ({ ...job, source: job.request.source })),
+      ))
       return new Response('{}', { status: 404 })
     }))
-    render(<VkTaskDetailSidebar jobId="completed" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />)
+    const { rerender } = render(<VkTaskDetailSidebar jobId="completed" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />)
     await user.click(await screen.findByRole('button', { name: '再次提交任务' }))
     await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('fresh-job'))
-    expect(JSON.parse(submitBody)).toMatchObject({ request: { source: 'https://example.com/v', preset: 'quick-summary' } })
+    expect(posts).toEqual([`${BASE}/vk/v1/jobs/completed/refresh`])
+    expect(dispatched.mock.calls.map(([event]) => event as CustomEvent)
+      .find((event) => event.type === 'vk:job-retry-submitted')?.detail).toEqual({ jobId: child.job_id })
+
+    rerender(<VkTaskDetailSidebar jobId={child.job_id} baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />)
+    await screen.findByRole('button', { name: '重试' })
+    await user.click(await screen.findByRole('button', { name: '查看解析结果' }))
+    expect(dispatched.mock.calls.map(([event]) => event as CustomEvent)
+      .filter((event) => event.type === 'vk:open-output').at(-1)?.detail).toEqual({
+        jobId: child.job_id, versionJobId: undefined, title: '解析结果',
+      })
+  })
+
+  it.each(['cancelled', 'interrupted', 'completed_after_cancel_request'])('resubmits a %s task through retry', async (status) => {
+    const onJobChange = vi.fn()
+    const dispatched = vi.spyOn(window, 'dispatchEvent')
+    const posts: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.method === 'POST') posts.push(url)
+      if (url.endsWith('/vk/v1/jobs/stopped')) return new Response(JSON.stringify({
+        job_id: 'stopped', kind: 'run', status, submitted_at: '2026-08-07T10:00:00Z',
+        parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      }))
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }))
+      if (url.endsWith('/vk/v1/jobs/stopped/retry')) return new Response(JSON.stringify({ job_id: 'resumed-child', parent_job_id: 'stopped' }))
+      return new Response('[]')
+    }))
+    render(<VkTaskDetailSidebar jobId="stopped" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />)
+    await userEvent.click(await screen.findByRole('button', { name: '再次提交任务' }))
+    await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('resumed-child'))
+    expect(posts).toEqual([`${BASE}/vk/v1/jobs/stopped/retry`])
+    expect(dispatched.mock.calls.map(([event]) => event as CustomEvent)
+      .find((event) => event.type === 'vk:job-retry-submitted')?.detail).toEqual({ jobId: 'resumed-child' })
   })
 
   it('shows an interrupted child as rerunning', async () => {

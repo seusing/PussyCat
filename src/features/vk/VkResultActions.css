@@ -1,0 +1,35 @@
+.vk-result-actions {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.vk-result-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-panel);
+  color: var(--color-fg);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.vk-result-actions select {
+  min-width: 0;
+  max-width: 100%;
+  width: 120px;
+  min-height: 34px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--color-panel);
+  color: var(--color-fg);
+  color-scheme: dark;
+  font-size: 12px;
+}

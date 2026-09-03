@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, ChevronDown, ChevronUp, Eye, RefreshCw, Send, Square, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, RefreshCw, Send, Square, X } from 'lucide-react'
 import {
   fetchVkJob,
   fetchVkJobs,
   fetchVkProviderSettings,
-  postVkJob,
   postVkJobAction,
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
@@ -18,6 +17,8 @@ import {
   VK_OPEN_OUTPUT_EVENT,
 } from './taskUiState'
 import './VkTaskDetailSidebar.css'
+import { VkResultActions } from './VkResultActions'
+import { vkJobRowFromView, vkPrimaryOutput, vkTaskResultGroups, type VkTaskResultGroup } from './taskResults'
 
 const ACTIVE_STATUSES = new Set([
   'queued', 'running', 'cancel_requested', 'submitted', 'processing',
@@ -145,12 +146,6 @@ function sourceItems(job: VkJobView | null): string[] {
   const source = job?.request?.source
   if (typeof source !== 'string') return []
   return [...new Set(source.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))]
-}
-
-function primaryOutput(job: VkJobView): { id: string; label: string } | null {
-  if (job.outputs?.note_path) return { id: job.outputs.note_path, label: '查看解析结果' }
-  const artifact = job.outputs?.product_artifacts?.find((item) => item.markdown)
-  return artifact?.markdown ? { id: artifact.markdown, label: '查看解析结果' } : null
 }
 
 type TaskPhase = Readonly<{ label: string; stages: readonly string[] }>
@@ -432,6 +427,59 @@ function TaskProgressDetails({
   )
 }
 
+function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
+  jobId: string
+  baseUrl?: string
+  currentJob: VkJobView | null
+}) {
+  const [memberJob, setMemberJob] = useState<VkJobView | null>(
+    () => currentJob?.job_id === jobId ? currentJob : null,
+  )
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let disposed = false
+    let loading = false
+    let timer: number | undefined
+    const load = async () => {
+      if (loading || disposed) return
+      loading = true
+      try {
+        const nextJob = await fetchVkJob(jobId, baseUrl)
+        if (disposed) return
+        setMemberJob(nextJob)
+        setError(null)
+        if (ACTIVE_STATUSES.has(nextJob.status)) {
+          timer ??= window.setInterval(load, 1500)
+        } else if (timer !== undefined) {
+          window.clearInterval(timer)
+          timer = undefined
+        }
+      } catch (loadError) {
+        if (!disposed) setError(detailError(loadError))
+      } finally {
+        loading = false
+      }
+    }
+    void load()
+    return () => {
+      disposed = true
+      if (timer !== undefined) window.clearInterval(timer)
+    }
+  }, [jobId, baseUrl])
+
+  const detail = memberJob?.job_id === jobId ? memberJob : null
+  return (
+    <>
+      {error && <p role="alert">读取小任务进度失败：{error}</p>}
+      {!detail && !error && <p role="status">正在读取小任务进度…</p>}
+      {detail && (
+        <TaskProgressDetails job={detail} progress={stageProgress(detail, SUCCESS_STATUSES.has(detail.status))} />
+      )}
+    </>
+  )
+}
+
 export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
   jobId: string | null
   baseUrl?: string
@@ -440,14 +488,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
 }) {
   const [job, setJob] = useState<VkJobView | null>(null)
   const [providers, setProviders] = useState<VkProviderSettings | null>(null)
+  const [resultState, setResultState] = useState<{ jobId: string; groups: VkTaskResultGroup[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | 'batch' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
   const [batchMembers, setBatchMembers] = useState<
     BatchMember[]
   >([])
-  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
-  const pendingExpandedTaskRef = useRef<string | null | undefined>(undefined)
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(() => new Set())
+  const expandedScopeRef = useRef<string | null>(null)
+  const expandedScope = job?.job_id === jobId ? job?.batch_id ?? job?.job_id : null
   const [copyNoticeKey, setCopyNoticeKey] = useState(0)
   // 编号先按 job_id 查;查不到再按批次查 —— 列表把一批折成一行、只记得住那一行的
   // job_id,而详情页打开的往往是批里的某个成员,直查必然落空,标题就退回一串 UUID。
@@ -489,11 +539,22 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     setRerunMenuOpen(false)
     setRerunMenuPinned(false)
     rerunMenuPinnedRef.current = false
-    const pendingExpandedTask = pendingExpandedTaskRef.current
-    pendingExpandedTaskRef.current = undefined
-    if (pendingExpandedTask === undefined) setExpandedTaskId(null)
-    else setExpandedTaskId(pendingExpandedTask)
   }, [jobId, batchStateSignature])
+
+  useEffect(() => {
+    if (!expandedScope || expandedScopeRef.current === expandedScope) return
+    expandedScopeRef.current = expandedScope
+    setExpandedTaskIds(new Set())
+  }, [expandedScope])
+
+  const toggleTask = (rowId: string) => {
+    setExpandedTaskIds((current) => {
+      const next = new Set(current)
+      if (next.has(rowId)) next.delete(rowId)
+      else next.add(rowId)
+      return next
+    })
+  }
 
   useEffect(() => {
     if (!copyNoticeKey) return undefined
@@ -605,21 +666,29 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
       return
     }
     try {
-      const [nextJob, nextProviders] = await Promise.all([
+      const [nextJob, nextProviders, rows] = await Promise.all([
         fetchVkJob(jobId, baseUrl),
         fetchVkProviderSettings(baseUrl).catch(() => null),
+        fetchVkJobs(baseUrl).catch(() => []),
       ])
       if (generation !== loadGeneration.current) return
       setJob(nextJob)
       setProviders(nextProviders)
       setError(null)
-      // 同批的兄弟任务不在这条详情里,得从任务列表按 batch_id 捞。取不到就当单条处理——
-      // 批量视图是锦上添花,不该因为列表接口抖一下就把整个详情页拖垮。
+      const currentRow = vkJobRowFromView(nextJob)
+      const mergedRows = rows.some((row) => row.job_id === nextJob.job_id)
+        ? rows.map((row) => row.job_id === nextJob.job_id ? { ...row, ...currentRow } : row)
+        : [...rows, currentRow]
+      const groups = vkTaskResultGroups(mergedRows, nextJob.job_id)
+      setResultState({
+        jobId: nextJob.job_id,
+        groups: vkPrimaryOutput(nextJob) ? groups : groups.map((group) => ({
+          ...group, versions: group.versions.filter((version) => version.jobId !== nextJob.job_id),
+        })),
+      })
       if (nextJob.batch_id) {
-        const siblings = await fetchVkJobs(baseUrl).catch(() => [])
-        if (generation !== loadGeneration.current) return
         setBatchMembers(collapseAttempts(
-          siblings.filter((row) => row.batch_id === nextJob.batch_id),
+          mergedRows.filter((row) => row.batch_id === nextJob.batch_id),
         ))
       } else {
         setBatchMembers([])
@@ -678,29 +747,17 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
         await load()
         return
       }
-      if (action === 'retry') {
-        const result = await postVkJobAction(jobId, 'retry', baseUrl)
-        const nextJobId = typeof result.job_id === 'string' ? result.job_id : null
-        if (nextJobId) {
-          markVkJobAsRerun(nextJobId)
-          window.dispatchEvent(new CustomEvent(VK_JOB_RETRY_SUBMITTED_EVENT, {
-            detail: { jobId: nextJobId },
-          }))
-          onJobChange?.(nextJobId)
-        }
-        else await load()
-        return
+      const jobAction = action === 'resubmit' && SUCCESS_STATUSES.has(job.status) ? 'refresh' : 'retry'
+      const result = await postVkJobAction(jobId, jobAction, baseUrl)
+      const nextJobId = typeof result.job_id === 'string' ? result.job_id : null
+      if (nextJobId) {
+        markVkJobAsRerun(nextJobId)
+        window.dispatchEvent(new CustomEvent(VK_JOB_RETRY_SUBMITTED_EVENT, {
+          detail: { jobId: nextJobId },
+        }))
+        onJobChange?.(nextJobId)
       }
-      const request = job.request
-      if (!request?.source) throw new Error('该历史任务没有可再次提交的来源信息')
-      const result = await postVkJob({
-        request,
-        idempotency_key: crypto.randomUUID(),
-        client_job_id: crypto.randomUUID(),
-        ...(job.batch_id ? { batch_id: job.batch_id } : {}),
-      }, baseUrl)
-      markVkJobAsRerun(result.job_id)
-      onJobChange?.(result.job_id)
+      else await load()
     } catch (actionError) {
       setError(detailError(actionError))
     } finally {
@@ -821,18 +878,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                     state={member.state}
                     elapsed={`耗时 ${vkElapsedLabel(member.submitted_at, member.finished_at)}`}
                     current={member.job_id === jobId}
-                    expanded={expandedTaskId === member.job_id}
+                    expanded={expandedTaskIds.has(member.job_id)}
                     onToggle={() => {
-                      const nextExpandedTask = expandedTaskId === member.job_id ? null : member.job_id
-                      if (member.job_id !== jobId) pendingExpandedTaskRef.current = nextExpandedTask
-                      setExpandedTaskId(nextExpandedTask)
+                      toggleTask(member.job_id)
                       onJobChange?.(member.job_id)
                     }}
                     onCopy={copyLink}
                   >
-                    {member.job_id === jobId && (
-                      <TaskProgressDetails job={job} progress={progress} />
-                    )}
+                    <TaskMemberProgress jobId={member.job_id} baseUrl={baseUrl} currentJob={job} />
                   </TaskRow>
                 ))
                 : sources.length > 0
@@ -847,8 +900,8 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                         state={batchState(job.status)}
                         elapsed={`耗时 ${vkElapsedLabel(job.submitted_at, job.finished_at)}`}
                         current
-                        expanded={expandedTaskId === rowId}
-                        onToggle={() => setExpandedTaskId((current) => current === rowId ? null : rowId)}
+                        expanded={expandedTaskIds.has(rowId)}
+                        onToggle={() => toggleTask(rowId)}
                         onCopy={copyLink}
                       >
                         <TaskProgressDetails job={job} progress={progress} />
@@ -1030,17 +1083,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             )}
             {/* 看结果和再跑一次是同一时刻的两个选择,并排放;原先「查看解析结果」独占一个
                 区块吊在最底下,还得先滚过去。 */}
-            {completedSuccessfully && primaryOutput(job) && (
-              <button type="button" className="vk-task-open-output-button" onClick={() => {
-                const output = primaryOutput(job)
-                if (output) window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
-                  detail: { outputId: output.id, title: '解析结果', jobId: job.job_id },
+            <VkResultActions
+              groups={resultState?.jobId === jobId ? resultState.groups : []}
+              onOpen={(versionJobId) => {
+                const output = versionJobId ? null : vkPrimaryOutput(job)
+                window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
+                  detail: { jobId, versionJobId, title: '解析结果', ...(output ? { outputId: output.id } : {}) },
                 }))
-              }}>
-                <Eye size={14} aria-hidden="true" />
-                <span>{primaryOutput(job)?.label}</span>
-              </button>
-            )}
+              }}
+            />
           </div>
         </div>
       )}
