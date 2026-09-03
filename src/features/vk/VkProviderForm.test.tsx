@@ -413,22 +413,32 @@ test('确认删除模型配置后才保存,并解绑主角色和备用设置', a
   expect(body.role_fallbacks).toEqual({ deep_analysis: ['smart'], basic: [] })
 })
 
-test('删除确认取消或接收 cancel 事件不写入,点击背景保持弹窗', async () => {
+test('删除确认点击弹窗外关闭且不写入', async () => {
   const { calls } = stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
   const remove = await screen.findByTestId('vk-channel-remove-cheap')
   await userEvent.click(remove)
   const dialog = screen.getByRole('dialog', { name: '删除模型配置？' }) as HTMLDialogElement
   await userEvent.click(dialog)
-  expect(dialog).toBeInTheDocument()
-  await userEvent.click(within(dialog).getByRole('button', { name: '取消' }))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
+  expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(0)
+})
+
+test('删除确认取消或接收 cancel 事件不写入', async () => {
+  const { calls } = stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const remove = await screen.findByTestId('vk-channel-remove-cheap')
   await userEvent.click(remove)
   const reopened = screen.getByRole('dialog', { name: '删除模型配置？' }) as HTMLDialogElement
+  await userEvent.click(within(reopened).getByRole('button', { name: '取消' }))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  await userEvent.click(remove)
+  const reopenedForCancel = screen.getByRole('dialog', { name: '删除模型配置？' }) as HTMLDialogElement
   act(() => {
     const event = new Event('cancel', { cancelable: true })
-    reopened.dispatchEvent(event)
-    if (!event.defaultPrevented) reopened.close()
+    reopenedForCancel.dispatchEvent(event)
+    if (!event.defaultPrevented) reopenedForCancel.close()
   })
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()

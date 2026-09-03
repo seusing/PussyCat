@@ -650,6 +650,24 @@ select:focus-visible {
 }
 
 .display-mode-switch button[aria-pressed='true'] { background: #2c2738; color: #e9d5ff; }
+.inspiration-workspace-link,
+.inspiration-source-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #35445e;
+  border-radius: 7px;
+  background: #1d2739;
+  color: #b9ceff;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.inspiration-workspace-link:hover,
+.inspiration-source-save:hover { border-color: #5877b9; background: #263653; color: #e5edff; }
+.inspiration-source-save { border-color: #415b4e; background: #1d2c25; color: #a8e6bf; padding: 4px 8px; font-size: 11px; }
+.inspiration-source-save:hover { border-color: #5c9270; background: #263d31; color: #d7ffe4; }
 .site-display { display: grid; min-height: 500px; flex: 1; place-items: center; overflow: hidden; }
 
 .site-carousel { display: flex; width: min(760px, 100%); min-height: 350px; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; user-select: none; }
@@ -778,6 +796,11 @@ select:focus-visible {
 .command-workspace { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(420px, 1.35fr) minmax(320px, .85fr); overflow: hidden; border: 1px solid #292e37; border-radius: 8px; background: #14171c; }
 .command-config-pane { min-width: 0; overflow: auto; border-right: 1px solid #292e37; padding: 22px; }
 .command-run-pane { min-width: 0; overflow: auto; background: #111318; }
+
+@media (max-width: 760px) {
+  .inspiration-workspace-link { padding-inline: 8px; }
+  .inspiration-source-save { padding-inline: 6px; }
+}
 
 /* Login status: adapted from Astryx Table, Badge and DropdownMenu source. */
 .login-status-page {

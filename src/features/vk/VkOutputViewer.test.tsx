@@ -5,6 +5,7 @@ import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutput
 import { fetchVkJob, fetchVkOutputText, type VkJobView } from '../../host/vkClient'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
+import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
 
 vi.mock('../../host/vkClient', () => ({ fetchVkJob: vi.fn(), fetchVkOutputText: vi.fn() }))
 vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn() }))
@@ -63,6 +64,20 @@ it('loads only selected tasks, caches contents, and copies and saves the selecte
   expect(saveTextFileAs).toHaveBeenLastCalledWith('a.md', '# a.md\n\n正文 a.md', expect.any(Object))
   expect(fetchVkJob).toHaveBeenCalledTimes(2)
   expect(fetchVkOutputText).toHaveBeenCalledTimes(2)
+})
+
+it('收进灵感库时只保存当前结果', async () => {
+  render(<Harness />)
+  await screen.findByRole('heading', { name: 'a.md' })
+
+  await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+  expect(loadInspirationLibrary().items).toHaveLength(1)
+  expect(loadInspirationLibrary().items[0]).toMatchObject({
+    title: '任务 1',
+    content: '# a.md\n\n正文 a.md',
+    kind: 'video',
+  })
+  expect(screen.getByTestId('vk-output-viewer-save-library')).toHaveAccessibleName('已收进灵感库')
 })
 
 it.each([

@@ -62,6 +62,20 @@
   padding: 0 10px;
   color: var(--color-fg);
 }
+.vk-output-library-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 42%, var(--color-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-success) 10%, #171a20);
+  color: var(--color-success);
+  padding: 0 10px;
+  font-size: 12px;
+}
+.vk-output-library-button:hover:not(:disabled) { background: color-mix(in srgb, var(--color-success) 16%, #20252d); }
+.vk-output-library-button:disabled { cursor: not-allowed; opacity: .5; }
 
 .vk-output-copy-button:hover { background: rgb(255 255 255 / 6%); }
 

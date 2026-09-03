@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useDragControls, useMotionValue } from 'motion/react'
-import { Check, Copy, Download } from 'lucide-react'
+import { BookmarkPlus, Check, Copy, Download } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
+import { addInspirationItem } from '../inspiration/inspirationLibrary'
 import { vkPrimaryOutput, vkResultVersionLabel, type VkResultVersion } from './taskResults'
 import './VkOutputViewer.css'
 
@@ -42,6 +43,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const [outputDownloadProgress, setOutputDownloadProgress] = useState<number | null>(null)
   const [outputDownloadDone, setOutputDownloadDone] = useState(false)
   const [outputDownloadHovered, setOutputDownloadHovered] = useState(false)
+  const [librarySaved, setLibrarySaved] = useState(false)
   const outputDownloadController = useRef<AbortController | null>(null)
   const outputDownloadResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const interactionGeneration = useRef(0)
@@ -141,6 +143,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
     interactionGeneration.current += 1
     if (contentRef.current) contentRef.current.scrollTop = 0
     setOutputCopied(false)
+    setLibrarySaved(false)
     setActionError(null)
     resetOutputDownload()
     return () => {
@@ -201,6 +204,20 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
     }
   }
 
+  const saveToInspirationLibrary = () => {
+    if (!loaded) return
+    const saved = addInspirationItem({
+      title: activeTab?.label || '视频解析结果',
+      content: loaded.content,
+      kind: 'video',
+      format: 'md',
+      folderId: null,
+      source: activeTab?.source,
+    })
+    if (saved) setLibrarySaved(true)
+    else setActionError('保存到灵感库失败')
+  }
+
   return (
     <div data-testid="vk-output-viewer" className="vk-output-viewer">
       <motion.section
@@ -220,6 +237,9 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
           <h2 id={`${domId}-title`}>解析结果</h2>
           <button type="button" data-testid="vk-output-viewer-copy" aria-label={outputCopied ? '已复制' : '复制内容'} title={outputCopied ? '已复制' : '复制内容'} disabled={!loaded} onClick={() => { void copyOutput() }} className="vk-output-copy-button">
             <Copy size={14} aria-hidden="true" /><span>{outputCopied ? '已复制' : '复制内容'}</span>
+          </button>
+          <button type="button" data-testid="vk-output-viewer-save-library" aria-label={librarySaved ? '已收进灵感库' : '收进灵感库'} title={librarySaved ? '已收进灵感库' : '收进灵感库'} disabled={!loaded} onClick={saveToInspirationLibrary} className="vk-output-library-button">
+            <BookmarkPlus size={14} aria-hidden="true" /><span>{librarySaved ? '已收进' : '收进灵感库'}</span>
           </button>
           <motion.button
             type="button"

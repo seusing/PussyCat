@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
-import { ArrowLeft, GalleryHorizontalEnd, Orbit, Search } from 'lucide-react'
+import { ArrowLeft, BookmarkPlus, FolderOpen, GalleryHorizontalEnd, Orbit, Search } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import type { CommandManifest } from '../../data/types'
 import {
@@ -16,9 +16,12 @@ import { RunPanel } from '../runs/RunPanel'
 import { MicroButton } from '../../components/MicroButton'
 import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { commandDescription } from '../../data/zhCopy'
+import { addInspirationItem } from './inspirationLibrary'
+import { InspirationLibraryPanel } from './InspirationLibraryPanel'
 
 type Stage = 'sites' | 'commands' | 'execute'
 type DisplayMode = 'carousel' | 'wheel'
+type Workspace = 'library' | 'sources'
 
 const DISPLAY_MODE_KEY = 'zhuazhua:inspiration-display-mode:v1'
 
@@ -76,6 +79,7 @@ export function InspirationPanel({
     [selected, sites],
   )
   const [stage, setStage] = useState<Stage>(() => selected ? 'execute' : 'sites')
+  const [workspace, setWorkspace] = useState<Workspace>(() => selected ? 'sources' : 'library')
   const [site, setSite] = useState<SupportedSite | undefined>(() => selectedSite)
   const [mode, setMode] = useState<DisplayMode>(initialDisplayMode)
   const [query, setQuery] = useState('')
@@ -95,6 +99,7 @@ export function InspirationPanel({
   }
 
   const openSite = (next: SupportedSite) => {
+    setWorkspace('sources')
     setSite(next)
     setQuery('')
     setStage('commands')
@@ -122,8 +127,32 @@ export function InspirationPanel({
   }, [commands, query])
 
   const openCommand = (command: CommandManifest) => {
+    setWorkspace('sources')
     selectCommand(command)
     setStage('execute')
+  }
+
+  const openSources = () => {
+    setWorkspace('sources')
+    setStage(selected ? 'execute' : 'sites')
+  }
+
+  const saveSelectedSource = () => {
+    if (!selected) return
+    const description = commandDescription(selected.command, selected.description)
+    const item = addInspirationItem({
+      title: selected.name,
+      content: `# ${selected.name}\n\n${description}\n\n来源：${selected.site}`,
+      kind: 'source',
+      format: 'md',
+      folderId: null,
+      source: selected.site,
+    })
+    if (item) setWorkspace('library')
+  }
+
+  if (workspace === 'library') {
+    return <InspirationLibraryPanel onOpenSources={openSources} />
   }
 
   if (stage === 'execute' && selected) {
@@ -158,6 +187,9 @@ export function InspirationPanel({
               >
                 {isCommandFavorited(preferences, selected.command) ? '已收藏' : '收藏'}
               </MicroButton>
+              <button type="button" data-testid="save-command-to-inspiration-library" className="inspiration-source-save" onClick={saveSelectedSource} title="收进灵感库">
+                <BookmarkPlus size={14} aria-hidden="true" />收进灵感库
+              </button>
               <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
               {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
               <span data-testid="command-description" className="min-w-0 text-sm" style={{ flex: '1 1 16rem', color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
@@ -180,6 +212,7 @@ export function InspirationPanel({
               aria-label="搜索命令"
             />
           </label>
+          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库"><FolderOpen size={15} aria-hidden="true" />灵感库</button>
         </div>
         <div className="command-workspace">
           <main data-testid="col-config" className="command-config-pane">
@@ -209,6 +242,7 @@ export function InspirationPanel({
             <Search size={16} aria-hidden="true" />
             <input ref={searchRef} data-testid="nav-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索命令" aria-label="搜索命令" />
           </label>
+          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库"><FolderOpen size={15} aria-hidden="true" />灵感库</button>
         </div>
         <FisheyeCommandList
           commands={siteCommands}
@@ -231,6 +265,9 @@ export function InspirationPanel({
           <h1>灵感来源</h1>
         </div>
         <div className="display-mode-switch" role="group" aria-label="站点展示方式">
+          <button type="button" data-testid="open-inspiration-library" aria-label="灵感库" onClick={() => setWorkspace('library')} title="打开灵感库">
+            <FolderOpen size={17} />
+          </button>
           <button type="button" data-testid="display-mode-carousel" aria-label="卡片轮播" aria-pressed={mode === 'carousel'} onClick={() => chooseMode('carousel')}>
             <GalleryHorizontalEnd size={17} />
           </button>

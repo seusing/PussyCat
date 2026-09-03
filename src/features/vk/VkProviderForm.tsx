@@ -1080,9 +1080,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       {pendingDelete && (
         <dialog
           ref={deleteDialogRef}
-          className="vk-provider-delete-dialog"
+          className="vk-provider-delete-dialog scroll-fade"
           aria-labelledby="vk-provider-delete-title"
           aria-describedby="vk-provider-delete-description"
+          onClick={(event) => {
+            if (!savingRef.current && event.target === event.currentTarget) deleteDialogRef.current?.close()
+          }}
           onCancel={(event) => { if (savingRef.current) event.preventDefault() }}
           onClose={() => { setPendingDelete(null); setDeleteError(null) }}
         >

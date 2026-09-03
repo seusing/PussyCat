@@ -27,7 +27,7 @@ import {
 import type { LayoutSnapshot } from '../data/layout'
 
 const MODULES = [
-  { key: 'commands' as const, label: '灵感来源', icon: Lightbulb },
+  { key: 'commands' as const, label: '灵感库', icon: Lightbulb },
   { key: 'login' as const, label: '登录信息', icon: KeyRound },
   { key: 'vk' as const, label: '视频解析', icon: Clapperboard },
   { key: 'providers' as const, label: '模型配置', icon: SlidersHorizontal },
