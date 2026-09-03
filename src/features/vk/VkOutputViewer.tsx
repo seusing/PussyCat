@@ -31,6 +31,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   onClose: () => void
 }) {
   const cache = useRef(new Map<string, LoadedOutput>())
+  const outputCache = useRef(new Map<string, LoadedOutput>())
   const [loadedState, setLoadedState] = useState<{ key: string; value: LoadedOutput } | null>(null)
   const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null)
   const [retry, setRetry] = useState(0)
@@ -49,7 +50,9 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const verticalTabs = tabs.length > 15
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
   const outputKey = JSON.stringify([activeTabId, activeTab?.jobId, activeTab?.outputId])
-  const loaded = cache.current.get(outputKey) ?? (loadedState?.key === outputKey ? loadedState.value : undefined)
+  const loaded = (activeTab?.outputId ? outputCache.current.get(activeTab.outputId) : undefined)
+    ?? cache.current.get(outputKey)
+    ?? (loadedState?.key === outputKey ? loadedState.value : undefined)
   const error = loadError?.key === outputKey ? loadError.message : null
   const dragControls = useDragControls()
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
@@ -98,7 +101,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   useEffect(() => { sectionRef.current?.focus() }, [])
 
   useEffect(() => {
-    if (!activeTab || cache.current.has(outputKey)) return
+    if (!activeTab || cache.current.has(outputKey) || (activeTab.outputId && outputCache.current.has(activeTab.outputId))) return
     let current = true
     setLoadError(null)
     void (async () => {
@@ -112,6 +115,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
         const value = { outputId, content: await fetchVkOutputText(outputId, baseUrl) }
         if (!current) return
         cache.current.set(outputKey, value)
+        outputCache.current.set(outputId, value)
         setLoadedState({ key: outputKey, value })
       } catch (error) {
         if (current) setLoadError({ key: outputKey, message: errorText(error, '结果读取失败') })

@@ -725,6 +725,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   const notificationPrefsRef = useRef(notifications)
   const previousStatusesRef = useRef<Map<string, string> | null>(null)
   const taskNumbersRef = useRef(taskNumbers)
+  const selectedIdRef = useRef<string | null>(null)
+  selectedIdRef.current = selectedJobId ?? selectedJob?.job_id ?? null
   useEffect(() => { notificationPrefsRef.current = notifications }, [notifications])
   useEffect(() => { taskNumbersRef.current = taskNumbers }, [taskNumbers])
 
@@ -776,7 +778,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
               return !!before && ACTIVE_STATUSES.has(before) && !ACTIVE_STATUSES.has(row.status)
             })
           : []
-        const selectedId = selectedJobId ?? selectedJob?.job_id ?? null
+        const selectedId = selectedIdRef.current
         let selectedTerminalDetail: VkJobView | null = null
         if (selectedId && terminalTransitions.some((row) => row.job_id === selectedId)) {
           try {
@@ -826,7 +828,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
     } finally {
       if (manual) setJobsRefreshing(false)
     }
-  }, [attachTaskNumbers, base, selectedJob?.job_id, selectedJobId])
+  }, [attachTaskNumbers, base])
   useEffect(() => { void refreshJobs() }, [refreshJobs, refreshToken])
   const refreshEngineStatus = useCallback(async () => {
     setHealthChecking(true)
@@ -909,14 +911,24 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
   }
 
   const openTaskOutputs = useCallback((jobId: string, versionJobId?: string, fallback?: { outputId: string; title: string }) => {
-    const rows = selectedJob?.job_id === jobId && !jobs.some((row) => row.job_id === jobId)
-      ? [...jobs, vkJobRowFromView(selectedJob)] : jobs
+    const selectedRow = selectedJob?.job_id === jobId ? vkJobRowFromView(selectedJob) : null
+    const rows = selectedRow
+      ? jobs.some((row) => row.job_id === jobId)
+        ? jobs.map((row) => row.job_id === jobId
+          ? { ...row, ...selectedRow, source: selectedRow.source ?? row.source }
+          : row)
+        : [...jobs, selectedRow]
+      : jobs
     const groups = vkTaskResultGroups(rows, jobId)
     const selected = groups.find((group) => group.jobIds.includes(versionJobId ?? jobId))
     const tabs: VkOutputTab[] = groups.flatMap((group) => {
       const version = group.versions.find((item) => item.jobId === versionJobId) ?? group.versions[0]
       return version ? [{
-        id: group.id, jobId: version.jobId, source: group.source,
+        id: group.id,
+        jobId: version.jobId,
+        source: group.source,
+        outputId: version.outputId
+          ?? (fallback && version.jobId === (versionJobId ?? jobId) ? fallback.outputId : undefined),
         label: `任务 ${group.taskNumber ?? '—'}${groups.length > 1 ? ` · 小任务 ${group.ordinal}` : ''}`,
         versions: group.versions,
       }] : []
@@ -1453,7 +1465,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken }: {
 
       {activeTabId && (
         <VkOutputViewer tabs={outputTabs} activeTabId={activeTabId} onSelectTab={setActiveTabId}
-          onSelectVersion={(tabId, jobId) => setOutputTabs((tabs) => tabs.map((tab) => tab.id === tabId ? { ...tab, jobId, outputId: undefined } : tab))}
+          onSelectVersion={(tabId, jobId) => setOutputTabs((tabs) => tabs.map((tab) => {
+            if (tab.id !== tabId) return tab
+            const version = tab.versions?.find((item) => item.jobId === jobId)
+            return { ...tab, jobId, outputId: version?.outputId }
+          }))}
           baseUrl={base ?? DEFAULT_BASE_URL} onClose={() => setActiveTabId(null)} />
       )}
     </div>

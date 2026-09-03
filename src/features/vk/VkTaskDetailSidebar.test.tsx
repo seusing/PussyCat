@@ -155,6 +155,29 @@ describe('VkTaskDetailSidebar', () => {
     expect(await screen.findByRole('button', { name: '查看解析结果' })).toBeInTheDocument()
   })
 
+  it('详情先返回时立即显示当前结果,不等待慢任务列表', async () => {
+    const { details, fetchMock } = resultHistoryFixture('done')
+    details.get('result-current')!.outputs = { note_path: 'notes/current.md' }
+    const originalFetch = fetchMock.getMockImplementation()!
+    let releaseRows!: (response: Response) => void
+    const rowsPending = new Promise<Response>((resolve) => { releaseRows = resolve })
+    fetchMock.mockImplementation(async (input) => {
+      if (new URL(String(input)).pathname === '/vk/v1/jobs') return rowsPending
+      return originalFetch(input)
+    })
+    const dispatched = vi.spyOn(window, 'dispatchEvent')
+
+    render(<VkTaskDetailSidebar jobId="result-current" baseUrl={BASE} onClose={() => {}} />)
+    const open = await screen.findByRole('button', { name: '查看解析结果' })
+    await userEvent.click(open)
+    const event = dispatched.mock.calls.map(([value]) => value as CustomEvent)
+      .find((value) => value.type === 'vk:open-output')
+    expect(event?.detail).toMatchObject({ jobId: 'result-current', outputId: 'notes/current.md' })
+
+    releaseRows(new Response(JSON.stringify([...details.values()].map((detail) => ({ ...detail, source: detail.request?.source })))))
+    expect(await screen.findByRole('combobox', { name: '查看历史结果' })).toBeInTheDocument()
+  })
+
   it('同批多个成员各自展开并保留真实进度,收起一行不影响另一行', async () => {
     const { fetchMock } = memberProgressFixture()
     const onJobChange = vi.fn()
@@ -172,11 +195,23 @@ describe('VkTaskDetailSidebar', () => {
     expect(first).toHaveAttribute('aria-expanded', 'true')
     expect(second).toHaveAttribute('aria-expanded', 'true')
     expect(onJobChange).toHaveBeenLastCalledWith('member-b')
-    await userEvent.click(first)
-    expect(first).toHaveAttribute('aria-expanded', 'false')
+    const firstAfterReload = screen.getByTestId('vk-task-detail-task-row-member-a')
+    await userEvent.click(firstAfterReload)
+    expect(firstAfterReload).toHaveAttribute('aria-expanded', 'false')
     expect(second).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(1)
+    await waitFor(() => expect(screen.getAllByTestId('vk-task-detail-stage-details')).toHaveLength(1))
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/member-d'))).toBe(false)
+  })
+
+  it('收起阶段详情保留退出生命周期后再卸载内容', async () => {
+    memberProgressFixture()
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    const row = await screen.findByTestId('vk-task-detail-task-row-member-a')
+    await userEvent.click(row)
+    await screen.findByTestId('vk-task-detail-stage-details')
+    await userEvent.click(row)
+    expect(screen.getByTestId('vk-task-detail-stage-details')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument())
   })
 
   it('批次轮询进入终态保持已展开成员,收起后停止该成员进度轮询', async () => {
@@ -193,7 +228,7 @@ describe('VkTaskDetailSidebar', () => {
     await userEvent.click(second)
     const count = fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b')).length
     await act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b'))).toHaveLength(count)
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/member-b'))).toHaveLength(count))
     await userEvent.click(second)
     await waitFor(() => expect(within(second.closest('li')!).getByTestId('vk-task-detail-stage-details')).toHaveTextContent('进行中'))
     details.get('member-b')!.status = 'done'
@@ -241,7 +276,7 @@ describe('VkTaskDetailSidebar', () => {
     expect(within(second.closest('li')!).queryByTestId('vk-task-detail-stage-details')).not.toBeInTheDocument()
     await userEvent.click(second)
     await userEvent.click(second)
-    expect(within(second.closest('li')!).getByRole('status')).toHaveTextContent('正在读取小任务进度')
+    await waitFor(() => expect(within(second.closest('li')!).getByRole('status')).toHaveTextContent('正在读取小任务进度'))
     await userEvent.click(second)
     await act(async () => { finish?.(new Response(JSON.stringify({ ...details.get('member-b'), status: 'running' }))) })
     expect(polls.size).toBe(0)

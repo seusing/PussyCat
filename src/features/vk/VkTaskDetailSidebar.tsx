@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Check, ChevronDown, ChevronUp, RefreshCw, Send, Square, X } from 'lucide-react'
 import {
   fetchVkJob,
@@ -311,13 +311,18 @@ type TaskRowProps = {
   expanded: boolean
   onToggle: () => void
   onCopy: (source: string) => void
+  /** Changes only when the row's inline progress is owned by the parent job. */
+  contentVersion?: unknown
   children?: ReactNode
 }
+
+const TaskDisclosureContext = createContext(true)
 
 function TaskRow({
   id, label, source, state, elapsed, current, expanded, onToggle, onCopy, children,
 }: TaskRowProps) {
   const copiedFromClickRef = useRef(false)
+  const reduceMotion = useReducedMotion()
   return (
     <li
       className={`vk-task-detail-task-row is-${state}`}
@@ -361,16 +366,38 @@ function TaskRow({
         <span className="vk-task-detail-task-elapsed">{elapsed}</span>
         <ChevronDown className="vk-task-detail-task-chevron" size={14} aria-hidden="true" />
       </button>
-      {expanded && children ? (
-        <div className="vk-task-detail-task-disclosure">
-          <div className="vk-task-detail-task-disclosure-inner">
-            {children}
-          </div>
-        </div>
-      ) : null}
+      <TaskDisclosureContext.Provider value={expanded}>
+        <AnimatePresence initial={false}>
+          {expanded && children ? (
+          <motion.div
+            key="task-disclosure"
+            className="vk-task-detail-task-disclosure"
+            initial={reduceMotion ? false : { gridTemplateRows: '0fr', opacity: 0, y: -4 }}
+            animate={{ gridTemplateRows: '1fr', opacity: 1, y: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { gridTemplateRows: '0fr', opacity: 0, y: -4 }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+          >
+            <div className="vk-task-detail-task-disclosure-inner">
+              {children}
+            </div>
+          </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </TaskDisclosureContext.Provider>
     </li>
   )
 }
+
+const MemoTaskRow = memo(TaskRow, (previous, next) => (
+  previous.id === next.id
+  && previous.label === next.label
+  && previous.source === next.source
+  && previous.state === next.state
+  && previous.elapsed === next.elapsed
+  && previous.current === next.current
+  && previous.expanded === next.expanded
+  && previous.contentVersion === next.contentVersion
+))
 
 function TaskProgressDetails({
   job, progress,
@@ -432,12 +459,18 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
   baseUrl?: string
   currentJob: VkJobView | null
 }) {
+  const pollingEnabled = useContext(TaskDisclosureContext)
   const [memberJob, setMemberJob] = useState<VkJobView | null>(
     () => currentJob?.job_id === jobId ? currentJob : null,
   )
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (pollingEnabled) setError(null)
+  }, [pollingEnabled])
+
+  useEffect(() => {
+    if (!pollingEnabled) return undefined
     let disposed = false
     let loading = false
     let timer: number | undefined
@@ -466,7 +499,7 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
       disposed = true
       if (timer !== undefined) window.clearInterval(timer)
     }
-  }, [jobId, baseUrl])
+  }, [jobId, baseUrl, pollingEnabled])
 
   const detail = memberJob?.job_id === jobId ? memberJob : null
   return (
@@ -480,11 +513,18 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
   )
 }
 
-export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
+const MemoTaskMemberProgress = memo(TaskMemberProgress, (previous, next) => (
+  previous.jobId === next.jobId
+  && previous.baseUrl === next.baseUrl
+  && previous.currentJob?.job_id === next.currentJob?.job_id
+))
+
+export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJobRefresh }: {
   jobId: string | null
   baseUrl?: string
   onClose: () => void
   onJobChange?: (jobId: string) => void
+  onJobRefresh?: () => void
 }) {
   const [job, setJob] = useState<VkJobView | null>(null)
   const [providers, setProviders] = useState<VkProviderSettings | null>(null)
@@ -663,19 +703,33 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     if (!jobId) {
       setJob(null)
       setError(null)
+      setProviders(null)
+      setResultState(null)
+      setBatchMembers([])
       return
     }
     try {
-      const [nextJob, nextProviders, rows] = await Promise.all([
-        fetchVkJob(jobId, baseUrl),
-        fetchVkProviderSettings(baseUrl).catch(() => null),
-        fetchVkJobs(baseUrl).catch(() => []),
-      ])
+      // The detail endpoint contains the current output path. Render it as soon
+      // as it arrives; the provider and list reads only enrich history and
+      // sibling rows and must not hold the result action hostage.
+      const providersPromise = fetchVkProviderSettings(baseUrl).catch(() => null)
+      const rowsPromise = fetchVkJobs(baseUrl).catch(() => [])
+      const nextJob = await fetchVkJob(jobId, baseUrl)
       if (generation !== loadGeneration.current) return
       setJob(nextJob)
-      setProviders(nextProviders)
       setError(null)
       const currentRow = vkJobRowFromView(nextJob)
+      const currentGroups = vkTaskResultGroups([currentRow], nextJob.job_id)
+      setResultState({
+        jobId: nextJob.job_id,
+        groups: vkPrimaryOutput(nextJob) ? currentGroups : currentGroups.map((group) => ({
+          ...group, versions: group.versions.filter((version) => version.jobId !== nextJob.job_id),
+        })),
+      })
+
+      const [nextProviders, rows] = await Promise.all([providersPromise, rowsPromise])
+      if (generation !== loadGeneration.current) return
+      setProviders(nextProviders)
       const mergedRows = rows.some((row) => row.job_id === nextJob.job_id)
         ? rows.map((row) => row.job_id === nextJob.job_id ? { ...row, ...currentRow } : row)
         : [...rows, currentRow]
@@ -708,6 +762,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
 
   useEffect(() => {
     previousJobStatus.current = null
+    setJob(null)
+    setProviders(null)
+    setResultState(null)
+    setBatchMembers([])
     void load()
   }, [load])
   useEffect(() => {
@@ -756,6 +814,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
           detail: { jobId: nextJobId },
         }))
         onJobChange?.(nextJobId)
+        onJobRefresh?.()
       }
       else await load()
     } catch (actionError) {
@@ -799,7 +858,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
     setActionPending(null)
     // 部分失败要说清是哪几条,否则用户只知道"没全跑起来"却不知道差在哪。
     if (failures.length > 0) setError(`部分视频未能重跑\n${failures.join('\n')}`)
-    if (firstNewJobId) onJobChange?.(firstNewJobId)
+    if (firstNewJobId) {
+      onJobChange?.(firstNewJobId)
+      onJobRefresh?.()
+    }
     else await load()
   }
 
@@ -870,7 +932,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
             <ol className="vk-task-detail-task-list">
               {batchMembers.length > 1
                 ? batchMembers.map((member, index) => (
-                  <TaskRow
+                  <MemoTaskRow
                     key={member.job_id}
                     id={member.job_id}
                     label={`小任务${index + 1}`}
@@ -881,18 +943,19 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                     expanded={expandedTaskIds.has(member.job_id)}
                     onToggle={() => {
                       toggleTask(member.job_id)
-                      onJobChange?.(member.job_id)
+                      if (member.job_id !== jobId) onJobChange?.(member.job_id)
                     }}
                     onCopy={copyLink}
+                    contentVersion={baseUrl}
                   >
-                    <TaskMemberProgress jobId={member.job_id} baseUrl={baseUrl} currentJob={job} />
-                  </TaskRow>
+                    <MemoTaskMemberProgress jobId={member.job_id} baseUrl={baseUrl} currentJob={job} />
+                  </MemoTaskRow>
                 ))
                 : sources.length > 0
                   ? sources.map((source, index) => {
                     const rowId = `source-${index}`
                     return (
-                      <TaskRow
+                      <MemoTaskRow
                         key={rowId}
                         id={rowId}
                         label="链接"
@@ -903,9 +966,10 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange }: {
                         expanded={expandedTaskIds.has(rowId)}
                         onToggle={() => toggleTask(rowId)}
                         onCopy={copyLink}
+                        contentVersion={job}
                       >
                         <TaskProgressDetails job={job} progress={progress} />
-                      </TaskRow>
+                      </MemoTaskRow>
                     )
                   })
                   : (

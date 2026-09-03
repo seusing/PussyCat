@@ -80,6 +80,8 @@ export interface VkJobRow {
   batchMembers?: VkJobRow[]
   /** Fresh submission initiated from an existing task. */
   isRerun?: boolean
+  /** Some list snapshots are enriched with the same opaque output ids as a detail view. */
+  outputs?: Partial<VkJobOutputs>
 }
 
 export interface VkProductArtifact {

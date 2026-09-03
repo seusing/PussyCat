@@ -142,6 +142,22 @@ it('opens direct documents without fetching a job and safely renders Markdown', 
   expect(screen.getByText('unsafe')).not.toHaveAttribute('href', 'javascript:bad()')
 })
 
+it('prefers an explicit outputId over the job lookup and reuses its content immediately', async () => {
+  const items: VkOutputTab[] = [
+    { id: 'direct:one', label: '结果 1', jobId: 'job-ignored', outputId: 'shared.md' },
+    { id: 'direct:two', label: '结果 2', outputId: 'shared.md' },
+  ]
+  render(<Harness items={items} />)
+  await screen.findByRole('heading', { name: 'shared.md' })
+  expect(fetchVkJob).not.toHaveBeenCalled()
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(1)
+
+  await userEvent.click(screen.getByRole('tab', { name: '结果 2' }))
+  expect(screen.getByRole('heading', { name: 'shared.md' })).toBeInTheDocument()
+  expect(fetchVkJob).not.toHaveBeenCalled()
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(1)
+})
+
 it('falls back to the first available Markdown artifact and then to audit', async () => {
   vi.mocked(fetchVkJob).mockResolvedValueOnce({ outputs: { product_artifacts: [{ markdown: '' }, { markdown: 'product.md' }], audit_path: 'audit.md' } } as VkJobView)
     .mockResolvedValueOnce({ outputs: { audit_path: 'audit.md' } } as VkJobView)

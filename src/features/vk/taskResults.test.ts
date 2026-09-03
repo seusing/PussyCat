@@ -42,6 +42,15 @@ describe('vkTaskResultGroups', () => {
     ])
   })
 
+  it('carries known output identifiers into result versions', () => {
+    const groups = vkTaskResultGroups([
+      row('known', { outputs: { note_path: 'notes/known.md' } }),
+      row('unknown', { submitted_at: '2026-09-03T00:02:00Z' }),
+    ], 'known')
+    expect(groups[0].versions[0]).toMatchObject({ jobId: 'known', outputId: 'notes/known.md', outputTitle: '知识笔记' })
+    expect(groups[1].versions[0]).not.toHaveProperty('outputId')
+  })
+
   it('does not merge independent unbatched submissions of the same source', () => {
     const groups = vkTaskResultGroups([
       row('original', { batch_id: null, source: 'https://example.com/same' }),

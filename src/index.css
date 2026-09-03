@@ -90,6 +90,183 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
+/* Scrollable surfaces keep the track unobtrusive until the user enters,
+   focuses, or actively scrolls the region. The utility-class selectors cover
+   Tailwind overflow helpers without touching overflow-hidden containers. */
+.scroll-fade,
+.app-content,
+.legacy-nav,
+.legacy-runs,
+.legacy-config,
+.command-config-pane,
+.command-run-pane,
+.login-table-scroll,
+.login-operation-menu,
+.vk-task-table-viewport,
+.vk-task-detail-body,
+.vk-task-batch-rerun-menu,
+.vk-task-operation-menu,
+.vk-output-tabs,
+.vk-output-viewer-content,
+.vk-output-viewer-content pre,
+.wrss-log,
+[class~="overflow-auto"],
+[class~="overflow-x-auto"],
+[class~="overflow-y-auto"] {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 420ms ease;
+}
+
+.scroll-fade::-webkit-scrollbar,
+.app-content::-webkit-scrollbar,
+.legacy-nav::-webkit-scrollbar,
+.legacy-runs::-webkit-scrollbar,
+.legacy-config::-webkit-scrollbar,
+.command-config-pane::-webkit-scrollbar,
+.command-run-pane::-webkit-scrollbar,
+.login-table-scroll::-webkit-scrollbar,
+.login-operation-menu::-webkit-scrollbar,
+.vk-task-table-viewport::-webkit-scrollbar,
+.vk-task-detail-body::-webkit-scrollbar,
+.vk-task-batch-rerun-menu::-webkit-scrollbar,
+.vk-task-operation-menu::-webkit-scrollbar,
+.vk-output-tabs::-webkit-scrollbar,
+.vk-output-viewer-content::-webkit-scrollbar,
+.vk-output-viewer-content pre::-webkit-scrollbar,
+.wrss-log::-webkit-scrollbar,
+[class~="overflow-auto"]::-webkit-scrollbar,
+[class~="overflow-x-auto"]::-webkit-scrollbar,
+[class~="overflow-y-auto"]::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-fade::-webkit-scrollbar-thumb,
+.app-content::-webkit-scrollbar-thumb,
+.legacy-nav::-webkit-scrollbar-thumb,
+.legacy-runs::-webkit-scrollbar-thumb,
+.legacy-config::-webkit-scrollbar-thumb,
+.command-config-pane::-webkit-scrollbar-thumb,
+.command-run-pane::-webkit-scrollbar-thumb,
+.login-table-scroll::-webkit-scrollbar-thumb,
+.login-operation-menu::-webkit-scrollbar-thumb,
+.vk-task-table-viewport::-webkit-scrollbar-thumb,
+.vk-task-detail-body::-webkit-scrollbar-thumb,
+.vk-task-batch-rerun-menu::-webkit-scrollbar-thumb,
+.vk-task-operation-menu::-webkit-scrollbar-thumb,
+.vk-output-tabs::-webkit-scrollbar-thumb,
+.vk-output-viewer-content::-webkit-scrollbar-thumb,
+.vk-output-viewer-content pre::-webkit-scrollbar-thumb,
+.wrss-log::-webkit-scrollbar-thumb,
+[class~="overflow-auto"]::-webkit-scrollbar-thumb,
+[class~="overflow-x-auto"]::-webkit-scrollbar-thumb,
+[class~="overflow-y-auto"]::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  background-clip: padding-box;
+  transition: background-color 180ms ease;
+}
+
+.scroll-fade:is(:hover, :focus-visible, :focus-within, :active),
+.app-content:is(:hover, :focus-visible, :focus-within, :active),
+.legacy-nav:is(:hover, :focus-visible, :focus-within, :active),
+.legacy-runs:is(:hover, :focus-visible, :focus-within, :active),
+.legacy-config:is(:hover, :focus-visible, :focus-within, :active),
+.command-config-pane:is(:hover, :focus-visible, :focus-within, :active),
+.command-run-pane:is(:hover, :focus-visible, :focus-within, :active),
+.login-table-scroll:is(:hover, :focus-visible, :focus-within, :active),
+.login-operation-menu:is(:hover, :focus-visible, :focus-within, :active),
+.vk-task-table-viewport:is(:hover, :focus-visible, :focus-within, :active),
+.vk-task-detail-body:is(:hover, :focus-visible, :focus-within, :active),
+.vk-task-batch-rerun-menu:is(:hover, :focus-visible, :focus-within, :active),
+.vk-task-operation-menu:is(:hover, :focus-visible, :focus-within, :active),
+.vk-output-tabs:is(:hover, :focus-visible, :focus-within, :active),
+.vk-output-viewer-content:is(:hover, :focus-visible, :focus-within, :active),
+.vk-output-viewer-content pre:is(:hover, :focus-visible, :focus-within, :active),
+.wrss-log:is(:hover, :focus-visible, :focus-within, :active),
+[class~="overflow-auto"]:is(:hover, :focus-visible, :focus-within, :active),
+[class~="overflow-x-auto"]:is(:hover, :focus-visible, :focus-within, :active),
+[class~="overflow-y-auto"]:is(:hover, :focus-visible, :focus-within, :active) {
+  scrollbar-color: color-mix(in srgb, var(--color-fg-dim) 68%, transparent) transparent;
+  transition-duration: 120ms;
+}
+
+.scroll-fade:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.app-content:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.legacy-nav:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.legacy-runs:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.legacy-config:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.command-config-pane:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.command-run-pane:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.login-table-scroll:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.login-operation-menu:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.vk-task-table-viewport:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.vk-task-detail-body:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.vk-task-batch-rerun-menu:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.vk-task-operation-menu:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.vk-output-tabs:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.vk-output-viewer-content:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.vk-output-viewer-content pre:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+.wrss-log:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+[class~="overflow-auto"]:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+[class~="overflow-x-auto"]:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
+[class~="overflow-y-auto"]:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-fg-dim) 68%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(
+    .scroll-fade,
+    .app-content,
+    .legacy-nav,
+    .legacy-runs,
+    .legacy-config,
+    .command-config-pane,
+    .command-run-pane,
+    .login-table-scroll,
+    .login-operation-menu,
+    .vk-task-table-viewport,
+    .vk-task-detail-body,
+    .vk-task-batch-rerun-menu,
+    .vk-task-operation-menu,
+    .vk-output-tabs,
+    .vk-output-viewer-content,
+    .vk-output-viewer-content pre,
+    .wrss-log,
+    [class~="overflow-auto"],
+    [class~="overflow-x-auto"],
+    [class~="overflow-y-auto"]
+  ) {
+    transition: none;
+  }
+  :where(
+    .scroll-fade,
+    .app-content,
+    .legacy-nav,
+    .legacy-runs,
+    .legacy-config,
+    .command-config-pane,
+    .command-run-pane,
+    .login-table-scroll,
+    .login-operation-menu,
+    .vk-task-table-viewport,
+    .vk-task-detail-body,
+    .vk-task-batch-rerun-menu,
+    .vk-task-operation-menu,
+    .vk-output-tabs,
+    .vk-output-viewer-content,
+    .vk-output-viewer-content pre,
+    .wrss-log,
+    [class~="overflow-auto"],
+    [class~="overflow-x-auto"],
+    [class~="overflow-y-auto"]
+  )::-webkit-scrollbar-thumb {
+    transition: none;
+  }
+}
+
 .overflow-tooltip {
   position: relative;
   display: block;

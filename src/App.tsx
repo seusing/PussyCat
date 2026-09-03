@@ -367,8 +367,8 @@ export default function App({
               onJobChange={(jobId) => {
                 setSelectedVkJobId(jobId)
                 setVkRightPanelOpen(true)
-                setVkJobsRevision((revision) => revision + 1)
               }}
+              onJobRefresh={() => setVkJobsRevision((revision) => revision + 1)}
             />
           : undefined}
         rightPanelOpen={activeModule === 'vk' && vkRightPanelOpen}

@@ -7,7 +7,12 @@ export type VkResultVersion = {
   attempt: number
   submittedAt: string
   status: string
+  /** 已在任务详情中解析出的主结果;有它就不必再查一次任务详情。 */
+  outputId?: string
+  outputTitle?: string
 }
+
+type VkResultRow = VkJobRow & { outputs?: VkJobView['outputs'] }
 
 export type VkTaskResultGroup = {
   id: string
@@ -18,12 +23,12 @@ export type VkTaskResultGroup = {
   versions: VkResultVersion[]
 }
 
-export function vkJobRowFromView(job: VkJobView): VkJobRow {
+export function vkJobRowFromView(job: VkJobView): VkResultRow {
   return { ...job, source: job.request?.source }
 }
 
 /** Results belong to one submission. Retries stay with their original video. */
-export function vkTaskResultGroups(rows: readonly VkJobRow[], jobId: string): VkTaskResultGroup[] {
+export function vkTaskResultGroups(rows: readonly VkResultRow[], jobId: string): VkTaskResultGroup[] {
   const byId = new Map(rows.map((row) => [row.job_id, row]))
   const selected = byId.get(jobId)
   if (!selected) return []
@@ -64,9 +69,17 @@ export function vkTaskResultGroups(rows: readonly VkJobRow[], jobId: string): Vk
     source: attempts.find((row) => row.source?.trim())?.source?.trim() ?? '',
     ordinal: index + 1,
     taskNumber: selected.taskNumber ?? attempts[0].taskNumber,
-    versions: attempts.flatMap((row, attempt) => RESULT_STATUSES.has(row.status.trim().toLowerCase())
-      ? [{ jobId: row.job_id, attempt: attempt + 1, submittedAt: row.submitted_at, status: row.status }]
-      : []).reverse(),
+    versions: attempts.flatMap((row, attempt) => {
+      if (!RESULT_STATUSES.has(row.status.trim().toLowerCase())) return []
+      const output = vkPrimaryOutput(row)
+      return [{
+        jobId: row.job_id,
+        attempt: attempt + 1,
+        submittedAt: row.submitted_at,
+        status: row.status,
+        ...(output ? { outputId: output.id, outputTitle: output.title } : {}),
+      }]
+    }).reverse(),
   }))
 }
 
@@ -75,7 +88,7 @@ export function vkResultVersionLabel(version: VkResultVersion, latest = false): 
   return `第 ${version.attempt} 次 · ${time}${latest ? ' · 最新结果' : ''}`
 }
 
-export function vkPrimaryOutput(job: VkJobView): { id: string; title: string } | null {
+export function vkPrimaryOutput(job: Pick<VkJobView, 'outputs'>): { id: string; title: string } | null {
   if (job.outputs?.note_path) return { id: job.outputs.note_path, title: '知识笔记' }
   const product = job.outputs?.product_artifacts?.find((artifact) => artifact.markdown)
   if (product?.markdown) return { id: product.markdown, title: `${product.preset} MD` }
