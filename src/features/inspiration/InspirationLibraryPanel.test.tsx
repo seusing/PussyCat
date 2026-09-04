@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { addInspirationItem, loadInspirationLibrary } from './inspirationLibrary'
+import { addInspirationFolder, addInspirationItem, loadInspirationLibrary } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
 
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
@@ -67,5 +67,52 @@ describe('灵感库', () => {
     expect(screen.getByText('来源：视频解析任务')).toBeInTheDocument()
     await userEvent.type(screen.getByTestId('nav-search'), '不存在')
     expect(screen.getByText('没有匹配的灵感')).toBeInTheDocument()
+  })
+
+  it('根目录同时显示笔记和文件夹，并支持进入子文件夹', async () => {
+    const parent = addInspirationFolder('选题')!
+    const child = addInspirationFolder('短视频', parent.id)!
+    const rootNote = addInspirationItem({ title: '根目录笔记', content: 'root', kind: 'note', format: 'md', folderId: null })!
+    const childNote = addInspirationItem({ title: '子目录笔记', content: 'child', kind: 'note', format: 'md', folderId: child.id })!
+    render(<InspirationLibraryPanel onOpenSources={() => {}} />)
+
+    expect(screen.getByTestId(`inspiration-folder-item-${parent.id}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`inspiration-item-${rootNote.id}`)).toBeInTheDocument()
+    expect(screen.queryByTestId(`inspiration-item-${childNote.id}`)).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId(`inspiration-folder-${parent.id}`))
+    expect(screen.getByTestId(`inspiration-folder-item-${child.id}`)).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId(`inspiration-folder-item-${child.id}`))
+    expect(screen.getByTestId(`inspiration-item-${childNote.id}`)).toBeInTheDocument()
+    expect(screen.queryByText('未分类')).not.toBeInTheDocument()
+  })
+
+  it('删除文件夹前要求确认，并把内容移到上一级', async () => {
+    const parent = addInspirationFolder('父文件夹')!
+    const child = addInspirationFolder('待删除', parent.id)!
+    const note = addInspirationItem({ title: '保留笔记', content: 'keep', kind: 'note', format: 'md', folderId: child.id })!
+    render(<InspirationLibraryPanel onOpenSources={() => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: `删除文件夹 ${child.name}` }))
+    expect(screen.getByRole('dialog', { name: '删除文件夹？' })).toBeInTheDocument()
+    expect(loadInspirationLibrary().items[0].folderId).toBe(child.id)
+    await userEvent.click(screen.getByRole('button', { name: '删除' }))
+
+    const saved = loadInspirationLibrary()
+    expect(saved.folders.some((folder) => folder.id === child.id)).toBe(false)
+    expect(saved.items.find((item) => item.id === note.id)?.folderId).toBe(parent.id)
+  })
+
+  it('搜索建议支持键盘选中灵感', async () => {
+    const item = addInspirationItem({ title: '键盘搜索目标', content: '内容', kind: 'note', format: 'md', folderId: null })!
+    render(<InspirationLibraryPanel onOpenSources={() => {}} />)
+
+    const search = screen.getByRole('combobox', { name: '搜索灵感' })
+    await userEvent.type(search, '键盘搜索')
+    expect(screen.getByRole('listbox', { name: '搜索建议' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /键盘搜索目标/ })).toBeInTheDocument()
+    await userEvent.keyboard('{ArrowDown}{Enter}')
+    expect(search).toHaveValue('')
+    expect(screen.getByTestId('inspiration-title-input')).toHaveValue(item.title)
   })
 })

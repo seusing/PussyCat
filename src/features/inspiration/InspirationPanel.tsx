@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
-import { ArrowLeft, BookmarkPlus, FolderOpen, GalleryHorizontalEnd, Orbit, Search } from 'lucide-react'
+import { ArrowLeft, BookmarkPlus, FolderOpen, GalleryHorizontalEnd, Search } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import type { CommandManifest } from '../../data/types'
 import {
@@ -9,7 +9,6 @@ import {
   type SupportedSite,
 } from '../../data/supportedSites'
 import { SiteCarousel } from './SiteCarousel'
-import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
 import { CommandConfig } from '../config/CommandConfig'
 import { RunPanel } from '../runs/RunPanel'
@@ -20,18 +19,7 @@ import { addInspirationItem } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
 
 type Stage = 'sites' | 'commands' | 'execute'
-type DisplayMode = 'carousel' | 'wheel'
 type Workspace = 'library' | 'sources'
-
-const DISPLAY_MODE_KEY = 'zhuazhua:inspiration-display-mode:v1'
-
-function initialDisplayMode(): DisplayMode {
-  try {
-    return localStorage.getItem(DISPLAY_MODE_KEY) === 'wheel' ? 'wheel' : 'carousel'
-  } catch {
-    return 'carousel'
-  }
-}
 
 function fixtureSites(commands: CommandManifest[]): SupportedSite[] {
   return [...new Set(commands.map((command) => command.site))].map((site) => ({
@@ -81,7 +69,6 @@ export function InspirationPanel({
   const [stage, setStage] = useState<Stage>(() => selected ? 'execute' : 'sites')
   const [workspace, setWorkspace] = useState<Workspace>(() => selected ? 'sources' : 'library')
   const [site, setSite] = useState<SupportedSite | undefined>(() => selectedSite)
-  const [mode, setMode] = useState<DisplayMode>(initialDisplayMode)
   const [query, setQuery] = useState('')
   const lastSelectedCommand = useRef(selected?.command)
 
@@ -97,11 +84,6 @@ export function InspirationPanel({
     setWorkspace('sources')
     setStage('execute')
   }, [selected, sites])
-
-  const chooseMode = (next: DisplayMode) => {
-    setMode(next)
-    try { localStorage.setItem(DISPLAY_MODE_KEY, next) } catch { /* in-memory preference still applies */ }
-  }
 
   const openSite = (next: SupportedSite) => {
     setWorkspace('sources')
@@ -273,11 +255,8 @@ export function InspirationPanel({
           <button type="button" data-testid="open-inspiration-library" aria-label="灵感库" onClick={() => setWorkspace('library')} title="打开灵感库">
             <FolderOpen size={17} />
           </button>
-          <button type="button" data-testid="display-mode-carousel" aria-label="卡片轮播" aria-pressed={mode === 'carousel'} onClick={() => chooseMode('carousel')}>
+          <button type="button" data-testid="display-mode-carousel" aria-label="卡片轮播" aria-pressed="true" title="卡片轮播">
             <GalleryHorizontalEnd size={17} />
-          </button>
-          <button type="button" data-testid="display-mode-wheel" aria-label="活动转盘" aria-pressed={mode === 'wheel'} onClick={() => chooseMode('wheel')}>
-            <Orbit size={17} />
           </button>
         </div>
         <label className="command-search inspiration-global-search">
@@ -296,9 +275,7 @@ export function InspirationPanel({
           />
         : (
           <div className="site-display">
-            {mode === 'carousel'
-              ? <SiteCarousel sites={sites} onSelect={openSite} />
-              : <ActivityWheel sites={sites} onSelect={openSite} />}
+            <SiteCarousel sites={sites} onSelect={openSite} />
           </div>
         )}
     </div>

@@ -4,6 +4,7 @@ export type InspirationFolder = {
   id: string
   name: string
   createdAt: number
+  parentId: string | null
 }
 
 export type InspirationItem = {
@@ -72,8 +73,14 @@ function normalize(raw: unknown): InspirationLibrary {
   if (!raw || typeof raw !== 'object') return emptyInspirationLibrary()
   const value = raw as Partial<InspirationLibrary>
   if (value.version !== undefined && value.version !== 1) return emptyInspirationLibrary()
-  const folders = Array.isArray(value.folders) ? value.folders.filter(validFolder) : []
-  const folderIds = new Set(folders.map((folder) => folder.id))
+  const rawFolders = Array.isArray(value.folders) ? value.folders.filter(validFolder) : []
+  const folderIds = new Set(rawFolders.map((folder) => folder.id))
+  const folders = rawFolders.map((folder) => ({
+    ...folder,
+    parentId: typeof folder.parentId === 'string' && folder.parentId !== folder.id && folderIds.has(folder.parentId)
+      ? folder.parentId
+      : null,
+  }))
   const items = Array.isArray(value.items)
     ? value.items.filter(validItem).map((item) => ({ ...item, folderId: item.folderId && folderIds.has(item.folderId) ? item.folderId : null }))
     : []
@@ -110,15 +117,23 @@ export function addInspirationItem(input: Omit<InspirationItem, 'id' | 'createdA
   return saveInspirationLibrary({ ...library, items: [item, ...library.items] }, storage) ? item : null
 }
 
-export function addInspirationFolder(name: string, storage?: Storage): InspirationFolder | null {
+export function addInspirationFolder(name: string, storage?: Storage): InspirationFolder | null
+export function addInspirationFolder(name: string, parentId: string | null, storage?: Storage): InspirationFolder | null
+export function addInspirationFolder(name: string, parentIdOrStorage?: string | null | Storage, storage?: Storage): InspirationFolder | null {
   const trimmed = name.trim()
   if (!trimmed) return null
-  const library = loadInspirationLibrary(storage)
-  const folder: InspirationFolder = { id: id('folder'), name: trimmed, createdAt: Date.now() }
-  return saveInspirationLibrary({ ...library, folders: [...library.folders, folder] }, storage) ? folder : null
+  const targetStorage = parentIdOrStorage && typeof parentIdOrStorage === 'object' ? parentIdOrStorage : storage
+  const parentId = typeof parentIdOrStorage === 'string' ? parentIdOrStorage : null
+  const library = loadInspirationLibrary(targetStorage)
+  const folder: InspirationFolder = {
+    id: id('folder'),
+    name: trimmed,
+    createdAt: Date.now(),
+    parentId: parentId && library.folders.some((item) => item.id === parentId) ? parentId : null,
+  }
+  return saveInspirationLibrary({ ...library, folders: [...library.folders, folder] }, targetStorage) ? folder : null
 }
 
 export function inspirationKindLabel(kind: InspirationItemKind): string {
   return kind === 'video' ? '视频解析' : kind === 'source' ? '灵感来源' : '笔记'
 }
-
