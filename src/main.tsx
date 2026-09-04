@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { StartupSplash } from './components/StartupSplash'
 import { createHostSelection } from './host'
 import './index.css'
 
@@ -12,11 +13,13 @@ const hostSelection = createHostSelection({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App
-      host={hostSelection.host}
-      catalogSource={hostSelection.catalogSource}
-      mode={hostSelection.mode}
-      baseUrl={hostSelection.baseUrl}
-    />
+    <StartupSplash>
+      <App
+        host={hostSelection.host}
+        catalogSource={hostSelection.catalogSource}
+        mode={hostSelection.mode}
+        baseUrl={hostSelection.baseUrl}
+      />
+    </StartupSplash>
   </StrictMode>,
 )
