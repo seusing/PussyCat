@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 
 const anime = vi.hoisted(() => {
   const engine = { speed: 1 }
@@ -22,7 +22,7 @@ vi.mock('animejs', () => anime)
 
 import { StartupSplash } from './StartupSplash'
 
-test('shows the startup layer, scrambles the tagline, and restores engine speed on exit', () => {
+test('holds the startup layer until input, then restores engine speed after the exit fade', () => {
   vi.useFakeTimers()
   anime.engine.speed = 1
   anime.animate.mockClear()
@@ -38,19 +38,24 @@ test('shows the startup layer, scrambles the tagline, and restores engine speed 
     )
 
     expect(screen.getByTestId('app-content')).toBeInTheDocument()
-    expect(screen.getByTestId('startup-splash')).toHaveAttribute('aria-label', 'Let inspiration spark...')
+    const splash = screen.getByTestId('startup-splash')
+    expect(splash).toHaveAttribute('aria-label', 'Press any key to continue')
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(anime.engine.speed).toBe(0.35)
-    expect(anime.animate).toHaveBeenCalledTimes(4)
+    expect(anime.animate).toHaveBeenCalled()
     expect(anime.scrambleText).toHaveBeenCalledWith({
-      text: 'Let inspiration spark...',
+      text: 'Press any key to continue',
       from: 'center',
       cursor: '_',
       seed: 7,
     })
 
-    act(() => vi.advanceTimersByTime(2_400))
+    act(() => vi.advanceTimersByTime(3_000))
+    expect(screen.getByTestId('startup-splash')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Enter' })
     expect(screen.getByTestId('startup-splash')).toHaveClass('is-leaving')
-    act(() => vi.advanceTimersByTime(520))
+    act(() => vi.advanceTimersByTime(560))
     expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument()
     expect(anime.engine.speed).toBe(1)
     expect(anime.revert).toHaveBeenCalledTimes(1)
@@ -60,4 +65,3 @@ test('shows the startup layer, scrambles the tagline, and restores engine speed 
     vi.useRealTimers()
   }
 })
-
