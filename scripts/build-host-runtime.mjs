@@ -1,7 +1,7 @@
 // 生成自包含 Host runtime 到 dist-host/。
 // 铁律:dist-host 必须镜像仓内相对拓扑(server/ 用相对 import 引 ../src/shared/*.mjs),拍平必断。
 // 可复现性:opencli 及其 production 依赖由 host-runtime/package-lock.json 钉死,用 npm ci 安装。
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -22,7 +22,10 @@ cpSync(join(root, 'host-runtime/package-lock.json'), join(out, 'package-lock.jso
 // execSync 内建走 shell(Windows 用 cmd.exe,POSIX 用 /bin/sh),天然绕开这个限制且跨平台一致;
 // 命令字符串是脚本内硬编码字面量、无任何外部/动态输入拼接,不构成注入面。
 execSync('npm ci --omit=dev', { cwd: out, stdio: 'inherit' })
-execSync(`${process.execPath} ${join(root, 'scripts/apply-opencli-overrides.mjs')} --target=${join(out, 'node_modules/@jackwener/opencli')}`, { cwd: root, stdio: 'inherit' })
+execFileSync(process.execPath, [
+  join(root, 'scripts/apply-opencli-overrides.mjs'),
+  `--target=${join(out, 'node_modules/@jackwener/opencli')}`,
+], { cwd: root, stdio: 'inherit' })
 
 // 2) 镜像拓扑拷贝(server + src/shared + public 快照)
 // 逐文件拷而不是 cpSync(recursive+filter):拷哪些文件由 host-runtime-sources.mjs 唯一定义,
