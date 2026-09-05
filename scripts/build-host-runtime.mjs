@@ -22,6 +22,7 @@ cpSync(join(root, 'host-runtime/package-lock.json'), join(out, 'package-lock.jso
 // execSync 内建走 shell(Windows 用 cmd.exe,POSIX 用 /bin/sh),天然绕开这个限制且跨平台一致;
 // 命令字符串是脚本内硬编码字面量、无任何外部/动态输入拼接,不构成注入面。
 execSync('npm ci --omit=dev', { cwd: out, stdio: 'inherit' })
+execSync(`${process.execPath} ${join(root, 'scripts/apply-opencli-overrides.mjs')} --target=${join(out, 'node_modules/@jackwener/opencli')}`, { cwd: root, stdio: 'inherit' })
 
 // 2) 镜像拓扑拷贝(server + src/shared + public 快照)
 // 逐文件拷而不是 cpSync(recursive+filter):拷哪些文件由 host-runtime-sources.mjs 唯一定义,

@@ -75,7 +75,7 @@ export const REVIEWED_RECORDS = new Map([
 
   // ── browser-cookie-read-pilot ──────────────────────────────────────────────
   // 审定全文见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md(逐条附源码行号)。
-  // **八条共同前提**:effects/residues 的取值以「Host 不放行 --trace / --site-session /
+  // **十一条共同前提**:effects/residues 的取值以「Host 不放行 --trace / --site-session /
   // --keep-tab / --window」为条件(审定 §1.2 口径 F)。这些是 opencli 的运行时全局选项
   // (commanderAdapter.js:49,53-55),不是 manifest args,因此**不进 reviewShapeHash**——
   // 它们的封堵由 policy.mjs 的 assertDeclaredArgvOnly 在 Host 侧兑现,不能只靠前端 buildArgv。
@@ -105,6 +105,39 @@ export const REVIEWED_RECORDS = new Map([
       effects: [],
       credentialFlow: 'consume',
       // ephemeral 会话 + keepTab=false,成功/失败两路径都调 closeWindow(execution.js:466,480,314,339)。
+      residues: [],
+    },
+  }],
+  ['xiaohongshu/saved', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/saved') },
+    metadata: {
+      executionPath: 'browser-bridge',
+      authorities: ['browser-profile', 'public-network'],
+      exposure: 'personal',
+      effects: [],
+      credentialFlow: 'consume',
+      residues: [],
+    },
+  }],
+  ['xiaohongshu/collections', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/collections') },
+    metadata: {
+      executionPath: 'browser-bridge',
+      authorities: ['browser-profile', 'public-network'],
+      exposure: 'personal',
+      effects: [],
+      credentialFlow: 'consume',
+      residues: [],
+    },
+  }],
+  ['xiaohongshu/liked', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/liked') },
+    metadata: {
+      executionPath: 'browser-bridge',
+      authorities: ['browser-profile', 'public-network'],
+      exposure: 'personal',
+      effects: [],
+      credentialFlow: 'consume',
       residues: [],
     },
   }],
@@ -200,10 +233,10 @@ export const REVIEWED_RECORDS = new Map([
  * 条一次性拉进 tier,其中 488 条随即因 metadata-missing 落 unknown。结果仍 fail-closed,但
  * 三处代价真实存在——tier 名字("pilot")与成员规模不符;`no-tier` 与 `metadata-missing` 两个
  * reasonCode 的语义被搅混;§4.1.2 L2「触碰即处置」的记账面凭空扩大 60 倍。
- * **显式集合是「试点」的诚实表达**:进 tier 的只有这八条,其余 488 条继续 `unknown/no-tier`。
+ * **显式集合是「试点」的诚实表达**:进 tier 的只有这十一条,其余命令继续 `unknown/no-tier`。
  */
 export const BROWSER_COOKIE_READ_PILOT = new Set([
-  'xiaohongshu/whoami', 'xiaohongshu/feed',
+  'xiaohongshu/whoami', 'xiaohongshu/feed', 'xiaohongshu/saved', 'xiaohongshu/collections', 'xiaohongshu/liked',
   'bilibili/whoami', 'bilibili/hot',
   'twitter/whoami', 'twitter/timeline',
   'youtube/whoami', 'youtube/subscriptions',

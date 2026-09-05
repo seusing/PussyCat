@@ -1,6 +1,6 @@
 // 命令与参数说明的中文覆盖表。
 //
-// **范围有意收窄到试点八条。** 目录里 1278 条命令的 description 与 arg.help 来自 opencli 的
+// **范围有意收窄到已审定的只读命令。** 目录里的 description 与 arg.help 来自 opencli 的
 // manifest,绝大多数是英文;逐条翻译既不可能、也不该由本仓假装完成——机翻的错译会比英文原文
 // 更误导人(参数说明直接决定用户填什么值)。因此:**表里有就用中文,表里没有就如实回落英文原文**,
 // 不做任何自动翻译、不留半截译文。
@@ -17,6 +17,18 @@ const ZH: Record<string, CommandCopy> = {
   },
   'xiaohongshu/feed': {
     description: '读取小红书首页推荐流',
+    args: { limit: '返回条数' },
+  },
+  'xiaohongshu/saved': {
+    description: '读取小红书收藏笔记；填写专辑名可只读取该专辑，留空读取全部收藏',
+    args: { collection: '专辑名称，留空读取全部收藏', limit: '返回条数' },
+  },
+  'xiaohongshu/collections': {
+    description: '读取小红书收藏专辑列表及每个专辑的笔记数量',
+    args: { limit: '返回专辑数量' },
+  },
+  'xiaohongshu/liked': {
+    description: '读取小红书点赞过的笔记列表',
     args: { limit: '返回条数' },
   },
   'bilibili/whoami': {
