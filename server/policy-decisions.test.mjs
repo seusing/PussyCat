@@ -76,9 +76,9 @@ describe('准入算法', () => {
     expect(decisions.size).toBe(snapshot.commands.length)
   })
 
-  it('可执行面 = legacy 276 + 三条 local-direct + 八条试点', () => {
+  it('可执行面 = legacy 276 + 三条 local-direct + 十一条试点', () => {
     const runnable = [...decisions.values()].filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
-    expect(runnable.length).toBe(276 + 3 + 8)
+    expect(runnable.length).toBe(276 + 3 + 11)
   })
 
   // 上一条的「全状态」是遍历**恰好出现的**状态,证明不了四个状态都能构造出来。
@@ -139,11 +139,11 @@ describe('准入算法 —— 真实数据到不了的出口(注入夹具)', () 
 
 // ——— browser-cookie-read-pilot 试点 ————————————————————————————————————————
 // 审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md。
-// 这一组守的是三件事:八条真的进了 tier 且只能落 ready/ack;**没进试点的同 cohort 命令
+  // 这一组守的是三件事:十一条真的进了 tier 且只能落 ready/ack;**没进试点的同 cohort 命令
 // 一条都没被带出来**;write/ui/intercept/download/login 继续被拒。
 describe('browser-cookie-read-pilot', () => {
   const PILOT = [
-    'xiaohongshu/whoami', 'xiaohongshu/feed',
+    'xiaohongshu/whoami', 'xiaohongshu/feed', 'xiaohongshu/saved', 'xiaohongshu/collections', 'xiaohongshu/liked',
     'bilibili/whoami', 'bilibili/hot',
     'twitter/whoami', 'twitter/timeline',
     'youtube/whoami', 'youtube/subscriptions',
@@ -161,7 +161,7 @@ describe('browser-cookie-read-pilot', () => {
     expect(d.metadata.credentialFlow).toBe('consume')
   })
 
-  it('八条只能得 ready 或 acknowledgement-required —— 不得出现 denied/unknown', () => {
+  it('十一条只能得 ready 或 acknowledgement-required —— 不得出现 denied/unknown', () => {
     for (const key of PILOT) {
       expect(['ready', 'acknowledgement-required'], key).toContain(decisions.get(key).state)
     }
@@ -182,7 +182,7 @@ describe('browser-cookie-read-pilot', () => {
     }
   })
 
-  it('**同 cohort 的非成员一条都没被带出来** —— 496 条 read+cookie+browser 里只放行这八条', () => {
+  it('**同 cohort 的非成员一条都没被带出来** —— read+cookie+browser 里只放行这十一条', () => {
     const cohort = snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'cookie' && c.browser === true)
       .map((c) => c.command)

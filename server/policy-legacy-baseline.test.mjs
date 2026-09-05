@@ -23,9 +23,9 @@ describe('legacy 基线 artifact', () => {
   // 三个值已核实与 main@43d789b 的实际文件一致(2026-07-27)。
   it('固定源身份等于 spec §4.2 钉死的那一份,而非「某一份自洽的快照」', () => {
     expect(baseline.materializedFrom.sha256)
-      .toBe('d714ef22863031ea694d5d90d2582d331bb466bc508db46ecf7cb6faf0b0398f')
+      .toBe('37ec65020d604f4dd4835111008676ff72661db0c145526b43263e12f69610c7')
     expect(baseline.materializedFrom.gitBlob)
-      .toBe('3b80be2b9b19e03f7475ab6a085f6eb0f85ab3fa')
+      .toBe('93be28ea46a9e652922a6d7b85221383216c2c90')
     expect(baseline.opencliVersion).toBe('1.8.6')
   })
 

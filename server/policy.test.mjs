@@ -127,9 +127,9 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(policy.allowedCommands.size).toBe(runnable.size)
   })
 
-  it('执行面增量恰为三条 local-direct 加八条试点命令,且没有任何条目被移除', () => {
+  it('执行面增量恰为三条 local-direct 加十一条试点命令,且没有任何条目被移除', () => {
     // 只断言总数 287 挡不住「减掉一条 legacy、多进来两条别的」——必须钉住**增量本身**。
-    // 试点开放后增量从 3 条变 11 条:多出的八条**逐条列名**,任何第九条溜进执行面都会红。
+    // 试点开放后增量从 3 条变 14 条:多出的十一条**逐条列名**,任何额外命令都会红。
     const legacyDerived = new Set(snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
       .map((c) => c.command)
@@ -139,11 +139,12 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(added).toEqual([
       'antigravity/recent-paths', 'bilibili/hot', 'bilibili/whoami',
       'mercury/reimbursement-plan', 'trae-cn/setup', 'twitter/timeline', 'twitter/whoami',
-      'xiaohongshu/feed', 'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
+      'xiaohongshu/collections', 'xiaohongshu/feed', 'xiaohongshu/liked', 'xiaohongshu/saved',
+      'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
     ])
     expect(removed).toEqual([])
     expect(legacyDerived.size).toBe(276)
-    expect(policy.allowedCommands.size).toBe(287)
+    expect(policy.allowedCommands.size).toBe(290)
   })
 
   it('注入缝不经 buildExecutionPolicy 透传 —— 传第二参也不改变任何判决', () => {
@@ -359,10 +360,13 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
     }, policy).commandKey).toBe('36kr/news')
   })
 
-  it('八条试点命令都挂上了约束,且 flags 恰为各自 manifest 声明的集合', () => {
+  it('十一条试点命令都挂上了约束,且 flags 恰为各自 manifest 声明的集合', () => {
     const expected = new Map([
       ['xiaohongshu/whoami', []],
       ['xiaohongshu/feed', ['--limit']],
+      ['xiaohongshu/saved', ['--collection', '--id', '--limit']],
+      ['xiaohongshu/collections', ['--id', '--limit']],
+      ['xiaohongshu/liked', ['--id', '--limit']],
       ['bilibili/whoami', []],
       ['bilibili/hot', ['--limit']],
       ['twitter/whoami', []],

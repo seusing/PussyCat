@@ -1,8 +1,8 @@
 {
   "materializedFrom": {
     "path": "public/catalog.snapshot.json",
-    "gitBlob": "3b80be2b9b19e03f7475ab6a085f6eb0f85ab3fa",
-    "sha256": "d714ef22863031ea694d5d90d2582d331bb466bc508db46ecf7cb6faf0b0398f"
+    "gitBlob": "93be28ea46a9e652922a6d7b85221383216c2c90",
+    "sha256": "37ec65020d604f4dd4835111008676ff72661db0c145526b43263e12f69610c7"
   },
   "opencliVersion": "1.8.6",
   "entries": {
