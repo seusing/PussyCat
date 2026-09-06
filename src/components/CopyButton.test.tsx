@@ -50,3 +50,21 @@ test('1.5 秒后恢复原始文案和图标状态', async () => {
     expect(button).toHaveAttribute('aria-pressed', 'false')
   }, { timeout: 2500 })
 })
+
+test('iconOnly 保留复制行为并用无障碍文案反馈状态', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  render(<CopyButton iconOnly label="复制结果" getText={() => 'result'} testid="copy-icon" />)
+
+  const button = screen.getByTestId('copy-icon')
+  expect(button).toHaveAttribute('aria-label', '复制结果')
+  expect(button).toHaveAttribute('title', '复制结果')
+  expect(button).toHaveStyle({ width: '36px', height: '36px', padding: '0px' })
+  await userEvent.click(button)
+
+  expect(writeText).toHaveBeenCalledWith('result')
+  await waitFor(() => {
+    expect(button).toHaveAttribute('aria-label', '已复制')
+    expect(button).toHaveAttribute('title', '已复制')
+  })
+})

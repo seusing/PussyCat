@@ -1,0 +1,11 @@
+.inspiration-breadcrumb > .inspiration-workspace-link,
+.inspiration-page-heading > .inspiration-workspace-link {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  gap: 0;
+  padding: 0;
+}

@@ -160,6 +160,14 @@ try {
     parentWatch,
   })}\n`)
 
+  if (wrssRuntime.status().state === 'installed') {
+    setImmediate(() => {
+      void wrssRuntime.enable().catch((error) => {
+        console.error('[opencli-host] WeRSS warmup failed:', error.message)
+      })
+    })
+  }
+
   const printableAddress = typeof address === 'object' && address ? `${address.address}:${address.port}` : `${host}:${port}`
   console.log(`[opencli-host] listening on http://${printableAddress}`)
   console.log(`[opencli-host] OpenCLI ${policy.opencliVersion}: ${opencliEntry}`)

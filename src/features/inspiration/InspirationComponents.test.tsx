@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
 import { SiteCarousel } from './SiteCarousel'
+import { InspirationPanel } from './InspirationPanel'
 import type { SupportedSite } from '../../data/supportedSites'
 import type { CommandManifest } from '../../data/types'
+import { useAppStore } from '../../store/appStore'
 
 const sites: SupportedSite[] = ['a', 'b', 'c', 'd', 'e'].map((id) => ({
   id,
@@ -119,5 +121,33 @@ describe('inspiration selectors', () => {
     fireEvent.mouseMove(rowA)
     expect(headerA).toHaveAttribute('aria-expanded', 'true')
     expect(headerB).toHaveAttribute('aria-expanded', 'false')
+  })
+})
+
+describe('inspiration workspace link', () => {
+  const renderPanel = () => render(
+    <InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />,
+  )
+
+  it('execute 页使用无文字的固定尺寸灵感库图标按钮', () => {
+    useAppStore.setState({ commands: [commands[0]], selected: commands[0] })
+    renderPanel()
+
+    const button = screen.getByTestId('open-inspiration-library')
+    expect(button).toHaveAttribute('aria-label', '打开灵感库')
+    expect(button).toHaveAttribute('title', '打开灵感库')
+    expect(button.textContent).toBe('')
+    expect(button).toHaveClass('inspiration-workspace-link')
+  })
+
+  it('commands 页使用同一灵感库图标按钮', () => {
+    useAppStore.setState({ commands: [commands[0]], selected: commands[0] })
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+
+    const button = screen.getByTestId('open-inspiration-library')
+    expect(button).toHaveAttribute('aria-label', '打开灵感库')
+    expect(button.textContent).toBe('')
+    expect(button).toHaveClass('inspiration-workspace-link')
   })
 })

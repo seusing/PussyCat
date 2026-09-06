@@ -27,4 +27,20 @@ describe('ResultsTable 送去视频解析', () => {
     expect(screen.queryByText('操作')).toBeNull()
     expect(screen.queryByTestId('send-to-vk-0')).toBeNull()
   })
+
+  it('renders a fixed-size icon action when requested', () => {
+    render(
+      <ResultsTable
+        columns={['title', 'url']}
+        rows={[{ title: '示例视频', url: 'https://example.com/video' }]}
+        onSendToVk={() => undefined}
+        sendIconOnly
+      />,
+    )
+
+    const button = screen.getByRole('button', { name: '送去视频解析' })
+    expect(button).toHaveAttribute('title', '送去视频解析')
+    expect(button).toHaveStyle({ width: '36px', height: '36px', padding: '0px' })
+    expect(button.querySelector('.lucide-send')).toBeInTheDocument()
+  })
 })

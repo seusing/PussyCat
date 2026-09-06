@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
+import { ChevronDown, Download, RotateCw, Send, Square, X } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { StreamLog } from './StreamLog'
 import { ResultsTable } from './ResultsTable'
@@ -8,6 +9,7 @@ import { CopyButton } from '../../components/CopyButton'
 import { validate } from '../config/validation'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { collectNoteLinks } from './noteLinks'
+import './RunPanel.css'
 
 export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun: () => void }) {
   const run = useAppStore((s) => s.currentRun)
@@ -51,20 +53,23 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
   const rerunLabel = run.state === 'succeeded' ? '再次执行' : run.state === 'failed' ? '重试' : '重新执行'
 
   return (
-    <div className="flex h-full flex-col p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span data-testid="run-state" className="flex items-center gap-2 text-sm font-medium">
+    <div className="run-panel flex h-full flex-col p-3">
+      <div className="run-panel-header">
+        <span data-testid="run-state" className="run-panel-status text-sm font-medium">
           {active && <ThinkingOrb state={orbState(run.state)} size={20} theme="dark" />}
           {stateLabel(run.state)}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="run-panel-actions" role="toolbar" aria-label="任务操作">
           {active && (
             <button data-testid="cancel-button" onClick={onCancel} disabled={run.state === 'cancelling'}
-              className="rounded-lg px-3 py-1 text-sm disabled:opacity-50" style={{ background: 'var(--color-danger)', color: 'var(--color-on-accent)' }}>
-              {run.state === 'cancelling' ? '正在取消…' : '取消执行'}
+              className="run-panel-icon-button is-danger disabled:opacity-50"
+              aria-label={run.state === 'cancelling' ? '正在取消' : '取消执行'}
+              title={run.state === 'cancelling' ? '正在取消' : '取消执行'}>
+              <Square size={15} aria-hidden="true" />
+              <span className="sr-only">{run.state === 'cancelling' ? '正在取消' : '取消执行'}</span>
             </button>
           )}
-          {payload && <CopyButton label={payload.label} getText={() => payload.text} testid="copy-run" />}
+          {payload && <CopyButton iconOnly label={payload.label} getText={() => payload.text} testid="copy-run" />}
           {noteLinks.video.length > 0 && (
             <button
               data-testid="export-note-links"
@@ -74,9 +79,10 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
                 commandKey: run.command.command,
                 collectedAt: run.startedAt,
               })}
-              className="rounded-lg px-3 py-1 text-sm"
-              style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-            >一键导出笔记链接</button>
+              className="run-panel-icon-button"
+              aria-label="一键导出笔记链接"
+              title="一键导出笔记链接"
+            ><Send size={16} aria-hidden="true" /><span className="sr-only">一键导出笔记链接</span></button>
           )}
           {noteLinks.all.length > 0 && (
             <button
@@ -84,22 +90,26 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
               type="button"
               onClick={() => { void saveLinks() }}
               disabled={savingLinks}
-              className="rounded-lg px-3 py-1 text-sm disabled:opacity-50"
-              style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-            >{savingLinks ? '正在保存…' : '保存至本地'}</button>
+              className="run-panel-icon-button disabled:opacity-50"
+              aria-label={savingLinks ? '正在保存' : '保存至本地'}
+              title={savingLinks ? '正在保存' : '保存至本地'}
+            ><Download size={16} aria-hidden="true" /><span className="sr-only">{savingLinks ? '正在保存' : '保存至本地'}</span></button>
           )}
           {rerunVisible && (
             <button data-testid="rerun-button" disabled={rerunDisabled} onClick={onRerun}
-              title={rerunDisabled ? '参数校验未通过，请回表单修正' : undefined}
-              className="rounded-lg px-3 py-1 text-sm disabled:opacity-50"
-              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
-              {rerunLabel}
+              title={rerunDisabled ? '参数校验未通过，请回表单修正' : rerunLabel}
+              aria-label={rerunDisabled ? `不可${rerunLabel}：参数校验未通过` : rerunLabel}
+              className="run-panel-icon-button is-accent disabled:opacity-50">
+              <RotateCw size={16} aria-hidden="true" />
+              <span className="sr-only">{rerunLabel}</span>
             </button>
           )}
           <button data-testid="collapse-panel" onClick={() => setCollapsed(!collapsed)}
             aria-label={collapsed ? '展开面板' : '收起面板'}
-            className="rounded-lg px-2 py-1 text-sm leading-none" style={{ color: 'var(--color-fg-dim)' }}>
-            {collapsed ? '▾' : '×'}
+            title={collapsed ? '展开面板' : '收起面板'}
+            className="run-panel-icon-button">
+            {collapsed ? <ChevronDown size={17} aria-hidden="true" /> : <X size={17} aria-hidden="true" />}
+            <span className="sr-only">{collapsed ? '展开面板' : '收起面板'}</span>
           </button>
         </div>
       </div>
@@ -142,6 +152,7 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
                   <ResultsTable
                     columns={columns}
                     rows={run.result ?? []}
+                    sendIconOnly
                     onSendToVk={listingCollections ? undefined : (url) => {
                       // 跨模块交接:规范化 URL + 脱敏 provenance(命令键/采集时刻),
                       // 严禁携带行数据,严禁另造第二种 manifest 格式。
@@ -166,7 +177,7 @@ function LinkGroup({ title, links, testid }: { title: string; links: string[]; t
     <section data-testid={testid} className="min-w-0 rounded-lg p-2" style={{ border: '1px solid var(--color-line)', background: 'var(--color-canvas)' }}>
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-xs font-medium" style={{ color: 'var(--color-fg)' }}>{title}（{links.length}）</span>
-        <CopyButton label="复制链接" getText={() => `${links.join('\n')}\n`} testid={`${testid}-copy`} />
+        <CopyButton iconOnly label="复制链接" getText={() => `${links.join('\n')}\n`} testid={`${testid}-copy`} />
       </div>
       <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-all text-xs" style={{ color: 'var(--color-fg-dim)' }}>{links.join('\n')}</pre>
     </section>

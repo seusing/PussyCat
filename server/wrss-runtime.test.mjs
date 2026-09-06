@@ -404,6 +404,8 @@ describe('WrssRuntimeManager', () => {
   it('patches an existing installed UI theme idempotently before each start', async () => {
     const { root, bundle } = await fixture()
     const installed = writeInstalled(root)
+    const indexPath = join(installed.sourceDir, 'static', 'index.html')
+    writeFileSync(indexPath, readFileSync(indexPath, 'utf8').replace('</head>', '<script src="https://hm.baidu.com/hm.js?975de8724ac02eb7e6d2357bb95c067d"></script><script src="/business.js"></script></head>'))
     let starts = 0
     const manager = new WrssRuntimeManager({
       home: root,
@@ -431,6 +433,8 @@ describe('WrssRuntimeManager', () => {
 
     const index = readFileSync(join(installed.sourceDir, 'static', 'index.html'), 'utf8')
     expectSourcePatched(installed.sourceDir)
+    expect(index).not.toContain('hm.baidu.com/hm.js')
+    expect(index).toContain('<script src="/business.js"></script>')
     expect(occurrences(index, '/static/pussycat-theme.css')).toBe(1)
     expect(occurrences(index, '/static/pussycat-bootstrap.js')).toBe(1)
     expect(occurrences(index, '/static/pussycat-ui.js')).toBe(1)
@@ -752,6 +756,73 @@ it('keeps injected navigation stable across observer frames and preserves drawer
     expect(menu.parentElement).toBe(header)
     menu.querySelector('[data-route="/"]').click()
     expect(navigate).toHaveBeenLastCalledWith('/')
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('preserves original article controls when moving the toolbar and restores it on teardown', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header>
+    <section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item active-mp">全部</button><button class="arco-list-item">新智元</button></div></aside>
+      <div class="arco-page-header"><div class="arco-page-header-extra"><button id="export">导出</button><button id="delete" disabled>批量删除</button></div></div>
+    </section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  const { document } = window
+  const toolbar = document.querySelector('.arco-page-header-extra')
+  const header = toolbar.parentElement
+  const exportAction = vi.fn()
+  toolbar.querySelector('#export').addEventListener('click', exportAction)
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(toolbar.parentElement.className).toBe('pussycat-article-actions'))
+    expect(header.childNodes[0].nodeType).toBe(window.Node.COMMENT_NODE)
+    expect(document.querySelector('.arco-list').getAttribute('aria-label')).toBe('公众号')
+    const accounts = [...document.querySelectorAll('.arco-list-item')]
+    accounts[0].classList.remove('active-mp')
+    accounts[1].classList.add('active-mp')
+    await vi.waitFor(() => expect(accounts[1].getAttribute('aria-current')).toBe('page'))
+    expect(accounts[0].hasAttribute('aria-current')).toBe(false)
+
+    const trigger = document.querySelector('.pussycat-more-button')
+    trigger.click()
+    toolbar.querySelector('#export').click()
+    expect(exportAction).toHaveBeenCalledOnce()
+    toolbar.querySelector('#delete').disabled = false
+    expect(document.querySelector('.pussycat-article-actions #delete').disabled).toBe(false)
+    const modal = document.createElement('div')
+    modal.className = 'arco-modal-wrapper'
+    modal.innerHTML = '<input aria-label="导出文件名">'
+    document.body.append(modal)
+    modal.querySelector('input').focus()
+    modal.querySelector('input').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(document.activeElement).toBe(modal.querySelector('input'))
+    expect(modal.closest('[inert]')).toBeNull()
+    modal.remove()
+    document.querySelector('.pussycat-drawer-close').click()
+    expect(document.body.style.overflow).toBe('')
+
+    window.history.pushState({}, '', '/export/records')
+    window.dispatchEvent(new window.PopStateEvent('popstate'))
+    await vi.waitFor(() => expect(toolbar.parentElement).toBe(header))
+    window.history.pushState({}, '', '/')
+    window.dispatchEvent(new window.PopStateEvent('popstate'))
+    await vi.waitFor(() => expect(toolbar.parentElement.className).toBe('pussycat-article-actions'))
+    const article = document.querySelector('.article-list')
+    const replacement = article.cloneNode(true)
+    replacement.querySelector('.arco-page-header').innerHTML = '<div class="arco-page-header-extra"><button>新的导出</button></div>'
+    article.replaceWith(replacement)
+    await vi.waitFor(() => expect(document.querySelector('.pussycat-article-actions').textContent).toContain('新的导出'))
+    expect(toolbar.isConnected).toBe(false)
+    expect(document.querySelectorAll('.arco-page-header-extra')).toHaveLength(1)
+    window.__PUSSYCAT_WRSS_UI__.destroy()
+    expect(replacement.querySelector('.arco-page-header-extra')?.textContent).toBe('新的导出')
   } finally {
     window.__PUSSYCAT_WRSS_UI__?.destroy()
     window.close()

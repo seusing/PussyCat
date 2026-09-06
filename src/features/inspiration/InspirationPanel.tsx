@@ -17,6 +17,7 @@ import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { commandDescription } from '../../data/zhCopy'
 import { addInspirationItem } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
+import './InspirationPanel.css'
 
 type Stage = 'sites' | 'commands' | 'execute'
 type Workspace = 'library' | 'sources'
@@ -199,7 +200,7 @@ export function InspirationPanel({
               aria-label="搜索命令"
             />
           </label>
-          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库"><FolderOpen size={15} aria-hidden="true" />灵感库</button>
+          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库" aria-label="打开灵感库"><FolderOpen size={18} aria-hidden="true" /></button>
         </div>
         <div className="command-workspace">
           <main data-testid="col-config" className="command-config-pane">
@@ -229,7 +230,7 @@ export function InspirationPanel({
             <Search size={16} aria-hidden="true" />
             <input ref={searchRef} data-testid="nav-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索命令" aria-label="搜索命令" />
           </label>
-          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库"><FolderOpen size={15} aria-hidden="true" />灵感库</button>
+          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库" aria-label="打开灵感库"><FolderOpen size={18} aria-hidden="true" /></button>
         </div>
         <FisheyeCommandList
           commands={siteCommands}

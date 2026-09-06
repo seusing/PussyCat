@@ -39,15 +39,18 @@ const WRSS_THEME_LINK = '<link rel="stylesheet" href="/static/pussycat-theme.css
 const WRSS_AUTH_SCRIPT = '<script src="/static/pussycat-auth.js"></script>'
 const WRSS_UI_SCRIPT = '<script src="/static/pussycat-ui.js"></script>'
 const WRSS_THEME_CSS = `:root,
-html {
+html,
+body {
   color-scheme: dark;
   --color-bg-1: #0f1115 !important;
   --color-bg-2: #171a21 !important;
   --color-fill-1: rgb(23 26 33 / 72%) !important;
   --color-fill-2: rgb(38 44 56 / 72%) !important;
+  --color-fill-3: #303745 !important;
   --color-border: rgb(38 44 56 / 88%) !important;
   --color-text-1: #e6e9ef !important;
   --color-text-2: #9aa4b2 !important;
+  --color-text-3: #8995a7 !important;
   --color-primary-6: #4f8cff !important;
 }
 
@@ -345,6 +348,18 @@ a,
 
 .pussycat-drawer-items { display: grid; gap: 4px; }
 
+.pussycat-article-actions { padding-bottom: 14px; margin-bottom: 10px; border-bottom: 1px solid rgb(38 44 56 / 88%); }
+.pussycat-article-actions[hidden] { display: none; }
+.pussycat-article-actions h2 { margin: 8px 10px 12px; font-size: 14px; color: #9aa4b2; }
+.pussycat-article-actions .arco-page-header-extra { margin: 0; }
+.pussycat-article-actions .arco-space { display: grid !important; grid-template-columns: auto 1fr; width: 100%; gap: 8px !important; }
+.pussycat-article-actions .arco-space-item { margin: 0 !important; grid-column: 1 / -1; }
+.pussycat-article-actions .arco-space-item:first-child { grid-column: 1; align-self: center; padding-left: 10px; }
+.pussycat-article-actions .arco-space-item:nth-child(2) { grid-column: 2; }
+.pussycat-article-actions .arco-btn { width: 100%; justify-content: flex-start; }
+.pussycat-article-actions .arco-btn:disabled { opacity: .4; }
+.pussycat-more-menu ~ .arco-trigger-popup { z-index: 1000; }
+
 .pussycat-more-menu.is-open {
   transform: translateX(0);
 }
@@ -378,50 +393,90 @@ a,
   color: #f6f9ff;
 }
 
-.article-list > .arco-layout-sider,
-.article-list .arco-layout-sider {
-  border-right: 1px solid rgb(38 44 56 / 72%) !important;
-  background: rgb(15 17 21 / 58%) !important;
-}
-
-.article-list .arco-layout-sider .arco-card,
-.article-list .arco-layout-sider .arco-card-header,
-.article-list .arco-layout-sider .arco-card-body {
-  border-color: rgb(38 44 56 / 72%) !important;
-  background: transparent !important;
-}
-
-.article-list .arco-layout-sider .arco-card-body {
-  position: relative;
-  padding: 12px !important;
-}
-
-.article-list .arco-layout-sider .arco-list {
-  max-height: calc(100vh - 310px);
-  overflow-y: auto;
-  padding: 4px;
+.article-list { flex-direction: column !important; }
+.article-list > .arco-layout-sider {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  flex: none !important;
   border: 0 !important;
+  border-bottom: 1px solid rgb(38 44 56 / 72%) !important;
+  background: #0f1115 !important;
+}
+.article-list > .arco-layout-content { min-width: 0; padding: 16px 20px !important; }
+.article-list .arco-layout-sider .arco-card {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 16px 20px;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+}
+.article-list .arco-layout-sider .arco-card-header,
+.article-list .arco-layout-sider .arco-card-body,
+.article-list .arco-layout-sider .arco-card-body > div {
+  display: contents !important;
   background: transparent !important;
 }
-
+.article-list .arco-layout-sider .arco-card-header-title { grid-column: 1; grid-row: 1; color: #e6e9ef; font-size: 16px; }
+.article-list .arco-layout-sider .arco-card-header-extra { grid-column: 4; grid-row: 1; justify-self: end; }
+.article-list .arco-layout-sider .arco-card-body > div > div:first-child { grid-column: 2; grid-row: 1; margin: 0 !important; }
+.article-list .arco-layout-sider .arco-card-body > div > div:nth-child(2) { grid-column: 3; grid-row: 1; margin: 0 !important; padding: 0 !important; }
+.article-list .arco-layout-sider .arco-pagination { grid-column: 4; grid-row: 2; justify-self: end; margin: 0 !important; }
+.article-list .arco-layout-sider .arco-list-wrapper { grid-column: 1 / -2; grid-row: 2; min-width: 0; }
+.article-list .arco-layout-sider .arco-list {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow-x: auto;
+  border: 0 !important;
+}
+.article-list .arco-layout-sider .arco-list-content { display: flex; gap: 8px; min-width: max-content; }
 .article-list .arco-layout-sider .arco-list-item {
-  min-height: 58px;
-  margin: 4px 0;
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 42px;
+  margin: 0;
+  padding: 8px 12px !important;
+  white-space: nowrap;
   border: 1px solid transparent !important;
   border-radius: 8px;
-  background: rgb(255 255 255 / 3%) !important;
-  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
-
+.article-list .arco-layout-sider .arco-list-item img { width: 24px !important; height: 24px; margin-right: 8px !important; object-fit: cover; border-radius: 50%; }
+.article-list .arco-layout-sider .arco-list-item .arco-typography { color: #b9c5d8; line-height: 24px !important; }
 .article-list .arco-layout-sider .arco-list-item:hover {
   border-color: rgb(79 140 255 / 24%) !important;
   background: rgb(79 140 255 / 10%) !important;
 }
 
-.article-list .arco-layout-sider .arco-list-item.active-mp {
+.article-list .arco-layout-sider .arco-list-item[aria-current="page"] {
   border-color: rgb(79 140 255 / 40%) !important;
   background: rgb(79 140 255 / 16%) !important;
-  box-shadow: inset 3px 0 0 #4f8cff;
+  box-shadow: none;
+}
+.article-list .arco-page-header { padding: 0 0 14px !important; }
+.article-list .arco-page-header-title,
+.article-list .arco-pagination { color: #e6e9ef; }
+.article-list .arco-pagination-total,
+.article-list .arco-pagination-simple-pager,
+.article-list .arco-pagination-jumper-total-page { color: #9aa4b2; }
+.article-list .arco-input-wrapper,
+.article-list .arco-radio-group-button { border-color: rgb(38 44 56 / 88%); background: #171a21 !important; }
+.article-list .arco-input-wrapper .arco-input { background: transparent !important; }
+.article-list .arco-radio-checked { background: rgb(79 140 255 / 18%) !important; color: #e6e9ef !important; }
+.article-list .arco-page-header-subtitle,
+.article-list .arco-page-header-divider { display: none; }
+@media (max-width: 720px) {
+  .article-list .arco-layout-sider .arco-card { grid-template-columns: 1fr auto; }
+  .article-list .arco-layout-sider .arco-card-header-extra { grid-column: 2; }
+  .article-list .arco-layout-sider .arco-card-body > div > div:first-child { grid-column: 1; grid-row: 2; }
+  .article-list .arco-layout-sider .arco-card-body > div > div:nth-child(2) { grid-column: 2; grid-row: 2; }
+  .article-list .arco-layout-sider .arco-list-wrapper { grid-column: 1 / -1; grid-row: 3; }
+  .article-list .arco-layout-sider .arco-pagination { grid-column: 1 / -1; grid-row: 4; }
 }
 #pussycat-settings-panel {
   flex: 0 0 auto;
@@ -446,7 +501,7 @@ a,
 #main.is-pussycat-log-view > .arco-layout { display: none !important; }
 `
 const WRSS_UI_JS = `(() => {
-  const VERSION = 'pussycat-wrss-ui-v4'
+  const VERSION = 'pussycat-wrss-ui-v5'
   const previous = window.__PUSSYCAT_WRSS_UI__
   if (previous && previous.version === VERSION) return
   if (previous && typeof previous.destroy === 'function') previous.destroy()
@@ -463,6 +518,8 @@ const WRSS_UI_JS = `(() => {
     brand: null,
     menuCloseButton: null,
     bodyOverflow: null,
+    articleToolbar: null,
+    articleToolbarPlaceholder: null,
     settingsPanel: null,
     route: window.location.pathname,
     logsMode: false,
@@ -599,7 +656,7 @@ const WRSS_UI_JS = `(() => {
       panel.className = 'pussycat-more-menu'
       panel.setAttribute('aria-label', '公众号菜单')
       panel.setAttribute('inert', '')
-      panel.innerHTML = '<button type="button" class="pussycat-drawer-close" aria-label="关闭公众号菜单">关闭</button><div class="pussycat-drawer-items"></div>'
+      panel.innerHTML = '<button type="button" class="pussycat-drawer-close" aria-label="关闭公众号菜单">关闭</button><section class="pussycat-article-actions" aria-label="文章操作" hidden><h2>文章操作</h2></section><div class="pussycat-drawer-items"></div>'
       state.menuPanel = panel
       state.menuCloseButton = panel.querySelector('.pussycat-drawer-close')
       state.menuCloseButton.addEventListener('click', () => closeMore())
@@ -656,6 +713,38 @@ const WRSS_UI_JS = `(() => {
     document.querySelectorAll('.app-header .header-right a').forEach((link) => {
       if (headerLinks.has(normalize(link.textContent))) link.classList.add('pussycat-hidden-link')
     })
+  }
+
+  function restoreArticleToolbar() {
+    if (state.articleToolbarPlaceholder?.isConnected) state.articleToolbarPlaceholder.replaceWith(state.articleToolbar)
+    else state.articleToolbar?.remove()
+    state.articleToolbar = null
+    state.articleToolbarPlaceholder = null
+  }
+
+  function enhanceArticles() {
+    const articleList = document.querySelector('.article-list')
+    const actions = state.menuPanel?.querySelector('.pussycat-article-actions')
+    if (!actions) return
+    if (state.articleToolbar && (!articleList?.contains(state.articleToolbarPlaceholder) || window.location.pathname !== '/')) restoreArticleToolbar()
+    const toolbar = articleList?.querySelector('.arco-page-header-extra')
+    if (!state.articleToolbar && toolbar && window.location.pathname === '/') {
+      const placeholder = document.createComment('article actions')
+      toolbar.before(placeholder)
+      actions.appendChild(toolbar)
+      state.articleToolbar = toolbar
+      state.articleToolbarPlaceholder = placeholder
+    }
+    actions.hidden = !state.articleToolbar
+    const list = articleList?.querySelector('.arco-layout-sider .arco-list')
+    if (list) {
+      list.setAttribute('role', 'navigation')
+      list.setAttribute('aria-label', '公众号')
+      list.querySelectorAll('.arco-list-item').forEach((item) => {
+        if (item.classList.contains('active-mp')) item.setAttribute('aria-current', 'page')
+        else item.removeAttribute('aria-current')
+      })
+    }
   }
 
   function requestDiagnostics() {
@@ -765,6 +854,7 @@ const WRSS_UI_JS = `(() => {
     state.raf = 0
     enhanceHeaderLinks()
     enhanceNav()
+    enhanceArticles()
     enhanceSettings()
   }
 
@@ -774,9 +864,11 @@ const WRSS_UI_JS = `(() => {
   }
 
   const onDocumentClick = (event) => {
+    if (event.target.closest?.('.arco-trigger-popup, .arco-modal-wrapper')) return
     if (state.moreWrap && !state.moreWrap.contains(event.target) && !state.menuPanel?.contains(event.target)) closeMore()
   }
   const onKeyDown = (event) => {
+    if (event.target.closest?.('.arco-trigger-popup, .arco-modal-wrapper')) return
     if (event.key === 'Escape') {
       closeMore()
       return
@@ -806,13 +898,16 @@ const WRSS_UI_JS = `(() => {
     schedule()
   }
 
-  state.observer = new MutationObserver(schedule)
-  state.observer.observe(document.documentElement, { childList: true, subtree: true })
+  state.observer = new MutationObserver((mutations) => {
+    if (mutations.some((mutation) => mutation.type === 'childList' || mutation.target.matches('.article-list .arco-list-item'))) schedule()
+  })
+  state.observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
   state.destroy = () => {
     closeMore()
     if (state.raf) window.cancelAnimationFrame(state.raf)
     if (state.observer) state.observer.disconnect()
     state.cleanup.forEach((cleanup) => cleanup())
+    restoreArticleToolbar()
     if (state.settingsPanel) state.settingsPanel.remove()
     if (state.brand) state.brand.remove()
     if (state.moreWrap) state.moreWrap.remove()
@@ -843,6 +938,7 @@ export function ensureWrssStaticAssets(sourceDir) {
   const headMatches = indexHtml.match(/<\/head>/gi) ?? []
   if (headMatches.length !== 1) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不符合预期')
   const withoutManagedAssets = indexHtml
+    .replace(/\s*<script\b[^>]*\bsrc=["']https?:\/\/hm\.baidu\.com\/hm\.js(?:\?[^"']*)?["'][^>]*>\s*<\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-ui\.js["']><\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-auth\.js["']><\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-bootstrap\.js["']><\/script>/gi, '')

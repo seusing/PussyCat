@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname, join } from 'node:path'
@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 const serverEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'index.mjs')
 
 function startHost(env = {}) {
+  const outputEvents = []
   const child = spawn(process.execPath, [serverEntry], {
     env: { ...process.env, OPENCLI_HOST_PORT: '0', ...env },
     // 三条 pipe 本就是 Node 的默认值,这里写出来是**把前提摆到明面**:父进程存活通道的用例
@@ -21,6 +22,7 @@ function startHost(env = {}) {
     let buf = ''
     const timer = setTimeout(() => rejectPromise(new Error(`readiness timeout; got: ${buf}`)), 20000)
     child.stdout.on('data', (chunk) => {
+      outputEvents.push({ stream: 'stdout', text: chunk.toString() })
       buf += chunk
       for (const line of buf.split('\n')) {
         if (!line.includes('opencliHostReady')) continue
@@ -32,7 +34,47 @@ function startHost(env = {}) {
     child.once('error', rejectPromise)
     child.once('exit', (code) => { clearTimeout(timer); rejectPromise(new Error(`exited ${code} before readiness; got: ${buf}`)) })
   })
-  return { child, firstJson }
+  child.stderr.on('data', (chunk) => outputEvents.push({ stream: 'stderr', text: chunk.toString() }))
+  return { child, firstJson, outputEvents }
+}
+
+async function waitForOutput(outputEvents, pattern, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const index = outputEvents.findIndex((event) => pattern.test(event.text))
+    if (index >= 0) return index
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20))
+  }
+  throw new Error(`output timeout: ${pattern}`)
+}
+
+async function stopHost(child) {
+  if (child.exitCode !== null) return
+  const exited = new Promise((resolvePromise) => child.once('exit', resolvePromise))
+  child.kill('SIGKILL')
+  await exited
+}
+
+function createWrssHome({ installed }) {
+  const root = mkdtempSync(join(tmpdir(), 'opencli-wrss-warmup-'))
+  const bundle = join(root, 'bundle')
+  mkdirSync(bundle, { recursive: true })
+  writeFileSync(join(bundle, 'runtime-manifest.json'), JSON.stringify({ uv: { name: 'missing-uv', sha256: 'unused' } }))
+  if (installed) {
+    const wrss = join(root, 'wrss')
+    const sourceDir = join(wrss, 'versions', 'src')
+    const venvDir = join(wrss, 'versions', 'py')
+    mkdirSync(sourceDir, { recursive: true })
+    mkdirSync(join(venvDir, 'Scripts'), { recursive: true })
+    writeFileSync(join(venvDir, 'Scripts', 'python.exe'), '')
+    writeFileSync(join(wrss, 'receipt.json'), JSON.stringify({
+      schema: 'wrss-runtime-receipt@1',
+      version: '1.5.2',
+      sourceDir,
+      venvDir,
+    }))
+  }
+  return { root, bundle }
 }
 
 describe('readiness 协议', () => {
@@ -61,6 +103,41 @@ describe('readiness 协议', () => {
       const res = await fetch(`http://127.0.0.1:${ready.port}/health`, { headers: { Origin: 'http://127.0.0.1:5173' } })
       expect(res.status).toBe(200)
     } finally { child.kill('SIGKILL') }
+  }, 30000)
+
+  it('已安装 WeRSS 在 host ready 后异步预热', async () => {
+    const fixture = createWrssHome({ installed: true })
+    const { child, firstJson, outputEvents } = startHost({
+      OPENCLI_HOST_VK_HOME: fixture.root,
+      OPENCLI_HOST_VK_BUNDLE_DIR: fixture.bundle,
+    })
+    try {
+      await firstJson
+      const readyIndex = outputEvents.findIndex((event) => event.text.includes('opencliHostReady'))
+      const warmupIndex = await waitForOutput(outputEvents, /WeRSS warmup failed:/)
+      expect(readyIndex).toBeGreaterThanOrEqual(0)
+      expect(warmupIndex).toBeGreaterThan(readyIndex)
+    } finally {
+      await stopHost(child)
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it('未安装 WeRSS 不触发安装或预热', async () => {
+    const fixture = createWrssHome({ installed: false })
+    const { child, firstJson, outputEvents } = startHost({
+      OPENCLI_HOST_VK_HOME: fixture.root,
+      OPENCLI_HOST_VK_BUNDLE_DIR: fixture.bundle,
+    })
+    try {
+      await firstJson
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100))
+      expect(existsSync(join(fixture.root, 'wrss'))).toBe(false)
+      expect(outputEvents.some((event) => event.text.includes('WeRSS warmup failed:'))).toBe(false)
+    } finally {
+      await stopHost(child)
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
   }, 30000)
 
   it('协议内失败:catalog 快照不可读 → ready:false + error,且非零退出', async () => {

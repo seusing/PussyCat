@@ -1,0 +1,63 @@
+.run-panel-header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.run-panel-status {
+  display: inline-flex;
+  min-height: 36px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: var(--color-panel);
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.run-panel-actions {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.run-panel-icon-button {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border: 1px solid var(--color-line);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-fg);
+  padding: 0;
+  white-space: nowrap;
+}
+
+.run-panel-icon-button:hover:not(:disabled) {
+  border-color: var(--color-fg-dim);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.run-panel-icon-button.is-accent {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+.run-panel-icon-button.is-danger {
+  border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-line));
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: var(--color-danger);
+}

@@ -158,7 +158,11 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     })
     render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
     expect(screen.getByTestId('copy-run')).toHaveTextContent('复制结构化结果')
+    expect(screen.getByTestId('copy-run')).toHaveAttribute('aria-label', '复制结构化结果')
     expect(screen.getByTestId('rerun-button')).toHaveTextContent('再次执行')
+    expect(screen.getByTestId('rerun-button')).toHaveAttribute('aria-label', '再次执行')
+    expect(screen.getByTestId('rerun-button')).toHaveAttribute('title', '再次执行')
+    expect(screen.getByRole('toolbar', { name: '任务操作' })).toHaveClass('run-panel-actions')
   })
 
   test('成功结果按视频/图文分组，并把视频链接按换行交给视频解析', async () => {
@@ -291,6 +295,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     const btn = screen.getByTestId('rerun-button')
     expect(btn).toBeDisabled()
     expect(btn).toHaveAttribute('title', '参数校验未通过，请回表单修正')
+    expect(btn).toHaveAttribute('aria-label', '不可再次执行：参数校验未通过')
   })
 
   test('点重跑 → onRerun 被调', async () => {
