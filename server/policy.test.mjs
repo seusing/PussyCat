@@ -364,7 +364,7 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
     const expected = new Map([
       ['xiaohongshu/whoami', []],
       ['xiaohongshu/feed', ['--limit']],
-      ['xiaohongshu/saved', ['--collection', '--id', '--limit']],
+      ['xiaohongshu/saved', ['--collection', '--id', '--limit', '--list-collections']],
       ['xiaohongshu/collections', ['--id', '--limit']],
       ['xiaohongshu/liked', ['--id', '--limit']],
       ['bilibili/whoami', []],

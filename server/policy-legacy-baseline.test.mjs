@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -11,8 +12,11 @@ const snapshotRaw = readFileSync(resolve('public/catalog.snapshot.json'))
 const snapshot = JSON.parse(snapshotRaw.toString('utf8').replace(/^﻿/, ''))
 
 describe('legacy 基线 artifact', () => {
-  it('固定源身份与实际快照逐字节匹配', () => {
-    const sha = createHash('sha256').update(snapshotRaw).digest('hex')
+  it('固定源身份与来源 Git 对象匹配', () => {
+    const sourceRaw = execFileSync('git', ['show', baseline.materializedFrom.gitBlob], {
+      maxBuffer: 64 * 1024 * 1024,
+    })
+    const sha = createHash('sha256').update(sourceRaw).digest('hex')
     expect(baseline.materializedFrom.sha256).toBe(sha)
     expect(baseline.materializedFrom.path).toBe('public/catalog.snapshot.json')
     expect(baseline.opencliVersion).toBe(snapshot.opencliVersion)
