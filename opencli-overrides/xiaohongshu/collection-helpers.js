@@ -1,4 +1,4 @@
-import { ArgumentError, AuthRequiredError, CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
+import { ArgumentError, AuthRequiredError, CommandExecutionError } from '@jackwener/opencli/errors';
 function buildXhsNoteUrl(userId, noteId, xsecToken) {
     const url = new URL(`https://www.xiaohongshu.com/user/profile/${String(userId).trim()}/${String(noteId).trim()}`);
     if (String(xsecToken ?? '').trim()) {
@@ -78,7 +78,7 @@ export function mapCollectionNote(entry, options = {}) {
     return {
         id: noteId,
         title: toCleanString(noteCard.display_title ?? noteCard.displayTitle ?? noteCard.title ?? entry.title ?? entry.display_title),
-        author: toCleanString(user.nickname ?? user.nick_name ?? user.name),
+        author: toCleanString(user.nickname ?? user.nickName ?? user.nick_name ?? user.name),
         likes: toCleanString(interact.liked_count ?? interact.likedCount ?? 0) || '0',
         type: toCleanString(noteCard.type ?? entry.type),
         url,
@@ -217,11 +217,58 @@ export async function extractCollectionAlbumsFromDom(page) {
     return payload.filter((item) => item?.id && item?.name);
 }
 
+export function buildCollectionStateJs(profileTab, boardId = '', userId = '') {
+    return `(() => {
+      const unwrap = (value) => value?.value ?? value?._value ?? value;
+      const state = window.__INITIAL_STATE__;
+      const boardId = ${JSON.stringify(boardId)};
+      let notes, hasMore;
+      if (boardId) {
+        const feed = unwrap(state?.board?.boardFeedsMap)?.[boardId];
+        notes = feed?.notes;
+        hasMore = feed?.hasMore;
+      } else {
+        const user = state?.user;
+        const tab = unwrap(user?.activeTab);
+        const subTab = unwrap(user?.activeSubTab);
+        if (tab?.query !== ${JSON.stringify(profileTab)} || subTab?.query !== 'note') return null;
+        const index = subTab.index;
+        const query = unwrap(user?.noteQueries)?.[index];
+        if (${JSON.stringify(userId)} && query?.userId !== ${JSON.stringify(userId)}) return null;
+        notes = unwrap(user?.notes)?.[index];
+        hasMore = query?.hasMore;
+      }
+      if (!Array.isArray(notes)) return null;
+      return JSON.parse(JSON.stringify({ notes, hasMore }));
+    })()`;
+}
+
+const EXTRACT_COLLECTIONS_STATE_JS = `(() => {
+  const unwrap = (value) => value?.value ?? value?._value ?? value;
+  const state = window.__INITIAL_STATE__;
+  if (unwrap(state?.user?.activeTab)?.query !== 'fav' || unwrap(state?.user?.activeSubTab)?.query !== 'board') return null;
+  const albums = unwrap(state?.board?.userBoardList);
+  return Array.isArray(albums) ? JSON.parse(JSON.stringify(albums.map(({ id, name, total }) => ({
+    id, name, count: String(total ?? ''), url: new URL('/board/' + encodeURIComponent(id), location.origin).toString()
+  })))) : null;
+})()`;
+
+async function readCollectionState(page, profileTab, boardId, userId) {
+    const state = unwrapBrowserResult(await page.evaluate(buildCollectionStateJs(profileTab, boardId, userId)));
+    if (!isObject(state) || !Array.isArray(state.notes)) return null;
+    return { notes: extractNotesFromResponses([{ data: { notes: state.notes } }]), hasMore: state.hasMore };
+}
+
+async function readCollectionAlbums(page) {
+    const albums = unwrapBrowserResult(await page.evaluate(EXTRACT_COLLECTIONS_STATE_JS));
+    return Array.isArray(albums) ? albums : extractCollectionAlbumsFromDom(page);
+}
+
 export async function resolveXhsCollection(page, userId, collectionName) {
     await page.goto(buildProfileCollectionUrl(userId, SAVED_PROFILE_TAB, ALBUM_PROFILE_SUBTAB));
     await page.wait(2);
     await assertOnCollectionProfile(page, userId);
-    const albums = await extractCollectionAlbumsFromDom(page);
+    const albums = await readCollectionAlbums(page);
     const wanted = toCleanString(collectionName);
     const match = albums.find((album) => album.name === wanted);
     if (!match) {
@@ -245,17 +292,20 @@ export async function fetchXhsCollectionNotes(page, { userId, profileTab, apiPat
     await page.wait(2);
     if (boardId) await assertOnBoardPage(page, boardId);
     else await assertOnCollectionProfile(page, userId);
-    let notes = [];
-    for (let i = 0; i < 16; i++) {
+    let state = await readCollectionState(page, profileTab, boardId, userId);
+    let notes = state?.notes ?? [];
+    for (let i = 0; !notes.length && state?.hasMore !== false && i < 16; i++) {
         await page.wait(0.5);
-        notes = await accumulateInterceptedNotes(page, capturedRequests, userId);
-        if (notes.length) break;
+        state = await readCollectionState(page, profileTab, boardId, userId);
+        notes = state?.notes.length ? state.notes : await accumulateInterceptedNotes(page, capturedRequests, userId);
     }
     let previousCount = notes.length;
-    for (let i = 0; notes.length < limit && i < 4; i += 1) {
+    for (let i = 0; notes.length < limit && state?.hasMore !== false && i < 4; i += 1) {
         await page.autoScroll({ times: 1, delayMs: 1500 });
         await page.wait(1);
-        const nextNotes = await accumulateInterceptedNotes(page, capturedRequests, userId);
+        state = await readCollectionState(page, profileTab, boardId, userId);
+        const captured = await accumulateInterceptedNotes(page, capturedRequests, userId);
+        const nextNotes = [...new Map([...notes, ...(state?.notes ?? []), ...captured].map((note) => [note.id, note])).values()];
         if (nextNotes.length > previousCount) { notes = nextNotes; previousCount = nextNotes.length; continue; }
         break;
     }
@@ -263,7 +313,7 @@ export async function fetchXhsCollectionNotes(page, { userId, profileTab, apiPat
         const domNotes = await extractNotesFromDom(page);
         if (domNotes.length) notes = domNotes;
     }
-    if (!notes.length) throw new EmptyResultError('xiaohongshu collection', `No ${emptyLabel} notes found. Ensure you are logged in and this profile tab is visible.`);
+    if (!notes.length && state?.hasMore !== false) throw new CommandExecutionError(`Xiaohongshu ${emptyLabel} list has not loaded; open the collection page in the browser and retry.`);
     return notes.slice(0, limit).map((item, index) => ({ rank: index + 1, ...item }));
 }
 
@@ -271,7 +321,6 @@ export async function fetchXhsCollections(page, { userId, limit }) {
     await page.goto(buildProfileCollectionUrl(userId, SAVED_PROFILE_TAB, ALBUM_PROFILE_SUBTAB));
     await page.wait(2);
     await assertOnCollectionProfile(page, userId);
-    const albums = await extractCollectionAlbumsFromDom(page);
-    if (!albums.length) throw new EmptyResultError('xiaohongshu collections', 'No collections found.');
+    const albums = await readCollectionAlbums(page);
     return albums.slice(0, limit).map((item, index) => ({ rank: index + 1, ...item }));
 }

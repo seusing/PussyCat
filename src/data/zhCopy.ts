@@ -20,12 +20,20 @@ const ZH: Record<string, CommandCopy> = {
     args: { limit: '返回条数' },
   },
   'xiaohongshu/saved': {
-    description: '读取小红书收藏笔记；填写专辑名可只读取该专辑，留空读取全部收藏',
-    args: { collection: '专辑名称，留空读取全部收藏', limit: '返回条数' },
+    description: '读取小红书收藏笔记；可按收藏夹筛选，也可只列出收藏夹',
+    args: {
+      id: '用户 ID 或主页链接，留空使用当前登录账号',
+      collection: '收藏夹名称，留空读取全部收藏',
+      'list-collections': '只列出收藏夹，不读取笔记',
+      limit: '返回条数',
+    },
   },
   'xiaohongshu/collections': {
     description: '读取小红书收藏专辑列表及每个专辑的笔记数量',
-    args: { limit: '返回专辑数量' },
+    args: {
+      id: '用户 ID 或主页链接，留空使用当前登录账号',
+      limit: '返回专辑数量',
+    },
   },
   'xiaohongshu/liked': {
     description: '读取小红书点赞过的笔记列表',

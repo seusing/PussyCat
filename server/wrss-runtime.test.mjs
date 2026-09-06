@@ -451,8 +451,8 @@ describe('WrssRuntimeManager', () => {
     expect(uiScript).toContain('aria-controls="pussycat-wrss-nav"')
     expect(uiScript).toContain('aria-current')
     expect(uiScript).toContain("host.setAttribute('role', 'banner')")
-    expect(uiScript).toContain('className = \'pussycat-primary-shell\'')
-    expect(uiScript).toContain('<nav id="pussycat-wrss-nav"')
+    expect(uiScript).not.toContain('pussycat-primary-shell')
+    expect(uiScript).toContain("panel.id = 'pussycat-wrss-nav'")
     expect(uiScript).toContain('document.body.style.overflow')
     expect(uiScript).toContain('/filter-rules')
   })
@@ -655,6 +655,108 @@ describe('WrssRuntimeManager', () => {
   })
 })
 
+
+it('keeps injected navigation stable across observer frames and preserves drawer focus and original navigation', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const css = readFileSync(join(sourceDir, 'static', 'pussycat-theme.css'), 'utf8')
+  const dom = new JSDOM(`<style>${css}</style><div id="main">
+    <header class="arco-layout-header"><div class="arco-menu arco-menu-horizontal">
+      <button class="arco-menu-item arco-menu-overflow-hidden-menu-item" data-route="/" style="position:absolute;left:100%;transform:translateX(-999px);visibility:hidden;pointer-events:none">订阅管理</button>
+      <button class="arco-menu-item" data-route="/export/records">导出记录</button>
+      <button class="arco-menu-item" data-route="/configs">配置信息</button>
+      <button class="arco-menu-item" data-route="/sys-info">系统信息</button>
+    </div></header>
+    <section class="arco-layout"><main class="arco-layout-content">文章内容</main></section>
+  </div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  const { document } = window
+  const header = document.querySelector('header')
+  const menu = header.firstElementChild
+  const navigate = vi.fn()
+  const frame = () => new Promise((resolve) => window.requestAnimationFrame(resolve))
+  try {
+    expect(css).toMatch(/\.pussycat-primary-nav\.arco-menu-overflow-hidden-menu-item\s*\{[^}]*pointer-events: auto !important;/)
+    menu.querySelectorAll('[data-route]').forEach((button) => button.addEventListener('click', () => {
+      navigate(button.dataset.route)
+      window.history.pushState({}, '', button.dataset.route)
+      document.querySelector('.arco-layout-content').textContent = button.dataset.route
+    }))
+    window.eval(script)
+    await vi.waitFor(() => expect(document.querySelectorAll('.pussycat-more-button')).toHaveLength(1))
+    await frame()
+    const nodeCount = document.querySelectorAll('*').length
+    for (let index = 0; index < 6; index += 1) {
+      document.querySelector('.arco-layout-content').textContent = `文章内容 ${index}`
+      await frame()
+      await frame()
+      expect(document.querySelectorAll('*')).toHaveLength(nodeCount)
+    }
+    expect(document.querySelectorAll('.pussycat-brand')).toHaveLength(1)
+    expect(document.querySelectorAll('.pussycat-more-button')).toHaveLength(1)
+    expect(document.querySelectorAll('.pussycat-more-menu')).toHaveLength(1)
+    expect(document.querySelectorAll('.pussycat-primary-shell')).toHaveLength(0)
+    expect(menu.parentElement).toBe(header)
+    expect(header.hasAttribute('role')).toBe(false)
+    expect(menu.getAttribute('role')).toBe('navigation')
+    expect(menu.getAttribute('aria-label')).toBe('Main')
+
+    menu.querySelector('[data-route="/export/records"]').click()
+    await frame()
+    expect(navigate).toHaveBeenLastCalledWith('/export/records')
+    expect(menu.querySelector('[aria-current="page"]').dataset.route).toBe('/export/records')
+    const trigger = document.querySelector('.pussycat-more-button')
+    const drawer = document.getElementById(trigger.getAttribute('aria-controls'))
+    const scrim = document.querySelector('.pussycat-menu-scrim')
+    expect(drawer.parentElement).toBe(document.body)
+    expect(scrim.parentElement).toBe(document.body)
+    expect(drawer.hasAttribute('inert')).toBe(true)
+    document.body.style.overflow = 'auto'
+    trigger.click()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(drawer.hasAttribute('inert')).toBe(false)
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(document.activeElement).toBe(drawer.querySelector('.pussycat-more-item'))
+
+    const focusable = [...drawer.querySelectorAll('button')]
+    focusable.at(-1).focus()
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+    expect(document.activeElement).toBe(focusable[0])
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
+    expect(document.activeElement).toBe(focusable.at(-1))
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(drawer.hasAttribute('inert')).toBe(true)
+    expect(document.body.style.overflow).toBe('auto')
+    expect(document.activeElement).toBe(trigger)
+
+    trigger.click()
+    const systemInfo = [...drawer.querySelectorAll('.pussycat-more-item')].find((button) => button.textContent === '系统信息')
+    systemInfo.click()
+    await frame()
+    expect(navigate).toHaveBeenLastCalledWith('/sys-info')
+    expect(drawer.querySelectorAll('[aria-current="page"]')).toHaveLength(1)
+    expect(drawer.querySelector('[aria-current="page"]').textContent).toBe('系统信息')
+    trigger.click()
+    scrim.click()
+    expect(document.activeElement).toBe(trigger)
+    expect(drawer.hasAttribute('inert')).toBe(true)
+    trigger.click()
+    drawer.querySelector('.pussycat-drawer-close').click()
+    expect(document.activeElement).toBe(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+    window.__PUSSYCAT_WRSS_UI__.destroy()
+    expect(document.querySelectorAll('.pussycat-brand, .pussycat-more-wrap, .pussycat-more-menu, .pussycat-menu-scrim')).toHaveLength(0)
+    expect(menu.parentElement).toBe(header)
+    menu.querySelector('[data-route="/"]').click()
+    expect(navigate).toHaveBeenLastCalledWith('/')
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
 
 it('renders settings tabs beside the published nested route layout and restores routes after logs', async () => {
   const { root } = await fixture()

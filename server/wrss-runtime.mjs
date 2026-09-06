@@ -151,8 +151,7 @@ a,
   background: rgb(15 17 21 / 92%) !important;
 }
 
-#main > .arco-layout-header > .pussycat-primary-shell,
-#main > .arco-layout-header > .pussycat-primary-shell > .arco-menu,
+#main > .arco-layout-header > .arco-menu,
 #main > .arco-layout-header .arco-menu-horizontal {
   flex: 1 1 auto !important;
   width: auto !important;
@@ -200,13 +199,6 @@ a,
   color: #b9c5d8 !important;
 }
 
-#main > .arco-layout-header .arco-menu-selected,
-#main > .arco-layout-header .arco-menu-item.arco-menu-selected {
-  background: rgb(79 140 255 / 18%) !important;
-  color: #f6f9ff !important;
-  box-shadow: inset 0 0 0 1px rgb(79 140 255 / 34%) !important;
-}
-
 #main > .arco-layout-header .arco-menu-item:hover {
   background: rgb(255 255 255 / 6%) !important;
   color: #f6f9ff !important;
@@ -231,7 +223,16 @@ a,
 
 #main > .arco-layout-header .pussycat-primary-nav,
 #main > .arco-layout-header .pussycat-primary-nav.arco-menu-overflow-hidden-menu-item {
+  position: static !important;
+  inset: auto !important;
+  left: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none !important;
   display: inline-flex !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
 }
 
 #main > .arco-layout-header [aria-current="page"] {
@@ -248,7 +249,6 @@ a,
   color: #f6f9ff;
   font-size: 16px;
   font-weight: 650;
-  letter-spacing: .01em;
   white-space: nowrap;
 }
 
@@ -321,7 +321,8 @@ a,
   align-content: start;
   gap: 4px;
   width: min(320px, 88vw);
-  padding: 82px 14px 18px;
+  padding: 18px 14px;
+  overflow-y: auto;
   transform: translateX(-105%);
   transition: transform 180ms ease;
   border: 1px solid rgb(38 44 56 / 88%);
@@ -331,7 +332,20 @@ a,
   backdrop-filter: blur(14px) saturate(1.08);
 }
 
-.pussycat-more-wrap.is-open .pussycat-more-menu {
+.pussycat-drawer-close {
+  justify-self: end;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgb(38 44 56 / 88%);
+  border-radius: 7px;
+  background: transparent;
+  color: #b9c5d8;
+  cursor: pointer;
+}
+
+.pussycat-drawer-items { display: grid; gap: 4px; }
+
+.pussycat-more-menu.is-open {
   transform: translateX(0);
 }
 
@@ -359,7 +373,7 @@ a,
 }
 
 .pussycat-more-item:hover,
-.pussycat-more-item.is-active {
+.pussycat-more-item[aria-current="page"] {
   background: rgb(79 140 255 / 14%);
   color: #f6f9ff;
 }
@@ -432,7 +446,7 @@ a,
 #main.is-pussycat-log-view > .arco-layout { display: none !important; }
 `
 const WRSS_UI_JS = `(() => {
-  const VERSION = 'pussycat-wrss-ui-v3'
+  const VERSION = 'pussycat-wrss-ui-v4'
   const previous = window.__PUSSYCAT_WRSS_UI__
   if (previous && previous.version === VERSION) return
   if (previous && typeof previous.destroy === 'function') previous.destroy()
@@ -444,7 +458,10 @@ const WRSS_UI_JS = `(() => {
     cleanup: [],
     moreWrap: null,
     menuButton: null,
+    menuPanel: null,
     menuScrim: null,
+    brand: null,
+    menuCloseButton: null,
     bodyOverflow: null,
     settingsPanel: null,
     route: window.location.pathname,
@@ -505,6 +522,10 @@ const WRSS_UI_JS = `(() => {
     const button = state.menuButton || state.moreWrap.querySelector('.pussycat-more-button')
     if (button) button.setAttribute('aria-expanded', 'false')
     if (state.menuScrim) state.menuScrim.classList.remove('is-visible')
+    if (state.menuPanel) {
+      state.menuPanel.setAttribute('inert', '')
+      state.menuPanel.classList.remove('is-open')
+    }
     if (state.bodyOverflow !== null) {
       document.body.style.overflow = state.bodyOverflow
       state.bodyOverflow = null
@@ -517,8 +538,13 @@ const WRSS_UI_JS = `(() => {
     state.moreWrap.classList.add('is-open')
     state.menuButton.setAttribute('aria-expanded', 'true')
     if (state.menuScrim) state.menuScrim.classList.add('is-visible')
+    if (state.menuPanel) {
+      state.menuPanel.removeAttribute('inert')
+      state.menuPanel.classList.add('is-open')
+    }
     if (state.bodyOverflow === null) state.bodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    state.menuPanel?.querySelector('.pussycat-more-item')?.focus()
   }
 
   function attrValue(value) {
@@ -539,28 +565,24 @@ const WRSS_UI_JS = `(() => {
   }
 
   function ensureMoreMenu(menu) {
-    const host = menu.parentElement
+    const host = document.querySelector('#main > .arco-layout-header')
     if (!host) return
-    host.setAttribute('role', 'banner')
-    let nav = host.querySelector('.pussycat-primary-shell')
-    if (!nav) {
-      nav = document.createElement('nav')
-      nav.className = 'pussycat-primary-shell'
-      nav.setAttribute('aria-label', 'Main')
-      menu.replaceWith(nav)
-      nav.appendChild(menu)
-    }
+    if (host.tagName !== 'HEADER') host.setAttribute('role', 'banner')
+    else host.removeAttribute('role')
+    menu.setAttribute('role', 'navigation')
+    menu.setAttribute('aria-label', 'Main')
     if (!host.querySelector('.pussycat-brand')) {
       const brand = document.createElement('div')
       brand.className = 'pussycat-brand'
       brand.innerHTML = '<span class="pussycat-brand-mark" aria-hidden="true"></span><span>公众号</span>'
-      host.insertBefore(brand, nav)
+      host.insertBefore(brand, menu)
+      state.brand = brand
     }
     let wrap = Array.from(host.children).find((child) => child.classList && child.classList.contains('pussycat-more-wrap'))
     if (!wrap) {
       wrap = document.createElement('div')
       wrap.className = 'pussycat-more-wrap'
-      wrap.innerHTML = '<button type="button" class="pussycat-more-button" aria-haspopup="true" aria-expanded="false" aria-controls="pussycat-wrss-nav" aria-label="打开公众号菜单"><span aria-hidden="true"><span></span><span></span><span></span></span><span>菜单</span></button><nav id="pussycat-wrss-nav" class="pussycat-more-menu" aria-label="More"></nav>'
+      wrap.innerHTML = '<button type="button" class="pussycat-more-button" aria-haspopup="true" aria-expanded="false" aria-controls="pussycat-wrss-nav" aria-label="打开公众号菜单"><span aria-hidden="true"><span></span><span></span><span></span></span><span>菜单</span></button>'
       host.appendChild(wrap)
       const button = wrap.querySelector('.pussycat-more-button')
       button.addEventListener('click', (event) => {
@@ -568,29 +590,41 @@ const WRSS_UI_JS = `(() => {
         if (wrap.classList.contains('is-open')) closeMore()
         else openMore()
       })
+      state.menuButton = button
+    }
+    state.moreWrap = wrap
+    if (!state.menuPanel) {
+      const panel = document.createElement('nav')
+      panel.id = 'pussycat-wrss-nav'
+      panel.className = 'pussycat-more-menu'
+      panel.setAttribute('aria-label', '公众号菜单')
+      panel.setAttribute('inert', '')
+      panel.innerHTML = '<button type="button" class="pussycat-drawer-close" aria-label="关闭公众号菜单">关闭</button><div class="pussycat-drawer-items"></div>'
+      state.menuPanel = panel
+      state.menuCloseButton = panel.querySelector('.pussycat-drawer-close')
+      state.menuCloseButton.addEventListener('click', () => closeMore())
       const scrim = document.createElement('button')
       scrim.type = 'button'
       scrim.className = 'pussycat-menu-scrim'
       scrim.setAttribute('aria-label', '关闭公众号菜单')
       scrim.addEventListener('click', () => closeMore())
-      host.appendChild(scrim)
-      state.menuButton = button
+      document.body.append(scrim, panel)
       state.menuScrim = scrim
     }
-    state.moreWrap = wrap
 
-    const panel = wrap.querySelector('.pussycat-more-menu')
+    const panel = state.menuPanel
     if (!panel) return
-    panel.setAttribute('aria-label', 'More')
+    panel.setAttribute('aria-label', '公众号菜单')
+    const items = panel.querySelector('.pussycat-drawer-items') || panel
     const activePath = window.location.pathname
     const signature = activePath + '|' + menuNav.map((entry) => entry.path + ':' + entry.label).join(',')
     if (panel.dataset.pussycatSignature === signature) return
     panel.dataset.pussycatSignature = signature
-    panel.replaceChildren(...menuNav.map((entry) => {
+    items.replaceChildren(...menuNav.map((entry) => {
       const button = document.createElement('button')
       button.type = 'button'
-      button.className = 'pussycat-more-item' + (activePath === entry.path || (entry.path === '/configs' && activePath === '/sys-info') ? ' is-active' : '')
-      if (activePath === entry.path || (entry.path === '/configs' && activePath === '/sys-info')) button.setAttribute('aria-current', 'page')
+      button.className = 'pussycat-more-item'
+      if (activePath === entry.path) button.setAttribute('aria-current', 'page')
       button.textContent = entry.label
       button.addEventListener('click', () => navigate(entry.path))
       return button
@@ -740,10 +774,25 @@ const WRSS_UI_JS = `(() => {
   }
 
   const onDocumentClick = (event) => {
-    if (state.moreWrap && !state.moreWrap.contains(event.target)) closeMore()
+    if (state.moreWrap && !state.moreWrap.contains(event.target) && !state.menuPanel?.contains(event.target)) closeMore()
   }
   const onKeyDown = (event) => {
-    if (event.key === 'Escape') closeMore()
+    if (event.key === 'Escape') {
+      closeMore()
+      return
+    }
+    if (event.key !== 'Tab' || !state.moreWrap?.classList.contains('is-open') || !state.menuPanel) return
+    const focusable = [...state.menuPanel.querySelectorAll('button:not([disabled])')]
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
   }
 
   document.addEventListener('click', onDocumentClick)
@@ -765,6 +814,9 @@ const WRSS_UI_JS = `(() => {
     if (state.observer) state.observer.disconnect()
     state.cleanup.forEach((cleanup) => cleanup())
     if (state.settingsPanel) state.settingsPanel.remove()
+    if (state.brand) state.brand.remove()
+    if (state.moreWrap) state.moreWrap.remove()
+    if (state.menuPanel) state.menuPanel.remove()
     if (state.menuScrim) state.menuScrim.remove()
     document.getElementById('main')?.classList.remove('is-pussycat-log-view')
     if (window.__PUSSYCAT_WRSS_UI__ === state) delete window.__PUSSYCAT_WRSS_UI__

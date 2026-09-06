@@ -27,7 +27,16 @@ if (!saved.args.some((arg) => arg.name === 'collection')) {
     name: 'collection',
     type: 'string',
     required: false,
-    help: '按专辑名称筛选；留空读取全部收藏',
+    help: '按收藏夹名称筛选；留空读取全部收藏',
+  })
+}
+if (!saved.args.some((arg) => arg.name === 'list-collections')) {
+  saved.args.push({
+    name: 'list-collections',
+    type: 'bool',
+    default: false,
+    required: false,
+    help: '只列出收藏夹，不读取笔记',
   })
 }
 

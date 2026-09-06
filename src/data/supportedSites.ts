@@ -63,7 +63,9 @@ export function siteForCommand(site: string): SupportedSite | undefined {
 }
 
 export function commandsForSite(commands: CommandManifest[], site: SupportedSite): CommandManifest[] {
-  return commands.filter((command) => site.keys.includes(command.site))
+  return commands.filter((command) =>
+    site.keys.includes(command.site)
+    && !(command.site === 'xiaohongshu' && command.name === 'collections'))
 }
 
 /**
@@ -72,10 +74,12 @@ export function commandsForSite(commands: CommandManifest[], site: SupportedSite
  * supported-site set.
  */
 export function visibleCommands(commands: CommandManifest[]): CommandManifest[] {
+  const commandsWithoutLegacyCollections = commands.filter((command) =>
+    !(command.site === 'xiaohongshu' && command.name === 'collections'))
   const presentProductSites = new Set(
-    commands.map((command) => siteForCommand(command.site)?.id).filter((id): id is string => !!id),
+    commandsWithoutLegacyCollections.map((command) => siteForCommand(command.site)?.id).filter((id): id is string => !!id),
   )
   return presentProductSites.size >= 3
-    ? commands.filter((command) => !!siteForCommand(command.site))
-    : commands
+    ? commandsWithoutLegacyCollections.filter((command) => !!siteForCommand(command.site))
+    : commandsWithoutLegacyCollections
 }

@@ -84,11 +84,23 @@ test('刷新成功 → 目录更新 + generatedAt 显示', async () => {
   ])
   render(<App catalogSource={source} />)
   await screen.findByTestId('refresh-catalog')
-  expect(screen.getByTestId('refresh-catalog')).toHaveTextContent('更新命令列表')
-  expect(screen.getByTestId('refresh-catalog')).toHaveAttribute('title', expect.stringContaining('OpenCLI'))
+  expect(screen.getByTestId('refresh-catalog')).toHaveTextContent('刷新命令列表')
+  expect(screen.getByTestId('refresh-catalog')).toHaveAttribute('title', expect.stringContaining('已安装 OpenCLI 版本'))
   await userEvent.click(screen.getByTestId('refresh-catalog'))
   await waitFor(() => expect(useAppStore.getState().commands[0].command).toBe('c/d'))
   expect(screen.getByTestId('catalog-meta')).toBeInTheDocument()
+})
+
+test('目录摘要只统计界面可见命令', async () => {
+  const commands: CommandManifest[] = [
+    { command: 'xiaohongshu/saved', site: 'xiaohongshu', name: 'saved', description: '', access: 'read', browser: true, args: [] },
+    { command: 'xiaohongshu/collections', site: 'xiaohongshu', name: 'collections', description: '', access: 'read', browser: true, args: [] },
+    { command: 'twitter/timeline', site: 'twitter', name: 'timeline', description: '', access: 'read', browser: true, args: [] },
+    { command: 'youtube/subscriptions', site: 'youtube', name: 'subscriptions', description: '', access: 'read', browser: true, args: [] },
+  ]
+  render(<App catalogSource={sourceOf([async () => ({ snapshot: SNAP({ commands }) })])} />)
+
+  expect(await screen.findByTestId('catalog-meta')).toHaveTextContent('3 条')
 })
 
 test('登录和视频模块不显示命令列表操作', async () => {

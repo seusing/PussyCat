@@ -25,6 +25,7 @@ import type { HostBridge } from './host/types'
 import { HostRequestError } from './host/errors'
 import { isRunnable } from './data/policy'
 import { isAcknowledged } from './data/preferences'
+import { visibleCommands } from './data/supportedSites'
 
 // 后台登录体检同时在飞的上限。必须 ≤ Host 的 maxConcurrentRuns(server/run-manager.mjs),
 // 否则多出来的那些只会拿到 429。取 3 是因为这些命令等的是浏览器往返而不是本机算力;
@@ -398,7 +399,8 @@ function CatalogRefresh({ refresh, onRefresh }: {
   refresh: { state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }
   onRefresh: () => void
 }) {
-  const count = useAppStore((s) => s.commands.length)
+  const commands = useAppStore((s) => s.commands)
+  const count = visibleCommands(commands).length
   const decisionsCount = useAppStore((s) => s.decisions.size)
   return (
     <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
@@ -421,8 +423,8 @@ function CatalogRefresh({ refresh, onRefresh }: {
       <button data-testid="refresh-catalog" disabled={refresh.state === 'refreshing'} onClick={onRefresh}
         className="rounded-lg px-2 py-1 disabled:opacity-50"
         style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-        title="更新 OpenCLI 可用命令和执行许可">
-        {refresh.state === 'refreshing' ? '更新中…' : '更新命令列表'}
+        title="刷新已安装 OpenCLI 版本的可用命令和执行许可">
+        {refresh.state === 'refreshing' ? '刷新中…' : '刷新命令列表'}
       </button>
     </div>
   )

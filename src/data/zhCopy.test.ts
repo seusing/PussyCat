@@ -44,3 +44,16 @@ test('文案是精简的:说明不复述实现细节(如加权公式)', () => {
   expect(help).not.toContain('×')
   expect(help.length).toBeLessThan(60)
 })
+
+test('saved 统一使用收藏夹文案，并说明列表模式不读取笔记', () => {
+  expect(commandDescription('xiaohongshu/saved')).toContain('收藏夹')
+  expect(commandDescription('xiaohongshu/saved')).not.toContain('专辑')
+  expect(argHelp('xiaohongshu/saved', 'id')).toContain('当前登录账号')
+  expect(argHelp('xiaohongshu/saved', 'collection')).toContain('收藏夹')
+  expect(argHelp('xiaohongshu/saved', 'list-collections')).toBe('只列出收藏夹，不读取笔记')
+})
+
+test('collections 保留旧记录的中文说明', () => {
+  expect(commandDescription('xiaohongshu/collections')).toContain('收藏专辑')
+  expect(argHelp('xiaohongshu/collections', 'id')).toContain('当前登录账号')
+})

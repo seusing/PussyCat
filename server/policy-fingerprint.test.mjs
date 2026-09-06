@@ -168,7 +168,7 @@ describe('decisionFingerprint', () => {
       // browser-cookie-read-pilot 十一条(审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md)
       ['xiaohongshu/whoami', '213fc041ef1582b8f390040cee1f9327160e8e19c33cef3156e59f44a44ab372'],
       ['xiaohongshu/feed', '61eed464da4b2059f6b1ead8f4826118ecacb4385d7710c40d7c71b5d0608fb4'],
-      ['xiaohongshu/saved', '6286923a14951800d45bd7bbff49a435fa82049e14694521b0fdedcb8e45baf8'],
+      ['xiaohongshu/saved', '4c47126f559db2c5d4e1bdad5577fd1b67afa7b831e8081290c0d7f1ddb795e4'],
       ['xiaohongshu/collections', 'e4e39940aea94da2a16b71426efe5d35686183d8e175c80f598abd4bde9a8339'],
       ['xiaohongshu/liked', '5cbce01ed962238e57096e6864c53c71203ab3e0f33953d8ba7ed15063600a4a'],
       ['bilibili/whoami', 'a0f3a88f084e94b0e574be103ab1780e0934700d9ebe8831c0fae91087dfc0ac'],

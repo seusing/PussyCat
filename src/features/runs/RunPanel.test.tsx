@@ -9,6 +9,10 @@ import type { HostBridge } from '../../host/types'
 const cmd: CommandManifest = {
   command: 'x/go', site: 'x', name: 'go', description: '', access: 'read', browser: false, args: [], columns: ['status', 'site'],
 }
+const savedCmd: CommandManifest = {
+  command: 'xiaohongshu/saved', site: 'xiaohongshu', name: 'saved', description: '', access: 'read', browser: true, args: [],
+  columns: ['rank', 'id', 'title', 'author', 'likes', 'type', 'url'],
+}
 
 beforeEach(() => {
   useAppStore.setState({
@@ -160,10 +164,10 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
   test('成功结果按视频/图文分组，并把视频链接按换行交给视频解析', async () => {
     const user = userEvent.setup()
     useAppStore.setState({
-      selected: cmd,
+      selected: savedCmd,
       values: {},
       currentRun: {
-        id: 'run-links', command: { ...cmd, columns: ['type', 'url'] }, values: {}, state: 'succeeded',
+        id: 'run-links', command: savedCmd, values: {}, state: 'succeeded',
         startedAt: 123, endedAt: 456, lines: [],
         result: [
           { type: 'normal', url: 'https://example.com/image' },
@@ -179,10 +183,34 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     await user.click(screen.getByTestId('export-note-links'))
     expect(useAppStore.getState().vkHandoff).toEqual({
       url: 'https://example.com/video-a\nhttps://example.com/video-b',
-      commandKey: cmd.command,
+      commandKey: savedCmd.command,
       collectedAt: 123,
     })
     expect(useAppStore.getState().activeModule).toBe('vk')
+  })
+
+  test('saved 列表模式显示收藏夹字段，不提供视频解析操作', async () => {
+    useAppStore.setState({
+      selected: savedCmd,
+      values: { 'list-collections': true },
+      currentRun: {
+        id: 'run-collections', command: savedCmd, values: { 'list-collections': true }, state: 'succeeded',
+        startedAt: 123, endedAt: 456, lines: [],
+        result: [{ rank: 1, id: 'folder-1', name: '食谱', count: 12, url: 'https://www.xiaohongshu.com/user/profile/example' }],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    await userEvent.click(screen.getByText('表格结果'))
+
+    const table = screen.getByTestId('results-table')
+    expect(table).toHaveTextContent('name')
+    expect(table).toHaveTextContent('食谱')
+    expect(table).toHaveTextContent('count')
+    expect(table).toHaveTextContent('12')
+    expect(screen.queryByText('送去视频解析')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('image-note-links')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('save-note-links')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('export-note-links')).not.toBeInTheDocument()
   })
 
   test('failed → 「复制日志」+「重试」;cancelled → 「重新执行」', () => {

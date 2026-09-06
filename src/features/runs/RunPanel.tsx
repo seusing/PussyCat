@@ -19,14 +19,20 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
   const [detailOpen, setDetailOpen] = useState(false)
   const [savingLinks, setSavingLinks] = useState(false)
   useEffect(() => { setDetailOpen(false) }, [run?.id])
+  const listingCollections = run?.command.command === 'xiaohongshu/saved'
+    && run.values['list-collections'] === true
   const noteLinks = useMemo(
-    () => run?.state === 'succeeded' ? collectNoteLinks(run.result ?? []) : { video: [], imageText: [], all: [] },
-    [run?.result, run?.state],
+    () => run?.state === 'succeeded' && !listingCollections
+      ? collectNoteLinks(run.result ?? [])
+      : { video: [], imageText: [], all: [] },
+    [listingCollections, run?.result, run?.state],
   )
   if (!run) return <div className="p-3 text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无任务</div>
 
   const active = run.state === 'starting' || run.state === 'running' || run.state === 'cancelling'
-  const columns = run.command.columns ?? []
+  const columns = listingCollections
+    ? ['rank', 'id', 'name', 'count', 'url']
+    : run.command.columns ?? []
   const showTable = run.state === 'succeeded' && columns.length > 0 && (run.result?.length ?? 0) > 0
   const terminal = run.state === 'succeeded' || run.state === 'failed' || run.state === 'cancelled'
   const payload = terminal ? copyPayloadFor(run) : null
@@ -136,7 +142,7 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
                   <ResultsTable
                     columns={columns}
                     rows={run.result ?? []}
-                    onSendToVk={(url) => {
+                    onSendToVk={listingCollections ? undefined : (url) => {
                       // 跨模块交接:规范化 URL + 脱敏 provenance(命令键/采集时刻),
                       // 严禁携带行数据,严禁另造第二种 manifest 格式。
                       useAppStore.getState().setVkHandoff({
