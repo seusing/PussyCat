@@ -66,7 +66,7 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
 
   useEffect(() => {
     if (!status || !['installing', 'starting'].includes(status.state)) return
-    const timer = setInterval(() => { void refresh() }, 1_000)
+    const timer = setInterval(() => { void refresh() }, 250)
     return () => clearInterval(timer)
   }, [status, refresh])
 
@@ -105,7 +105,7 @@ export default function WrssPanel({ baseUrl }: { baseUrl?: string }) {
 
   useEffect(() => {
     if (!frameReady || !runningUrl) return
-    const timer = window.setTimeout(() => setExitedSkeletonUrl(runningUrl), 420)
+    const timer = window.setTimeout(() => setExitedSkeletonUrl(runningUrl), 180)
     return () => window.clearTimeout(timer)
   }, [frameReady, runningUrl])
 

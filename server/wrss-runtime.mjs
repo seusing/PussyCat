@@ -143,30 +143,31 @@ a,
 #main > .arco-layout-header {
   display: flex !important;
   align-items: center !important;
-  min-height: 54px !important;
+  min-height: 58px !important;
   height: auto !important;
-  padding: 9px 24px !important;
+  gap: 14px !important;
+  padding: 10px 20px !important;
   border-bottom: 1px solid rgb(38 44 56 / 72%) !important;
-  background: rgb(15 17 21 / 74%) !important;
+  background: rgb(15 17 21 / 92%) !important;
 }
 
-#main > .arco-layout-header > .arco-menu,
+#main > .arco-layout-header > .pussycat-primary-shell,
+#main > .arco-layout-header > .pussycat-primary-shell > .arco-menu,
 #main > .arco-layout-header .arco-menu-horizontal {
-  flex: 0 1 auto !important;
+  flex: 1 1 auto !important;
   width: auto !important;
   min-width: 0 !important;
-  display: inline-flex !important;
+  display: flex !important;
   align-items: center !important;
-  gap: 4px !important;
-  padding: 3px !important;
-  border: 1px solid rgb(79 140 255 / 24%) !important;
-  border-radius: 999px !important;
-  background: rgb(15 17 21 / 52%) !important;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%) !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 #main > .arco-layout-header .arco-menu-inner {
-  display: inline-flex !important;
+  display: flex !important;
   align-items: center !important;
   gap: 4px !important;
   width: auto !important;
@@ -193,7 +194,7 @@ a,
   height: 34px !important;
   line-height: 34px !important;
   margin: 0 !important;
-  padding: 0 14px !important;
+  padding: 0 10px !important;
   border-radius: 999px !important;
   background: transparent !important;
   color: #b9c5d8 !important;
@@ -230,15 +231,33 @@ a,
 
 #main > .arco-layout-header .pussycat-primary-nav,
 #main > .arco-layout-header .pussycat-primary-nav.arco-menu-overflow-hidden-menu-item {
-  position: static !important;
-  inset: auto !important;
-  left: auto !important;
-  top: auto !important;
-  right: auto !important;
-  bottom: auto !important;
-  transform: none !important;
   display: inline-flex !important;
-  visibility: visible !important;
+}
+
+#main > .arco-layout-header [aria-current="page"] {
+  background: rgb(79 140 255 / 18%) !important;
+  color: #f6f9ff !important;
+  box-shadow: inset 0 0 0 1px rgb(79 140 255 / 34%) !important;
+}
+
+.pussycat-brand {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  color: #f6f9ff;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+
+.pussycat-brand-mark {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4f8cff;
+  box-shadow: 0 0 0 4px rgb(79 140 255 / 14%);
 }
 
 #main > .arco-layout-header .pussycat-primary-nav[data-pussycat-path="/"] {
@@ -255,18 +274,34 @@ a,
 
 .pussycat-more-wrap {
   position: relative;
-  margin-left: 8px;
+  margin-left: auto;
   flex: 0 0 auto;
 }
 
 .pussycat-more-button {
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid rgb(79 140 255 / 24%);
-  border-radius: 999px;
-  background: rgb(15 17 21 / 58%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 13px;
+  border: 1px solid rgb(79 140 255 / 32%);
+  border-radius: 8px;
+  background: rgb(79 140 255 / 10%);
   color: #c7d2e5;
   cursor: pointer;
+}
+
+.pussycat-more-button > span:first-child {
+  display: inline-grid;
+  gap: 3px;
+  width: 16px;
+}
+
+.pussycat-more-button > span:first-child > span {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
 }
 
 .pussycat-more-button:hover,
@@ -277,30 +312,44 @@ a,
 }
 
 .pussycat-more-menu {
-  position: absolute;
-  top: calc(100% + 8px);
+  position: fixed;
+  top: 0;
+  bottom: 0;
   left: 0;
-  right: auto;
-  z-index: 50;
-  display: none;
-  min-width: 184px;
-  padding: 6px;
+  z-index: 60;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  width: min(320px, 88vw);
+  padding: 82px 14px 18px;
+  transform: translateX(-105%);
+  transition: transform 180ms ease;
   border: 1px solid rgb(38 44 56 / 88%);
-  border-radius: 10px;
+  border-radius: 0 12px 12px 0;
   background: rgb(23 26 33 / 92%);
   box-shadow: 0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 4%);
   backdrop-filter: blur(14px) saturate(1.08);
 }
 
 .pussycat-more-wrap.is-open .pussycat-more-menu {
-  display: grid;
-  gap: 3px;
+  transform: translateX(0);
 }
+
+.pussycat-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: none;
+  border: 0;
+  background: rgb(0 0 0 / 42%);
+}
+
+.pussycat-menu-scrim.is-visible { display: block; }
 
 .pussycat-more-item {
   width: 100%;
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 14px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -383,7 +432,7 @@ a,
 #main.is-pussycat-log-view > .arco-layout { display: none !important; }
 `
 const WRSS_UI_JS = `(() => {
-  const VERSION = 'pussycat-wrss-ui-v2'
+  const VERSION = 'pussycat-wrss-ui-v3'
   const previous = window.__PUSSYCAT_WRSS_UI__
   if (previous && previous.version === VERSION) return
   if (previous && typeof previous.destroy === 'function') previous.destroy()
@@ -394,6 +443,9 @@ const WRSS_UI_JS = `(() => {
     observer: null,
     cleanup: [],
     moreWrap: null,
+    menuButton: null,
+    menuScrim: null,
+    bodyOverflow: null,
     settingsPanel: null,
     route: window.location.pathname,
     logsMode: false,
@@ -421,6 +473,7 @@ const WRSS_UI_JS = `(() => {
     { from: '配置信息', label: '配置信息', path: '/configs' },
     { from: '系统信息', label: '系统信息', path: '/sys-info' },
   ]
+  const menuNav = [...moreNav, settingsNav[1]]
   const headerLinks = new Set(['Views', 'Docs', 'Gitee', 'GitHub', 'ClawCloud', '云部署', '支持', '赞助'])
 
   function normalize(value) {
@@ -447,9 +500,25 @@ const WRSS_UI_JS = `(() => {
 
   function closeMore() {
     if (!state.moreWrap) return
+    const wasOpen = state.moreWrap.classList.contains('is-open')
     state.moreWrap.classList.remove('is-open')
-    const button = state.moreWrap.querySelector('.pussycat-more-button')
+    const button = state.menuButton || state.moreWrap.querySelector('.pussycat-more-button')
     if (button) button.setAttribute('aria-expanded', 'false')
+    if (state.menuScrim) state.menuScrim.classList.remove('is-visible')
+    if (state.bodyOverflow !== null) {
+      document.body.style.overflow = state.bodyOverflow
+      state.bodyOverflow = null
+    }
+    if (wasOpen && button && document.activeElement !== button) button.focus()
+  }
+
+  function openMore() {
+    if (!state.moreWrap || !state.menuButton) return
+    state.moreWrap.classList.add('is-open')
+    state.menuButton.setAttribute('aria-expanded', 'true')
+    if (state.menuScrim) state.menuScrim.classList.add('is-visible')
+    if (state.bodyOverflow === null) state.bodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
   }
 
   function attrValue(value) {
@@ -472,33 +541,56 @@ const WRSS_UI_JS = `(() => {
   function ensureMoreMenu(menu) {
     const host = menu.parentElement
     if (!host) return
+    host.setAttribute('role', 'banner')
+    let nav = host.querySelector('.pussycat-primary-shell')
+    if (!nav) {
+      nav = document.createElement('nav')
+      nav.className = 'pussycat-primary-shell'
+      nav.setAttribute('aria-label', 'Main')
+      menu.replaceWith(nav)
+      nav.appendChild(menu)
+    }
+    if (!host.querySelector('.pussycat-brand')) {
+      const brand = document.createElement('div')
+      brand.className = 'pussycat-brand'
+      brand.innerHTML = '<span class="pussycat-brand-mark" aria-hidden="true"></span><span>公众号</span>'
+      host.insertBefore(brand, nav)
+    }
     let wrap = Array.from(host.children).find((child) => child.classList && child.classList.contains('pussycat-more-wrap'))
     if (!wrap) {
       wrap = document.createElement('div')
       wrap.className = 'pussycat-more-wrap'
-      wrap.innerHTML = '<button type="button" class="pussycat-more-button" aria-haspopup="menu" aria-expanded="false">更多</button><div class="pussycat-more-menu" role="menu"></div>'
+      wrap.innerHTML = '<button type="button" class="pussycat-more-button" aria-haspopup="true" aria-expanded="false" aria-controls="pussycat-wrss-nav" aria-label="打开公众号菜单"><span aria-hidden="true"><span></span><span></span><span></span></span><span>菜单</span></button><nav id="pussycat-wrss-nav" class="pussycat-more-menu" aria-label="More"></nav>'
       host.appendChild(wrap)
       const button = wrap.querySelector('.pussycat-more-button')
       button.addEventListener('click', (event) => {
         event.stopPropagation()
-        const open = !wrap.classList.contains('is-open')
-        wrap.classList.toggle('is-open', open)
-        button.setAttribute('aria-expanded', open ? 'true' : 'false')
+        if (wrap.classList.contains('is-open')) closeMore()
+        else openMore()
       })
+      const scrim = document.createElement('button')
+      scrim.type = 'button'
+      scrim.className = 'pussycat-menu-scrim'
+      scrim.setAttribute('aria-label', '关闭公众号菜单')
+      scrim.addEventListener('click', () => closeMore())
+      host.appendChild(scrim)
+      state.menuButton = button
+      state.menuScrim = scrim
     }
     state.moreWrap = wrap
 
     const panel = wrap.querySelector('.pussycat-more-menu')
     if (!panel) return
+    panel.setAttribute('aria-label', 'More')
     const activePath = window.location.pathname
-    const signature = activePath + '|' + moreNav.map((entry) => entry.path + ':' + entry.label).join(',')
+    const signature = activePath + '|' + menuNav.map((entry) => entry.path + ':' + entry.label).join(',')
     if (panel.dataset.pussycatSignature === signature) return
     panel.dataset.pussycatSignature = signature
-    panel.replaceChildren(...moreNav.map((entry) => {
+    panel.replaceChildren(...menuNav.map((entry) => {
       const button = document.createElement('button')
       button.type = 'button'
       button.className = 'pussycat-more-item' + (activePath === entry.path || (entry.path === '/configs' && activePath === '/sys-info') ? ' is-active' : '')
-      button.setAttribute('role', 'menuitem')
+      if (activePath === entry.path || (entry.path === '/configs' && activePath === '/sys-info')) button.setAttribute('aria-current', 'page')
       button.textContent = entry.label
       button.addEventListener('click', () => navigate(entry.path))
       return button
@@ -516,6 +608,10 @@ const WRSS_UI_JS = `(() => {
       item.classList.toggle('pussycat-primary-nav', primaryNav.some((nav) => nav.path === entry.path))
       item.classList.toggle('pussycat-low-nav', [...moreNav, ...settingsNav].some((nav) => nav.path === entry.path))
       if (entry.order) item.style.order = entry.order
+      if (primaryNav.some((nav) => nav.path === entry.path)) {
+        if (window.location.pathname === entry.path) item.setAttribute('aria-current', 'page')
+        else item.removeAttribute('aria-current')
+      }
       setLastTextNode(item, entry.label)
     })
 
@@ -664,10 +760,12 @@ const WRSS_UI_JS = `(() => {
   state.observer = new MutationObserver(schedule)
   state.observer.observe(document.documentElement, { childList: true, subtree: true })
   state.destroy = () => {
+    closeMore()
     if (state.raf) window.cancelAnimationFrame(state.raf)
     if (state.observer) state.observer.disconnect()
     state.cleanup.forEach((cleanup) => cleanup())
     if (state.settingsPanel) state.settingsPanel.remove()
+    if (state.menuScrim) state.menuScrim.remove()
     document.getElementById('main')?.classList.remove('is-pussycat-log-view')
     if (window.__PUSSYCAT_WRSS_UI__ === state) delete window.__PUSSYCAT_WRSS_UI__
   }
