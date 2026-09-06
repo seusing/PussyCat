@@ -112,7 +112,7 @@ it('returns only diagnostics fields to the trusted running iframe without replac
   const fetchMock = vi.fn().mockImplementationOnce(() => response({ ...base, state: 'running', ui_url: origin }))
     .mockImplementation(() => response({ ...base, state: 'failed', summary: '进程退出', reason_code: 'runtime-exit', progress_log: ['line one', 'line two'], ui_url: origin, private_value: 'not-for-frame' }))
   vi.stubGlobal('fetch', fetchMock)
-  render(<WrssPanel />)
+  await act(async () => { render(<WrssPanel />) })
   const iframe = await screen.findByTestId('wrss-iframe') as HTMLIFrameElement
   const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
   fireEvent(window, new MessageEvent('message', {
@@ -130,7 +130,7 @@ it('ignores diagnostics requests from another source, origin, or message type', 
   const origin = 'http://127.0.0.1:4567'
   const fetchMock = vi.fn(() => response({ ...base, state: 'running', ui_url: origin }))
   vi.stubGlobal('fetch', fetchMock)
-  render(<WrssPanel />)
+  await act(async () => { render(<WrssPanel />) })
   const iframe = await screen.findByTestId('wrss-iframe') as HTMLIFrameElement
   const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
   for (const request of [
@@ -149,7 +149,7 @@ it('returns a diagnostics request failure to the iframe and allows a fresh reque
     .mockImplementationOnce(() => response({ error: '日志读取失败' }, 503))
     .mockImplementation(() => response({ ...base, state: 'running', summary: '恢复运行', progress_log: ['ready'] }))
   vi.stubGlobal('fetch', fetchMock)
-  render(<WrssPanel />)
+  await act(async () => { render(<WrssPanel />) })
   const iframe = await screen.findByTestId('wrss-iframe') as HTMLIFrameElement
   const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
   const request = () => fireEvent(window, new MessageEvent('message', {
