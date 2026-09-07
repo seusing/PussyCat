@@ -151,3 +151,67 @@ describe('inspiration workspace link', () => {
     expect(button).toHaveClass('inspiration-workspace-link')
   })
 })
+
+describe('inspiration command search', () => {
+  const likedCommand: CommandManifest = {
+    command: 'xiaohongshu/liked',
+    site: 'xiaohongshu',
+    name: 'liked',
+    description: 'Read liked notes',
+    aliases: ['hearts'],
+    access: 'read',
+    browser: true,
+    args: [],
+  }
+  const feedCommand: CommandManifest = {
+    command: 'xiaohongshu/feed',
+    site: 'xiaohongshu',
+    name: 'feed',
+    description: 'Browse the home feed',
+    access: 'read',
+    browser: true,
+    args: [],
+  }
+  const renderPanel = () => render(
+    <InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />,
+  )
+
+  it('filters a site command list by every user-visible command identity', () => {
+    useAppStore.setState({ commands: [likedCommand, feedCommand], selected: likedCommand })
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+
+    const search = screen.getByTestId('nav-search')
+    for (const query of ['liked', '  LiKeD  ', '点赞', 'Read liked', 'xiaohongshu/liked', 'hearts']) {
+      fireEvent.change(search, { target: { value: query } })
+      expect(screen.getByTestId('command-row-xiaohongshu/liked')).toBeInTheDocument()
+      expect(screen.queryByTestId('command-row-xiaohongshu/feed')).not.toBeInTheDocument()
+    }
+
+    fireEvent.change(search, { target: { value: '   ' } })
+    expect(screen.getByTestId('command-row-xiaohongshu/liked')).toBeInTheDocument()
+    expect(screen.getByTestId('command-row-xiaohongshu/feed')).toBeInTheDocument()
+  })
+
+  it('shows the empty result state for an unmatched site command query', () => {
+    useAppStore.setState({ commands: [likedCommand, feedCommand], selected: likedCommand })
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+
+    fireEvent.change(screen.getByTestId('nav-search'), { target: { value: 'not-a-command' } })
+    expect(screen.queryByTestId('command-row-xiaohongshu/liked')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('command-row-xiaohongshu/feed')).not.toBeInTheDocument()
+    expect(screen.getByText('没有匹配的命令')).toBeInTheDocument()
+  })
+
+  it('finds a command globally by its displayed Chinese description', () => {
+    useAppStore.setState({ commands: [likedCommand, feedCommand], selected: likedCommand })
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+    fireEvent.click(screen.getByRole('button', { name: '返回站点' }))
+
+    fireEvent.change(screen.getByTestId('nav-search'), { target: { value: '点赞' } })
+    expect(screen.getByTestId('command-row-xiaohongshu/liked')).toBeInTheDocument()
+    expect(screen.queryByTestId('command-row-xiaohongshu/feed')).not.toBeInTheDocument()
+  })
+})

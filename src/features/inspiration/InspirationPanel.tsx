@@ -34,6 +34,19 @@ function fixtureSites(commands: CommandManifest[]): SupportedSite[] {
   }))
 }
 
+function matchesCommand(command: CommandManifest, query: string): boolean {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  if (!normalizedQuery) return true
+  const searchable = [
+    command.name,
+    command.command,
+    command.description,
+    commandDescription(command.command, command.description),
+    ...(command.aliases ?? []),
+  ]
+  return searchable.some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
+}
+
 export function InspirationPanel({
   onRun,
   onCancel,
@@ -95,23 +108,13 @@ export function InspirationPanel({
 
   const siteCommands = useMemo(() => {
     if (!site) return []
-    const normalizedQuery = query.trim().toLocaleLowerCase()
     const list = commandsForSite(commands, site)
-    if (!normalizedQuery) return list
-    return list.filter((command) => (
-      command.name.toLocaleLowerCase().includes(normalizedQuery)
-      || command.description.toLocaleLowerCase().includes(normalizedQuery)
-    ))
+    return list.filter((command) => matchesCommand(command, query))
   }, [commands, query, site])
 
   const globalMatches = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase()
-    if (!normalizedQuery) return []
-    return commands.filter((command) => (
-      command.name.toLocaleLowerCase().includes(normalizedQuery)
-      || command.description.toLocaleLowerCase().includes(normalizedQuery)
-      || command.site.toLocaleLowerCase().includes(normalizedQuery)
-    )).slice(0, 24)
+    if (!query.trim()) return []
+    return commands.filter((command) => matchesCommand(command, query) || command.site.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).slice(0, 24)
   }, [commands, query])
 
   const openCommand = (command: CommandManifest) => {
