@@ -124,7 +124,8 @@ export const EXTRACT_COLLECTION_DOM_JS = `
       const titleEl = el.querySelector('.title, .note-title, a.title, .footer .title span');
       const nameEl = el.querySelector('a.author .name, .author-name, .nick-name, .name');
       const likesEl = el.querySelector('.count, .like-count, .like-wrapper .count');
-      const detailLinkEl = el.querySelector('a.cover.mask, a[href*="/search_result/"], a[href*="/explore/"], a[href*="/note/"], a[href*="/user/profile/"], a[href*="/board/"]');
+      const detailLinkEl = el.querySelector('a.cover.mask')
+        ?? el.querySelector('a[href*="/search_result/"], a[href*="/explore/"], a[href*="/note/"], a[href*="/user/profile/"], a[href*="/board/"]');
       const url = normalizeUrl(detailLinkEl?.getAttribute('href') || '');
       if (!url) return;
       const noteIdMatch = url.match(/\\/(?:search_result|explore|note)\\/([0-9a-f]{24})|\\/user\\/profile\\/[^/]+\\/([0-9a-f]{24})|\\/board\\/[^/]+\\/([0-9a-f]{24})/i);
@@ -231,8 +232,9 @@ export function buildCollectionStateJs(profileTab, boardId = '', userId = '') {
         const user = state?.user;
         const tab = unwrap(user?.activeTab);
         const subTab = unwrap(user?.activeSubTab);
-        if (tab?.query !== ${JSON.stringify(profileTab)} || subTab?.query !== 'note') return null;
-        const index = subTab.index;
+        if (tab?.query !== ${JSON.stringify(profileTab)}) return null;
+        if (tab.query !== 'liked' && subTab?.query !== 'note') return null;
+        const index = tab.query === 'liked' ? tab.index : subTab.index;
         const query = unwrap(user?.noteQueries)?.[index];
         if (${JSON.stringify(userId)} && query?.userId !== ${JSON.stringify(userId)}) return null;
         notes = unwrap(user?.notes)?.[index];

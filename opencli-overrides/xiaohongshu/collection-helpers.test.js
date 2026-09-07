@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ArgumentError, CommandExecutionError } from '@jackwener/opencli/errors';
 import { runInNewContext } from 'node:vm';
+import { JSDOM } from 'jsdom';
 import { getRegistry } from '@jackwener/opencli/registry';
 import {
   ALBUM_PROFILE_SUBTAB,
@@ -71,12 +72,47 @@ describe('xiaohongshu read-only collection adapter', () => {
     expect(runInNewContext(buildCollectionStateJs('fav', '', 'other-user'), { window: { __INITIAL_STATE__: state } })).toBeNull();
   });
 
+  it('reads liked notes and hasMore from the active top-level tab index', () => {
+    const likedNote = { ...note, noteId: '662908190000000001007367', displayTitle: '点赞笔记' };
+    const state = { user: {
+      activeTab: { value: { query: 'liked', index: 2 } },
+      activeSubTab: { value: { query: 'note', index: 1 } },
+      notes: { value: [[{ id: 'posted-note' }], [note], [likedNote]] },
+      noteQueries: { value: [{}, { hasMore: true, userId: 'user-1' }, { hasMore: false, userId: 'user-1' }] },
+    } };
+    expect(runInNewContext(buildCollectionStateJs('liked', '', 'user-1'), { window: { __INITIAL_STATE__: state } }))
+      .toEqual({ notes: [likedNote], hasMore: false });
+    state.user.activeSubTab = undefined;
+    expect(runInNewContext(buildCollectionStateJs('liked', '', 'user-1'), { window: { __INITIAL_STATE__: state } }))
+      .toEqual({ notes: [likedNote], hasMore: false });
+  });
+
   it('returns hydrated saved notes without waiting for an XHR that SSR does not send', async () => {
     const page = collectionPage({ notes: [note], hasMore: false });
     await expect(fetchXhsCollectionNotes(page, { userId: 'user-1', profileTab: 'fav', apiPattern: 'note/collect/page', limit: 20, emptyLabel: 'saved' }))
       .resolves.toMatchObject([{ rank: 1, title: '收藏笔记', author: '作者', url: expect.stringContaining('xsec_token=token') }]);
     expect(page.getInterceptedRequests).not.toHaveBeenCalled();
     expect(page.autoScroll).not.toHaveBeenCalled();
+  });
+
+  it('returns hydrated liked notes without polling intercepts or scrolling', async () => {
+    const likedNote = { ...note, displayTitle: '点赞笔记' };
+    const page = collectionPage({ notes: [likedNote], hasMore: false });
+    await expect(fetchXhsCollectionNotes(page, { userId: 'user-1', profileTab: 'liked', apiPattern: 'note/like/page', limit: 20, emptyLabel: 'liked' }))
+      .resolves.toMatchObject([{ rank: 1, title: '点赞笔记', author: '作者', url: expect.stringContaining('xsec_token=token') }]);
+    expect(page.getInterceptedRequests).not.toHaveBeenCalled();
+    expect(page.autoScroll).not.toHaveBeenCalled();
+  });
+
+  it('prefers the visible cover link over an earlier hidden explore link', () => {
+    const id = '662908190000000001007368';
+    const dom = new JSDOM(`<section class="note-item">
+      <a href="/explore/662908190000000001007369" hidden>hidden</a>
+      <a class="cover mask" href="/explore/${id}?xsec_token=valid-token">cover</a>
+      <span class="title">有效笔记</span><a class="author"><span class="name">作者</span></a><span class="count">7</span>
+    </section>`, { url: 'https://www.xiaohongshu.com/user/profile/user-1' });
+    expect(runInNewContext(EXTRACT_COLLECTION_DOM_JS, { document: dom.window.document, URL: dom.window.URL }))
+      .toEqual([{ id, title: '有效笔记', author: '作者', likes: '7', type: '', url: `https://www.xiaohongshu.com/explore/${id}?xsec_token=valid-token` }]);
   });
 
   it('returns an empty list only when the loaded list has no more notes', async () => {
