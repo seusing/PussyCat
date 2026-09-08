@@ -63,7 +63,6 @@ body,
 }
 
 .app-container,
-.app-header,
 .arco-layout,
 .arco-layout-content,
 .arco-card,
@@ -74,10 +73,10 @@ body,
 .arco-modal-content,
 .arco-drawer,
 .arco-drawer-content,
-.arco-dropdown,
-.arco-trigger-popup,
-.arco-select-popup,
-.arco-popover {
+.arco-popover-popup-content,
+.arco-popconfirm-popup-content,
+.arco-select-dropdown,
+.arco-dropdown {
   border-color: rgb(38 44 56 / 82%) !important;
   background: rgb(23 26 33 / 78%) !important;
   color: #e6e9ef !important;
@@ -87,11 +86,22 @@ body,
 .arco-card,
 .arco-modal,
 .arco-drawer,
-.arco-dropdown,
-.arco-trigger-popup,
-.arco-select-popup,
-.arco-popover {
+.arco-popover-popup-content,
+.arco-popconfirm-popup-content,
+.arco-select-dropdown,
+.arco-dropdown {
   box-shadow: 0 18px 48px rgb(0 0 0 / 32%), inset 0 1px 0 rgb(255 255 255 / 4%) !important;
+}
+
+.arco-trigger-popup {
+  border: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+}
+
+.app-header {
+  display: none !important;
 }
 
 .arco-table-th,
@@ -347,6 +357,7 @@ a,
 }
 
 .pussycat-drawer-items { display: grid; gap: 4px; }
+.pussycat-menu-group { margin: 14px 10px 4px; color: #778399; font-size: 12px; font-weight: 600; }
 
 .pussycat-article-actions { padding-bottom: 14px; margin-bottom: 10px; border-bottom: 1px solid rgb(38 44 56 / 88%); }
 .pussycat-article-actions[hidden] { display: none; }
@@ -499,9 +510,13 @@ a,
   font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 #main.is-pussycat-log-view > .arco-layout { display: none !important; }
+.pussycat-wechat-note { margin: 0 24px 16px; color: #9aa4b2; }
+.wechat-status-page .account-header { background: linear-gradient(135deg, #171a21 0%, #202632 100%) !important; color: #e6e9ef !important; }
+.wechat-status-page .token-section { background: #171a21 !important; color: #e6e9ef !important; }
+.wechat-status-page .token-value { background: #0f1115 !important; color: #b9c5d8 !important; }
 `
 const WRSS_UI_JS = `(() => {
-  const VERSION = 'pussycat-wrss-ui-v5'
+  const VERSION = 'pussycat-wrss-ui-v6'
   const previous = window.__PUSSYCAT_WRSS_UI__
   if (previous && previous.version === VERSION) return
   if (previous && typeof previous.destroy === 'function') previous.destroy()
@@ -530,24 +545,24 @@ const WRSS_UI_JS = `(() => {
   const primaryNav = [
     { from: '订阅管理', label: '订阅与文章', path: '/', order: '1' },
     { from: '导出记录', label: '导出记录', path: '/export/records', order: '2' },
-    { from: '授权管理', label: '授权', path: '/wechat-status', order: '3' },
+    { from: '授权管理', label: '微信授权', path: '/wechat-status', order: '3' },
   ]
   const moreNav = [
-    { from: '标签管理', label: '标签管理', path: '/tags' },
-    { from: '消息任务', label: '消息任务', path: '/message-tasks' },
-    { from: '过滤规则', label: '过滤规则', path: '/filter-rules' },
-    { from: '任务队列', label: '任务队列', path: '/task-queue' },
-    { from: '公众号状态', label: '公众号状态', path: '/cascade/feed-status' },
-    { from: '级联管理', label: '级联管理', path: '/cascade' },
-    { from: 'Access Key', label: 'Access Key', path: '/access-keys' },
-    { from: '异常统计', label: '异常统计', path: '/env-exception' },
-    { from: '配置信息', label: '设置与诊断', path: '/configs' },
+    { from: '标签管理', label: '标签管理', path: '/tags', group: '整理与自动化', description: '按主题整理公众号' },
+    { from: '消息任务', label: '消息任务', path: '/message-tasks', group: '整理与自动化', description: '定时更新并向指定渠道推送' },
+    { from: '过滤规则', label: '过滤规则', path: '/filter-rules', group: '整理与自动化', description: '清理采集文章中的指定内容' },
+    { from: '任务队列', label: '任务队列', path: '/task-queue', group: '整理与自动化', description: '查看正在运行和等待的采集任务' },
+    { from: '公众号状态', label: '采集状态', path: '/cascade/feed-status', group: '整理与自动化', description: '查看各公众号的采集进度' },
+    { from: '级联管理', label: '级联管理', path: '/cascade', group: '高级与诊断', description: '多台WeRSS服务器之间分配采集任务' },
+    { from: 'Access Key', label: 'Access Key', path: '/access-keys', group: '高级与诊断', description: '让其他程序访问本机WeRSS接口' },
+    { from: '异常统计', label: '异常统计', path: '/env-exception', group: '高级与诊断', description: '查看抓取异常' },
+    { from: '配置信息', label: '设置与诊断', path: '/configs', group: '高级与诊断', description: '配置参数并查看运行日志' },
   ]
   const settingsNav = [
     { from: '配置信息', label: '配置信息', path: '/configs' },
-    { from: '系统信息', label: '系统信息', path: '/sys-info' },
+    { from: '系统信息', label: '系统信息', path: '/sys-info', group: '高级与诊断', description: '查看版本与文章统计' },
   ]
-  const menuNav = [...moreNav, settingsNav[1]]
+  const menuNav = moreNav
   const headerLinks = new Set(['Views', 'Docs', 'Gitee', 'GitHub', 'ClawCloud', '云部署', '支持', '赞助'])
 
   function normalize(value) {
@@ -564,6 +579,15 @@ const WRSS_UI_JS = `(() => {
     let last = null
     while ((node = walker.nextNode())) last = node
     if (last && normalize(last.nodeValue) !== label) last.nodeValue = label
+  }
+
+  function replaceExactText(element, replacements) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    let node = null
+    while ((node = walker.nextNode())) {
+      const replacement = replacements.get(normalize(node.nodeValue))
+      if (replacement) node.nodeValue = replacement
+    }
   }
 
   function entryFor(item) {
@@ -673,19 +697,30 @@ const WRSS_UI_JS = `(() => {
     if (!panel) return
     panel.setAttribute('aria-label', '公众号菜单')
     const items = panel.querySelector('.pussycat-drawer-items') || panel
-    const activePath = window.location.pathname
+    const activePath = window.location.pathname === '/sys-info' ? '/configs' : window.location.pathname
     const signature = activePath + '|' + menuNav.map((entry) => entry.path + ':' + entry.label).join(',')
     if (panel.dataset.pussycatSignature === signature) return
     panel.dataset.pussycatSignature = signature
-    items.replaceChildren(...menuNav.map((entry) => {
+    const nodes = []
+    let group = ''
+    menuNav.forEach((entry) => {
+      if (entry.group !== group) {
+        group = entry.group
+        const heading = document.createElement('h2')
+        heading.className = 'pussycat-menu-group'
+        heading.textContent = group
+        nodes.push(heading)
+      }
       const button = document.createElement('button')
       button.type = 'button'
       button.className = 'pussycat-more-item'
       if (activePath === entry.path) button.setAttribute('aria-current', 'page')
       button.textContent = entry.label
+      button.title = entry.description
       button.addEventListener('click', () => navigate(entry.path))
-      return button
-    }))
+      nodes.push(button)
+    })
+    items.replaceChildren(...nodes)
   }
 
   function enhanceNav() {
@@ -736,14 +771,68 @@ const WRSS_UI_JS = `(() => {
       state.articleToolbarPlaceholder = placeholder
     }
     actions.hidden = !state.articleToolbar
+    if (state.articleToolbar) {
+      replaceExactText(state.articleToolbar, new Map([
+        ['内链', '在应用内阅读'],
+        ['订阅', '订阅链接'],
+      ]))
+      state.articleToolbar.querySelectorAll('button').forEach((button) => {
+        if (normalize(button.textContent) === '刷新授权') button.classList.add('pussycat-hidden-link')
+      })
+    }
+    const sourceTitle = articleList?.querySelector('.arco-layout-sider .arco-card-header-title')
+    if (sourceTitle) setLastTextNode(sourceTitle, '已订阅公众号')
+    articleList?.querySelectorAll('.arco-layout-sider .arco-card-header-extra button').forEach((button) => {
+      if (normalize(button.textContent) === '订阅') setLastTextNode(button, '添加公众号')
+    })
     const list = articleList?.querySelector('.arco-layout-sider .arco-list')
     if (list) {
       list.setAttribute('role', 'navigation')
       list.setAttribute('aria-label', '公众号')
       list.querySelectorAll('.arco-list-item').forEach((item) => {
+        const image = item.querySelector('img')
+        const label = item.querySelector('.arco-typography')
+        if (image?.getAttribute('src') === '/static/logo.svg' && label) {
+          const replacement = new Map([
+            ['全部', '全部文章'],
+            ['精选文章', '单篇收录'],
+          ]).get(normalize(label.textContent))
+          if (replacement) setLastTextNode(label, replacement)
+        }
         if (item.classList.contains('active-mp')) item.setAttribute('aria-current', 'page')
         else item.removeAttribute('aria-current')
       })
+    }
+    const pageTitle = articleList?.querySelector('.arco-layout-content .arco-page-header-title')
+    if (pageTitle) replaceExactText(pageTitle, new Map([
+      ['全部', '全部文章'],
+      ['精选文章', '单篇收录'],
+    ]))
+    articleList?.querySelectorAll('.arco-alert').forEach((alert) => replaceExactText(alert, new Map([
+      ['请选择一个公众号码进行管理,搜索文章后再点击订阅会有惊喜哟！！！', '选择公众号查看文章；添加公众号后可更新内容。'],
+      ['显示所有公众号文章', '选择公众号查看文章；添加公众号后可更新内容。'],
+      ['用户手动添加的精选文章', '选择公众号查看文章；添加公众号后可更新内容。'],
+    ])))
+    document.querySelectorAll('.arco-trigger-popup, .arco-modal-wrapper').forEach((popup) => replaceExactText(popup, new Map([
+      ['添加精选文章', '收录单篇文章'],
+    ])))
+  }
+
+  function enhanceWechatStatus() {
+    const page = document.querySelector('.wechat-status-page')
+    if (!page) return
+    const title = page.querySelector('.arco-page-header-title')
+    if (title) setLastTextNode(title, '微信授权')
+    page.querySelectorAll('button').forEach((button) => {
+      if (normalize(button.textContent) === '刷新Token') button.classList.add('pussycat-hidden-link')
+    })
+    if (!page.querySelector('.pussycat-wechat-note')) {
+      const note = document.createElement('p')
+      note.className = 'pussycat-wechat-note'
+      note.textContent = '微信授权会保存在本机，重启后复用；到期或微信使其失效后，需要重新扫码。'
+      const header = page.querySelector('.arco-page-header')
+      if (header) header.after(note)
+      else page.prepend(note)
     }
   }
 
@@ -852,9 +941,11 @@ const WRSS_UI_JS = `(() => {
 
   function apply() {
     state.raf = 0
+    document.body.setAttribute('arco-theme', 'dark')
     enhanceHeaderLinks()
     enhanceNav()
     enhanceArticles()
+    enhanceWechatStatus()
     enhanceSettings()
   }
 

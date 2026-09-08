@@ -6,7 +6,13 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { ensureWrssSourcePatches } from './wrss-patches.mjs'
-import { wrssPinBundle, wrssPinPython, wrssPinQrcode } from '../test-fixtures/wrss-pin.mjs'
+import {
+  wrssPinBundle,
+  wrssPinPython,
+  wrssPinQrcode,
+  wrssPinSuccess,
+  wrssPinWechatStatus,
+} from '../test-fixtures/wrss-pin.mjs'
 
 function fixture(python = wrssPinPython) {
   const root = mkdtempSync(join(tmpdir(), 'wrss-source-patch-'))
@@ -14,9 +20,13 @@ function fixture(python = wrssPinPython) {
   mkdirSync(join(root, 'driver'), { recursive: true })
   const bundlePath = join(root, 'static', 'assets', 'index.a75a6e55.js')
   const driverPath = join(root, 'driver', 'wx.py')
+  const successPath = join(root, 'driver', 'success.py')
+  const wechatStatusPath = join(root, 'static', 'assets', 'WechatStatus.62cf3d3b.js')
   writeFileSync(bundlePath, wrssPinBundle)
   writeFileSync(driverPath, python)
-  return { root, bundlePath, driverPath }
+  writeFileSync(successPath, wrssPinSuccess)
+  writeFileSync(wechatStatusPath, wrssPinWechatStatus)
+  return { root, bundlePath, driverPath, successPath, wechatStatusPath }
 }
 
 function setupSource(bundle, name) {
@@ -59,9 +69,10 @@ function deferred() {
 
 describe('WeRSS pinned source patches', () => {
   it('patches real pinned source idempotently and preserves the complete QR render function', () => {
-    const { root, bundlePath, driverPath } = fixture(wrssPinPython.replace(/\r?\n/g, '\r\n'))
+    const { root, bundlePath, driverPath, successPath, wechatStatusPath } = fixture(wrssPinPython.replace(/\r?\n/g, '\r\n'))
     ensureWrssSourcePatches(root)
-    const first = [bundlePath, driverPath, join(root, 'static', 'pussycat-auth.js')].map((file) => readFileSync(file))
+    const files = [bundlePath, driverPath, successPath, wechatStatusPath, join(root, 'static', 'pussycat-auth.js')]
+    const first = files.map((file) => readFileSync(file))
     const bundle = first[0].toString()
     const render = wrssPinQrcode.slice(wrssPinQrcode.indexOf('return o({startAuth:g})'))
     expect(bundle).toContain(render)
@@ -71,10 +82,37 @@ describe('WeRSS pinned source patches', () => {
     const result = vm.runInNewContext(`${authSource}unused=0;[QRCode(),checkQRCodeStatus()]`, { window: { __PUSSYCAT_WRSS_AUTH__: methods } })
     expect([...result]).toEqual(['qr', 'status'])
     ensureWrssSourcePatches(root)
-    for (const [index, file] of [bundlePath, driverPath, join(root, 'static', 'pussycat-auth.js')].entries()) {
+    for (const [index, file] of files.entries()) {
       expect(readFileSync(file)).toEqual(first[index])
     }
     expect(first[1].toString().replaceAll('\r\n', '')).not.toContain('\n')
+  })
+
+  it('restores only uninitialized login state from complete unexpired persisted credentials', () => {
+    const { root, successPath } = fixture()
+    ensureWrssSourcePatches(root)
+    const python = readFileSync(successPath, 'utf8')
+    expect(python).toContain('WX_LOGIN_ED = None')
+    expect(python).toContain("token_data.get('cookie')")
+    expect(python).toContain("expiry.get('expiry_timestamp')")
+    expect(python).toContain('expiry_timestamp >= time.time()')
+    expect(python).not.toContain("'remaining_seconds' in expiry")
+    expect(python).toContain('if WX_LOGIN_ED is False:\n            return False')
+    expect(python).toContain('def CanGetToken():')
+    expect(python).toContain('if not getStatus():')
+  })
+
+  it('shares the App login state with WechatStatus and refreshes it after QR success', () => {
+    const { root, bundlePath, wechatStatusPath } = fixture()
+    ensureWrssSourcePatches(root)
+    const bundle = readFileSync(bundlePath, 'utf8')
+    const status = readFileSync(wechatStatusPath, 'utf8')
+    expect(bundle).toContain('const w=ref({username:"",avatar:""}),_=ref(!1),')
+    expect(bundle).toContain('g=async()=>{await P(),Message.success')
+    expect(bundle).toContain('provide("pussycatWechatAuth",{login:_,info:y,refresh:P})')
+    expect(status).toContain('const {login:m,info:o,refresh:y}=H("pussycatWechatAuth")')
+    expect(status).not.toContain('m=h(!1),o=h(null)')
+    expect(status).toContain('return J(()=>{y()})')
   })
 
   it('waits for a loaded QR image with bounded navigation and screenshot timeouts', () => {

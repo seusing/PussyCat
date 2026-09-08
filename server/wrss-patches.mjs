@@ -34,6 +34,37 @@ const QR_PAGE = `            page = driver.page
             qrcode = page.locator(qr_tag)
             code_src = await qrcode.get_attribute("src")
 `
+const LOGIN_STATUS = `def getStatus():
+    """从本进程状态和持久化凭据获取登录状态。"""
+    global WX_LOGIN_ED
+    import time
+
+    with login_lock:
+        if WX_LOGIN_ED is False:
+            return False
+
+    token_data = getLoginInfo()
+    expiry = token_data.get('expiry') if token_data else None
+    expiry_timestamp = expiry.get('expiry_timestamp') if expiry else None
+    valid = bool(
+        token_data
+        and token_data.get('token')
+        and token_data.get('cookie')
+        and expiry_timestamp
+        and expiry_timestamp >= time.time()
+    )
+
+    with login_lock:
+        WX_LOGIN_ED = valid
+        return WX_LOGIN_ED
+`
+const CAN_GET_TOKEN = `def CanGetToken():
+    """检查当前持久化凭据是否仍然有效。"""
+    if not getStatus():
+        print_warning("当前未登录，请先扫码登录")
+        return False
+    return True
+`
 
 function replaceOnce(source, before, after) {
   if (source.includes(after)) return source
@@ -74,14 +105,60 @@ function patchDriver(source) {
   return patched.replace(/\n/g, newline)
 }
 
+function patchLoginStatus(source) {
+  const newline = source.includes('\r\n') ? '\r\n' : '\n'
+  let patched = source.replace(/\r\n/g, '\n')
+  patched = replaceOnce(patched, 'WX_LOGIN_ED = False', 'WX_LOGIN_ED = None')
+  if (!patched.includes(LOGIN_STATUS)) {
+    const start = patched.indexOf('def getStatus():')
+    const end = patched.indexOf('def getLoginInfo():', start)
+    if (start < 0 || end < 0) throw new Error('WeRSS v1.5.2 登录状态代码不符合预期')
+    patched = patched.slice(0, start) + LOGIN_STATUS + patched.slice(end)
+  }
+  if (!patched.includes(CAN_GET_TOKEN)) {
+    const start = patched.indexOf('def CanGetToken():')
+    if (start < 0) throw new Error('WeRSS v1.5.2 Token 状态代码不符合预期')
+    patched = patched.slice(0, start) + CAN_GET_TOKEN
+  }
+  return patched.replace(/\n/g, newline)
+}
+
+function patchSharedWechatStatus(source) {
+  source = replaceOnce(
+    source,
+    'g=()=>{_.value=!0,Message.success("\\u5FAE\\u4FE1\\u6388\\u6743\\u6210\\u529F")}',
+    'g=async()=>{await P(),Message.success("\\u5FAE\\u4FE1\\u6388\\u6743\\u6210\\u529F")}',
+  )
+  source = replaceOnce(source, 'const w=ref({username:"",avatar:""}),_=ref(!0),', 'const w=ref({username:"",avatar:""}),_=ref(!1),')
+  return replaceOnce(
+    source,
+    ';return onMounted(()=>{E.value&&B(),initBrowserNotification(),translatePage(),P()}',
+    ';provide("pussycatWechatAuth",{login:_,info:y,refresh:P});return onMounted(()=>{E.value&&B(),initBrowserNotification(),translatePage(),P()}',
+  )
+}
+
+function patchWechatStatus(source) {
+  const before = 'setup(pe){const m=h(!1),o=h(null),F=h(!1),k=H("showAuthQrcode",()=>{r.warning("\\u8BF7\\u4ECE\\u9875\\u9762\\u5934\\u90E8\\u8FDB\\u884C\\u626B\\u7801\\u6388\\u6743")}),y=async()=>{var i,u;try{const c=await K();m.value=((i=c==null?void 0:c.wx)==null?void 0:i.login)||!1,o.value=((u=c==null?void 0:c.wx)==null?void 0:u.info)||null}catch(c){console.error("\\u83B7\\u53D6\\u7CFB\\u7EDF\\u4FE1\\u606F\\u5931\\u8D25",c)}}'
+  const after = 'setup(pe){const {login:m,info:o,refresh:y}=H("pussycatWechatAuth"),F=h(!1),k=H("showAuthQrcode",()=>{r.warning("\\u8BF7\\u4ECE\\u9875\\u9762\\u5934\\u90E8\\u8FDB\\u884C\\u626B\\u7801\\u6388\\u6743")})'
+  return replaceOnce(source, before, after)
+}
+
 export function ensureWrssSourcePatches(sourceDir) {
   const bundlePath = join(sourceDir, 'static', 'assets', 'index.a75a6e55.js')
   const driverPath = join(sourceDir, 'driver', 'wx.py')
+  const loginStatusPath = join(sourceDir, 'driver', 'success.py')
+  const wechatStatusPath = join(sourceDir, 'static', 'assets', 'WechatStatus.62cf3d3b.js')
   const bundle = readFileSync(bundlePath, 'utf8')
   const driver = readFileSync(driverPath, 'utf8')
-  const patchedBundle = patchBundle(bundle)
+  const loginStatus = readFileSync(loginStatusPath, 'utf8')
+  const wechatStatus = readFileSync(wechatStatusPath, 'utf8')
+  const patchedBundle = patchSharedWechatStatus(patchBundle(bundle))
   const patchedDriver = patchDriver(driver)
+  const patchedLoginStatus = patchLoginStatus(loginStatus)
+  const patchedWechatStatus = patchWechatStatus(wechatStatus)
   if (bundle !== patchedBundle) writeFileSync(bundlePath, patchedBundle, 'utf8')
   if (driver !== patchedDriver) writeFileSync(driverPath, patchedDriver, 'utf8')
+  if (loginStatus !== patchedLoginStatus) writeFileSync(loginStatusPath, patchedLoginStatus, 'utf8')
+  if (wechatStatus !== patchedWechatStatus) writeFileSync(wechatStatusPath, patchedWechatStatus, 'utf8')
   writeFileSync(join(sourceDir, 'static', 'pussycat-auth.js'), readFileSync(new URL('./wrss-auth.js', import.meta.url)))
 }

@@ -6,7 +6,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { JSDOM } from 'jsdom'
-import { wrssPinBundle, wrssPinPython } from '../test-fixtures/wrss-pin.mjs'
+import { wrssPinBundle, wrssPinPython, wrssPinSuccess, wrssPinWechatStatus } from '../test-fixtures/wrss-pin.mjs'
 import {
   extractTarGzipSecure,
   ensureWrssStaticAssets,
@@ -76,8 +76,10 @@ function weRssArchive({ omit = [], configName = 'config.example.yaml' } = {}) {
     { name: `${root}/static/index.html`, content: '<html><head></head><body></body></html>' },
     { name: `${root}/static/assets/`, type: '5' },
     { name: `${root}/static/assets/index.a75a6e55.js`, content: wrssPinBundle },
+    { name: `${root}/static/assets/WechatStatus.62cf3d3b.js`, content: wrssPinWechatStatus },
     { name: `${root}/driver/`, type: '5' },
     { name: `${root}/driver/wx.py`, content: wrssPinPython },
+    { name: `${root}/driver/success.py`, content: wrssPinSuccess },
     { name: `${root}/docs/`, type: '5' },
     { name: `${root}/docs/主界面.png`, content: Buffer.from([1, 2, 3]) },
     { name: `${root}/docs/赞赏码.jpg`, content: Buffer.from([4, 5, 6]) },
@@ -89,7 +91,9 @@ function writePinSource(sourceDir) {
   mkdirSync(join(sourceDir, 'static', 'assets'), { recursive: true })
   mkdirSync(join(sourceDir, 'driver'), { recursive: true })
   writeFileSync(join(sourceDir, 'static', 'assets', 'index.a75a6e55.js'), wrssPinBundle)
+  writeFileSync(join(sourceDir, 'static', 'assets', 'WechatStatus.62cf3d3b.js'), wrssPinWechatStatus)
   writeFileSync(join(sourceDir, 'driver', 'wx.py'), wrssPinPython)
+  writeFileSync(join(sourceDir, 'driver', 'success.py'), wrssPinSuccess)
 }
 
 function expectSourcePatched(sourceDir) {
@@ -736,12 +740,12 @@ it('keeps injected navigation stable across observer frames and preserves drawer
     expect(document.activeElement).toBe(trigger)
 
     trigger.click()
-    const systemInfo = [...drawer.querySelectorAll('.pussycat-more-item')].find((button) => button.textContent === '系统信息')
-    systemInfo.click()
+    const settings = [...drawer.querySelectorAll('.pussycat-more-item')].find((button) => button.textContent === '设置与诊断')
+    settings.click()
     await frame()
-    expect(navigate).toHaveBeenLastCalledWith('/sys-info')
+    expect(navigate).toHaveBeenLastCalledWith('/configs')
     expect(drawer.querySelectorAll('[aria-current="page"]')).toHaveLength(1)
-    expect(drawer.querySelector('[aria-current="page"]').textContent).toBe('系统信息')
+    expect(drawer.querySelector('[aria-current="page"]').textContent).toBe('设置与诊断')
     trigger.click()
     scrim.click()
     expect(document.activeElement).toBe(trigger)
