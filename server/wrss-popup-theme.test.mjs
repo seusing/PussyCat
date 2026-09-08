@@ -29,9 +29,10 @@ it('keeps trigger shells transparent while styling popup content with the Arco d
 
   const css = readFileSync(join(sourceDir, 'static', 'pussycat-theme.css'), 'utf8')
   const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
-  expect(css).toMatch(/\.arco-popover-popup-content,[\s\S]*\.arco-popconfirm-popup-content,[\s\S]*\.arco-select-dropdown,[\s\S]*\.arco-dropdown\s*\{[\s\S]*background: rgb\(23 26 33 \/ 78%\) !important;/)
+  expect(css).toMatch(/\.arco-popover-popup-content,[\s\S]*\.arco-popconfirm-popup-content\s*\{[\s\S]*background: #171a21 !important;[\s\S]*backdrop-filter: none;/)
+  expect(css).toMatch(/\.arco-trigger-popup\.arco-popover[\s\S]*\.arco-trigger-popup\.arco-popconfirm[\s\S]*animation: none !important;/)
 
-  const dom = new JSDOM(`<style>${css}</style><div id="main"></div><div id="popup" class="arco-trigger-popup arco-popover"><div class="arco-popover-popup-content">内容</div></div>`, {
+  const dom = new JSDOM(`<style>${css}</style><div id="main"></div><div id="popup" class="arco-trigger-popup arco-popover arco-trigger-popup-enter"><div id="content" class="arco-popover-popup-content"><div>公众号</div><div id="id-row">ID: wx-example</div><div id="parent-row">说明 <span>ID: 保留在父元素中</span></div></div></div>`, {
     url: 'http://127.0.0.1:43202/',
     pretendToBeVisual: true,
     runScripts: 'outside-only',
@@ -43,6 +44,10 @@ it('keeps trigger shells transparent while styling popup content with the Arco d
     const popupStyle = dom.window.getComputedStyle(dom.window.document.getElementById('popup'))
     expect(popupStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)')
     expect(popupStyle.boxShadow).toBe('none')
+    const contentStyle = dom.window.getComputedStyle(dom.window.document.getElementById('content'))
+    expect(contentStyle.backgroundColor).toBe('rgb(23, 26, 33)')
+    expect(dom.window.getComputedStyle(dom.window.document.getElementById('id-row')).display).toBe('none')
+    expect(dom.window.getComputedStyle(dom.window.document.getElementById('parent-row')).display).not.toBe('none')
   } finally {
     dom.window.__PUSSYCAT_WRSS_UI__?.destroy()
     dom.window.close()

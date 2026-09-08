@@ -15,21 +15,39 @@ function deferred() {
 
 function harness(fetchImpl) {
   const fetch = vi.fn(fetchImpl)
+  const values = new Map([['token', 'fixture-token']])
+  const dispatchEvent = vi.fn()
   const context = vm.createContext({
     fetch, AbortController, DOMException, URL, Date, console,
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail } },
+    dispatchEvent,
     setTimeout, clearTimeout,
-    localStorage: { getItem: (key) => key === 'token' ? 'fixture-token' : null },
+    localStorage: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    },
     location: { origin: 'http://127.0.0.1:43202', href: 'http://127.0.0.1:43202/configs' },
   })
   context.window = context
   vm.runInContext(readFileSync(new URL('./wrss-auth.js', import.meta.url), 'utf8'), context)
-  return { auth: context.__PUSSYCAT_WRSS_AUTH__, fetch }
+  return { auth: context.__PUSSYCAT_WRSS_AUTH__, fetch, dispatchEvent, values }
 }
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('WeRSS authorization client', () => {
+  it('starts with an unknown login state and publishes auth state changes', () => {
+    const { auth, dispatchEvent } = harness(async () => response(null))
+    expect(auth.getState().login).toBeNull()
+    auth.bindStatus({ login: true, info: { name: 'fixture' } })
+    expect(dispatchEvent).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'pussycat-wechat-auth-change',
+      detail: expect.objectContaining({ login: true, info: { name: 'fixture' } }),
+    }))
+  })
+
   it('returns an existing QR image immediately with same-origin authorization', async () => {
     const { auth, fetch } = harness(async () => response({ code: 'static/wx_qrcode.png?t=1', is_exists: true }))
     const result = await auth.qrCode()
@@ -139,6 +157,40 @@ describe('WeRSS authorization client', () => {
     await expect(outcome).resolves.toMatchObject({ login_status: true })
     expect(statusCalls).toBe(2)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('publishes each scanned and QR version update while polling status', async () => {
+    const updates = []
+    let statusCalls = 0
+    const { auth, dispatchEvent } = harness(async (url) => {
+      if (url.endsWith('/code')) return response({ code: '/static/wx_qrcode.png?v=1', is_exists: true })
+      statusCalls += 1
+      return response(statusCalls === 1
+        ? { login_status: false, qr_code: true, scanned: true, version: 2, code: '/static/wx_qrcode.png?v=2' }
+        : { login_status: true, qr_code: true, scanned: false, version: 2 })
+    })
+    await auth.qrCode()
+    const outcome = auth.checkStatus((next) => updates.push(next))
+    await vi.advanceTimersByTimeAsync(1000)
+    await outcome
+    expect(updates).toHaveLength(2)
+    expect(updates[0]).toMatchObject({ scanned: true, version: 2, code: '/static/wx_qrcode.png?v=2' })
+    expect(dispatchEvent.mock.calls.some(([event]) => event.type === 'pussycat-wechat-auth-change' && event.detail.scanned === true)).toBe(true)
+  })
+
+  it('logs out WeChat without clearing the administrator token and clears shared state', async () => {
+    const { auth, fetch, dispatchEvent, values } = harness(async () => response({ login: false }))
+    auth.bindStatus({ login: true, info: { name: 'fixture' } })
+    await expect(auth.logout()).resolves.toEqual({ login: false })
+    expect(fetch).toHaveBeenLastCalledWith('/api/v1/wx/auth/wechat/logout', expect.objectContaining({
+      method: 'POST', credentials: 'same-origin',
+      headers: { Authorization: 'Bearer fixture-token' },
+    }))
+    expect(values.get('token')).toBe('fixture-token')
+    expect(auth.getState()).toMatchObject({ login: false, info: null, qr: null, scanned: false })
+    expect(dispatchEvent).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'pussycat-wechat-auth-change', detail: expect.objectContaining({ login: false, info: null }),
+    }))
   })
 
   it('cancels status polling when closed', async () => {

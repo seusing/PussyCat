@@ -72,6 +72,8 @@ it('clarifies navigation, article actions, sources, and local WeChat authorizati
   const { window } = dom
   const { document } = window
   const navigate = vi.fn()
+  const prefetch = vi.fn().mockResolvedValue({ code: '/qr' })
+  window.__PUSSYCAT_WRSS_AUTH__ = { getState: () => ({ login: false }), prefetch, logout: vi.fn() }
   document.querySelectorAll('[data-route]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.route)))
   try {
     window.eval(script)
@@ -84,6 +86,7 @@ it('clarifies navigation, article actions, sources, and local WeChat authorizati
     expect(document.getElementById('scan').classList.contains('pussycat-hidden-link')).toBe(false)
     expect(window.getComputedStyle(document.getElementById('auth-modal')).display).not.toBe('none')
     expect(document.querySelector('.pussycat-wechat-note').textContent).toBe('微信授权会保存在本机，重启后复用；到期或微信使其失效后，需要重新扫码。')
+    expect(prefetch).not.toHaveBeenCalled()
 
     expect(document.querySelector('.arco-card-header-title').textContent).toBe('已订阅公众号')
     expect(document.querySelector('.arco-card-header-extra button').textContent).toBe('添加公众号')
@@ -121,5 +124,91 @@ it('clarifies navigation, article actions, sources, and local WeChat authorizati
   } finally {
     window.__PUSSYCAT_WRSS_UI__?.destroy()
     window.close()
+  }
+})
+
+it('uses shared authorization state for status actions and menu logout errors', async () => {
+  sourceDir = await mkdtemp(join(tmpdir(), 'wrss-navigation-auth-'))
+  mkdirSync(join(sourceDir, 'static', 'assets'), { recursive: true })
+  mkdirSync(join(sourceDir, 'driver'), { recursive: true })
+  writeFileSync(join(sourceDir, 'static', 'index.html'), '<html><head></head><body></body></html>')
+  writeFileSync(join(sourceDir, 'static', 'assets', 'index.a75a6e55.js'), wrssPinBundle)
+  writeFileSync(join(sourceDir, 'static', 'assets', 'WechatStatus.62cf3d3b.js'), wrssPinWechatStatus)
+  writeFileSync(join(sourceDir, 'driver', 'wx.py'), wrssPinPython)
+  writeFileSync(join(sourceDir, 'driver', 'success.py'), wrssPinSuccess)
+  ensureWrssStaticAssets(sourceDir)
+
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const css = readFileSync(join(sourceDir, 'static', 'pussycat-theme.css'), 'utf8')
+  const dom = new JSDOM(`<style>${css}</style><div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item" data-route="/wechat-status">授权管理</button></div></header><section class="wechat-status-page"><header class="arco-page-header"><h1 class="arco-page-header-title">公众号状态</h1></header><button id="status-scan">扫码授权</button><section class="action-card"><button id="action-scan">扫码授权</button><button>切换账号</button><button>刷新Token</button></section></section></div>`, {
+    url: 'http://127.0.0.1:43202/wechat-status', pretendToBeVisual: true, runScripts: 'outside-only',
+  })
+  const { window } = dom
+  const { document } = window
+  let rejectLogout
+  const logout = vi.fn(() => new Promise((resolve, reject) => { rejectLogout = reject }))
+  const prefetch = vi.fn().mockResolvedValue({ code: '/qr' })
+  let login = true
+  window.__PUSSYCAT_WRSS_AUTH__ = { getState: () => ({ login }), prefetch, logout }
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(document.querySelector('.pussycat-wechat-logout')).not.toBeNull())
+    expect(window.getComputedStyle(document.querySelector('.action-card')).display).toBe('none')
+    expect(window.getComputedStyle(document.getElementById('status-scan')).display).toBe('none')
+    expect(prefetch).not.toHaveBeenCalled()
+    expect([...document.querySelectorAll('.pussycat-menu-group')].map((node) => node.textContent)).toContain('账户')
+
+    const logoutButton = document.querySelector('.pussycat-wechat-logout')
+    logoutButton.click()
+    expect(logoutButton.disabled).toBe(true)
+    rejectLogout(new Error('退出服务暂时不可用'))
+    await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toBe('退出服务暂时不可用'))
+    expect(logoutButton.disabled).toBe(false)
+    expect(login).toBe(true)
+
+    login = false
+    window.dispatchEvent(new window.CustomEvent('pussycat-wechat-auth-change', { detail: { login: false, info: null } }))
+    await vi.waitFor(() => expect(window.getComputedStyle(document.querySelector('.action-card')).display).not.toBe('none'))
+    expect(document.querySelector('.pussycat-wechat-logout')).toBeNull()
+    expect(window.getComputedStyle(document.getElementById('status-scan')).display).not.toBe('none')
+    expect(prefetch).toHaveBeenCalledTimes(1)
+    document.querySelector('.wechat-status-page').append(document.createElement('span'))
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    expect(prefetch).toHaveBeenCalledTimes(1)
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('waits for a known unauthorized state before prefetching the WeChat QR code', async () => {
+  sourceDir = await mkdtemp(join(tmpdir(), 'wrss-navigation-auth-pending-'))
+  mkdirSync(join(sourceDir, 'static', 'assets'), { recursive: true })
+  mkdirSync(join(sourceDir, 'driver'), { recursive: true })
+  writeFileSync(join(sourceDir, 'static', 'index.html'), '<html><head></head><body></body></html>')
+  writeFileSync(join(sourceDir, 'static', 'assets', 'index.a75a6e55.js'), wrssPinBundle)
+  writeFileSync(join(sourceDir, 'static', 'assets', 'WechatStatus.62cf3d3b.js'), wrssPinWechatStatus)
+  writeFileSync(join(sourceDir, 'driver', 'wx.py'), wrssPinPython)
+  writeFileSync(join(sourceDir, 'driver', 'success.py'), wrssPinSuccess)
+  ensureWrssStaticAssets(sourceDir)
+
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM('<div id="main"><section class="wechat-status-page"></section></div>', {
+    url: 'http://127.0.0.1:43202/wechat-status', pretendToBeVisual: true, runScripts: 'outside-only',
+  })
+  let login = null
+  const prefetch = vi.fn().mockResolvedValue({ code: '/qr' })
+  dom.window.__PUSSYCAT_WRSS_AUTH__ = { getState: () => ({ login }), prefetch }
+  try {
+    dom.window.eval(script)
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve))
+    expect(prefetch).not.toHaveBeenCalled()
+    login = false
+    dom.window.dispatchEvent(new dom.window.CustomEvent('pussycat-wechat-auth-change', { detail: { login: false, info: null } }))
+    await vi.waitFor(() => expect(prefetch).toHaveBeenCalledTimes(1))
+  } finally {
+    dom.window.__PUSSYCAT_WRSS_UI__?.destroy()
+    dom.window.close()
   }
 })

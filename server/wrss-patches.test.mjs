@@ -1,7 +1,9 @@
 // @vitest-environment node
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
@@ -18,15 +20,109 @@ function fixture(python = wrssPinPython) {
   const root = mkdtempSync(join(tmpdir(), 'wrss-source-patch-'))
   mkdirSync(join(root, 'static', 'assets'), { recursive: true })
   mkdirSync(join(root, 'driver'), { recursive: true })
+  mkdirSync(join(root, 'apis'), { recursive: true })
   const bundlePath = join(root, 'static', 'assets', 'index.a75a6e55.js')
   const driverPath = join(root, 'driver', 'wx.py')
   const successPath = join(root, 'driver', 'success.py')
   const wechatStatusPath = join(root, 'static', 'assets', 'WechatStatus.62cf3d3b.js')
+  const authApiPath = join(root, 'apis', 'auth.py')
   writeFileSync(bundlePath, wrssPinBundle)
   writeFileSync(driverPath, python)
   writeFileSync(successPath, wrssPinSuccess)
   writeFileSync(wechatStatusPath, wrssPinWechatStatus)
-  return { root, bundlePath, driverPath, successPath, wechatStatusPath }
+  writeFileSync(authApiPath, 'router = object()\n')
+  return { root, bundlePath, driverPath, successPath, wechatStatusPath, authApiPath }
+}
+
+function wxLoginProbe(driverPath, scenario) {
+  const root = mkdtempSync(join(tmpdir(), 'wrss-wx-login-probe-'))
+  const script = join(root, 'probe.py')
+  const image = join(root, 'qr.png')
+  writeFileSync(script, String.raw`
+import asyncio as real_asyncio, base64, json, os, sys, types
+
+driver_path, scenario, image_path = sys.argv[1:]
+
+class Clock:
+    now = 0
+    def time(self): return self.now
+    def monotonic(self): return self.now
+clock = Clock()
+
+async def sleep(seconds):
+    clock.now += 60
+    if scenario == "scanned" and clock.now >= 120:
+        subject._qr_cancelled = True
+
+class Lock:
+    def acquire(self): pass
+    def release(self): pass
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+
+class Response:
+    url = "https://mp.weixin.qq.com/cgi-bin/scanloginqrcode?action=ask"
+    async def json(self): return {"status": 1}
+
+class Page:
+    def __init__(self):
+        self.url = "https://mp.weixin.qq.com/"
+        self.gotos = 0
+        self.images = []
+        self.response_handler = None
+    async def goto(self, *args, **kwargs): self.gotos += 1
+    async def wait_for_function(self, *args, **kwargs): pass
+    def locator(self, selector): return self
+    async def evaluate(self, expression):
+        pixels = ("image-%d" % self.gotos).encode()
+        self.images.append(pixels.decode())
+        if scenario == "scanned" and self.response_handler:
+            await self.response_handler(Response())
+        if scenario == "refresh" and self.gotos >= 2:
+            subject._qr_cancelled = True
+        return base64.b64encode(pixels).decode()
+    def on(self, event, handler): self.response_handler = handler
+
+class Driver:
+    def __init__(self): self.page = Page()
+    async def start_browser(self): pass
+
+namespace = {
+    "time": clock, "os": os, "PlaywrightController": Driver,
+    "print_warning": lambda *args: None, "print_error": lambda *args: None,
+    "print_info": lambda *args: None,
+}
+source = open(driver_path, encoding="utf-8").read()
+exec(compile(source, driver_path, "exec"), namespace)
+subject = namespace["WxLogin"]()
+subject.WX_LOGIN = "https://mp.weixin.qq.com/login"
+subject.WX_HOME = "https://mp.weixin.qq.com/home"
+subject.wx_login_url = image_path
+subject.Notice = None
+subject.SESSION = None
+subject._login_lock = Lock()
+subject.check_lock = lambda: False
+subject.set_lock = lambda: None
+subject.cleanup_resources = lambda: None
+subject.release_lock = lambda: None
+subject.Clean = lambda: None
+async def close(): pass
+subject.Close = close
+
+real_asyncio.sleep = sleep
+real_asyncio.run(subject.wxLogin(NeedExit=False))
+print(json.dumps({
+    "gotos": subject.controller.page.gotos,
+    "images": subject.controller.page.images,
+    "saved": open(image_path, "rb").read().decode(),
+    "scanned": subject._qr_scanned,
+}))
+`)
+  const bundled = fileURLToPath(new URL('../artifacts/wrss-startup-probe/home/wrss/versions/py/Scripts/python.exe', import.meta.url))
+  const executable = existsSync(bundled) ? bundled : process.platform === 'win32' ? 'python.exe' : 'python3'
+  const result = spawnSync(executable, [script, driverPath, scenario, image], { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout)
+  return JSON.parse(result.stdout.trim())
 }
 
 function setupSource(bundle, name) {
@@ -54,7 +150,7 @@ function component(bundle, client) {
   const cleanup = []
   const context = {
     ref: (value) => ({ value }), s: emitted,
-    QRCode: () => client.qrCode(), checkQRCodeStatus: () => client.checkStatus(),
+    QRCode: () => client.qrCode(), checkQRCodeStatus: (onUpdate) => client.checkStatus(onUpdate),
     window: { __PUSSYCAT_WRSS_AUTH__: client }, onBeforeUnmount: (callback) => cleanup.push(callback),
   }
   const state = vm.runInNewContext(`(()=>{${setupSource(bundle, 'WechatAuthQrcode')};return {c,d,u,A,g,f}})()`, context)
@@ -74,8 +170,9 @@ describe('WeRSS pinned source patches', () => {
     const files = [bundlePath, driverPath, successPath, wechatStatusPath, join(root, 'static', 'pussycat-auth.js')]
     const first = files.map((file) => readFileSync(file))
     const bundle = first[0].toString()
-    const render = wrssPinQrcode.slice(wrssPinQrcode.indexOf('return o({startAuth:g})'))
-    expect(bundle).toContain(render)
+    expect(bundle).toContain('return o({startAuth:g})')
+    expect(bundle).toContain('已扫码，请在手机上点击确认')
+    expect(bundle).toContain('pussycat-qr-countdown')
     expect(bundle).not.toContain('axios$1.head')
     const methods = { qrCode: vi.fn(() => 'qr'), checkStatus: vi.fn(() => 'status') }
     const authSource = bundle.slice(0, bundle.indexOf('refreshToken='))
@@ -115,13 +212,18 @@ describe('WeRSS pinned source patches', () => {
     expect(status).toContain('return J(()=>{y()})')
   })
 
-  it('waits for a loaded QR image with bounded navigation and screenshot timeouts', () => {
+  it('uses original QR pixels and refreshes only before scanning', () => {
     const { root, driverPath } = fixture()
     ensureWrssSourcePatches(root)
     const python = readFileSync(driverPath, 'utf8')
     expect(python).toContain('wait_until="domcontentloaded", timeout=20000')
     expect(python).toContain('timeout=15000')
-    expect(python).toContain('qrcode.screenshot(path=self.wx_login_url, timeout=5000)')
+    expect(python).toContain('canvas.width = img.naturalWidth')
+    expect(python).toContain('time.time() + 60')
+    expect(python).toContain('if not self._qr_scanned and time.time() >= self._qr_expires_at:')
+    expect(python).toContain('await load_qr()')
+    expect(python).toContain('await self.Call_Success()')
+    expect(python).not.toContain('wait_for_event("framenavigated"')
     expect(python).not.toContain('networkidle')
     const predicate = python.match(/"(selector => \{[^\n]+\})"/)[1]
     const ready = (image) => vm.runInNewContext(`(${predicate})('qr')`, { document: { querySelector: () => image } })
@@ -129,8 +231,40 @@ describe('WeRSS pinned source patches', () => {
     expect(ready({ complete: false, naturalWidth: 180 })).toBe(false)
     expect(ready({ complete: true, naturalWidth: 0 })).toBe(false)
     expect(ready({ complete: true, naturalWidth: 180 })).toBe(true)
-    const unchangedTail = wrssPinPython.slice(wrssPinPython.indexOf('            print("二维码已保存'))
-    expect(python).toContain(unchangedTail)
+    expect(python).toContain('finally:')
+    expect(python).toContain('await self.Close()')
+  })
+
+  it('navigates again after 60 seconds and replaces the QR image', () => {
+    const { root, driverPath } = fixture()
+    ensureWrssSourcePatches(root)
+    const result = wxLoginProbe(driverPath, 'refresh')
+    expect(result.gotos).toBe(2)
+    expect(result.images).toEqual(['image-1', 'image-2'])
+    expect(result.saved).toBe('image-2')
+  })
+
+  it('freezes the QR image after the scan response is observed', () => {
+    const { root, driverPath } = fixture()
+    ensureWrssSourcePatches(root)
+    const result = wxLoginProbe(driverPath, 'scanned')
+    expect(result.scanned).toBe(true)
+    expect(result.gotos).toBe(1)
+    expect(result.images).toEqual(['image-1'])
+    expect(result.saved).toBe('image-1')
+  })
+
+  it('patches WeChat logout to clear persistent and shared login state', () => {
+    const { root, authApiPath } = fixture()
+    ensureWrssSourcePatches(root)
+    const python = readFileSync(authApiPath, 'utf8')
+    expect(python).toContain('@router.post("/wechat/logout"')
+    expect(python).toContain('_save_to_local({})')
+    expect(python).toContain('redis_client._client.delete(REDIS_TOKEN_PREFIX + "data")')
+    expect(python).toContain('Store.save([])')
+    expect(python).toContain('setStatus(False)')
+    expect(python).toContain('WX_API._qr_login_complete = False')
+    expect(python).toContain('WX_API.SESSION = None')
   })
 
   it('does not show sponsorship on the first visit but keeps the manual entry', () => {
@@ -138,8 +272,9 @@ describe('WeRSS pinned source patches', () => {
     ensureWrssSourcePatches(root)
     const values = new Map()
     const state = vm.runInNewContext(`(()=>{${setupSource(readFileSync(bundlePath, 'utf8'), 'App')};return {c,d}})()`, {
-      ref: (value) => ({ value }), computed: () => ({}), provide() {},
+      ref: (value) => ({ value }), computed: () => ({}), provide() {}, onBeforeUnmount() {},
       useRouter: () => ({}), useRoute: () => ({}), console: { log() {} },
+      window: { __PUSSYCAT_WRSS_AUTH__: { bindStatus() {} }, addEventListener() {} },
       localStorage: { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) },
     })
     expect(state.c.value).toBe(false)

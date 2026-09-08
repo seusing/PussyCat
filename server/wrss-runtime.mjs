@@ -73,14 +73,20 @@ body,
 .arco-modal-content,
 .arco-drawer,
 .arco-drawer-content,
-.arco-popover-popup-content,
-.arco-popconfirm-popup-content,
 .arco-select-dropdown,
 .arco-dropdown {
   border-color: rgb(38 44 56 / 82%) !important;
   background: rgb(23 26 33 / 78%) !important;
   color: #e6e9ef !important;
   backdrop-filter: blur(12px) saturate(1.08);
+}
+
+.arco-popover-popup-content,
+.arco-popconfirm-popup-content {
+  border-color: rgb(38 44 56 / 82%) !important;
+  background: #171a21 !important;
+  color: #e6e9ef !important;
+  backdrop-filter: none;
 }
 
 .arco-card,
@@ -98,6 +104,19 @@ body,
   background: transparent !important;
   box-shadow: none !important;
   backdrop-filter: none;
+}
+
+.arco-trigger-popup.arco-popover[class*="-enter"],
+.arco-trigger-popup.arco-popover[class*="-leave"],
+.arco-trigger-popup.arco-popconfirm[class*="-enter"],
+.arco-trigger-popup.arco-popconfirm[class*="-leave"] {
+  animation: none !important;
+  transition: none !important;
+  opacity: 1 !important;
+}
+
+.pussycat-popup-id-row {
+  display: none !important;
 }
 
 .app-header {
@@ -150,6 +169,10 @@ a,
 }
 
 .pussycat-hidden-link {
+  display: none !important;
+}
+
+.pussycat-wechat-authorized-hidden {
   display: none !important;
 }
 
@@ -403,6 +426,7 @@ a,
   background: rgb(79 140 255 / 14%);
   color: #f6f9ff;
 }
+.pussycat-menu-alert { margin: 6px 14px; color: #ff8f8f; font-size: 13px; }
 
 .article-list { flex-direction: column !important; }
 .article-list > .arco-layout-sider {
@@ -516,7 +540,7 @@ a,
 .wechat-status-page .token-value { background: #0f1115 !important; color: #b9c5d8 !important; }
 `
 const WRSS_UI_JS = `(() => {
-  const VERSION = 'pussycat-wrss-ui-v6'
+  const VERSION = 'pussycat-wrss-ui-v7'
   const previous = window.__PUSSYCAT_WRSS_UI__
   if (previous && previous.version === VERSION) return
   if (previous && typeof previous.destroy === 'function') previous.destroy()
@@ -536,6 +560,7 @@ const WRSS_UI_JS = `(() => {
     articleToolbar: null,
     articleToolbarPlaceholder: null,
     settingsPanel: null,
+    prefetchKey: '',
     route: window.location.pathname,
     logsMode: false,
     diagnosticsText: '正在读取运行日志…',
@@ -567,6 +592,9 @@ const WRSS_UI_JS = `(() => {
 
   function normalize(value) {
     return String(value || '').replace(/\\s+/g, ' ').trim()
+  }
+  function wechatLoginState() {
+    return window.__PUSSYCAT_WRSS_AUTH__?.getState?.()?.login
   }
 
   function setLastTextNode(element, label) {
@@ -698,7 +726,8 @@ const WRSS_UI_JS = `(() => {
     panel.setAttribute('aria-label', '公众号菜单')
     const items = panel.querySelector('.pussycat-drawer-items') || panel
     const activePath = window.location.pathname === '/sys-info' ? '/configs' : window.location.pathname
-    const signature = activePath + '|' + menuNav.map((entry) => entry.path + ':' + entry.label).join(',')
+    const authorized = wechatLoginState() === true
+    const signature = activePath + '|' + authorized + '|' + menuNav.map((entry) => entry.path + ':' + entry.label).join(',')
     if (panel.dataset.pussycatSignature === signature) return
     panel.dataset.pussycatSignature = signature
     const nodes = []
@@ -720,6 +749,33 @@ const WRSS_UI_JS = `(() => {
       button.addEventListener('click', () => navigate(entry.path))
       nodes.push(button)
     })
+    if (authorized) {
+      const heading = document.createElement('h2')
+      heading.className = 'pussycat-menu-group'
+      heading.textContent = '账户'
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'pussycat-more-item pussycat-wechat-logout'
+      button.textContent = '退出登录'
+      button.addEventListener('click', async () => {
+        button.disabled = true
+        panel.querySelector('.pussycat-menu-alert')?.remove()
+        try {
+          await window.__PUSSYCAT_WRSS_AUTH__.logout()
+          closeMore()
+        } catch (error) {
+          const alert = document.createElement('p')
+          alert.className = 'pussycat-menu-alert'
+          alert.setAttribute('role', 'alert')
+          alert.textContent = error?.message || '退出登录失败'
+          button.after(alert)
+        } finally {
+          button.disabled = false
+          schedule()
+        }
+      })
+      nodes.push(heading, button)
+    }
     items.replaceChildren(...nodes)
   }
 
@@ -755,6 +811,12 @@ const WRSS_UI_JS = `(() => {
     else state.articleToolbar?.remove()
     state.articleToolbar = null
     state.articleToolbarPlaceholder = null
+  }
+
+  function enhancePopups() {
+    document.querySelectorAll('.arco-popover-popup-content *, .arco-popconfirm-popup-content *').forEach((element) => {
+      element.classList.toggle('pussycat-popup-id-row', element.children.length === 0 && /^ID:\\s*\\S/.test(normalize(element.textContent)))
+    })
   }
 
   function enhanceArticles() {
@@ -824,8 +886,16 @@ const WRSS_UI_JS = `(() => {
     const title = page.querySelector('.arco-page-header-title')
     if (title) setLastTextNode(title, '微信授权')
     page.querySelectorAll('button').forEach((button) => {
-      if (normalize(button.textContent) === '刷新Token') button.classList.add('pussycat-hidden-link')
+      const text = normalize(button.textContent)
+      if (text === '刷新Token' || text === '切换账号') button.classList.add('pussycat-hidden-link')
+      if (text === '扫码授权') button.classList.toggle('pussycat-wechat-authorized-hidden', wechatLoginState() === true)
     })
+    const login = wechatLoginState()
+    const authorized = login === true
+    page.querySelectorAll('.action-card').forEach((card) => card.classList.toggle('pussycat-wechat-authorized-hidden', authorized))
+    const prefetchKey = window.location.pathname === '/wechat-status' && login === false ? 'wechat-status:unauthorized' : ''
+    if (prefetchKey && state.prefetchKey !== prefetchKey) window.__PUSSYCAT_WRSS_AUTH__?.prefetch?.().catch(() => {})
+    state.prefetchKey = prefetchKey
     if (!page.querySelector('.pussycat-wechat-note')) {
       const note = document.createElement('p')
       note.className = 'pussycat-wechat-note'
@@ -934,10 +1004,13 @@ const WRSS_UI_JS = `(() => {
     schedule()
   }
   const onPopState = () => { state.logsMode = false; schedule() }
+  const onWechatStatus = () => schedule()
   window.addEventListener('message', onDiagnostics)
   window.addEventListener('popstate', onPopState)
+  window.addEventListener('pussycat-wechat-auth-change', onWechatStatus)
   state.cleanup.push(() => window.removeEventListener('message', onDiagnostics))
   state.cleanup.push(() => window.removeEventListener('popstate', onPopState))
+  state.cleanup.push(() => window.removeEventListener('pussycat-wechat-auth-change', onWechatStatus))
 
   function apply() {
     state.raf = 0
@@ -945,6 +1018,7 @@ const WRSS_UI_JS = `(() => {
     enhanceHeaderLinks()
     enhanceNav()
     enhanceArticles()
+    enhancePopups()
     enhanceWechatStatus()
     enhanceSettings()
   }
