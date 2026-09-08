@@ -105,6 +105,7 @@ async def logout_wechat(current_user: dict = Depends(get_current_user)):
     setStatus(False)
     return success_response({"login": False})
 `
+
 const LOGIN_STATUS = `def getStatus():
     """从本进程状态和持久化凭据获取登录状态。"""
     global WX_LOGIN_ED
@@ -234,12 +235,28 @@ function patchWechatStatus(source) {
   return replaceOnce(source, before, after)
 }
 
+function patchMpsApi(source) {
+  const oldCatch = `    except Exception as e:\n        print(f"搜索公众号错误: {str(e)}")\n        raise HTTPException(\n            status_code=status.HTTP_201_CREATED,\n            detail=error_response(\n                code=50001,\n                message=f"搜索公众号失败,请重新扫码授权！",\n            )\n        )`
+  const newCatch = `    except HTTPException:\n        raise\n    except Exception as e:\n        print(f"搜索公众号错误: {str(e)}")\n        raise HTTPException(\n            status_code=status.HTTP_502_BAD_GATEWAY,\n            detail=error_response(\n                code=50002,\n                message="搜索公众号失败，请稍后重试",\n            )\n        )`
+  const rewriteCatch = (value) => value.includes(oldCatch) ? value.replace(oldCatch, newCatch) : value
+  if (source.includes('# pussycat_authorization_guard')) return rewriteCatch(source)
+  const match = source.match(/^(\s*)(async\s+def|def)\s+(search_mp)\s*\(([^)]*)\)\s*:/m)
+  if (!match) return source
+  const indent = match[1]
+  const bodyIndent = `${indent}    `
+  const guard = `${bodyIndent}# pussycat_authorization_guard\n${bodyIndent}from driver.success import getStatus\n${bodyIndent}if not getStatus():\n${bodyIndent}    raise HTTPException(\n${bodyIndent}        status_code=status.HTTP_401_UNAUTHORIZED,\n${bodyIndent}        detail=error_response(code=40101, message="微信公众号授权已失效，请重新扫码授权"),\n${bodyIndent}    )\n`
+  const start = match.index + match[0].length
+  const patched = source.slice(0, start) + `\n${guard}` + source.slice(start)
+  return rewriteCatch(patched)
+}
+
 export function ensureWrssSourcePatches(sourceDir) {
   const bundlePath = join(sourceDir, 'static', 'assets', 'index.a75a6e55.js')
   const driverPath = join(sourceDir, 'driver', 'wx.py')
   const loginStatusPath = join(sourceDir, 'driver', 'success.py')
   const wechatStatusPath = join(sourceDir, 'static', 'assets', 'WechatStatus.62cf3d3b.js')
   const authApiPath = join(sourceDir, 'apis', 'auth.py')
+  const mpsApiPath = join(sourceDir, 'apis', 'mps.py')
   const bundle = readFileSync(bundlePath, 'utf8')
   const driver = readFileSync(driverPath, 'utf8')
   const loginStatus = readFileSync(loginStatusPath, 'utf8')
@@ -248,10 +265,13 @@ export function ensureWrssSourcePatches(sourceDir) {
   const patchedDriver = patchDriver(driver)
   const patchedLoginStatus = patchLoginStatus(loginStatus)
   const patchedWechatStatus = patchWechatStatus(wechatStatus)
+  const mps = existsSync(mpsApiPath) ? readFileSync(mpsApiPath, 'utf8') : null
+  const patchedMps = mps === null ? null : patchMpsApi(mps)
   if (bundle !== patchedBundle) writeFileSync(bundlePath, patchedBundle, 'utf8')
   if (driver !== patchedDriver) writeFileSync(driverPath, patchedDriver, 'utf8')
   if (loginStatus !== patchedLoginStatus) writeFileSync(loginStatusPath, patchedLoginStatus, 'utf8')
   if (wechatStatus !== patchedWechatStatus) writeFileSync(wechatStatusPath, patchedWechatStatus, 'utf8')
+  if (mps !== null && mps !== patchedMps) writeFileSync(mpsApiPath, patchedMps, 'utf8')
   if (existsSync(authApiPath)) {
     const authApi = readFileSync(authApiPath, 'utf8')
     if (!authApi.includes('async def logout_wechat(')) writeFileSync(authApiPath, `${authApi}\n${WECHAT_LOGOUT}`, 'utf8')

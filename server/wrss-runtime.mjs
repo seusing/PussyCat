@@ -287,6 +287,7 @@ a,
   font-weight: 650;
   white-space: nowrap;
 }
+.pussycat-brand { display:none !important; }
 
 .pussycat-brand-mark {
   width: 9px;
@@ -392,6 +393,12 @@ a,
 .pussycat-article-actions .arco-space-item:nth-child(2) { grid-column: 2; }
 .pussycat-article-actions .arco-btn { width: 100%; justify-content: flex-start; }
 .pussycat-article-actions .arco-btn:disabled { opacity: .4; }
+.pussycat-source-search { order: -1; min-width: 240px; margin-right: 12px; }
+.pussycat-frequent-group { display: inline-flex; align-items: center; gap: 6px; margin: 4px 8px; color: #9aa4b2; font-size: 13px; }
+.pussycat-frequent-group button { border: 0; background: transparent; color: #c7d2e5; cursor: pointer; padding: 3px 6px; }
+.pussycat-count-hidden { display: none !important; }
+.article-list .arco-page-header-extra { position: relative; z-index: 2; }
+.article-list .arco-dropdown-menu, .article-list .arco-select-popup, .article-list .arco-trigger-popup { z-index: 1200 !important; }
 .pussycat-more-menu ~ .arco-trigger-popup { z-index: 1000; }
 
 .pussycat-more-menu.is-open {
@@ -564,6 +571,7 @@ const WRSS_UI_JS = `(() => {
     route: window.location.pathname,
     logsMode: false,
     diagnosticsText: '正在读取运行日志…',
+    refreshTimer: null,
   }
   window.__PUSSYCAT_WRSS_UI__ = state
 
@@ -691,7 +699,7 @@ const WRSS_UI_JS = `(() => {
     if (!wrap) {
       wrap = document.createElement('div')
       wrap.className = 'pussycat-more-wrap'
-      wrap.innerHTML = '<button type="button" class="pussycat-more-button" aria-haspopup="true" aria-expanded="false" aria-controls="pussycat-wrss-nav" aria-label="打开公众号菜单"><span aria-hidden="true"><span></span><span></span><span></span></span><span>菜单</span></button>'
+      wrap.innerHTML = '<button type="button" class="pussycat-more-button" aria-haspopup="true" aria-expanded="false" aria-controls="pussycat-wrss-nav" aria-label="打开公众号更多操作"><span aria-hidden="true"><span></span><span></span><span></span></span><span>更多</span></button>'
       host.appendChild(wrap)
       const button = wrap.querySelector('.pussycat-more-button')
       button.addEventListener('click', (event) => {
@@ -825,6 +833,29 @@ const WRSS_UI_JS = `(() => {
     if (!actions) return
     if (state.articleToolbar && (!articleList?.contains(state.articleToolbarPlaceholder) || window.location.pathname !== '/')) restoreArticleToolbar()
     const toolbar = articleList?.querySelector('.arco-page-header-extra')
+    const sourceSearch = articleList?.querySelector('.arco-layout-sider input[placeholder*="搜索公众号"], .arco-layout-sider input[placeholder*="公众号名称"]')
+    if (sourceSearch && !sourceSearch.dataset.pussycatMoved) {
+      const holder = sourceSearch.closest('.arco-input-group, .arco-form-item, .arco-input-wrapper') || sourceSearch.parentElement
+      const target = articleList?.querySelector('.arco-layout-content .arco-page-header-extra')
+      if (holder && target) {
+        holder.dataset.pussycatMoved = '1'
+        holder.classList.add('pussycat-source-search')
+        target.prepend(holder)
+        let recent = []
+        try { recent = JSON.parse(localStorage.getItem('pussycat-recent-mps') || '[]') } catch {}
+        if (!Array.isArray(recent)) recent = []
+        if (recent.length && !target.querySelector('.pussycat-frequent-group')) {
+          const group = document.createElement('div')
+          group.className = 'pussycat-frequent-group'
+          group.innerHTML = '<span>常看的</span>' + recent.slice(0, 5).map((name) => '<button type="button">' + String(name).replace(/[&<>"']/g, '') + '</button>').join('')
+          group.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
+            sourceSearch.value = button.textContent
+            sourceSearch.dispatchEvent(new Event('input', { bubbles: true }))
+          }))
+          target.append(group)
+        }
+      }
+    }
     if (!state.articleToolbar && toolbar && window.location.pathname === '/') {
       const placeholder = document.createComment('article actions')
       toolbar.before(placeholder)
@@ -856,8 +887,8 @@ const WRSS_UI_JS = `(() => {
         const label = item.querySelector('.arco-typography')
         if (image?.getAttribute('src') === '/static/logo.svg' && label) {
           const replacement = new Map([
-            ['全部', '全部文章'],
-            ['精选文章', '单篇收录'],
+            ['全部', '最新文章'],
+            ['精选文章', '我的收藏'],
           ]).get(normalize(label.textContent))
           if (replacement) setLastTextNode(label, replacement)
         }
@@ -867,14 +898,33 @@ const WRSS_UI_JS = `(() => {
     }
     const pageTitle = articleList?.querySelector('.arco-layout-content .arco-page-header-title')
     if (pageTitle) replaceExactText(pageTitle, new Map([
-      ['全部', '全部文章'],
-      ['精选文章', '单篇收录'],
+      ['全部', '最新文章'],
+      ['精选文章', '我的收藏'],
     ]))
     articleList?.querySelectorAll('.arco-alert').forEach((alert) => replaceExactText(alert, new Map([
       ['请选择一个公众号码进行管理,搜索文章后再点击订阅会有惊喜哟！！！', '选择公众号查看文章；添加公众号后可更新内容。'],
       ['显示所有公众号文章', '选择公众号查看文章；添加公众号后可更新内容。'],
       ['用户手动添加的精选文章', '选择公众号查看文章；添加公众号后可更新内容。'],
     ])))
+    articleList?.querySelectorAll('button').forEach((button) => {
+      if (!/^刷新/.test(normalize(button.textContent))) return
+      const key = 'pussycat-wechat-last-refresh'
+      const last = Number(localStorage.getItem(key) || 0)
+      const remain = Math.max(0, 300000 - (Date.now() - last))
+      button.disabled = remain > 0
+      if (remain > 0 && !state.refreshTimer) {
+        state.refreshTimer = window.setTimeout(() => { state.refreshTimer = null; schedule() }, remain + 20)
+      }
+      if (!button.dataset.pussycatCooldown) {
+        button.dataset.pussycatCooldown = '1'
+        button.addEventListener('click', () => localStorage.setItem(key, String(Date.now())), { capture: true })
+      }
+    })
+    articleList?.querySelectorAll('*').forEach((element) => {
+      if (element.children.length || !/^共\s*\d+\s*条$/.test(normalize(element.textContent))) return
+      element.classList.add('pussycat-count-hidden')
+    })
+    articleList?.querySelectorAll('.arco-trigger-popup, .arco-dropdown-menu, .arco-select-popup').forEach((popup) => { popup.style.zIndex = '1200' })
     document.querySelectorAll('.arco-trigger-popup, .arco-modal-wrapper').forEach((popup) => replaceExactText(popup, new Map([
       ['添加精选文章', '收录单篇文章'],
     ])))

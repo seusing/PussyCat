@@ -90,8 +90,8 @@ it('clarifies navigation, article actions, sources, and local WeChat authorizati
 
     expect(document.querySelector('.arco-card-header-title').textContent).toBe('已订阅公众号')
     expect(document.querySelector('.arco-card-header-extra button').textContent).toBe('添加公众号')
-    expect([...document.querySelectorAll('.arco-list-item .arco-typography')].map((node) => node.textContent)).toEqual(['全部文章', '单篇收录', '真实公众号'])
-    expect(document.querySelector('.article-list .arco-page-header-title').textContent).toBe('全部文章')
+    expect([...document.querySelectorAll('.arco-list-item .arco-typography')].map((node) => node.textContent)).toEqual(['最新文章', '我的收藏', '真实公众号'])
+    expect(document.querySelector('.article-list .arco-page-header-title').textContent).toBe('最新文章')
     expect(document.querySelector('.arco-alert').textContent).toBe('选择公众号查看文章；添加公众号后可更新内容。')
     const actions = document.querySelector('.pussycat-article-actions')
     expect(actions.textContent).toContain('在应用内阅读')
@@ -104,6 +104,7 @@ it('clarifies navigation, article actions, sources, and local WeChat authorizati
     const menuLabels = [...document.querySelectorAll('.pussycat-more-item')].map((button) => button.textContent)
     expect(menuLabels).toContain('设置与诊断')
     expect(menuLabels).not.toContain('系统信息')
+    expect(document.querySelector('.pussycat-more-button').textContent).toContain('更多')
     const collectionStatus = [...document.querySelectorAll('.pussycat-more-item')].find((button) => button.textContent === '采集状态')
     expect(collectionStatus.title).toBe('查看各公众号的采集进度')
     collectionStatus.click()

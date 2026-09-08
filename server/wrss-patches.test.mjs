@@ -26,12 +26,13 @@ function fixture(python = wrssPinPython) {
   const successPath = join(root, 'driver', 'success.py')
   const wechatStatusPath = join(root, 'static', 'assets', 'WechatStatus.62cf3d3b.js')
   const authApiPath = join(root, 'apis', 'auth.py')
+  const mpsApiPath = join(root, 'apis', 'mps.py')
   writeFileSync(bundlePath, wrssPinBundle)
   writeFileSync(driverPath, python)
   writeFileSync(successPath, wrssPinSuccess)
   writeFileSync(wechatStatusPath, wrssPinWechatStatus)
   writeFileSync(authApiPath, 'router = object()\n')
-  return { root, bundlePath, driverPath, successPath, wechatStatusPath, authApiPath }
+  return { root, bundlePath, driverPath, successPath, wechatStatusPath, authApiPath, mpsApiPath }
 }
 
 function wxLoginProbe(driverPath, scenario) {
@@ -164,6 +165,32 @@ function deferred() {
 }
 
 describe('WeRSS pinned source patches', () => {
+  it('guards optional mps search with an explicit authorization error', () => {
+    const { root, mpsApiPath } = fixture()
+    writeFileSync(mpsApiPath, `async def search_mp(name):
+    try:
+        result = search_Biz(name)
+        return result
+    except Exception as e:
+        print(f"搜索公众号错误: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_201_CREATED,
+            detail=error_response(
+                code=50001,
+                message=f"搜索公众号失败,请重新扫码授权！",
+            )
+        )
+`)
+    ensureWrssSourcePatches(root)
+    const patched = readFileSync(mpsApiPath, 'utf8')
+    expect(patched).toContain('pussycat_authorization_guard')
+    expect(patched).toContain('微信公众号授权已失效，请重新扫码授权')
+    expect(patched).toContain('status_code=status.HTTP_502_BAD_GATEWAY')
+    expect(patched).toContain('搜索公众号失败，请稍后重试')
+    ensureWrssSourcePatches(root)
+    expect(readFileSync(mpsApiPath, 'utf8')).toBe(patched)
+  })
+
   it('patches real pinned source idempotently and preserves the complete QR render function', () => {
     const { root, bundlePath, driverPath, successPath, wechatStatusPath } = fixture(wrssPinPython.replace(/\r?\n/g, '\r\n'))
     ensureWrssSourcePatches(root)
