@@ -16,7 +16,7 @@ import {
   wrssPinWechatStatus,
 } from '../test-fixtures/wrss-pin.mjs'
 
-function fixture(python = wrssPinPython) {
+function fixture(python = wrssPinPython, bundle = wrssPinBundle) {
   const root = mkdtempSync(join(tmpdir(), 'wrss-source-patch-'))
   mkdirSync(join(root, 'static', 'assets'), { recursive: true })
   mkdirSync(join(root, 'driver'), { recursive: true })
@@ -27,7 +27,7 @@ function fixture(python = wrssPinPython) {
   const wechatStatusPath = join(root, 'static', 'assets', 'WechatStatus.62cf3d3b.js')
   const authApiPath = join(root, 'apis', 'auth.py')
   const mpsApiPath = join(root, 'apis', 'mps.py')
-  writeFileSync(bundlePath, wrssPinBundle)
+  writeFileSync(bundlePath, bundle)
   writeFileSync(driverPath, python)
   writeFileSync(successPath, wrssPinSuccess)
   writeFileSync(wechatStatusPath, wrssPinWechatStatus)
@@ -192,7 +192,8 @@ describe('WeRSS pinned source patches', () => {
   })
 
   it('patches real pinned source idempotently and preserves the complete QR render function', () => {
-    const { root, bundlePath, driverPath, successPath, wechatStatusPath } = fixture(wrssPinPython.replace(/\r?\n/g, '\r\n'))
+    const bundleFixture = wrssPinBundle + '\nconst __pussycatPageOptions={pageSizeOptions:[10,20,50,100]};'
+    const { root, bundlePath, driverPath, successPath, wechatStatusPath } = fixture(wrssPinPython.replace(/\r?\n/g, '\r\n'), bundleFixture)
     ensureWrssSourcePatches(root)
     const files = [bundlePath, driverPath, successPath, wechatStatusPath, join(root, 'static', 'pussycat-auth.js')]
     const first = files.map((file) => readFileSync(file))
@@ -201,6 +202,7 @@ describe('WeRSS pinned source patches', () => {
     expect(bundle).toContain('已扫码，请在手机上点击确认')
     expect(bundle).toContain('pussycat-qr-countdown')
     expect(bundle).not.toContain('axios$1.head')
+    expect(bundle).toContain('pageSizeOptions:[10,20,30,50]')
     const methods = { qrCode: vi.fn(() => 'qr'), checkStatus: vi.fn(() => 'status') }
     const authSource = bundle.slice(0, bundle.indexOf('refreshToken='))
     const result = vm.runInNewContext(`${authSource}unused=0;[QRCode(),checkQRCodeStatus()]`, { window: { __PUSSYCAT_WRSS_AUTH__: methods } })

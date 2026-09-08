@@ -161,6 +161,8 @@ function patchBundle(source) {
     }
     source = source.slice(0, start + component.length) + AUTH_SETUP + source.slice(end)
   }
+  source = source.replace('pageSizeOptions:[10,20,50,100]', 'pageSizeOptions:[10,20,30,50]')
+  source = source.replace('pageSizeOptions:[10]}', 'pageSizeOptions:[10,20,30,50]}')
   source = replaceOnce(source,
     'createBaseVNode("img",{src:u.value,alt:"\\u5FAE\\u4FE1\\u6388\\u6743\\u4E8C\\u7EF4\\u7801"},null,8,_hoisted_4$1)',
     'createBaseVNode("div",{class:"pussycat-qr-image",style:{position:"relative",width:"240px",margin:"0 auto"}},[createBaseVNode("img",{src:u.value,alt:"微信授权二维码",style:{width:"240px",height:"240px",imageRendering:"pixelated"}},null,8,["src"]),scanned.value?createBaseVNode("div",{class:"pussycat-qr-scanned",style:{position:"absolute",inset:"0",display:"grid",placeContent:"center",background:"rgba(255,255,255,.96)",color:"#222",fontSize:"18px",padding:"20px"}},"已扫码，请在手机上点击确认"):createCommentVNode("",!0)]),createBaseVNode("p",{class:"pussycat-qr-countdown"},scanned.value?"等待手机确认":remaining.value+" 秒后自动刷新",1)',
