@@ -27,6 +27,26 @@ type PendingDelete = { kind: 'item' | 'folder'; id: string; name: string }
 type SearchSuggestion = { kind: 'item' | 'folder'; id: string; label: string; detail: string }
 type FolderOption = { folder: InspirationFolder; depth: number }
 
+function InspirationEmptyState({
+  title,
+  description,
+  icon,
+  className = '',
+}: {
+  title: string
+  description?: string
+  icon?: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={`inspiration-empty-state ${className}`.trim()} role="status" aria-label={title}>
+      {icon}
+      <strong>{title}</strong>
+      {description && <span>{description}</span>}
+    </div>
+  )
+}
+
 function formatDate(value: number): string {
   return new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
@@ -136,6 +156,16 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
   const folderOptions = useMemo(() => flattenFolders(library.folders), [library.folders])
   const currentFolder = folderFilter === 'all' ? null : library.folders.find((folder) => folder.id === folderFilter) ?? null
   const currentFolderTitle = currentFolder?.name ?? '全部灵感'
+  const currentFolderPath = useMemo(() => {
+    const path: InspirationFolder[] = []
+    let folder = currentFolder
+    while (folder) {
+      path.unshift(folder)
+      const parentId = folder.parentId
+      folder = parentId ? library.folders.find((candidate) => candidate.id === parentId) ?? null : null
+    }
+    return path
+  }, [currentFolder, library.folders])
 
   const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
     if (!normalizedQuery) return []
@@ -406,7 +436,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
                     {suggestion.kind === 'folder' ? <Folder size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
                     <span><strong>{suggestion.label}</strong><small>{suggestion.detail}</small></span>
                   </div>
-                )) : <p className="inspiration-library-search-empty">暂无匹配建议</p>}
+                )) : <InspirationEmptyState className="inspiration-library-search-empty" title="暂无匹配建议" />}
               </div>
             )}
           </div>
@@ -452,11 +482,22 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
 
           <section className="inspiration-library-list-pane" aria-label="灵感列表">
             <div className="inspiration-library-pane-heading">
-              <div><strong>{currentFolderTitle}</strong><span>{listCount} 项</span></div>
+              <div className="inspiration-library-pane-heading-main">
+                <nav className="inspiration-library-breadcrumb" aria-label="文件夹路径">
+                  <button type="button" data-testid="inspiration-breadcrumb-root" className={folderFilter === 'all' ? 'is-current' : ''} aria-current={folderFilter === 'all' ? 'page' : undefined} onClick={() => setFolderFilter('all')}>全部灵感</button>
+                  {currentFolderPath.map((folder) => (
+                    <span key={`crumb-${folder.id}`} className="inspiration-library-breadcrumb-segment">
+                      <span className="inspiration-library-breadcrumb-separator" aria-hidden="true">›</span>
+                      <button type="button" data-testid={`inspiration-breadcrumb-${folder.id}`} className={folder.id === folderFilter ? 'is-current' : ''} aria-current={folder.id === folderFilter ? 'page' : undefined} onClick={() => setFolderFilter(folder.id)}>{folder.name}</button>
+                    </span>
+                  ))}
+                </nav>
+                <div><strong>{currentFolderTitle}</strong><span>{listCount} 项</span></div>
+              </div>
               <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} aria-hidden="true" />新建笔记</button>
             </div>
             <div className="inspiration-library-items scroll-fade">
-              {listCount === 0 ? <p className="inspiration-library-no-results">没有匹配的灵感</p> : (
+              {listCount === 0 ? <InspirationEmptyState className="inspiration-library-no-results" title="没有匹配的灵感" /> : (
                 <>
                   {visibleFolders.map((folder) => (
                     <button type="button" key={folder.id} data-testid={`inspiration-folder-item-${folder.id}`} className="inspiration-library-folder-item" onClick={() => setFolderFilter(folder.id)}>

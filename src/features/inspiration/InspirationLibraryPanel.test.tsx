@@ -84,7 +84,20 @@ describe('灵感库', () => {
     expect(screen.getByTestId(`inspiration-folder-item-${child.id}`)).toBeInTheDocument()
     await userEvent.click(screen.getByTestId(`inspiration-folder-item-${child.id}`))
     expect(screen.getByTestId(`inspiration-item-${childNote.id}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`inspiration-breadcrumb-${parent.id}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`inspiration-breadcrumb-${child.id}`)).toHaveClass('is-current')
+    await userEvent.click(screen.getByTestId(`inspiration-breadcrumb-${parent.id}`))
+    expect(screen.getByTestId(`inspiration-folder-item-${child.id}`)).toBeInTheDocument()
     expect(screen.queryByText('未分类')).not.toBeInTheDocument()
+  })
+
+  it('搜索无结果时使用可复用空状态提示', async () => {
+    addInspirationItem({ title: '已有灵感', content: '内容', kind: 'note', format: 'md', folderId: null })
+    render(<InspirationLibraryPanel onOpenSources={() => {}} />)
+
+    await userEvent.type(screen.getByRole('combobox', { name: '搜索灵感' }), '不存在')
+    expect(screen.getByRole('status', { name: '暂无匹配建议' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: '没有匹配的灵感' })).toBeInTheDocument()
   })
 
   it('删除文件夹前要求确认，并把内容移到上一级', async () => {

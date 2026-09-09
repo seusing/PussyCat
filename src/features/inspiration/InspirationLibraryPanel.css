@@ -28,6 +28,8 @@
 .inspiration-library-search-wrap { position: relative; min-width: 210px; flex: 1 1 230px; }
 .inspiration-library-search { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; border: 1px solid #2e333d; border-radius: 7px; background: #171a20; color: #7e8796; padding: 0 10px; }
 .inspiration-library-search input { width: 100%; height: 36px; border: 0; outline: 0; background: transparent; color: #edf0f4; }
+.inspiration-library-search:focus-within { border-color: #6f8fd8; outline: 2px solid #8fb2ff; outline-offset: 2px; }
+.inspiration-library-search input:focus-visible { outline: 0; }
 .inspiration-library-search > button { display: grid; width: 22px; height: 22px; place-items: center; color: #8d96a5; }
 .inspiration-library-search-listbox { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; left: 0; overflow: hidden; border: 1px solid #3a4352; border-radius: 8px; background: #1a1e25; box-shadow: 0 14px 28px rgb(0 0 0 / 35%); padding: 4px; }
 .inspiration-library-search-listbox [role='option'] { display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: 5px; color: #c8d0dc; cursor: pointer; padding: 8px; }
@@ -36,7 +38,10 @@
 .inspiration-library-search-listbox [role='option'] > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .inspiration-library-search-listbox [role='option'] strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .inspiration-library-search-listbox [role='option'] small { color: #7f8999; font-size: 10px; }
-.inspiration-library-search-empty { margin: 8px; color: #858e9d; font-size: 11px; text-align: center; }
+.inspiration-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #858e9d; font-size: 11px; text-align: center; }
+.inspiration-empty-state strong { color: inherit; font-size: inherit; font-weight: 500; }
+.inspiration-empty-state span { color: #727d8e; font-size: 10px; }
+.inspiration-library-search-empty { margin: 8px; min-height: 28px; }
 
 .inspiration-library-toast { position: absolute; z-index: 60; top: 12px; right: 12px; width: min(380px, calc(100vw - 24px)); }
 
@@ -112,8 +117,15 @@
 .inspiration-library-folder-row > button:first-child > span:not(:last-child) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .inspiration-library-list-pane { display: flex; flex-direction: column; overflow: hidden; }
-.inspiration-library-pane-heading { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #292f39; padding: 0 12px; }
-.inspiration-library-pane-heading > div { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.inspiration-library-pane-heading { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #292f39; padding: 6px 12px; }
+.inspiration-library-pane-heading-main { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.inspiration-library-pane-heading-main > div { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.inspiration-library-breadcrumb { display: flex; min-width: 0; align-items: center; gap: 3px; overflow: hidden; color: #7e8796; font-size: 10px; }
+.inspiration-library-breadcrumb-segment { display: inline-flex; min-width: 0; align-items: center; gap: 3px; }
+.inspiration-library-breadcrumb button { overflow: hidden; border-radius: 3px; color: #8f99a8; padding: 2px 3px; text-overflow: ellipsis; white-space: nowrap; }
+.inspiration-library-breadcrumb button:hover { background: #252a33; color: #dce4f4; }
+.inspiration-library-breadcrumb button.is-current { color: #d8e2ff; font-weight: 600; }
+.inspiration-library-breadcrumb-separator { color: #596273; }
 .inspiration-library-pane-heading strong { overflow: hidden; color: #e5e9f0; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .inspiration-library-pane-heading span { color: #7e8796; font-size: 11px; }
 .inspiration-library-items { min-height: 0; flex: 1; overflow: auto; padding: 8px; }
@@ -127,7 +139,7 @@
 .inspiration-library-item-copy strong { overflow: hidden; color: #e7eaf0; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .inspiration-library-item-copy small { color: #7e8796; font-size: 10px; }
 .inspiration-library-item-copy em { overflow: hidden; color: #929baa; font-size: 11px; font-style: normal; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.inspiration-library-no-results { margin: 26px 8px; color: #7e8796; font-size: 12px; text-align: center; }
+.inspiration-library-no-results { min-height: 100px; margin: 26px 8px; color: #7e8796; font-size: 12px; }
 .inspiration-library-folder-item { display: flex; width: 100%; min-width: 0; align-items: flex-start; gap: 9px; border: 1px solid transparent; border-radius: 7px; padding: 9px; text-align: left; }
 .inspiration-library-folder-item:hover { background: #1b2028; }
 
@@ -135,6 +147,8 @@
 .inspiration-library-editor-heading { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #292f39; padding: 0 14px; }
 .inspiration-library-editor-title { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; color: #8b96a7; }
 .inspiration-library-editor-title input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #eff1f5; font-size: 15px; font-weight: 600; }
+.inspiration-library-editor-title:focus-within { border-radius: 4px; outline: 2px solid #8fb2ff; outline-offset: 2px; }
+.inspiration-library-editor-title input:focus-visible { outline: 0; }
 .inspiration-library-editor-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
 .inspiration-library-editor-actions > button,
 .inspiration-library-view-switch button { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 6px; color: #9aa4b4; }
@@ -149,7 +163,9 @@
 .inspiration-library-editor-meta label { display: inline-flex; align-items: center; gap: 5px; }
 .inspiration-library-editor-meta label:first-of-type { margin-left: auto; }
 .inspiration-library-editor-meta select { max-width: 130px; border: 1px solid #353c49; border-radius: 5px; outline: 0; background: #1a1e25; color: #cbd2df; padding: 3px 5px; font-size: 11px; }
+.inspiration-library-editor-meta select:focus-visible { outline: 2px solid #8fb2ff; outline-offset: 1px; }
 .inspiration-library-editor textarea { min-height: 0; flex: 1; resize: none; border: 0; outline: 0; background: #101217; color: #dce2eb; padding: 16px; font: 13px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.inspiration-library-editor textarea:focus-visible { outline: 2px solid #8fb2ff; outline-offset: -2px; }
 .inspiration-library-preview { min-height: 0; flex: 1; overflow: auto; color: #dce2eb; padding: 16px; font-size: 13px; line-height: 1.7; }
 .inspiration-library-preview h1, .inspiration-library-preview h2, .inspiration-library-preview h3 { color: #f0f2f5; }
 .inspiration-library-preview a { color: #8fb2ff; }

@@ -243,7 +243,7 @@ export function InspirationPanel({
             return decision?.state !== 'denied'
           }}
         />
-        {siteCommands.length === 0 && <div className="inspiration-empty">没有匹配的命令</div>}
+        {siteCommands.length === 0 && <div className="inspiration-empty inspiration-empty-state" role="status" aria-label="没有匹配的命令">没有匹配的命令</div>}
       </div>
     )
   }
@@ -269,14 +269,16 @@ export function InspirationPanel({
         </label>
       </div>
       {query.trim()
-        ? <FisheyeCommandList
-            commands={globalMatches}
-            onSubmit={openCommand}
-            canSubmit={(command) => {
-              const decision = decisionFor(command.command)
-              return decision?.state !== 'denied'
-            }}
-          />
+        ? globalMatches.length > 0
+          ? <FisheyeCommandList
+              commands={globalMatches}
+              onSubmit={openCommand}
+              canSubmit={(command) => {
+                const decision = decisionFor(command.command)
+                return decision?.state !== 'denied'
+              }}
+            />
+          : <div className="inspiration-empty inspiration-empty-state" role="status" aria-label="没有匹配的命令">没有匹配的命令</div>
         : (
           <div className="site-display">
             <SiteCarousel sites={sites} onSelect={openSite} />

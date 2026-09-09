@@ -201,7 +201,7 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
             </div>
           )
         })}
-        {groups.length === 0 && <div className="px-3 py-2" style={{ color: 'var(--color-fg-dim)' }}>无匹配命令</div>}
+        {groups.length === 0 && <div className="nav-empty-state px-3 py-4" role="status" aria-label="无匹配命令" style={{ margin: '12px 4px', border: '1px dashed var(--color-line)', borderRadius: 8, color: 'var(--color-fg-dim)', textAlign: 'center' }}>无匹配命令</div>}
       </nav>
     </div>
   )
