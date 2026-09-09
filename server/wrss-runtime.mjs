@@ -396,6 +396,7 @@ a,
 .pussycat-source-search { order: -1; min-width: 240px; margin-right: 12px; }
 .pussycat-frequent-group { display: inline-flex; align-items: center; gap: 6px; margin: 4px 8px; color: #9aa4b2; font-size: 13px; }
 .pussycat-frequent-group button { border: 0; background: transparent; color: #c7d2e5; cursor: pointer; padding: 3px 6px; }
+.pussycat-empty-state { display: grid; min-height: 76px; place-items: center; margin: 12px 4px; border: 1px dashed rgb(38 44 56 / 88%); border-radius: 8px; color: #9aa4b2; font-size: 13px; text-align: center; }
 .pussycat-count-hidden { display: none !important; }
 .article-list .arco-page-header-extra { position: relative; z-index: 2; }
 .article-list .arco-dropdown-menu, .article-list .arco-select-popup, .article-list .arco-trigger-popup { z-index: 1200 !important; }
@@ -512,6 +513,13 @@ a,
 .article-list .arco-radio-checked { background: rgb(79 140 255 / 18%) !important; color: #e6e9ef !important; }
 .article-list .arco-page-header-subtitle,
 .article-list .arco-page-header-divider { display: none; }
+.article-list .arco-empty {
+  min-height: 156px; margin: 16px 0; padding: 28px 20px;
+  border: 1px dashed rgb(79 140 255 / 28%); border-radius: 12px;
+  background: rgb(23 26 33 / 72%); color: #9aa4b2 !important;
+}
+.article-list .arco-empty .arco-empty-image { margin-bottom: 10px; opacity: .82; }
+.article-list .arco-empty .arco-empty-description { color: #9aa4b2 !important; }
 @media (max-width: 720px) {
   .article-list .arco-layout-sider .arco-card { grid-template-columns: 1fr auto; }
   .article-list .arco-layout-sider .arco-card-header-extra { grid-column: 2; }
@@ -814,6 +822,23 @@ const WRSS_UI_JS = `(() => {
     })
   }
 
+  function renderEmptyState(container, key, visible, label) {
+    if (!container) return
+    const selector = '.pussycat-empty-state[data-pussycat-empty="' + key + '"]'
+    const current = container.querySelector(selector)
+    if (!visible) {
+      current?.remove()
+      return
+    }
+    if (current) return
+    const empty = document.createElement('div')
+    empty.className = 'pussycat-empty-state'
+    empty.dataset.pussycatEmpty = key
+    empty.setAttribute('role', 'status')
+    empty.textContent = label
+    container.append(empty)
+  }
+
   function restoreArticleToolbar() {
     if (state.articleToolbarPlaceholder?.isConnected) state.articleToolbarPlaceholder.replaceWith(state.articleToolbar)
     else state.articleToolbar?.remove()
@@ -833,7 +858,8 @@ const WRSS_UI_JS = `(() => {
     if (!actions) return
     if (state.articleToolbar && (!articleList?.contains(state.articleToolbarPlaceholder) || window.location.pathname !== '/')) restoreArticleToolbar()
     const toolbar = articleList?.querySelector('.arco-page-header-extra')
-    const sourceSearch = articleList?.querySelector('.arco-layout-sider input[placeholder*="搜索公众号"], .arco-layout-sider input[placeholder*="公众号名称"]')
+    const sourceSearch = articleList?.querySelector('.arco-layout-sider input[placeholder*="搜索公众号"], .arco-layout-sider input[placeholder*="公众号名称"], .pussycat-source-search input')
+    const sourceList = articleList?.querySelector('.arco-layout-sider .arco-list')
     if (sourceSearch && !sourceSearch.dataset.pussycatMoved) {
       const holder = sourceSearch.closest('.arco-input-group, .arco-form-item, .arco-input-wrapper') || sourceSearch.parentElement
       const target = articleList?.querySelector('.arco-layout-content .arco-page-header-extra')
@@ -878,7 +904,7 @@ const WRSS_UI_JS = `(() => {
     articleList?.querySelectorAll('.arco-layout-sider .arco-card-header-extra button').forEach((button) => {
       if (normalize(button.textContent) === '订阅') setLastTextNode(button, '添加公众号')
     })
-    const list = articleList?.querySelector('.arco-layout-sider .arco-list')
+    const list = sourceList
     if (list) {
       list.setAttribute('role', 'navigation')
       list.setAttribute('aria-label', '公众号')
@@ -895,7 +921,10 @@ const WRSS_UI_JS = `(() => {
         if (item.classList.contains('active-mp')) item.setAttribute('aria-current', 'page')
         else item.removeAttribute('aria-current')
       })
+      renderEmptyState(list, 'source-search', Boolean(sourceSearch && normalize(sourceSearch.value) && list.querySelectorAll('.arco-list-item').length === 0), '没有匹配的公众号')
     }
+    const articleResults = articleList?.querySelector('.arco-layout-content .arco-list')
+    if (articleResults) renderEmptyState(articleResults, 'article-results', articleResults.querySelectorAll('.arco-list-item').length === 0, '暂无文章')
     const pageTitle = articleList?.querySelector('.arco-layout-content .arco-page-header-title')
     if (pageTitle) replaceExactText(pageTitle, new Map([
       ['全部', '最新文章'],

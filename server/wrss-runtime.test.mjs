@@ -833,6 +833,31 @@ it('preserves original article controls when moving the toolbar and restores it 
   }
 })
 
+it('renders scoped empty states for missing公众号 and empty article results', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header>
+    <section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><input placeholder="搜索公众号" value="不存在" /></div></aside>
+      <div class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-extra"><button>导出</button></div></div><div class="arco-list"></div></div>
+    </section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  const { document } = window
+  try {
+    window.eval(script)
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    await vi.waitFor(() => expect(document.querySelector('[data-pussycat-empty="source-search"]')).not.toBeNull())
+    expect(document.querySelector('[data-pussycat-empty="source-search"]')).toHaveAttribute('role', 'status')
+    expect(document.querySelector('[data-pussycat-empty="source-search"]').textContent).toBe('没有匹配的公众号')
+    expect(document.querySelector('[data-pussycat-empty="article-results"]')).toHaveAttribute('role', 'status')
+    expect(document.querySelector('[data-pussycat-empty="article-results"]').textContent).toBe('暂无文章')
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
 it('renders settings tabs beside the published nested route layout and restores routes after logs', async () => {
   const { root } = await fixture()
   const { sourceDir } = writeInstalled(root)
