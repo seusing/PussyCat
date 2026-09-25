@@ -3,6 +3,8 @@ import { useAppStore } from '../../store/appStore'
 import { searchCommands, groupBySite } from '../../data/catalog'
 import { siteLabel } from '../../data/zhCopy'
 import type { CommandManifest } from '../../data/types'
+import { SearchX } from 'lucide-react'
+import { EmptyState } from '../../components/EmptyState'
 
 function NavCommandButton({ label, cmd, stale, active, onClick }: {
   label: string; cmd?: CommandManifest; stale: boolean; active: boolean; onClick: () => void
@@ -201,7 +203,7 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
             </div>
           )
         })}
-        {groups.length === 0 && <div className="nav-empty-state px-3 py-4" role="status" aria-label="无匹配命令" style={{ margin: '12px 4px', border: '1px dashed var(--color-line)', borderRadius: 8, color: 'var(--color-fg-dim)', textAlign: 'center' }}>无匹配命令</div>}
+        {groups.length === 0 && <EmptyState className="nav-empty-state" icon={<SearchX size={20} />} title="无匹配命令" description="请尝试其他关键词" />}
       </nav>
     </div>
   )

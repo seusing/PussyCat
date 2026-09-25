@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { createRequire } from 'node:module'
 import {
   chmodSync,
   copyFileSync,
@@ -35,9 +36,12 @@ const READY_POLL_MS = 250
 const TAR_BLOCK_SIZE = 512
 const MAX_EXTRACTED_ARCHIVE_BYTES = 256 * 1024 * 1024
 const WRSS_BOOTSTRAP_SCRIPT = '<script src="/static/pussycat-bootstrap.js"></script>'
+const WRSS_CRITICAL_STYLE = '<style id="pussycat-critical-theme">html,body,#app{min-height:100%;margin:0;background:#0f1115;color:#e6e9ef;color-scheme:dark}</style>'
 const WRSS_THEME_LINK = '<link rel="stylesheet" href="/static/pussycat-theme.css">'
 const WRSS_AUTH_SCRIPT = '<script src="/static/pussycat-auth.js"></script>'
+const WRSS_MOTION_SCRIPT = '<script src="/static/pussycat-motion.js"></script>'
 const WRSS_UI_SCRIPT = '<script src="/static/pussycat-ui.js"></script>'
+const MOTION_PACKAGE_DIR = dirname(createRequire(import.meta.url).resolve('motion/package.json'))
 const WRSS_THEME_CSS = `:root,
 html,
 body {
@@ -114,6 +118,13 @@ body,
   transition: none !important;
   opacity: 1 !important;
 }
+
+.pussycat-passive-tooltip {
+  pointer-events: none !important;
+  opacity: 1 !important;
+}
+
+.pussycat-native-empty-hidden { display: none !important; }
 
 .pussycat-popup-id-row {
   display: none !important;
@@ -383,21 +394,47 @@ a,
 .pussycat-drawer-items { display: grid; gap: 4px; }
 .pussycat-menu-group { margin: 14px 10px 4px; color: #778399; font-size: 12px; font-weight: 600; }
 
-.pussycat-article-actions { padding-bottom: 14px; margin-bottom: 10px; border-bottom: 1px solid rgb(38 44 56 / 88%); }
-.pussycat-article-actions[hidden] { display: none; }
-.pussycat-article-actions h2 { margin: 8px 10px 12px; font-size: 14px; color: #9aa4b2; }
-.pussycat-article-actions .arco-page-header-extra { margin: 0; }
-.pussycat-article-actions .arco-space { display: grid !important; grid-template-columns: auto 1fr; width: 100%; gap: 8px !important; }
-.pussycat-article-actions .arco-space-item { margin: 0 !important; grid-column: 1 / -1; }
-.pussycat-article-actions .arco-space-item:first-child { grid-column: 1; align-self: center; padding-left: 10px; }
-.pussycat-article-actions .arco-space-item:nth-child(2) { grid-column: 2; }
-.pussycat-article-actions .arco-btn { width: 100%; justify-content: flex-start; }
-.pussycat-article-actions .arco-btn:disabled { opacity: .4; }
-.pussycat-source-search { order: -1; min-width: 240px; margin-right: 12px; }
-.pussycat-frequent-group { display: inline-flex; align-items: center; gap: 6px; margin: 4px 8px; color: #9aa4b2; font-size: 13px; }
-.pussycat-frequent-group button { border: 0; background: transparent; color: #c7d2e5; cursor: pointer; padding: 3px 6px; }
-.pussycat-empty-state { display: grid; min-height: 76px; place-items: center; margin: 12px 4px; border: 1px dashed rgb(38 44 56 / 88%); border-radius: 8px; color: #9aa4b2; font-size: 13px; text-align: center; }
+.pussycat-article-actions { display: none !important; }
+.pussycat-article-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: clamp(280px, 40vw, 520px);
+  margin-left: auto;
+}
+.pussycat-article-search .search-input { min-width: 0; flex: 1 1 auto; }
+.pussycat-article-search .article-filter-select { flex: 0 0 auto; }
+.pussycat-empty-state { display: flex; min-height: 112px; align-items: center; justify-content: center; margin: 12px 4px; flex-direction: column; gap: 8px; color: #9aa4b2; font-size: 13px; text-align: center; }
+.pussycat-empty-state::before { content: '⌕'; color: #9aa4b2; font-size: 25px; line-height: 1; }
 .pussycat-count-hidden { display: none !important; }
+.pussycat-source-cards { display:block; position:relative; overflow:hidden; perspective:800px; min-height:420px; margin:16px 0; padding:44px 24px; }
+.pussycat-source-cards[hidden] { display:none !important; }
+.pussycat-source-card-controls { display:flex; justify-content:center; gap:8px; margin:-4px 0 8px; }
+.pussycat-source-card-controls[hidden] { display:none !important; }
+.pussycat-source-cards-empty[hidden] { display:none !important; }
+.pussycat-source-card-control { border:1px solid rgb(67 88 124 / 80%); border-radius:999px; background:#171a21; color:#c8d2e4; padding:6px 12px; cursor:pointer; font:inherit; }
+.pussycat-source-card-control:disabled { opacity:.45; cursor:default; }
+.pussycat-source-card { position:absolute; left:50%; top:150px; width:min(360px,calc(100% - 64px)); min-height:180px; padding:20px; border:1px solid rgb(38 44 56 / 88%); border-radius:16px; background:#171a21; color:#e6e9ef; cursor:pointer; text-align:left; font:inherit; transform-origin:center; will-change:transform,filter; }
+.pussycat-source-card:hover,.pussycat-source-card:focus-visible { border-color:rgb(79 140 255 / 60%); outline:none; }
+.pussycat-source-card img { width:40px; height:40px; border-radius:50%; object-fit:cover; vertical-align:middle; margin-right:10px; }
+.pussycat-source-card-title { color:#e6e9ef; font-weight:600; } .pussycat-source-card-description { color:#b9c5d8; font-size:13px; line-height:1.5; margin-top:12px; } .pussycat-source-card-meta { color:#9aa4b2; font-size:13px; margin-top:8px; } .pussycat-source-card-status { display:inline-flex; margin-top:10px; padding:2px 8px; border-radius:999px; background:#1c3a28; color:#68d391; font-size:12px; } .pussycat-source-card-status[data-status="disabled"] { background:#3a2424; color:#f28b82; }
+
+@media (prefers-reduced-motion: reduce) { .pussycat-content-slide { transition:none; } }
+#main > .arco-layout { background:#0f1115 !important; }
+.pussycat-source-entry { cursor: pointer; }
+.article-list[data-pussycat-source-mode="latest"] .pussycat-source-account,
+.article-list[data-pussycat-source-mode="favorites"] .pussycat-source-account,
+.article-list[data-pussycat-source-mode="latest"] .pussycat-source-controls,
+.article-list[data-pussycat-source-mode="favorites"] .pussycat-source-controls,
+.article-list[data-pussycat-source-mode="latest"] .arco-layout-sider .arco-pagination,
+.article-list[data-pussycat-source-mode="favorites"] .arco-layout-sider .arco-pagination { display: none !important; }
+.article-list[data-pussycat-source-mode="sources"] .pussycat-source-account { display:none !important; }
+.article-list[data-pussycat-source-mode="sources"] .arco-layout-content > .arco-card { display:none !important; }
+.article-list[data-pussycat-source-mode="account"] .pussycat-source-account { display:none !important; }
+.article-list[data-pussycat-source-mode="account"] .pussycat-source-controls,
+.article-list[data-pussycat-source-mode="account"] .arco-layout-sider .arco-pagination { display:none !important; }
+.article-list[data-pussycat-source-mode="sources"] .arco-pagination-total,
+.article-list[data-pussycat-source-mode="sources"] .arco-pagination-jumper { display: none !important; }
 .article-list .arco-page-header-extra { position: relative; z-index: 2; }
 .article-list .arco-dropdown-menu, .article-list .arco-select-popup, .article-list .arco-trigger-popup { z-index: 1200 !important; }
 .pussycat-more-menu ~ .arco-trigger-popup { z-index: 1000; }
@@ -446,7 +483,7 @@ a,
   border-bottom: 1px solid rgb(38 44 56 / 72%) !important;
   background: #0f1115 !important;
 }
-.article-list > .arco-layout-content { min-width: 0; padding: 16px 20px !important; }
+.article-list > .arco-layout-content { min-width: 0; padding: 16px 20px !important; perspective: 1000px; }
 .article-list .arco-layout-sider .arco-card {
   display: grid;
   grid-template-columns: auto minmax(180px, 1fr) auto auto;
@@ -465,7 +502,7 @@ a,
   display: contents !important;
   background: transparent !important;
 }
-.article-list .arco-layout-sider .arco-card-header-title { grid-column: 1; grid-row: 1; color: #e6e9ef; font-size: 16px; }
+.article-list .arco-layout-sider .arco-card-header-title { display: none; }
 .article-list .arco-layout-sider .arco-card-header-extra { grid-column: 4; grid-row: 1; justify-self: end; }
 .article-list .arco-layout-sider .arco-card-body > div > div:first-child { grid-column: 2; grid-row: 1; margin: 0 !important; }
 .article-list .arco-layout-sider .arco-card-body > div > div:nth-child(2) { grid-column: 3; grid-row: 1; margin: 0 !important; padding: 0 !important; }
@@ -474,10 +511,10 @@ a,
 .article-list .arco-layout-sider .arco-list {
   grid-column: 1 / -1;
   min-width: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   border: 0 !important;
 }
-.article-list .arco-layout-sider .arco-list-content { display: flex; gap: 8px; min-width: max-content; }
+.article-list .arco-layout-sider .arco-list-content { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .article-list .arco-layout-sider .arco-list-item {
   flex: 0 0 auto;
   width: auto;
@@ -502,6 +539,8 @@ a,
   box-shadow: none;
 }
 .article-list .arco-page-header { padding: 0 0 14px !important; }
+.article-list .arco-page-header-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+.article-list .arco-page-header-main { min-width: max-content; }
 .article-list .arco-page-header-title,
 .article-list .arco-pagination { color: #e6e9ef; }
 .article-list .arco-pagination-total,
@@ -515,12 +554,12 @@ a,
 .article-list .arco-page-header-divider { display: none; }
 .article-list .arco-empty {
   min-height: 156px; margin: 16px 0; padding: 28px 20px;
-  border: 1px dashed rgb(79 140 255 / 28%); border-radius: 12px;
-  background: rgb(23 26 33 / 72%); color: #9aa4b2 !important;
+  border: 0; background: transparent; color: #9aa4b2 !important;
 }
 .article-list .arco-empty .arco-empty-image { margin-bottom: 10px; opacity: .82; }
 .article-list .arco-empty .arco-empty-description { color: #9aa4b2 !important; }
 @media (max-width: 720px) {
+  .pussycat-article-search { width: 100%; margin-left: 0; flex-basis: 100%; }
   .article-list .arco-layout-sider .arco-card { grid-template-columns: 1fr auto; }
   .article-list .arco-layout-sider .arco-card-header-extra { grid-column: 2; }
   .article-list .arco-layout-sider .arco-card-body > div > div:first-child { grid-column: 1; grid-row: 2; }
@@ -555,7 +594,7 @@ a,
 .wechat-status-page .token-value { background: #0f1115 !important; color: #b9c5d8 !important; }
 `
 const WRSS_UI_JS = `(() => {
-  const VERSION = 'pussycat-wrss-ui-v7'
+  const VERSION = 'pussycat-wrss-ui-v10'
   const previous = window.__PUSSYCAT_WRSS_UI__
   if (previous && previous.version === VERSION) return
   if (previous && typeof previous.destroy === 'function') previous.destroy()
@@ -565,6 +604,7 @@ const WRSS_UI_JS = `(() => {
     raf: 0,
     observer: null,
     cleanup: [],
+    sourceClickNodes: new WeakSet(),
     moreWrap: null,
     menuButton: null,
     menuPanel: null,
@@ -572,16 +612,42 @@ const WRSS_UI_JS = `(() => {
     brand: null,
     menuCloseButton: null,
     bodyOverflow: null,
-    articleToolbar: null,
-    articleToolbarPlaceholder: null,
+    articleSearch: null,
+    articleSearchNodes: [],
+    articleSearchPlaceholders: [],
+    sourceMode: '',
     settingsPanel: null,
     prefetchKey: '',
     route: window.location.pathname,
     logsMode: false,
     diagnosticsText: '正在读取运行日志…',
     refreshTimer: null,
+    articleCache: new Map(),
+    articleCacheRestoreKey: '',
+    sourceIndex: { latest: 0, favorites: 1, sources: 2 },
+    viewToken: 0,
+    viewAnimation: null,
+    viewTransitionRunning: false,
+    pendingViewTransition: null,
+    sourceCardAnimations: [],
+    contentListeners: new Set(),
+    accountId: '',
+    primaryNavNodes: new WeakSet(),
+    primaryNavBypass: new WeakSet(),
+    primaryNavRunning: false,
+    primaryNavAnimation: null,
+    pendingPrimaryNav: null,
+    primaryRouteWaitCancel: null,
+    destroyed: false,
   }
   window.__PUSSYCAT_WRSS_UI__ = state
+  window.__PUSSYCAT_WRSS_CONTENT__ = {
+    getState: () => window.__PUSSYCAT_WRSS_BRIDGE__?.getState?.() || ({ view: state.sourceMode === 'account' && state.accountId ? 'account:' + state.accountId : (state.sourceMode || 'latest'), cache: [...state.articleCache.keys()] }),
+    selectView: (view) => selectContentView(String(view || 'latest')),
+    setSourcesQuery: (query) => { const input = document.querySelector('.arco-layout-sider input[placeholder*="搜索公众号"], .arco-layout-sider input[placeholder*="公众号名称"]'); if (input) { input.value = query || ''; input.dispatchEvent(new Event('input', { bubbles: true })) } },
+    loadMore: () => window.__PUSSYCAT_WRSS_BRIDGE__?.loadMoreSources?.(),
+    subscribe: (listener) => { if (typeof listener !== 'function') return () => {}; state.contentListeners.add(listener); return () => state.contentListeners.delete(listener) },
+  }
 
   const primaryNav = [
     { from: '订阅管理', label: '订阅与文章', path: '/', order: '1' },
@@ -687,6 +753,72 @@ const WRSS_UI_JS = `(() => {
       return
     }
     window.location.assign(path)
+  }
+
+  function primaryRouteContent() {
+    const main = document.querySelector('#main > .arco-layout .app-content, #main > section.arco-layout > main.arco-layout-content, #main > .arco-layout > .arco-layout-content')
+    return main?.firstElementChild || main
+  }
+
+  function waitForPrimaryRoute(path, previous, previousText) {
+    state.primaryRouteWaitCancel?.()
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        observer.disconnect()
+        window.clearTimeout(timeout)
+        state.primaryRouteWaitCancel = null
+        resolve()
+      }
+      const ready = () => {
+        const current = primaryRouteContent()
+        if (window.location.pathname === path && (current !== previous || normalize(current?.textContent) !== previousText)) finish()
+      }
+      const observer = new MutationObserver(ready)
+      observer.observe(document.getElementById('main') || document.body, { childList: true, subtree: true, characterData: true })
+      const timeout = window.setTimeout(finish, 2000)
+      state.primaryRouteWaitCancel = finish
+      ready()
+    })
+  }
+
+  async function transitionPrimaryRoute(item, path) {
+    if (state.destroyed) return
+    if (state.primaryNavRunning) { state.pendingPrimaryNav = { path }; return }
+    state.primaryNavRunning = true
+    const currentIndex = primaryNav.findIndex((nav) => nav.path === window.location.pathname)
+    const targetIndex = primaryNav.findIndex((nav) => nav.path === path)
+    const direction = targetIndex >= currentIndex ? 1 : -1
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const content = primaryRouteContent()
+    const animate = async (node, frames) => {
+      if (!node || reduced || !window.Motion?.animate) return
+      node.style.willChange = 'transform'
+      const animation = window.Motion.animate(node, { transform: frames }, { duration: 0.16, ease: [0.22, 0.8, 0.24, 1] })
+      state.primaryNavAnimation = animation
+      try { await animation?.finished } catch {}
+      if (state.primaryNavAnimation === animation) state.primaryNavAnimation = null
+    }
+    const previousText = normalize(content?.textContent)
+    await animate(content, ['translate3d(0,0,0)', 'translate3d(' + (direction > 0 ? '-8%' : '8%') + ',0,0)'])
+    if (state.destroyed) return
+    state.primaryNavBypass.add(item)
+    item.click()
+    await waitForPrimaryRoute(path, content, previousText)
+    if (state.destroyed) return
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    const next = primaryRouteContent()
+    await animate(next, ['translate3d(' + (direction > 0 ? '8%' : '-8%') + ',0,0)', 'translate3d(0,0,0)'])
+    if (next) { next.style.transform = ''; next.style.willChange = '' }
+    state.primaryNavRunning = false
+    const pending = state.pendingPrimaryNav
+    state.pendingPrimaryNav = null
+    if (pending && pending.path !== window.location.pathname) {
+      const pendingItem = document.querySelector('.arco-menu-item[data-pussycat-path="' + attrValue(pending.path) + '"]')
+      if (pendingItem instanceof HTMLElement) void transitionPrimaryRoute(pendingItem, pending.path)
+    }
   }
 
   function ensureMoreMenu(menu) {
@@ -809,6 +941,18 @@ const WRSS_UI_JS = `(() => {
       if (primaryNav.some((nav) => nav.path === entry.path)) {
         if (window.location.pathname === entry.path) item.setAttribute('aria-current', 'page')
         else item.removeAttribute('aria-current')
+        if (!state.primaryNavNodes.has(item)) {
+          state.primaryNavNodes.add(item)
+          const onPrimaryClick = (event) => {
+            if (state.primaryNavBypass.has(item)) { state.primaryNavBypass.delete(item); return }
+            if (entry.path === window.location.pathname && !state.primaryNavRunning) return
+            event.preventDefault()
+            event.stopImmediatePropagation()
+            void transitionPrimaryRoute(item, entry.path)
+          }
+          item.addEventListener('click', onPrimaryClick, { capture: true })
+          state.cleanup.push(() => { item.removeEventListener('click', onPrimaryClick, true); state.primaryNavNodes.delete(item); state.primaryNavBypass.delete(item) })
+        }
       }
       setLastTextNode(item, entry.label)
     })
@@ -839,63 +983,291 @@ const WRSS_UI_JS = `(() => {
     container.append(empty)
   }
 
-  function restoreArticleToolbar() {
-    if (state.articleToolbarPlaceholder?.isConnected) state.articleToolbarPlaceholder.replaceWith(state.articleToolbar)
-    else state.articleToolbar?.remove()
-    state.articleToolbar = null
-    state.articleToolbarPlaceholder = null
+  function renderContentRetry(container, visible, retry) {
+    if (!container) return
+    let button = container.querySelector('.pussycat-content-retry')
+    if (!visible) { button?.remove(); return }
+    if (!button) { button = document.createElement('button'); button.type = 'button'; button.className = 'pussycat-source-card-control pussycat-content-retry'; button.textContent = '加载失败，重试'; container.append(button) }
+    button.onclick = retry
+  }
+
+  function updateRefreshButton(button, key) {
+    const remain = Math.max(0, 300000 - (Date.now() - Number(localStorage.getItem(key) || 0)))
+    button.disabled = remain > 0
+    setLastTextNode(button, remain > 0 ? button.dataset.pussycatRefreshLabel + '（' + Math.ceil(remain / 1000) + '秒后可用）' : button.dataset.pussycatRefreshLabel)
+    return remain
+  }
+
+  function restoreArticleSearch() {
+    state.articleSearchNodes.forEach((node, index) => {
+      const placeholder = state.articleSearchPlaceholders[index]
+      if (placeholder?.isConnected) placeholder.replaceWith(node)
+    })
+    state.articleSearch?.remove()
+    state.articleSearch = null
+    state.articleSearchNodes = []
+    state.articleSearchPlaceholders = []
   }
 
   function enhancePopups() {
     document.querySelectorAll('.arco-popover-popup-content *, .arco-popconfirm-popup-content *').forEach((element) => {
       element.classList.toggle('pussycat-popup-id-row', element.children.length === 0 && /^ID:\\s*\\S/.test(normalize(element.textContent)))
     })
+    document.querySelectorAll('.arco-trigger-popup.arco-popover').forEach((popup) => {
+      const interactive = popup.querySelector('button, a, input, select, textarea, [role="button"], [tabindex]')
+      const passive = !interactive
+      if (popup.classList.contains('pussycat-passive-tooltip') !== passive) popup.classList.toggle('pussycat-passive-tooltip', passive)
+    })
+  }
+
+  function transitionArticleView(run, direction = 1) {
+    if (state.destroyed) return
+    if (state.viewTransitionRunning) { state.pendingViewTransition = { run, direction }; return }
+    state.viewTransitionRunning = true
+    direction = typeof direction === 'function' ? direction() : direction
+    const token = ++state.viewToken
+    const layout = document.querySelector('.article-list > .arco-layout-content')
+    const content = layout
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const execute = async () => { if (!state.destroyed && token === state.viewToken) { await run(); if (state.destroyed) return; enhanceArticles(); await new Promise((resolve) => window.requestAnimationFrame(resolve)); if (!state.destroyed) state.contentListeners.forEach((listener) => { try { listener(window.__PUSSYCAT_WRSS_CONTENT__.getState()) } catch {} }) } }
+    const complete = () => { state.viewAnimation = null; state.viewTransitionRunning = false; const pending = state.pendingViewTransition; state.pendingViewTransition = null; if (!state.destroyed && pending) transitionArticleView(pending.run, pending.direction) }
+    const easing = [0.22, 0.8, 0.24, 1]
+    if (!content || reduced || !window.Motion?.animate) { void execute().then(complete); return }
+    const animate = async (node, frames) => {
+      node.style.willChange = 'transform'
+      try {
+        const animation = window.Motion.animate(node, { transform: frames }, { duration: 0.16, ease: easing })
+        state.viewAnimation = animation
+        await animation?.finished
+      } catch {}
+    }
+    const outgoing = direction > 0 ? '-8%' : '8%'
+    const incoming = direction > 0 ? '8%' : '-8%'
+    void animate(content, ['translate3d(0,0,0)', 'translate3d(' + outgoing + ',0,0)'])
+      .then(execute)
+      .then(async () => {
+        const next = document.querySelector('.article-list > .arco-layout-content')
+        if (state.destroyed || !next) return
+        await animate(next, ['translate3d(' + incoming + ',0,0)', 'translate3d(0,0,0)'])
+        if (next) { next.style.transform = ''; next.style.willChange = '' }
+      })
+      .finally(complete)
+  }
+
+  function viewRank(view) {
+    if (view === 'latest') return 0
+    if (view === 'favorites') return 1
+    if (view === 'sources') return 2
+    if (view === 'account') return 3
+    return 0
+  }
+
+  function contentViewKey(mode = state.sourceMode, accountId = state.accountId) {
+    return mode === 'account' && accountId ? 'account:' + accountId : (mode || 'latest')
+  }
+
+  function articleScrollTarget(articleList) {
+    const content = articleList?.querySelector(':scope > .arco-layout-content')
+    const body = content?.querySelector('.arco-table-body')
+    if (body && body.scrollHeight > body.clientHeight) return body
+    return document.scrollingElement || body || content?.querySelector('.arco-list')
+  }
+
+  function snapshotArticleView(articleList) {
+    const results = articleScrollTarget(articleList)
+    if (!results) return
+    const query = articleList.querySelector('.pussycat-article-search input, .search-input input, input[placeholder*="文章标题"]')
+    state.articleCache.set(contentViewKey(), { scrollTop: results.scrollTop || 0, query: query?.value || '' })
+  }
+
+  function selectContentView(view) {
+    const list = document.querySelector('.article-list .arco-layout-sider .arco-list')
+    if (!list) { state.sourceMode = view; schedule(); return }
+    let target = null
+    if (view === 'latest' || view === 'favorites') target = list.querySelector('[data-pussycat-builtin="' + view + '"]')
+    else if (view === 'sources') target = list.querySelector('.pussycat-sources-entry')
+    else if (view.startsWith('account:')) {
+      const id = view.slice('account:'.length)
+      target = [...list.querySelectorAll('.pussycat-source-account')].find((item) => item.dataset.mpId === id || item.dataset.id === id)
+    }
+    if (target instanceof HTMLElement) target.click()
+    else { state.sourceMode = view.startsWith('account:') ? 'account' : view; schedule() }
+  }
+
+  function renderSourceCards(articleList, list) {
+    if (!articleList || !list) return
+    let cards = articleList.querySelector('.pussycat-source-cards')
+    if (!cards) { cards = document.createElement('div'); cards.className = 'pussycat-source-cards'; articleList.querySelector(':scope > .arco-layout-content')?.prepend(cards) }
+    let controls = articleList.querySelector('.pussycat-source-card-controls')
+    if (!controls) {
+      controls = document.createElement('div')
+      controls.className = 'pussycat-source-card-controls'
+      const previous = document.createElement('button')
+      previous.type = 'button'; previous.className = 'pussycat-source-card-control'; previous.textContent = '‹'; previous.title = '上一个公众号'; previous.setAttribute('aria-label', '上一个公众号')
+      const next = document.createElement('button')
+      next.type = 'button'; next.className = 'pussycat-source-card-control'; next.textContent = '›'; next.title = '下一个公众号'; next.setAttribute('aria-label', '下一个公众号')
+      controls.append(previous, next)
+      cards.after(controls)
+      controls.dataset.pussycatControls = '1'
+      controls._move = (delta) => {
+        const entries = [...cards.children]
+        const current = entries.findIndex((entry) => entry.dataset.pussycatSourceId === (cards.dataset.pussycatFocused || ''))
+        const target = entries[Math.max(0, Math.min(entries.length - 1, (current < 0 ? 0 : current) + delta))]
+        if (target) { cards.dataset.pussycatFocused = target.dataset.pussycatSourceId; updateCards(); if (entries.indexOf(target) >= entries.length - 2) window.__PUSSYCAT_WRSS_BRIDGE__?.loadMoreSources?.() }
+      }
+      previous.addEventListener('click', () => controls._move(-1))
+      next.addEventListener('click', () => controls._move(1))
+    }
+    let cardsEmpty = articleList.querySelector('.pussycat-source-cards-empty')
+    if (!cardsEmpty) { cardsEmpty = document.createElement('div'); cardsEmpty.className = 'pussycat-source-cards-empty'; controls.after(cardsEmpty) }
+    const accounts = [...list.querySelectorAll('.pussycat-source-account')], byId = new Map([...cards.children].map(n=>[n.dataset.pussycatSourceId,n])), seen = new Set()
+    const bridgedById = new Map((window.__PUSSYCAT_WRSS_BRIDGE__?.getState?.().sources || []).map((source) => [String(source.id), source]))
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const update = () => {
+      const c=cards.dataset.pussycatFocused||'', a=[...cards.children], fi=a.findIndex(n=>n.dataset.pussycatSourceId===c)
+      const signature=c+'|'+a.map(n=>n.dataset.pussycatSourceId).join('|')
+      if(cards.dataset.pussycatLayoutSignature===signature)return
+      cards.dataset.pussycatLayoutSignature=signature
+      state.sourceCardAnimations?.forEach((animation) => animation.stop?.()); state.sourceCardAnimations = []
+      const visibleIndexes = []
+      if (fi >= 0) {
+        for (let index = fi; index < a.length && visibleIndexes.length < 4; index += 1) visibleIndexes.push(index)
+        for (let index = fi - 1; index >= 0 && visibleIndexes.length < 4; index -= 1) visibleIndexes.push(index)
+      }
+      const layerGap = cards.clientWidth > 0 && cards.clientWidth < 520 ? 40 : 48
+      a.forEach((n,i)=>{
+        const depth = visibleIndexes.indexOf(i)
+        const target=depth===0?'translateX(-50%) translateY(0) translateZ(24px) rotateX(0deg) scale(1)':'translateX(-50%) translateY('+(-depth*layerGap)+'px) translateZ('+(-depth*60)+'px) rotateX('+(depth*2)+'deg) scale('+(1-depth*.045)+')'
+        const previous=n.style.transform; n.dataset.pussycatFocused=depth===0?'1':'0'; n.style.opacity=depth < 0 ? '0' : String(1-depth*.16); n.style.filter=depth > 0 ? 'blur('+(depth*.45)+'px)' : 'none'; n.style.zIndex=String(100-(depth < 0 ? 10 : depth)); n.style.visibility=depth >= 0 && depth <= 3?'visible':'hidden'; n.inert = depth > 3 || depth < 0; n.tabIndex=depth >= 0 && depth <= 3?0:-1
+        if(!cards.dataset.pussycatReady||reduced||!window.Motion?.animate||previous===target){n.style.transform=target;return}
+        try { state.sourceCardAnimations.push(window.Motion.animate(n,{transform:[previous,target]},{type:'spring',stiffness:250,damping:25,mass:.8})) } catch { n.style.transform=target }
+      })
+      cards.dataset.pussycatReady='1'
+      const entries = [...cards.children]
+      const current = entries.findIndex((entry) => entry.dataset.pussycatSourceId === (cards.dataset.pussycatFocused || ''))
+      controls?.querySelectorAll('button').forEach((button, index) => { button.disabled = current < 0 || (index === 0 ? current <= 0 : current >= entries.length - 1) })
+    }
+    const updateCards = update
+    accounts.forEach((item, index) => {
+      const fallbackName = normalize(item.querySelector('.arco-typography')?.textContent || '公众号')
+      const id = item.dataset.mpId || item.dataset.id || (window.__PUSSYCAT_WRSS_BRIDGE__ ? '' : fallbackName)
+      if (!id) return
+      const bridged = bridgedById.get(String(id))
+      const nameText = normalize(bridged?.name || fallbackName)
+      let card = byId.get(id)
+      if (!card) {
+        card = document.createElement('button')
+        card.type = 'button'
+        card.className = 'pussycat-source-card'
+        card.dataset.pussycatSourceId = id
+        card.addEventListener('click', () => {
+          if (cards.dataset.pussycatFocused !== id) {
+            cards.dataset.pussycatFocused = id
+            update()
+            return
+          }
+          card._pussycatSourceTarget?.click()
+        })
+        cards.append(card)
+      }
+      card._pussycatSourceTarget = item
+      seen.add(id)
+      const image = item.querySelector('img')
+      const source = bridged?.avatar || image?.currentSrc || image?.src || '/static/logo.svg'
+      let avatar = card.querySelector('img')
+      if (!avatar) {
+        avatar = document.createElement('img')
+        avatar.alt = ''
+        avatar.addEventListener('error', () => {
+          if (!avatar.src.endsWith('/static/logo.svg')) avatar.src = '/static/logo.svg'
+        })
+        card.prepend(avatar)
+      }
+      if (card.dataset.avatar !== source) {
+        avatar.src = source
+        card.dataset.avatar = source
+      }
+      let name = card.querySelector('.pussycat-source-card-title')
+      if (!name) {
+        name = document.createElement('span')
+        name.className = 'pussycat-source-card-title'
+        card.append(name)
+      }
+      if (name.textContent !== nameText) name.textContent = nameText
+      let description = card.querySelector('.pussycat-source-card-description')
+      if (!description) {
+        description = document.createElement('div')
+        description.className = 'pussycat-source-card-description'
+        card.append(description)
+      }
+      const descriptionText = normalize(bridged?.mp_intro || item.dataset.description || item.dataset.intro || item.querySelector('.arco-list-item-meta-description, [data-description]')?.textContent || '已订阅公众号')
+      if (description.textContent !== descriptionText) description.textContent = descriptionText
+      let meta = card.querySelector('.pussycat-source-card-meta')
+      if (!meta) {
+        meta = document.createElement('div')
+        meta.className = 'pussycat-source-card-meta'
+        card.append(meta)
+      }
+      const metaText = bridged ? String(bridged.article_count || 0) + ' 篇文章' : normalize(item.querySelector('.arco-typography-secondary')?.textContent || '暂无文章')
+      if (meta.textContent !== metaText) meta.textContent = metaText
+      let status = card.querySelector('.pussycat-source-card-status')
+      if (!status) {
+        status = document.createElement('span')
+        status.className = 'pussycat-source-card-status'
+        card.append(status)
+      }
+      const disabled = bridged ? Number(bridged.status) === 0 : item.dataset.status === 'disabled' || /停用|禁用/.test(normalize(item.textContent))
+      const statusText = disabled ? '停用' : '启用'
+      if (status.textContent !== statusText) status.textContent = statusText
+      status.dataset.status = disabled ? 'disabled' : 'enabled'
+      card.style.order = String(index)
+    })
+    ;[...cards.children].forEach(n=>{if(!seen.has(n.dataset.pussycatSourceId))n.remove()}); if (![...cards.children].some(n=>n.dataset.pussycatSourceId===cards.dataset.pussycatFocused) && cards.firstElementChild) cards.dataset.pussycatFocused = cards.firstElementChild.dataset.pussycatSourceId; cards.hidden=articleList.dataset.pussycatSourceMode!=='sources'; cards.style.display=cards.hidden?'none':'block'; if (controls) controls.hidden = cards.hidden; if (cardsEmpty) cardsEmpty.hidden = !(articleList.dataset.pussycatSourceMode === 'sources' && accounts.length === 0); update()
+    if(!cards.dataset.pussycatControls){cards.dataset.pussycatControls='1'; cards.tabIndex=0; const move=d=>{const a=[...cards.children],i=a.findIndex(n=>n.dataset.pussycatSourceId===(cards.dataset.pussycatFocused||'')),n=Math.max(0,Math.min(a.length-1,(i<0?0:i)+d)); if(a[n]){cards.dataset.pussycatFocused=a[n].dataset.pussycatSourceId; update(); if(n>=a.length-2)window.__PUSSYCAT_WRSS_BRIDGE__?.loadMoreSources?.()}}; cards.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();move(['ArrowLeft','ArrowUp'].includes(e.key)?-1:1)}}); let wheelDelta=0,wheelLocked=false,wheelTimer=null; cards.addEventListener('wheel',e=>{e.preventDefault();if(wheelLocked)return;const unit=e.deltaMode===1?16:e.deltaMode===2?cards.clientHeight||240:1;wheelDelta+=e.deltaY*unit;if(Math.abs(wheelDelta)<24)return;move(wheelDelta>0?1:-1);wheelDelta=0;wheelLocked=true;wheelTimer=window.setTimeout(()=>{wheelLocked=false;wheelTimer=null},140)},{passive:false});state.cleanup.push(()=>{if(wheelTimer)window.clearTimeout(wheelTimer)})}
   }
 
   function enhanceArticles() {
     const articleList = document.querySelector('.article-list')
+    const articleContent = articleList?.querySelector(':scope > .arco-layout-content')
     const actions = state.menuPanel?.querySelector('.pussycat-article-actions')
     if (!actions) return
-    if (state.articleToolbar && (!articleList?.contains(state.articleToolbarPlaceholder) || window.location.pathname !== '/')) restoreArticleToolbar()
-    const toolbar = articleList?.querySelector('.arco-page-header-extra')
-    const sourceSearch = articleList?.querySelector('.arco-layout-sider input[placeholder*="搜索公众号"], .arco-layout-sider input[placeholder*="公众号名称"], .pussycat-source-search input')
-    const sourceList = articleList?.querySelector('.arco-layout-sider .arco-list')
-    if (sourceSearch && !sourceSearch.dataset.pussycatMoved) {
-      const holder = sourceSearch.closest('.arco-input-group, .arco-form-item, .arco-input-wrapper') || sourceSearch.parentElement
-      const target = articleList?.querySelector('.arco-layout-content .arco-page-header-extra')
-      if (holder && target) {
-        holder.dataset.pussycatMoved = '1'
-        holder.classList.add('pussycat-source-search')
-        target.prepend(holder)
-        let recent = []
-        try { recent = JSON.parse(localStorage.getItem('pussycat-recent-mps') || '[]') } catch {}
-        if (!Array.isArray(recent)) recent = []
-        if (recent.length && !target.querySelector('.pussycat-frequent-group')) {
-          const group = document.createElement('div')
-          group.className = 'pussycat-frequent-group'
-          group.innerHTML = '<span>常看的</span>' + recent.slice(0, 5).map((name) => '<button type="button">' + String(name).replace(/[&<>"']/g, '') + '</button>').join('')
-          group.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
-            sourceSearch.value = button.textContent
-            sourceSearch.dispatchEvent(new Event('input', { bubbles: true }))
-          }))
-          target.append(group)
-        }
+    if (state.articleSearch && (!articleList?.contains(state.articleSearch) || window.location.pathname !== '/')) restoreArticleSearch()
+    const pageHeader = articleContent?.querySelector('.arco-page-header-header')
+    const searchBar = articleContent?.querySelector('.search-bar')
+    if (!state.articleSearch && pageHeader && searchBar && window.location.pathname === '/') {
+      const searchInput = searchBar.querySelector('.search-input, .arco-input-search')
+      const articleFilter = searchBar.querySelector('.article-filter-select')
+      const nodes = [searchInput, articleFilter].filter(Boolean)
+      if (nodes.length) {
+        const group = document.createElement('div')
+        group.className = 'pussycat-article-search'
+        group.setAttribute('role', 'search')
+        group.setAttribute('aria-label', '搜索文章')
+        const placeholders = nodes.map(() => document.createComment('article search'))
+        nodes.forEach((node, index) => {
+          node.before(placeholders[index])
+          group.appendChild(node)
+        })
+        pageHeader.appendChild(group)
+        state.articleSearch = group
+        state.articleSearchNodes = nodes
+        state.articleSearchPlaceholders = placeholders
       }
     }
-    if (!state.articleToolbar && toolbar && window.location.pathname === '/') {
-      const placeholder = document.createComment('article actions')
-      toolbar.before(placeholder)
-      actions.appendChild(toolbar)
-      state.articleToolbar = toolbar
-      state.articleToolbarPlaceholder = placeholder
+    const sourceSearch = articleList?.querySelector('.arco-layout-sider input[placeholder*="搜索公众号"], .arco-layout-sider input[placeholder*="公众号名称"], .pussycat-source-search input')
+    const sourceList = articleList?.querySelector('.arco-layout-sider .arco-list')
+    if (sourceSearch) {
+      const holder = sourceSearch.closest('.arco-input-group, .arco-form-item, .arco-input-wrapper') || sourceSearch.parentElement
+      holder?.classList.add('pussycat-source-controls')
     }
-    actions.hidden = !state.articleToolbar
-    if (state.articleToolbar) {
-      replaceExactText(state.articleToolbar, new Map([
+    actions.hidden = true
+    const toolbar = articleList?.querySelector('.arco-page-header-extra')
+    if (toolbar) {
+      replaceExactText(toolbar, new Map([
         ['内链', '在应用内阅读'],
         ['订阅', '订阅链接'],
       ]))
-      state.articleToolbar.querySelectorAll('button').forEach((button) => {
+      toolbar.querySelectorAll('button').forEach((button) => {
         if (normalize(button.textContent) === '刷新授权') button.classList.add('pussycat-hidden-link')
       })
     }
@@ -903,50 +1275,160 @@ const WRSS_UI_JS = `(() => {
     if (sourceTitle) setLastTextNode(sourceTitle, '已订阅公众号')
     articleList?.querySelectorAll('.arco-layout-sider .arco-card-header-extra button').forEach((button) => {
       if (normalize(button.textContent) === '订阅') setLastTextNode(button, '添加公众号')
+      button.closest('.arco-card-header-extra')?.classList.add('pussycat-source-controls')
     })
+    const sourceFilter = articleList?.querySelector('.arco-layout-sider .arco-radio-group-button')
+    sourceFilter?.parentElement?.classList.add('pussycat-source-controls')
     const list = sourceList
     if (list) {
       list.setAttribute('role', 'navigation')
       list.setAttribute('aria-label', '公众号')
+      const bridgedSources = window.__PUSSYCAT_WRSS_BRIDGE__?.getState?.().sources || []
+      let bridgedSourceIndex = 0
       list.querySelectorAll('.arco-list-item').forEach((item) => {
-        const image = item.querySelector('img')
         const label = item.querySelector('.arco-typography')
-        if (image?.getAttribute('src') === '/static/logo.svg' && label) {
-          const replacement = new Map([
-            ['全部', '最新文章'],
-            ['精选文章', '我的收藏'],
-          ]).get(normalize(label.textContent))
-          if (replacement) setLastTextNode(label, replacement)
+        const text = normalize(label?.textContent || item.textContent)
+        const builtin = item.dataset.pussycatBuiltin || ({ '全部': 'latest', '最新文章': 'latest', '精选文章': 'favorites', '我的收藏': 'favorites' }[text] || '')
+        if (builtin) {
+          item.dataset.pussycatBuiltin = builtin
+          item.classList.add('pussycat-source-entry')
+          if (label) setLastTextNode(label, builtin === 'latest' ? '最新文章' : '我的收藏')
+          if (!state.sourceClickNodes.has(item)) {
+            state.sourceClickNodes.add(item)
+            item.dataset.pussycatSourceClick = '1'
+            const onSourceClick = (event) => {
+              if (window.__PUSSYCAT_WRSS_BRIDGE__) { event.preventDefault(); event.stopImmediatePropagation() }
+              snapshotArticleView(articleList)
+              transitionArticleView(async () => { await window.__PUSSYCAT_WRSS_BRIDGE__?.selectView?.(builtin); state.sourceMode = builtin; state.accountId = ''; schedule() }, () => viewRank(builtin) >= viewRank(state.sourceMode || 'latest') ? 1 : -1)
+            }
+            item.addEventListener('click', onSourceClick, { capture: true })
+            state.cleanup.push(() => { item.removeEventListener('click', onSourceClick, true); state.sourceClickNodes.delete(item); delete item.dataset.pussycatSourceClick })
+          }
+        } else if (!item.classList.contains('pussycat-sources-entry')) {
+          const bridgedSource = bridgedSources[bridgedSourceIndex++]
+          if (!item.dataset.mpId && bridgedSource?.id) item.dataset.mpId = bridgedSource.id
+          item.classList.add('pussycat-source-account')
+          if (!state.sourceClickNodes.has(item)) {
+            state.sourceClickNodes.add(item)
+            item.dataset.pussycatSourceClick = '1'
+            const onSourceClick = (event) => {
+              const id = item.dataset.mpId || item.dataset.id
+              if (!id) return
+              if (window.__PUSSYCAT_WRSS_BRIDGE__) { event.preventDefault(); event.stopImmediatePropagation() }
+              snapshotArticleView(articleList)
+              transitionArticleView(async () => { await window.__PUSSYCAT_WRSS_BRIDGE__?.selectView?.('account:' + id); state.accountId = id; state.sourceMode = 'account'; schedule() }, () => viewRank('account') >= viewRank(state.sourceMode || 'latest') ? 1 : -1)
+            }
+            item.addEventListener('click', onSourceClick, { capture: true })
+            state.cleanup.push(() => { item.removeEventListener('click', onSourceClick, true); state.sourceClickNodes.delete(item); delete item.dataset.pussycatSourceClick; item.classList.remove('pussycat-source-account') })
+          }
         }
-        if (item.classList.contains('active-mp')) item.setAttribute('aria-current', 'page')
+      })
+      let sourcesEntry = list.querySelector('.pussycat-sources-entry')
+      if (!sourcesEntry) {
+        sourcesEntry = document.createElement('button')
+        sourcesEntry.type = 'button'
+        sourcesEntry.className = 'arco-list-item pussycat-source-entry pussycat-sources-entry'
+        sourcesEntry.innerHTML = '<span class="arco-list-item-main"><span class="arco-list-item-content"><span class="arco-typography">已订阅公众号</span></span></span>'
+        sourcesEntry.addEventListener('click', (event) => {
+          if (window.__PUSSYCAT_WRSS_BRIDGE__) { event.preventDefault(); event.stopImmediatePropagation() }
+          snapshotArticleView(articleList)
+          transitionArticleView(async () => { await window.__PUSSYCAT_WRSS_BRIDGE__?.selectView?.('sources'); state.sourceMode = 'sources'; schedule() }, () => viewRank('sources') >= viewRank(state.sourceMode || 'latest') ? 1 : -1)
+        })
+        const favorites = list.querySelector('[data-pussycat-builtin="favorites"]')
+        favorites?.after(sourcesEntry)
+      }
+      if (!state.sourceMode) {
+        state.sourceMode = 'latest'
+      }
+      articleList.dataset.pussycatSourceMode = state.sourceMode
+      renderSourceCards(articleList, list)
+      list.querySelectorAll('.arco-list-item').forEach((item) => {
+        const current = item.classList.contains('pussycat-sources-entry')
+          ? state.sourceMode === 'sources' && !list.querySelector('.pussycat-source-account.active-mp')
+          : item.classList.contains('active-mp') && (state.sourceMode === 'sources' ? item.classList.contains('pussycat-source-account') : item.dataset.pussycatBuiltin === state.sourceMode)
+        if (current) item.setAttribute('aria-current', 'page')
         else item.removeAttribute('aria-current')
       })
-      renderEmptyState(list, 'source-search', Boolean(sourceSearch && normalize(sourceSearch.value) && list.querySelectorAll('.arco-list-item').length === 0), '没有匹配的公众号')
+      const sourceEmptyVisible = Boolean(sourceSearch && normalize(sourceSearch.value) && list.querySelectorAll('.pussycat-source-account').length === 0)
+      if (state.sourceMode === 'sources') {
+        list.querySelector('[data-pussycat-empty="source-search"]')?.remove()
+        const cardsEmpty = articleList.querySelector('.pussycat-source-cards-empty')
+        renderEmptyState(cardsEmpty, 'source-search', sourceEmptyVisible, '没有匹配的公众号')
+      } else {
+        renderEmptyState(list, 'source-search', sourceEmptyVisible, '没有匹配的公众号')
+        articleList.querySelector('.pussycat-source-cards-empty [data-pussycat-empty="source-search"]')?.remove()
+      }
     }
-    const articleResults = articleList?.querySelector('.arco-layout-content .arco-list')
-    if (articleResults) renderEmptyState(articleResults, 'article-results', articleResults.querySelectorAll('.arco-list-item').length === 0, '暂无文章')
-    const pageTitle = articleList?.querySelector('.arco-layout-content .arco-page-header-title')
+    const pageSelect = articleContent?.querySelector('.arco-pagination .arco-select')
+    if (pageSelect) { const input = pageSelect.querySelector('input'); if (input && !input.value) input.value = '10'; pageSelect.querySelectorAll('option').forEach((option) => { if (!['10','20','30','50'].includes(option.value)) option.remove() }) }
+    const articleResults = articleContent?.querySelector('.arco-table-container, .arco-list')
+    const bridgeState = window.__PUSSYCAT_WRSS_BRIDGE__?.getState?.()
+    const articleEmptyVisible = Boolean(articleResults && (bridgeState ? bridgeState.view !== 'sources' && !bridgeState.articleLoading && !bridgeState.error && bridgeState.articles.length === 0 : state.sourceMode !== 'sources' && articleResults.querySelectorAll('.arco-table-tr, .arco-list-item').length === 0))
+    if (articleResults) renderEmptyState(articleResults, 'article-results', articleEmptyVisible, '暂无文章')
+    const suppressNativeEmpty = articleEmptyVisible || Boolean(bridgeState?.articleLoading || bridgeState?.error)
+    articleContent?.querySelectorAll('.arco-empty, .arco-table-empty, .arco-list-empty').forEach((empty) => {
+      if (!empty.classList.contains('pussycat-empty-state')) empty.classList.toggle('pussycat-native-empty-hidden', suppressNativeEmpty)
+    })
+    const retryHost = bridgeState?.view === 'sources' ? articleList?.querySelector('.pussycat-source-card-controls') : articleResults
+    renderContentRetry(retryHost, Boolean(bridgeState?.error), () => bridgeState?.view === 'sources' ? window.__PUSSYCAT_WRSS_BRIDGE__.fetchSources() : window.__PUSSYCAT_WRSS_BRIDGE__.fetchArticles())
+    const currentViewKey = contentViewKey()
+    if (articleResults && state.articleCache.has(currentViewKey) && state.articleCacheRestoreKey !== currentViewKey) {
+      state.articleCacheRestoreKey = currentViewKey
+      const cached = state.articleCache.get(currentViewKey)
+      const scrollTarget = articleScrollTarget(articleList)
+      if (scrollTarget) scrollTarget.scrollTop = cached.scrollTop || 0
+      if (!window.__PUSSYCAT_WRSS_BRIDGE__) {
+        const query = articleList?.querySelector('.pussycat-article-search input, .search-input input, input[placeholder*="文章标题"]')
+        if (query && cached.query !== undefined && query.value !== cached.query) { query.value = cached.query; query.dispatchEvent(new Event('input', { bubbles: true })) }
+      }
+    }
+    if (articleList) {
+      let accountBack = articleList.querySelector('.pussycat-account-back')
+      if (!accountBack) {
+        accountBack = document.createElement('button')
+        accountBack.type = 'button'
+        accountBack.className = 'pussycat-source-card-control pussycat-account-back'
+        accountBack.textContent = '返回已订阅公众号'
+        articleContent?.prepend(accountBack)
+        accountBack.addEventListener('click', () => {
+          const focusedId = state.accountId
+          const restoreFocus = () => {
+            const cards = articleList.querySelector('.pussycat-source-cards')
+            const card = [...(cards?.querySelectorAll('.pussycat-source-card') || [])].find((entry) => entry.dataset.pussycatSourceId === focusedId)
+            if (card) { cards.dataset.pussycatFocused = focusedId; card.focus() }
+          }
+          let unsubscribe = window.__PUSSYCAT_WRSS_CONTENT__.subscribe(() => { unsubscribe(); restoreFocus() })
+          selectContentView('sources')
+          if (!state.viewTransitionRunning) { unsubscribe(); window.requestAnimationFrame(restoreFocus) }
+        })
+      }
+      accountBack.hidden = state.sourceMode !== 'account'
+    }
+    const pageTitle = articleContent?.querySelector('.arco-page-header-title')
     if (pageTitle) replaceExactText(pageTitle, new Map([
       ['全部', '最新文章'],
       ['精选文章', '我的收藏'],
     ]))
+    if (pageTitle && state.sourceMode === 'sources' && !list?.querySelector('.pussycat-source-account.active-mp')) setLastTextNode(pageTitle, '已订阅公众号')
     articleList?.querySelectorAll('.arco-alert').forEach((alert) => replaceExactText(alert, new Map([
       ['请选择一个公众号码进行管理,搜索文章后再点击订阅会有惊喜哟！！！', '选择公众号查看文章；添加公众号后可更新内容。'],
       ['显示所有公众号文章', '选择公众号查看文章；添加公众号后可更新内容。'],
       ['用户手动添加的精选文章', '选择公众号查看文章；添加公众号后可更新内容。'],
     ])))
-    articleList?.querySelectorAll('button').forEach((button) => {
-      if (!/^刷新/.test(normalize(button.textContent))) return
+    articleList?.querySelectorAll('.arco-layout-content button').forEach((button) => {
+      if (!/^刷新/.test(normalize(button.textContent)) || /^刷新授权/.test(normalize(button.textContent))) return
       const key = 'pussycat-wechat-last-refresh'
-      const last = Number(localStorage.getItem(key) || 0)
-      const remain = Math.max(0, 300000 - (Date.now() - last))
-      button.disabled = remain > 0
+      if (!button.dataset.pussycatRefreshLabel) button.dataset.pussycatRefreshLabel = normalize(button.textContent) || '刷新'
+      const remain = updateRefreshButton(button, key)
       if (remain > 0 && !state.refreshTimer) {
-        state.refreshTimer = window.setTimeout(() => { state.refreshTimer = null; schedule() }, remain + 20)
+        state.refreshTimer = window.setInterval(() => {
+          const active = [...document.querySelectorAll('.article-list .arco-layout-content [data-pussycat-cooldown]')].some((entry) => updateRefreshButton(entry, key) > 0)
+          if (!active) { window.clearInterval(state.refreshTimer); state.refreshTimer = null }
+        }, 1000)
       }
       if (!button.dataset.pussycatCooldown) {
         button.dataset.pussycatCooldown = '1'
-        button.addEventListener('click', () => localStorage.setItem(key, String(Date.now())), { capture: true })
+        button.addEventListener('click', () => { localStorage.setItem(key, String(Date.now())); updateRefreshButton(button, key) }, { capture: true })
       }
     })
     articleList?.querySelectorAll('*').forEach((element) => {
@@ -1143,22 +1625,35 @@ const WRSS_UI_JS = `(() => {
   }
 
   state.observer = new MutationObserver((mutations) => {
-    if (mutations.some((mutation) => mutation.type === 'childList' || mutation.target.matches('.article-list .arco-list-item'))) schedule()
+    if (mutations.some((mutation) => { const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement; if (target?.closest('.pussycat-source-cards, .pussycat-empty-state, .pussycat-more-menu')) return false; return mutation.type === 'childList' || target?.matches('.article-list .arco-list-item') })) schedule()
   })
   state.observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
   state.destroy = () => {
+    state.destroyed = true
     closeMore()
     if (state.raf) window.cancelAnimationFrame(state.raf)
     if (state.observer) state.observer.disconnect()
+    if (state.refreshTimer) window.clearInterval(state.refreshTimer)
     state.cleanup.forEach((cleanup) => cleanup())
-    restoreArticleToolbar()
+    state.pendingViewTransition = null
+    state.pendingPrimaryNav = null
+    state.primaryRouteWaitCancel?.()
+    state.primaryRouteWaitCancel = null
+    state.viewTransitionRunning = false
+    restoreArticleSearch()
     if (state.settingsPanel) state.settingsPanel.remove()
     if (state.brand) state.brand.remove()
     if (state.moreWrap) state.moreWrap.remove()
     if (state.menuPanel) state.menuPanel.remove()
     if (state.menuScrim) state.menuScrim.remove()
+    document.querySelectorAll('.pussycat-source-cards, .pussycat-source-card-controls, .pussycat-source-cards-empty, .pussycat-account-back').forEach((node) => node.remove())
+    document.querySelector('.pussycat-sources-entry')?.remove()
     document.getElementById('main')?.classList.remove('is-pussycat-log-view')
+    state.viewAnimation?.stop?.()
+    state.primaryNavAnimation?.stop?.()
+    state.sourceCardAnimations?.forEach((animation) => animation.stop?.())
     if (window.__PUSSYCAT_WRSS_UI__ === state) delete window.__PUSSYCAT_WRSS_UI__
+    delete window.__PUSSYCAT_WRSS_CONTENT__
   }
 })()
 `
@@ -1182,13 +1677,17 @@ export function ensureWrssStaticAssets(sourceDir) {
   const headMatches = indexHtml.match(/<\/head>/gi) ?? []
   if (headMatches.length !== 1) throw new WrssRuntimeError(500, 'security-patch-mismatch', 'WeRSS 页面模板不符合预期')
   const withoutManagedAssets = indexHtml
+    .replace(/\s*<style\s+id=["']pussycat-critical-theme["']>[^<]*<\/style>/gi, '')
     .replace(/\s*<script\b[^>]*\bsrc=["']https?:\/\/hm\.baidu\.com\/hm\.js(?:\?[^"']*)?["'][^>]*>\s*<\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-ui\.js["']><\/script>/gi, '')
+    .replace(/\s*<script\s+src=["']\/static\/pussycat-motion\.js["']><\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-auth\.js["']><\/script>/gi, '')
     .replace(/\s*<script\s+src=["']\/static\/pussycat-bootstrap\.js["']><\/script>/gi, '')
     .replace(/\s*<link\s+rel=["']stylesheet["']\s+href=["']\/static\/pussycat-theme\.css["']\s*\/?>/gi, '')
-  atomicText(indexPath, withoutManagedAssets.replace(/<\/head>/i, `${WRSS_THEME_LINK}\n${WRSS_BOOTSTRAP_SCRIPT}\n${WRSS_AUTH_SCRIPT}\n${WRSS_UI_SCRIPT}\n</head>`))
+  const withCriticalTheme = withoutManagedAssets.replace(/<head([^>]*)>/i, `<head$1>\n${WRSS_CRITICAL_STYLE}`)
+  atomicText(indexPath, withCriticalTheme.replace(/<\/head>/i, `${WRSS_THEME_LINK}\n${WRSS_BOOTSTRAP_SCRIPT}\n${WRSS_AUTH_SCRIPT}\n${WRSS_MOTION_SCRIPT}\n${WRSS_UI_SCRIPT}\n</head>`))
   atomicText(join(staticDir, 'pussycat-theme.css'), WRSS_THEME_CSS)
+  copyFileSync(join(MOTION_PACKAGE_DIR, 'dist', 'motion.js'), join(staticDir, 'pussycat-motion.js'))
   atomicText(join(staticDir, 'pussycat-ui.js'), WRSS_UI_JS)
 }
 
@@ -1450,6 +1949,7 @@ export class WrssRuntimeManager {
   #summary = null
   #version = null
   #uiUrl = null
+  #apiToken = null
   #log = []
   #enableFlight = null
   #child = null
@@ -1584,6 +2084,42 @@ export class WrssRuntimeManager {
     }
     if (this.#state === 'running' && this.#uiUrl) status.ui_url = this.#uiUrl
     return status
+  }
+
+  async requestApi(path, init = {}) {
+    if (this.#state !== 'running' || !this.#uiUrl || !this.#apiToken) {
+      throw new WrssRuntimeError(503, 'not-running', '公众号运行环境尚未就绪')
+    }
+    if (typeof path !== 'string' || (!path.startsWith('/api/v1/wx/') && path !== '/static/wx_qrcode.png' && !path.startsWith('/static/res/logo/') && !path.startsWith('/files/avatars/'))) {
+      throw new WrssRuntimeError(400, 'invalid-api-path', '公众号接口路径无效')
+    }
+    const headers = new Headers(init.headers ?? {})
+    headers.set('Authorization', `Bearer ${this.#apiToken}`)
+    return this.fetchImpl(`${this.#uiUrl}${path}`, { ...init, headers, redirect: 'manual' })
+  }
+
+  async requestSourceAvatar(id) {
+    const metadata = await this.requestApi(`/api/v1/wx/mps/${encodeURIComponent(id)}`)
+    if (!metadata.ok) return metadata
+    const body = await metadata.json()
+    const source = body?.data ?? body
+    const cover = source?.mp_cover
+    if (typeof cover !== 'string' || !cover.trim()) throw new WrssRuntimeError(404, 'avatar-missing', '公众号头像不存在')
+    const localMatch = cover.replace(/\\/g, '/').match(/(?:^|\/)files\/avatars\/(.+)$/)
+    if (localMatch) return this.requestApi(`/files/avatars/${localMatch[1]}`)
+    let remote
+    try { remote = new URL(cover) } catch { throw new WrssRuntimeError(400, 'avatar-url-invalid', '公众号头像地址无效') }
+    if (!['http:', 'https:'].includes(remote.protocol)) throw new WrssRuntimeError(400, 'avatar-url-invalid', '公众号头像地址无效')
+    return this.fetchImpl(remote.href, { redirect: 'manual' })
+  }
+
+  async requestArticleImage(value) {
+    let remote
+    try { remote = new URL(value) } catch { throw new WrssRuntimeError(400, 'article-image-url-invalid', '文章图片地址无效') }
+    if (!['http:', 'https:'].includes(remote.protocol) || !['mmbiz.qpic.cn', 'mmbiz.qlogo.cn', 'mmecoa.qpic.cn'].includes(remote.hostname)) {
+      throw new WrssRuntimeError(400, 'article-image-url-invalid', '文章图片地址无效')
+    }
+    return this.fetchImpl(remote.href, { redirect: 'manual' })
   }
 
   async #runStep(step, command, argv, options = {}) {
@@ -1841,6 +2377,7 @@ export class WrssRuntimeManager {
     if (!responseOk(response) || typeof token !== 'string' || token.length < 1) {
       throw new WrssRuntimeError(502, 'auth-failed', '公众号登录初始化失败')
     }
+    this.#apiToken = token
     const bootstrapPath = join(sourceDir, 'static', 'pussycat-bootstrap.js')
     atomicText(bootstrapPath, `localStorage.setItem("token", ${JSON.stringify(token)})\n`)
   }
@@ -1874,6 +2411,7 @@ export class WrssRuntimeManager {
       ...this.env,
       PORT: String(this.#port),
       DB: `sqlite:///${dbPath.replace(/\\/g, '/')}`,
+      PUSSYCAT_WRSS_DATA_DIR: join(this.home, 'data'),
       SECRET_KEY: secret,
       USERNAME: 'pussycat',
       PASSWORD: secret,
@@ -1904,6 +2442,7 @@ export class WrssRuntimeManager {
       if (this.#child !== child) return
       this.#child = null
       this.#uiUrl = null
+      this.#apiToken = null
       if (this.#state === 'starting' || this.#state === 'running') {
         this.#setFailed(new WrssRuntimeError(500, 'process-exited', `WeRSS 进程已退出（${code ?? 'unknown'}）`))
       }
@@ -1983,6 +2522,7 @@ export class WrssRuntimeManager {
     const child = this.#child
     this.#child = null
     this.#uiUrl = null
+    this.#apiToken = null
     if (child && (this.#state === 'running' || this.#state === 'starting')) this.#state = 'installed'
     if (child) {
       await new Promise((resolveClose) => {

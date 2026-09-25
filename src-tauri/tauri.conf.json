@@ -1,13 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "爪爪",
-  "version": "0.1.0",
+  "version": "1.0.2",
   "identifier": "dev.lauseusing.opencli-app-clone",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build && npm run build:host && npm run build:vk-bundle"
+    "beforeBuildCommand": "npm run build && npm run build:host"
   },
   "app": {
     "windows": [],

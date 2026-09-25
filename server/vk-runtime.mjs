@@ -7,8 +7,9 @@ import { installVkRuntime } from './vk-runtime-install.mjs'
 import {
   listOwnedRuntimeReceipts,
   ownedRuntimeSizeBytesAsync,
+  pruneInvalidOwnedRuntimeDirs,
   pruneUnreferencedBases,
-  removeOwnedRuntimeReceipt,
+  removeOwnedRuntimeReceiptAsync,
   resolveActiveRuntime,
   writeActiveRuntime,
   writeRuntimeReceipt,
@@ -41,6 +42,8 @@ export class VkRuntimeManager {
   #installing = null
   #installingExtras = []
   #adopting = false
+  #rollingBack = false
+  #startupPrune = null
   #sizeCache = new Map()
   #sizeFlights = new Map()
 
@@ -50,6 +53,8 @@ export class VkRuntimeManager {
     installImpl = installVkRuntime,
     discoverImpl = discoverVkRuntimePaths,
     probeImpl = probeVkRuntime,
+    pruneInvalidRuntimeDirsImpl = pruneInvalidOwnedRuntimeDirs,
+    removeOwnedRuntimeImpl = removeOwnedRuntimeReceiptAsync,
     env = process.env,
     now = () => new Date().toISOString(),
   } = {}) {
@@ -58,10 +63,15 @@ export class VkRuntimeManager {
     this.installImpl = installImpl
     this.discoverImpl = discoverImpl
     this.probeImpl = probeImpl
+    this.pruneInvalidRuntimeDirsImpl = pruneInvalidRuntimeDirsImpl
+    this.removeOwnedRuntimeImpl = removeOwnedRuntimeImpl
     this.env = env
     this.allowExternalRuntime = env.OPENCLI_HOST_VK_ALLOW_EXTERNAL_RUNTIME === '1'
     this.now = now
     this.detected = new Map()
+    this.#startupPrune = Promise.resolve()
+      .then(() => this.#pruneOwnedRuntimes())
+      .catch((error) => { this.#log.push(`runtime-prune: ${String(error?.message ?? error)}`) })
   }
 
   #failurePath() {
@@ -257,8 +267,33 @@ export class VkRuntimeManager {
     const active = this.activeRuntime()
     const activePath = pathKey(active?.receiptPath)
     const receipts = listOwnedRuntimeReceipts({ home: this.home, bundleDir: this.bundleDir })
-    const rollback = receipts.find((receipt) => pathKey(receipt.receiptPath) !== activePath) ?? null
-    return { active, activePath, receipts, rollbackPath: pathKey(rollback?.receiptPath) }
+    const otherReceipts = receipts.filter((receipt) => pathKey(receipt.receiptPath) !== activePath)
+    const rollback = otherReceipts[0] ?? null
+    const retained = activePath ? [active, ...otherReceipts.slice(0, 2)] : receipts.slice(0, 3)
+    const retainedPaths = new Set(retained.map((receipt) => pathKey(receipt?.receiptPath)).filter(Boolean))
+    return { active, activePath, receipts, rollbackPath: pathKey(rollback?.receiptPath), retainedPaths }
+  }
+
+  async #waitForStartupPrune() {
+    await this.#startupPrune
+  }
+
+  async #pruneOwnedRuntimes() {
+    const invalid = await this.pruneInvalidRuntimeDirsImpl({ home: this.home, bundleDir: this.bundleDir })
+    for (const failure of invalid.failures) {
+      this.#log.push(`runtime-prune: ${failure.error}`)
+    }
+    const snapshot = this.#ownedSnapshot()
+    const removed = []
+    for (const receipt of snapshot.receipts) {
+      if (snapshot.retainedPaths.has(pathKey(receipt.receiptPath))) continue
+      try {
+        removed.push(await this.removeOwnedRuntimeImpl({ home: this.home, runtime: receipt }))
+      } catch (error) {
+        this.#log.push(`runtime-prune: ${String(error?.message ?? error)}`)
+      }
+    }
+    return removed
   }
 
   async #runtimeSize(receipt) {
@@ -284,11 +319,13 @@ export class VkRuntimeManager {
   }
 
   async versions() {
+    await this.#waitForStartupPrune()
     const snapshot = this.#ownedSnapshot()
     const versions = await Promise.all(snapshot.receipts.map(async (receipt) => {
       const receiptPath = pathKey(receipt.receiptPath)
       const active = receiptPath === snapshot.activePath
       const retainedForRollback = !active && receiptPath === snapshot.rollbackPath
+      const retained = snapshot.retainedPaths.has(receiptPath)
       const sizeBytes = await this.#runtimeSize(receipt)
       return {
         version: String(receipt.version ?? 'unknown'),
@@ -298,7 +335,7 @@ export class VkRuntimeManager {
         current: receipt.current === true,
         legacyUnreproducible: receipt.legacyUnreproducible === true,
         retainedForRollback,
-        removable: !active && !retainedForRollback,
+        removable: !retained,
         sizeBytes,
       }
     }))
@@ -312,7 +349,8 @@ export class VkRuntimeManager {
   }
 
   async rollback(version, { afterActivate = async () => {} } = {}) {
-    if (this.#installing || this.#adopting) {
+    await this.#waitForStartupPrune()
+    if (this.#installing || this.#adopting || this.#rollingBack) {
       throw new VkRuntimeError(409, 'runtime-busy', '解析环境正在变更，请完成后再回滚')
     }
     if (typeof version !== 'string' || !version.trim()) {
@@ -329,30 +367,40 @@ export class VkRuntimeManager {
     }
     const selected = matches[0]
     if (pathKey(selected.receiptPath) === snapshot.activePath) return this.status()
-    writeActiveRuntime(this.home, selected)
-    this.#clearFailure()
-    this.#state = 'installed'
-    this.#reasonCode = null
-    this.#summary = null
+    this.#rollingBack = true
     try {
-      await afterActivate()
-    } catch (error) {
-      this.#log.push(`rollback-after-activate: ${String(error?.message ?? error)}`)
+      writeActiveRuntime(this.home, selected)
+      this.#clearFailure()
+      this.#state = 'installed'
+      this.#reasonCode = null
+      this.#summary = null
+      try {
+        await afterActivate()
+      } catch (error) {
+        this.#log.push(`rollback-after-activate: ${String(error?.message ?? error)}`)
+      }
+      return this.status()
+    } finally {
+      this.#rollingBack = false
     }
-    return this.status()
   }
 
   async cleanup() {
-    if (this.#installing || this.#adopting) {
+    await this.#waitForStartupPrune()
+    if (this.#installing || this.#adopting || this.#rollingBack) {
       throw new VkRuntimeError(409, 'runtime-busy', '解析环境正在变更，请完成后再清理')
     }
     const snapshot = this.#ownedSnapshot()
     const removed = []
     for (const receipt of snapshot.receipts) {
       const receiptPath = pathKey(receipt.receiptPath)
-      if (receiptPath === snapshot.activePath || receiptPath === snapshot.rollbackPath) continue
+      if (snapshot.retainedPaths.has(receiptPath)) continue
       try {
-        removed.push(removeOwnedRuntimeReceipt({ home: this.home, runtime: receipt }))
+        removed.push(await removeOwnedRuntimeReceiptAsync({
+          home: this.home,
+          runtime: receipt,
+          calculateSize: true,
+        }))
       } catch (error) {
         throw new VkRuntimeError(409, 'runtime-cleanup-failed', String(error?.message ?? error))
       }
@@ -392,7 +440,8 @@ export class VkRuntimeManager {
   }
 
   async adopt(pythonPath, beforeActivate = async () => {}) {
-    if (this.#installing || this.#adopting) {
+    await this.#waitForStartupPrune()
+    if (this.#installing || this.#adopting || this.#rollingBack) {
       throw new VkRuntimeError(409, 'runtime-busy', '解析环境正在安装，请完成后再接管')
     }
     if (typeof pythonPath !== 'string') {
@@ -454,7 +503,8 @@ export class VkRuntimeManager {
     extras = [],
     afterActivate = async () => {},
   } = {}) {
-    if (this.#adopting) {
+    await this.#waitForStartupPrune()
+    if (this.#adopting || this.#rollingBack) {
       throw new VkRuntimeError(409, 'runtime-busy', '正在接管已有解析环境，请完成后再安装')
     }
     let requestedExtras
@@ -513,6 +563,11 @@ export class VkRuntimeManager {
         version: result?.version ?? null,
         stepTimings: result?.stepTimings ?? [],
       })
+      try {
+        await this.#pruneOwnedRuntimes()
+      } catch (error) {
+        this.#log.push(`runtime-prune: ${String(error?.message ?? error)}`)
+      }
       try {
         await afterActivate()
       } catch (error) {

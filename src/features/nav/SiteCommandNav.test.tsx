@@ -188,6 +188,14 @@ describe('收藏与最近分组', () => {
     await userEvent.type(screen.getByTestId('nav-search'), 'download')
     expect(screen.queryByTestId('group-recent')).not.toBeInTheDocument()
   })
+
+  test('无搜索结果使用结构化空状态', async () => {
+    render(<SiteCommandNav />)
+    await userEvent.type(screen.getByTestId('nav-search'), 'not-a-command')
+    const empty = screen.getByRole('status', { name: '无匹配命令' })
+    expect(empty).toHaveClass('empty-state')
+    expect(empty.querySelector('.empty-state-icon')).toBeInTheDocument()
+  })
 })
 
 // —— 顶栏切模块会把整个三栏卸载(AppShell 的 fullPage 分支),导航折叠状态必须活过这一下 ——

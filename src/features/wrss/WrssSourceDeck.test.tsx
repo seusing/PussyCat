@@ -1,0 +1,17 @@
+import {fireEvent,render,screen,waitFor} from '@testing-library/react'
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+import '@testing-library/jest-dom/vitest'
+
+const api=vi.hoisted(()=>({addWrssSource:vi.fn(),deleteWrssSource:vi.fn(),fetchWrssSources:vi.fn(),importSubscriptions:vi.fn(),lookupWrssArticleSource:vi.fn(),searchWrssSources:vi.fn(),sourceAvatarUrl:vi.fn(),subscriptionExportUrl:vi.fn(),toggleWrssSource:vi.fn(),updateAllWrssSources:vi.fn(),updateWrssSource:vi.fn()}))
+vi.mock('./wrssClient',()=>api)
+vi.mock('./wrssExternal',()=>({downloadWrssFile:vi.fn()}))
+import WrssSourceDeck from './WrssSourceDeck'
+
+const source=(index:number)=>({id:`s${index}`,name:`Source ${index}`,avatar:'',enabled:true,article_count:1})
+beforeEach(()=>Object.values(api).forEach(mock=>mock.mockReset()))
+
+describe('WrssSourceDeck',()=>{
+ it('stops failed page prefetch and retries the failed page',async()=>{api.fetchWrssSources.mockResolvedValueOnce({list:Array.from({length:10},(_,index)=>source(index)),total:20,page:1,limit:10}).mockRejectedValueOnce(new Error('page two failed')).mockResolvedValueOnce({list:Array.from({length:10},(_,index)=>source(index+10)),total:20,page:2,limit:10});render(<WrssSourceDeck active onOpen={vi.fn()}/>);const deck=await screen.findByLabelText('公众号叠卡');await screen.findByText('Source 0');for(let i=0;i<8;i++)fireEvent.keyDown(deck,{key:'ArrowRight'});expect(await screen.findByRole('alert')).toHaveTextContent('page two failed');await new Promise(resolve=>setTimeout(resolve,20));expect(api.fetchWrssSources).toHaveBeenCalledTimes(2);fireEvent.click(screen.getByRole('button',{name:'重试'}));await waitFor(()=>expect(api.fetchWrssSources).toHaveBeenLastCalledWith(undefined,'',2,10,true,undefined,expect.any(AbortSignal)));expect(await screen.findByText('Source 10')).toBeInTheDocument()})
+ it('tracks the sync task returned while adding a source',async()=>{api.fetchWrssSources.mockResolvedValue({list:[],total:0,page:1,limit:10});const task={task_id:'added-task',mp_id:'s1',status:'queued',code:0,message:'任务已排队',cooldown_until:0};api.addWrssSource.mockResolvedValue({source:{id:'s1'},syncTask:task});const manager={tasks:[],cooldownUntil:0,ready:true,autoSyncAllowed:true,error:'',trackSubmitted:vi.fn(),submitSource:vi.fn(),submitAll:vi.fn(),recheck:vi.fn()};render(<WrssSourceDeck active onOpen={vi.fn()} addToken={1} syncManager={manager}/>);fireEvent.change(await screen.findByLabelText('微信公众号 fakeid'),{target:{value:'Yml6'}});fireEvent.change(screen.getByLabelText('公众号名称'),{target:{value:'Added'}});fireEvent.click(screen.getByRole('button',{name:'手动添加'}));await waitFor(()=>expect(manager.trackSubmitted).toHaveBeenCalledWith(task));expect(screen.getByText('公众号已添加，文章更新任务已提交')).toBeVisible()})
+ it('shows one terminal synchronization failure without a list retry',async()=>{api.fetchWrssSources.mockResolvedValue({list:[source(1)],total:1,page:1,limit:10});const manager={tasks:[{task_id:'failed',mp_id:'s1',status:'failed' as const,code:50200,message:'微信网络请求失败',cooldown_until:0}],cooldownUntil:0,ready:true,autoSyncAllowed:true,error:'',trackSubmitted:vi.fn(),submitSource:vi.fn(),submitAll:vi.fn(),recheck:vi.fn()};render(<WrssSourceDeck active onOpen={vi.fn()} syncManager={manager}/>);const alerts=await screen.findAllByRole('alert');expect(alerts).toHaveLength(1);expect(alerts[0]).toHaveTextContent('微信网络请求失败');expect(screen.queryByRole('button',{name:'重试'})).not.toBeInTheDocument()})
+})

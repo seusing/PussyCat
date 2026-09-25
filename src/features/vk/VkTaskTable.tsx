@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { InlineLoader } from 'generative-loaders'
 import { Bell, BellOff, ChevronDown, Download, Trash2 } from 'lucide-react'
 import type { VkJobRow } from '../../host/vkClient'
+import { GlassSelect, useGlassMenuSurface } from '../../components/GlassMenu'
 import 'generative-loaders/styles.css'
 import './VkTaskTable.css'
 
@@ -127,6 +128,7 @@ export function VkTaskTable({
   const menuRef = useRef<HTMLDivElement>(null)
   const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>())
   const cancelDeleteRef = useRef<HTMLButtonElement>(null)
+  useGlassMenuSurface(menuRef, menuJobId !== null)
 
   useEffect(() => {
     if (!menuJobId) return
@@ -233,42 +235,36 @@ export function VkTaskTable({
       <div className="vk-task-table-toolbar">
         <label>
           <span>任务状态</span>
-          <select
+          <GlassSelect
             value={statusFilter}
-            onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }}
+            onChange={(value) => { setStatusFilter(value); setPage(1) }}
             aria-label="按任务状态筛选"
-          >
-            {STATUS_FILTERS.map((item) => (
-              <option key={item.value} value={item.value}>{item.label}</option>
-            ))}
-          </select>
+            options={STATUS_FILTERS}
+          />
         </label>
         <label>
           <span>开始时间</span>
-          <select
+          <GlassSelect
             value={timeFilter}
-            onChange={(event) => { setTimeFilter(event.target.value); setPage(1) }}
+            onChange={(value) => { setTimeFilter(value); setPage(1) }}
             aria-label="按开始时间筛选"
-          >
-            {TIME_FILTERS.map((item) => (
-              <option key={item.value} value={item.value}>{item.label}</option>
-            ))}
-          </select>
+            options={TIME_FILTERS}
+          />
         </label>
         <label className="vk-task-table-page-size">
           <span>每页</span>
-          <select
+          <GlassSelect
             value={String(pageSize)}
-            onChange={(event) => {
-              const value = event.target.value
+            onChange={(value) => {
               setPageSize(value === ALL_PAGE_SIZE ? ALL_PAGE_SIZE : (Number(value) as PageSize))
               setPage(1)
             }}
             aria-label="每页展示条数"
-          >
-            {PAGE_SIZES.map((size) => <option key={size} value={size}>{size} 条</option>)}
-            <option value={ALL_PAGE_SIZE}>全部</option>
-          </select>
+            options={[
+              ...PAGE_SIZES.map((size) => ({ value: String(size), label: `${size} 条` })),
+              { value: ALL_PAGE_SIZE, label: '全部' },
+            ]}
+          />
         </label>
         <span className="vk-task-table-count" data-testid="vk-task-table-count">
           {filtered.length === jobs.length
@@ -389,7 +385,7 @@ export function VkTaskTable({
                         ref={menuRef}
                         role="menu"
                         aria-label={`任务 ${taskNumber} 更多操作`}
-                        className="vk-task-operation-menu"
+                        className="vk-task-operation-menu glass-menu-effect"
                         style={menuPosition}
                         onClick={stopRowSelection}
                         onKeyDown={handleMenuKeyDown}

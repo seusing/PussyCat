@@ -1,27 +1,25 @@
 .app-notification-stack {
-  display: grid;
+  display: flex;
   width: 100%;
   min-width: 0;
-  padding-top: 24px;
-  perspective: 800px;
-  transform-style: preserve-3d;
-  overflow: visible;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
   pointer-events: none;
 }
 
 .app-notification-stack__card {
-  grid-area: 1 / 1;
-  align-self: start;
+  display: flex;
+  justify-content: flex-end;
+  position: relative;
   min-width: 0;
-  transform-origin: center top;
+  width: 100%;
   pointer-events: none;
 }
 
 .app-notification-stack .app-alert {
+  max-height: 100%;
+  overflow: auto;
   background: var(--color-panel);
   backdrop-filter: none;
-}
-
-.app-notification-stack [data-front='false'] .app-alert {
-  pointer-events: none;
 }

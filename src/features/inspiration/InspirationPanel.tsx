@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
-import { ArrowLeft, BookmarkPlus, FolderOpen, GalleryHorizontalEnd, Search } from 'lucide-react'
+import { ArrowLeft, BookmarkPlus, FolderOpen, GalleryHorizontalEnd, Search, SearchX } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import type { CommandManifest } from '../../data/types'
 import {
   SUPPORTED_SITES,
   commandsForSite,
+  siteForCommand,
   visibleCommands,
   type SupportedSite,
 } from '../../data/supportedSites'
@@ -17,6 +18,7 @@ import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { commandDescription } from '../../data/zhCopy'
 import { addInspirationItem } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
+import { EmptyState } from '../../components/EmptyState'
 import './InspirationPanel.css'
 
 type Stage = 'sites' | 'commands' | 'execute'
@@ -67,7 +69,11 @@ export function InspirationPanel({
   const toggleCommandFavorite = useAppStore((state) => state.toggleCommandFavorite)
   const selectCommand = useAppStore((state) => state.selectCommand)
   const decisionFor = useAppStore((state) => state.decisionFor)
-  const commands = useMemo(() => visibleCommands(allCommands), [allCommands])
+  const commands = useMemo(
+    () => visibleCommands(allCommands)
+      .filter((command) => siteForCommand(command.site)?.id !== 'wechat'),
+    [allCommands],
+  )
   const productSites = useMemo(
     () => SUPPORTED_SITES.filter((site) => commandsForSite(commands, site).length > 0),
     [commands],
@@ -243,7 +249,7 @@ export function InspirationPanel({
             return decision?.state !== 'denied'
           }}
         />
-        {siteCommands.length === 0 && <div className="inspiration-empty inspiration-empty-state" role="status" aria-label="没有匹配的命令">没有匹配的命令</div>}
+        {siteCommands.length === 0 && <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" description="请尝试其他关键词" />}
       </div>
     )
   }
@@ -278,7 +284,7 @@ export function InspirationPanel({
                 return decision?.state !== 'denied'
               }}
             />
-          : <div className="inspiration-empty inspiration-empty-state" role="status" aria-label="没有匹配的命令">没有匹配的命令</div>
+          : <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" description="请尝试其他关键词" />
         : (
           <div className="site-display">
             <SiteCarousel sites={sites} onSelect={openSite} />

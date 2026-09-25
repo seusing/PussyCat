@@ -4,6 +4,8 @@ import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
 import { SiteCarousel } from './SiteCarousel'
 import { InspirationPanel } from './InspirationPanel'
+import { InspirationFileCard } from './InspirationLibraryCards'
+import type { InspirationItem } from './inspirationLibrary'
 import type { SupportedSite } from '../../data/supportedSites'
 import type { CommandManifest } from '../../data/types'
 import { useAppStore } from '../../store/appStore'
@@ -29,6 +31,29 @@ const commands: CommandManifest[] = ['read', 'write'].map((name) => ({
 }))
 
 describe('inspiration selectors', () => {
+  it('keeps file-card delete confirmation separate from opening and cancels with Escape', async () => {
+    const onOpen = vi.fn()
+    const onDelete = vi.fn(() => true)
+    const item: InspirationItem = {
+      id: 'note-1', title: '待整理', content: '', kind: 'note', format: 'md', folderId: null,
+      source: '', createdAt: 1, updatedAt: 1,
+    }
+    render(<InspirationFileCard item={item} selected={false} formattedDate="2026/09/20" onOpen={onOpen} onDelete={onDelete} />)
+
+    const open = screen.getByTestId('inspiration-item-note-1')
+    expect(open.tagName).toBe('BUTTON')
+    expect(open.parentElement?.tagName).toBe('DIV')
+    fireEvent.click(screen.getByRole('button', { name: '删除笔记 待整理' }))
+    expect(await screen.findByRole('button', { name: '确认删除 待整理' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认删除 待整理' })).not.toHaveTextContent('确认')
+    expect(screen.getByRole('button', { name: '取消删除' })).not.toHaveTextContent('取消')
+    expect(onOpen).not.toHaveBeenCalled()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(await screen.findByRole('button', { name: '删除笔记 待整理' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认删除 待整理' })).not.toBeInTheDocument()
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
   it('requires a second click after a non-center carousel card is centered', () => {
     const onSelect = vi.fn()
     render(<SiteCarousel sites={sites} onSelect={onSelect} />)
@@ -176,6 +201,37 @@ describe('inspiration command search', () => {
     <InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />,
   )
 
+  it('removes WeChat sources from the carousel and global command search', () => {
+    const weixinCommand: CommandManifest = {
+      ...likedCommand,
+      command: 'weixin/articles',
+      site: 'weixin',
+      name: 'articles',
+      description: 'Read Weixin articles',
+    }
+    const channelsCommand: CommandManifest = {
+      ...likedCommand,
+      command: 'wechat-channels/videos',
+      site: 'wechat-channels',
+      name: 'videos',
+      description: 'Read WeChat Channels videos',
+    }
+    useAppStore.setState({
+      commands: [weixinCommand, channelsCommand, likedCommand],
+      selected: undefined,
+    })
+    renderPanel()
+    fireEvent.click(screen.getByTestId('inspiration-sources-tab'))
+
+    expect(screen.queryByTestId('site-row-wechat')).not.toBeInTheDocument()
+    expect(screen.getByTestId('site-row-xiaohongshu')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('nav-search'), { target: { value: 'weixin' } })
+    expect(screen.queryByTestId('command-row-weixin/articles')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('command-row-wechat-channels/videos')).not.toBeInTheDocument()
+    expect(screen.getByRole('status', { name: '没有匹配的命令' })).toBeInTheDocument()
+  })
+
   it('filters a site command list by every user-visible command identity', () => {
     useAppStore.setState({ commands: [likedCommand, feedCommand], selected: likedCommand })
     renderPanel()
@@ -201,7 +257,8 @@ describe('inspiration command search', () => {
     fireEvent.change(screen.getByTestId('nav-search'), { target: { value: 'not-a-command' } })
     expect(screen.queryByTestId('command-row-xiaohongshu/liked')).not.toBeInTheDocument()
     expect(screen.queryByTestId('command-row-xiaohongshu/feed')).not.toBeInTheDocument()
-    expect(screen.getByText('没有匹配的命令')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: '没有匹配的命令' })).toHaveClass('empty-state')
+    expect(screen.getByRole('status', { name: '没有匹配的命令' }).querySelector('.empty-state-icon')).toBeInTheDocument()
   })
 
   it('finds a command globally by its displayed Chinese description', () => {

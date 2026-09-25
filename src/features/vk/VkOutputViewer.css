@@ -15,7 +15,7 @@
 .vk-output-close { flex: 0 0 auto; padding: 4px 8px; font-size: 24px; line-height: 1; color: var(--color-fg-dim); }
 .vk-output-version-bar { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--color-line); color: var(--color-fg-dim); font-size: 12px; }
 .vk-output-version-bar span { flex: 0 0 auto; }
-.vk-output-version-bar select { flex: 1; min-width: 0; max-width: 380px; padding: 5px 8px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-canvas); color: var(--color-fg); }
+.vk-output-version-bar .glass-select-trigger { flex: 1; min-width: 0; max-width: 380px; padding: 5px 8px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-canvas); color: var(--color-fg); }
 .vk-output-body { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .vk-output-body.is-vertical { flex-direction: row; }
 .vk-output-tabs { display: flex; flex: 0 0 auto; overflow-x: auto; border-bottom: 1px solid var(--color-line); padding: 0 8px; }

@@ -7,7 +7,9 @@ import {
   RECEIPT_FILE,
   ownedRuntimeSizeBytes,
   ownedRuntimeSizeBytesAsync,
+  pruneInvalidOwnedRuntimeDirs,
   removeOwnedRuntimeReceipt,
+  removeOwnedRuntimeReceiptAsync,
   resolveActiveRuntime,
   writeActiveRuntime,
   writeRuntimeReceipt,
@@ -174,6 +176,73 @@ describe('runtime resolver', () => {
       .toMatchObject({ version: 'stale', sizeBytes: expect.any(Number) })
     expect(existsSync(active.dir)).toBe(true)
     expect(existsSync(stale.dir)).toBe(false)
+  })
+
+  it('asynchronously removes only a validated inactive owned runtime', async () => {
+    const home = tempDir('vk-home-')
+    const active = owned(home, { version: 'active-async' })
+    const stale = owned(home, { version: 'stale-async' })
+    const activeReceipt = writeRuntimeReceipt(home, active.receipt)
+    const staleReceipt = writeRuntimeReceipt(home, stale.receipt)
+    writeActiveRuntime(home, activeReceipt)
+
+    await expect(removeOwnedRuntimeReceiptAsync({ home, runtime: activeReceipt }))
+      .rejects.toThrow('活动 runtime 不允许清理')
+    await expect(removeOwnedRuntimeReceiptAsync({ home, runtime: staleReceipt }))
+      .resolves.toEqual({ version: 'stale-async' })
+    expect(existsSync(active.dir)).toBe(true)
+    expect(existsSync(stale.dir)).toBe(false)
+  })
+
+  it('prunes invalid direct version directories while preserving valid and raw active directories', async () => {
+    const home = tempDir('vk-home-')
+    const valid = [
+      owned(home, { version: 'valid-1' }),
+      owned(home, { version: 'valid-2' }),
+      owned(home, { version: 'valid-3' }),
+    ]
+    const invalid = owned(home, { version: 'invalid-receipt' })
+    writeFileSync(join(invalid.dir, RECEIPT_FILE), '{broken')
+    const interrupted = join(home, 'runtime', 'versions', 'interrupted')
+    mkdirSync(interrupted, { recursive: true })
+    writeFileSync(join(interrupted, 'partial.bin'), 'partial')
+    const activeInvalid = owned(home, { version: 'active-invalid' })
+    const activeReceipt = writeRuntimeReceipt(home, activeInvalid.receipt)
+    writeActiveRuntime(home, activeReceipt)
+    writeFileSync(join(activeInvalid.dir, RECEIPT_FILE), '{broken')
+
+    const result = await pruneInvalidOwnedRuntimeDirs({ home, bundleDir: bundle() })
+
+    expect(result.failures).toEqual([])
+    expect(result.removed).toEqual(expect.arrayContaining([invalid.dir, interrupted]))
+    for (const candidate of valid) expect(existsSync(candidate.dir)).toBe(true)
+    expect(existsSync(invalid.dir)).toBe(false)
+    expect(existsSync(interrupted)).toBe(false)
+    expect(existsSync(activeInvalid.dir)).toBe(true)
+  })
+
+  it('continues pruning invalid directories after one asynchronous removal fails', async () => {
+    const home = tempDir('vk-home-')
+    const versions = join(home, 'runtime', 'versions')
+    const first = join(versions, 'invalid-a')
+    const second = join(versions, 'invalid-b')
+    mkdirSync(first, { recursive: true })
+    mkdirSync(second, { recursive: true })
+    const calls = []
+
+    const result = await pruneInvalidOwnedRuntimeDirs({
+      home,
+      removeDirImpl: async (dir) => {
+        calls.push(dir)
+        if (calls.length === 1) throw new Error('directory busy')
+        rmSync(dir, { recursive: true, force: false })
+      },
+    })
+
+    expect(calls).toHaveLength(2)
+    expect(result.failures).toEqual([expect.objectContaining({ error: 'directory busy' })])
+    expect(existsSync(calls[0])).toBe(true)
+    expect(existsSync(calls[1])).toBe(false)
   })
 
   it('asynchronously scans legacy runtime sizes without changing the reported total', async () => {

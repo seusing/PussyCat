@@ -113,6 +113,43 @@ describe('WeRSS loopback integration routes', () => {
 })
 
 describe('managed WeRSS runtime route', () => {
+  it('forwards only fixed WeRSS API routes and preserves binary response metadata', async () => {
+    const calls = []
+    const runtime = {
+      status: () => ({ state: 'running' }),
+      requestApi: async (path, init) => {
+        calls.push({ path, init })
+        return new Response(path.includes('download') ? 'file' : JSON.stringify({ code: 0, data: [] }), {
+          status: 200,
+          headers: path.includes('download') ? { 'Content-Type': 'text/plain', 'Content-Disposition': 'attachment; filename="x.txt"' } : { 'Content-Type': 'application/json' },
+        })
+      },
+      close: async () => {},
+    }
+    const { baseUrl } = await setup({ wrssRuntime: runtime })
+    const listed = await fetch(`${baseUrl}/wrss/api/articles?offset=0&limit=10`, { headers: { Origin: origin } })
+    expect(listed.status).toBe(200)
+    expect(calls[0].path).toBe('/api/v1/wx/articles?offset=0&limit=10')
+    const refreshTask = await fetch(`${baseUrl}/wrss/api/articles/refresh/tasks/task-1`, { headers: { Origin: origin } })
+    expect(refreshTask.status).toBe(200)
+    expect(calls.at(-1).path).toBe('/api/v1/wx/articles/refresh/tasks/task-1')
+    const blocked = await fetch(`${baseUrl}/wrss/api/auth/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })
+    expect(blocked.status).toBe(404)
+    const preflight = await fetch(`${baseUrl}/wrss/api/articles/1/favorite`, { method: 'OPTIONS', headers: { Origin: origin } })
+    expect(preflight.headers.get('access-control-allow-methods')).toContain('PUT')
+    const download = await fetch(`${baseUrl}/wrss/api/tools/export/download?filename=x.txt`, { headers: { Origin: origin } })
+    expect(download.headers.get('content-disposition')).toContain('x.txt')
+  })
+
+  it('serves source avatars and allowlisted article images through dedicated runtime methods',async()=>{
+    const runtime={status:()=>({state:'running'}),requestSourceAvatar:vi.fn(async()=>new Response('avatar',{status:200,headers:{'content-type':'image/png'}})),requestArticleImage:vi.fn(async()=>new Response('article',{status:200,headers:{'content-type':'image/jpeg'}})),close:async()=>{}}
+    const {baseUrl}=await setup({wrssRuntime:runtime})
+    const avatar=await fetch(`${baseUrl}/wrss/source-avatar/source-1`,{headers:{Origin:origin}})
+    expect(await avatar.text()).toBe('avatar');expect(runtime.requestSourceAvatar).toHaveBeenCalledWith('source-1')
+    const image=await fetch(`${baseUrl}/wrss/article-image?url=${encodeURIComponent('https://mmbiz.qpic.cn/a.jpg')}`,{headers:{Origin:origin}})
+    expect(await image.text()).toBe('article');expect(runtime.requestArticleImage).toHaveBeenCalledWith('https://mmbiz.qpic.cn/a.jpg')
+  })
+
   it('returns 202 immediately and closes the runtime on Host shutdown', async () => {
     let enabled = 0
     let closed = 0

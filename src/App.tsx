@@ -350,7 +350,7 @@ export default function App({
         )}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'wrss'}>
-        {(visitedModules.has('wrss') || activeModule === 'wrss') && <WrssPanel baseUrl={baseUrl} />}
+        {(visitedModules.has('wrss') || activeModule === 'wrss') && <WrssPanel baseUrl={baseUrl} active={activeModule === 'wrss'} />}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'radar'}>
         {(visitedModules.has('radar') || activeModule === 'radar') && <RadarPanel baseUrl={baseUrl} />}

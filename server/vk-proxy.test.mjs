@@ -281,6 +281,63 @@ describe('/vk/v1 proxy', () => {
     }
   })
 
+  it('proxies Jev intent/config/test routes with unchanged JSON and keeps the key out of job shadow', async () => {
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    const jevKey = 'jev-private-key-do-not-shadow'
+    const requests = [
+      { method: 'GET', path: '/vk/v1/jev/config', target: '/api/jev/config' },
+      {
+        method: 'POST', path: '/vk/v1/intent-classify', target: '/api/intent-classify',
+        body: { user_goal: '梳理访谈观点', intent_tree_version: 'intent-tree@1' },
+      },
+      {
+        method: 'POST', path: '/vk/v1/jev/config', target: '/api/jev/config',
+        body: { api_key: jevKey },
+      },
+      { method: 'POST', path: '/vk/v1/jev/test', target: '/api/jev/test', body: {} },
+    ]
+
+    for (const request of requests) {
+      const response = await fetch(`${baseUrl}${request.path}`, {
+        method: request.method,
+        headers: jsonHeaders(),
+        ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+      })
+      expect(response.status, `${request.method} ${request.path}`).toBe(200)
+      const forwarded = vkSidecar.requests.at(-1)
+      expect(forwarded.path).toBe(request.target)
+      expect(forwarded.init.method ?? 'GET').toBe(request.method)
+      if (request.body) expect(JSON.parse(forwarded.init.body)).toEqual(request.body)
+    }
+
+    expect(JSON.stringify(vkJobShadow.list())).not.toContain(jevKey)
+    expect(vkJobShadow.list()).toHaveLength(0)
+  })
+
+  it('proxies Jev config CRUD, activation and usage routes', async () => {
+    const { baseUrl, vkSidecar } = await setup()
+    const cases = [
+      ['GET', '/vk/v1/jev/configs', '/api/jev/configs'],
+      ['GET', '/vk/v1/jev/usage', '/api/jev/usage'],
+      ['POST', '/vk/v1/jev/configs', '/api/jev/configs', { name: 'test' }],
+      ['PUT', '/vk/v1/jev/configs/cfg-1', '/api/jev/configs/cfg-1', { name: 'renamed' }],
+      ['DELETE', '/vk/v1/jev/configs/cfg-1', '/api/jev/configs/cfg-1'],
+      ['POST', '/vk/v1/jev/configs/cfg-1/enable', '/api/jev/configs/cfg-1/enable', {}],
+      ['POST', '/vk/v1/jev/configs/cfg-1/test', '/api/jev/configs/cfg-1/test', {}],
+    ]
+    for (const [method, from, to, body] of cases) {
+      const response = await fetch(`${baseUrl}${from}`, {
+        method,
+        headers: jsonHeaders(),
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+      expect(response.status, `${method} ${from}`).toBe(200)
+      expect(vkSidecar.requests.at(-1).path).toBe(to)
+      expect(vkSidecar.requests.at(-1).init.method ?? 'GET').toBe(method)
+    }
+  })
+
   it('codexradar 走 Node 侧代取 —— 渲染进程不直连第三方,CSP 不必为这几张表开口子', async () => {
     const BODIES = {
       [INSIGHTS_URL]: {

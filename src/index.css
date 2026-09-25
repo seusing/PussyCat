@@ -1,5 +1,12 @@
-@import "@fontsource-variable/inter";
 @import "tailwindcss";
+
+@font-face {
+  font-family: "Helvetica";
+  src: url("./assets/fonts/Helvetica.ttf") format("truetype");
+  font-display: swap;
+  font-style: oblique;
+  font-weight: 700;
+}
 
 @theme {
   --color-canvas: #0f1115;
@@ -38,11 +45,17 @@
 
 :root { color-scheme: dark; }
 html, body, #root { height: 100%; }
+html,
+body,
+#root,
+#root * {
+  font-family: "Helvetica" !important;
+}
 body {
   margin: 0;
   background: var(--color-canvas);
   color: var(--color-fg);
-  font-family: "Inter Variable", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  font-family: "Helvetica";
   font-size: var(--text-body);
   font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
@@ -532,6 +545,8 @@ select:focus-visible {
   align-items: center;
   gap: 7px;
   pointer-events: none;
+  max-height: calc(100% - 74px);
+  overflow: hidden;
 }
 
 .app-notification-layer .app-alert { pointer-events: auto; }
@@ -1035,12 +1050,8 @@ select:focus-visible {
   flex-direction: column;
   gap: 2px;
   overflow-y: auto;
-  border: 1px solid #343a45;
   border-radius: 8px;
-  background: #1a1d23;
   padding: 4px;
-  box-shadow: 0 18px 44px rgba(0,0,0,.45), 0 3px 10px rgba(0,0,0,.25);
-  animation: login-menu-in 130ms ease-out;
 }
 
 .radar-glass-section {

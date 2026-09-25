@@ -1,6 +1,6 @@
 [package]
 name = "opencli-app-clone"
-version = "0.1.0"
+version = "1.0.2"
 description = "OpenCLI App Clone — Tauri shell over a managed Node host"
 authors = ["opencli-app-clone"]
 license = ""
@@ -29,6 +29,7 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
 # 单实例:必须**最先**注册,早于任何 Host bootstrap(spec §5)——否则第二实例会先拉起第二个 Node 再被劝退。
 tauri-plugin-single-instance = "2"
 

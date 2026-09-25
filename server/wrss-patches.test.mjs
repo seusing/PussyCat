@@ -16,23 +16,41 @@ import {
   wrssPinWechatStatus,
 } from '../test-fixtures/wrss-pin.mjs'
 
+const wrssPinWxBase = `class WxBase:
+    def Over(self):
+        pass
+
+    def Error(self, error, code=None):
+        self.Over()
+        if code=="Invalid Session":
+            if cfg.get("server.send_code")=="True":
+                from jobs.failauth import send_wx_code
+                import threading
+                setStatus(False)
+                threading.Thread(target=send_wx_code, args=("expired",)).start()
+            raise Exception(error)
+`
+
 function fixture(python = wrssPinPython, bundle = wrssPinBundle) {
   const root = mkdtempSync(join(tmpdir(), 'wrss-source-patch-'))
   mkdirSync(join(root, 'static', 'assets'), { recursive: true })
   mkdirSync(join(root, 'driver'), { recursive: true })
   mkdirSync(join(root, 'apis'), { recursive: true })
+  mkdirSync(join(root, 'core', 'wx'), { recursive: true })
   const bundlePath = join(root, 'static', 'assets', 'index.a75a6e55.js')
   const driverPath = join(root, 'driver', 'wx.py')
   const successPath = join(root, 'driver', 'success.py')
   const wechatStatusPath = join(root, 'static', 'assets', 'WechatStatus.62cf3d3b.js')
   const authApiPath = join(root, 'apis', 'auth.py')
   const mpsApiPath = join(root, 'apis', 'mps.py')
+  const wxBasePath = join(root, 'core', 'wx', 'base.py')
   writeFileSync(bundlePath, bundle)
   writeFileSync(driverPath, python)
   writeFileSync(successPath, wrssPinSuccess)
   writeFileSync(wechatStatusPath, wrssPinWechatStatus)
   writeFileSync(authApiPath, 'router = object()\n')
-  return { root, bundlePath, driverPath, successPath, wechatStatusPath, authApiPath, mpsApiPath }
+  writeFileSync(wxBasePath, wrssPinWxBase)
+  return { root, bundlePath, driverPath, successPath, wechatStatusPath, authApiPath, mpsApiPath, wxBasePath }
 }
 
 function wxLoginProbe(driverPath, scenario) {
@@ -153,6 +171,7 @@ function component(bundle, client) {
     ref: (value) => ({ value }), s: emitted,
     QRCode: () => client.qrCode(), checkQRCodeStatus: (onUpdate) => client.checkStatus(onUpdate),
     window: { __PUSSYCAT_WRSS_AUTH__: client }, onBeforeUnmount: (callback) => cleanup.push(callback),
+    setInterval, clearInterval, setTimeout, clearTimeout,
   }
   const state = vm.runInNewContext(`(()=>{${setupSource(bundle, 'WechatAuthQrcode')};return {c,d,u,A,g,f}})()`, context)
   return { state, emitted, cleanup }
@@ -180,15 +199,89 @@ describe('WeRSS pinned source patches', () => {
                 message=f"搜索公众号失败,请重新扫码授权！",
             )
         )
+
+async def update_mps(mp_id):
+    return {"id": mp_id}
 `)
     ensureWrssSourcePatches(root)
     const patched = readFileSync(mpsApiPath, 'utf8')
     expect(patched).toContain('pussycat_authorization_guard')
+    expect(patched).toContain('pussycat_update_authorization_guard')
     expect(patched).toContain('微信公众号授权已失效，请重新扫码授权')
     expect(patched).toContain('status_code=status.HTTP_502_BAD_GATEWAY')
     expect(patched).toContain('搜索公众号失败，请稍后重试')
     ensureWrssSourcePatches(root)
     expect(readFileSync(mpsApiPath, 'utf8')).toBe(patched)
+  })
+
+  it('invalidates the session and clears credentials even when notices are disabled', () => {
+    const { root, wxBasePath } = fixture()
+    ensureWrssSourcePatches(root)
+    const patched = readFileSync(wxBasePath, 'utf8')
+    expect(patched.match(/pussycat_invalid_session_cleanup/g)).toHaveLength(1)
+    ensureWrssSourcePatches(root)
+    expect(readFileSync(wxBasePath, 'utf8')).toBe(patched)
+
+    const probe = join(root, 'invalid-session-probe.py')
+    writeFileSync(probe, String.raw`
+import json, sys, types
+events = []
+driver = types.ModuleType("driver")
+driver.__path__ = []
+token = types.ModuleType("driver.token")
+token._save_to_local = lambda value: events.append(["local", value])
+token.REDIS_TOKEN_PREFIX = "werss:token:"
+core = types.ModuleType("core")
+core.__path__ = []
+redis_module = types.ModuleType("core.redis_client")
+class Client:
+    def delete(self, key): events.append(["redis", key])
+redis_module.redis_client = types.SimpleNamespace(is_connected=True, _client=Client())
+sys.modules.update({"driver": driver, "driver.token": token, "core": core, "core.redis_client": redis_module})
+namespace = {
+    "cfg": types.SimpleNamespace(get=lambda key: "False"),
+    "setStatus": lambda value: events.append(["status", value]),
+}
+source = open(sys.argv[1], encoding="utf-8").read()
+exec(compile(source, sys.argv[1], "exec"), namespace)
+try:
+    namespace["WxBase"]().Error("expired", "Invalid Session")
+except Exception:
+    pass
+print(json.dumps(events))
+`)
+    const executable = process.platform === 'win32' ? 'python.exe' : 'python3'
+    const result = spawnSync(executable, [probe, wxBasePath], { encoding: 'utf8' })
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout.trim())).toEqual([
+      ['status', false],
+      ['local', {}],
+      ['redis', 'werss:token:data'],
+    ])
+  })
+
+  it('adds the favorite timestamp migration to CRLF database sources and stays idempotent', () => {
+    const { root } = fixture()
+    const dbDir = join(root, 'core')
+    mkdirSync(dbDir, { recursive: true })
+    const dbPath = join(dbDir, 'db.py')
+    const dbSource = [
+      '        columns = set()',
+      '        alter_statements = []',
+      '            if "is_favorite" not in columns:',
+      '                alter_statements.append("ALTER TABLE articles ADD COLUMN is_favorite INTEGER DEFAULT 0")',
+      '        return alter_statements',
+      '',
+    ].join('\r\n')
+    writeFileSync(dbPath, dbSource)
+
+    ensureWrssSourcePatches(root)
+    const patched = readFileSync(dbPath, 'utf8')
+    expect(patched).toContain('ALTER TABLE articles ADD COLUMN favorite_at INTEGER')
+    expect(patched).toContain('\r\n')
+    expect(patched).not.toContain('\n\n')
+    ensureWrssSourcePatches(root)
+    expect(readFileSync(dbPath, 'utf8')).toBe(patched)
   })
 
   it('patches real pinned source idempotently and preserves the complete QR render function', () => {
@@ -201,6 +294,8 @@ describe('WeRSS pinned source patches', () => {
     expect(bundle).toContain('return o({startAuth:g})')
     expect(bundle).toContain('已扫码，请在手机上点击确认')
     expect(bundle).toContain('pussycat-qr-countdown')
+    expect(bundle).toContain('pussycat-qr-refresh')
+    expect(bundle).toContain('refreshQRCode()')
     expect(bundle).not.toContain('axios$1.head')
     expect(bundle).toContain('pageSizeOptions:[10,20,30,50]')
     const methods = { qrCode: vi.fn(() => 'qr'), checkStatus: vi.fn(() => 'status') }
@@ -214,6 +309,48 @@ describe('WeRSS pinned source patches', () => {
     expect(first[1].toString().replaceAll('\r\n', '')).not.toContain('\n')
   })
 
+  it('executes the patched ArticleList bridge against the pinned setup refs', async () => {
+    const { root, bundlePath } = fixture()
+    ensureWrssSourcePatches(root)
+    const bundle = readFileSync(bundlePath, 'utf8')
+    const mounted = [], cleanup = []
+    const getArticles = vi.fn(async (params) => ({ list: [{ id: params.mp_id || 'latest' }], total: 1 }))
+    const getSubscriptions = vi.fn(async () => ({ list: [{ mp_id: 'mp-1', mp_name: '账号一' }], total: 1 }))
+    const context = {
+      ref: (value) => ({ value }), getArticles, getSubscriptions, nextTick: async () => {},
+      onMounted: (callback) => mounted.push(callback), onBeforeUnmount: (callback) => cleanup.push(callback),
+      window: {}, console: { log() {}, error() {} },
+    }
+    const state = vm.runInNewContext(`(()=>{${setupSource(bundle, 'ArticleListDesktop')};return {U,H,Dt,o,l,b,g}})()`, context)
+    await mounted[0]()
+    await vi.waitFor(() => expect(getArticles).toHaveBeenCalledWith(expect.objectContaining({ page: 0, pageSize: 10, mp_id: '' })))
+    expect(getSubscriptions).toHaveBeenCalledWith(expect.objectContaining({ page: 0, pageSize: 10 }))
+    await state.U('MP_WXS_FEATURED_ARTICLES')
+    await vi.waitFor(() => expect(getArticles).toHaveBeenCalledWith(expect.objectContaining({ only_favorite: true, mp_id: '' })))
+    await state.U('mp-1')
+    await vi.waitFor(() => expect(getArticles).toHaveBeenCalledWith(expect.objectContaining({ mp_id: 'mp-1' })))
+    expect(context.window.__PUSSYCAT_WRSS_BRIDGE__.getState().sources[0].id).toBe('mp-1')
+    cleanup[0]()
+    expect(context.window.__PUSSYCAT_WRSS_BRIDGE__).toBeUndefined()
+  })
+
+  it('upgrades the installed QR patch that predates the manual refresh button and stays idempotent', () => {
+    const { root, bundlePath } = fixture()
+    ensureWrssSourcePatches(root)
+    const refreshButton = ',createBaseVNode("button",{class:"pussycat-qr-refresh",disabled:d.value||scanned.value,onClick:refreshQr},d.value?"正在刷新…":"刷新二维码")'
+    const installed = readFileSync(bundlePath, 'utf8').replace(refreshButton, '')
+    expect(installed).toContain('pussycat-qr-image')
+    expect(installed).toContain('pussycat-qr-countdown')
+    expect(installed).not.toContain('pussycat-qr-refresh')
+    writeFileSync(bundlePath, installed)
+
+    ensureWrssSourcePatches(root)
+    const upgraded = readFileSync(bundlePath, 'utf8')
+    expect(upgraded).toContain(refreshButton.slice(1))
+    ensureWrssSourcePatches(root)
+    expect(readFileSync(bundlePath, 'utf8')).toBe(upgraded)
+  })
+
   it('restores only uninitialized login state from complete unexpired persisted credentials', () => {
     const { root, successPath } = fixture()
     ensureWrssSourcePatches(root)
@@ -222,7 +359,8 @@ describe('WeRSS pinned source patches', () => {
     expect(python).toContain("token_data.get('cookie')")
     expect(python).toContain("expiry.get('expiry_timestamp')")
     expect(python).toContain('expiry_timestamp >= time.time()')
-    expect(python).not.toContain("'remaining_seconds' in expiry")
+    expect(python).toContain("remaining_seconds = expiry.get('remaining_seconds') if expiry else None")
+    expect(python).toContain('or (remaining_seconds is not None and remaining_seconds > 0)')
     expect(python).toContain('if WX_LOGIN_ED is False:\n            return False')
     expect(python).toContain('def CanGetToken():')
     expect(python).toContain('if not getStatus():')
@@ -252,6 +390,9 @@ describe('WeRSS pinned source patches', () => {
     expect(python).toContain('if not self._qr_scanned and time.time() >= self._qr_expires_at:')
     expect(python).toContain('await load_qr()')
     expect(python).toContain('await self.Call_Success()')
+    expect(python).toContain('def GetHasCode(self):')
+    expect(python).toContain('def GetCode(self, CallBack=None, Notice=None):')
+    expect(python).toContain('def check_lock(self, timeout: int = 300) -> bool:')
     expect(python).not.toContain('wait_for_event("framenavigated"')
     expect(python).not.toContain('networkidle')
     const predicate = python.match(/"(selector => \{[^\n]+\})"/)[1]

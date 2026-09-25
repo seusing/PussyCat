@@ -21,6 +21,7 @@ import {
   SUPPORTED_SITES, siteForCommand, visibleCommands,
 } from '../../data/supportedSites'
 import type { CommandManifest } from '../../data/types'
+import { useGlassMenuSurface } from '../../components/GlassMenu'
 
 const STATE_TEXT: Record<LoginCheckState, string> = {
   unchecked: '未检查',
@@ -74,6 +75,7 @@ function AccountOperationMenu({
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRectRef = useRef<DOMRect>()
   const refreshDisabled = busy || state === 'not-approved'
+  useGlassMenuSurface(menuRef, open)
 
   const placeMenu = () => {
     const rect = triggerRef.current?.getBoundingClientRect()
@@ -198,7 +200,7 @@ function AccountOperationMenu({
           ref={menuRef}
           role="menu"
           aria-label={`${siteLabel(site)}账号操作`}
-          className="login-operation-menu"
+          className="login-operation-menu glass-menu-effect"
           style={position}
           onKeyDown={onMenuKeyDown}
         >
@@ -252,6 +254,7 @@ export function LoginStatusPanel() {
 
   const rows = useMemo(() => {
     const catalog = visibleCommands(commands)
+      .filter((command) => siteForCommand(command.site)?.id !== 'wechat')
     return catalog
       .filter((command) => command.name === 'whoami')
       .map((command) => {
@@ -293,6 +296,7 @@ export function LoginStatusPanel() {
     if (!auto.enabled) return
     const tick = () => {
       const sites = visibleCommands(useAppStore.getState().commands)
+        .filter((command) => siteForCommand(command.site)?.id !== 'wechat')
         .filter((command) => command.name === 'whoami')
         .filter((command) => {
           const decision = useAppStore.getState().decisionFor(command.command)

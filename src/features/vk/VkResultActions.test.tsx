@@ -1,5 +1,5 @@
 import userEvent from '@testing-library/user-event'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkResultActions } from './VkResultActions'
 import type { VkTaskResultGroup } from './taskResults'
@@ -28,19 +28,23 @@ describe('VkResultActions', () => {
     const onOpen = vi.fn()
     render(<VkResultActions groups={[group(1, ['latest', 'old'])]} onOpen={onOpen} />)
     const select = screen.getByRole('combobox', { name: '查看历史结果' })
-    expect(within(select).getByRole('option', { name: /第 2 次.*最新结果/ })).toHaveValue('latest')
-    await userEvent.selectOptions(select, 'old')
+    await userEvent.click(select)
+    expect(screen.getByRole('option', { name: /第 2 次.*最新结果/ })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('option', { name: /第 1 次/ }))
     expect(onOpen).toHaveBeenLastCalledWith('old')
-    expect(select).toHaveValue('')
-    await userEvent.selectOptions(select, 'old')
+    expect(select).toHaveAttribute('data-value', '')
+    await userEvent.click(select)
+    await userEvent.click(screen.getByRole('option', { name: /第 1 次/ }))
     expect(onOpen).toHaveBeenCalledTimes(2)
   })
 
-  it('groups options by stable member ordinal including a later member with a single result', () => {
+  it('groups options by stable member ordinal including a later member with a single result', async () => {
     render(<VkResultActions groups={[group(1, []), group(2, ['new-two', 'old-two']), group(3, ['only-three'])]} onOpen={() => {}} />)
     const select = screen.getByRole('combobox')
-    expect(within(select).queryByRole('group', { name: '小任务1' })).not.toBeInTheDocument()
-    expect(within(select).getByRole('group', { name: '小任务2' }).querySelectorAll('option')).toHaveLength(2)
-    expect(within(select).getByRole('group', { name: '小任务3' }).querySelector('option')).toHaveValue('only-three')
+    await userEvent.click(select)
+    expect(screen.queryByText('小任务1')).not.toBeInTheDocument()
+    expect(screen.getByText('小任务2')).toBeInTheDocument()
+    expect(screen.getByText('小任务3')).toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(4)
   })
 })

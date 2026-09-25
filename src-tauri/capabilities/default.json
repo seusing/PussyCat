@@ -9,6 +9,14 @@
   "permissions": [
     "core:default",
     "dialog:default",
-    "fs:allow-write-text-file"
+    "fs:allow-write-text-file",
+    "fs:allow-write-file",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" }
+      ]
+    }
   ]
 }

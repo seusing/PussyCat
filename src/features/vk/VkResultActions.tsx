@@ -1,5 +1,6 @@
 import { Eye } from 'lucide-react'
 import { vkResultVersionLabel, type VkTaskResultGroup } from './taskResults'
+import { GlassSelect, type GlassOption } from '../../components/GlassMenu'
 import './VkResultActions.css'
 
 export function VkResultActions({ groups, onOpen }: {
@@ -7,11 +8,11 @@ export function VkResultActions({ groups, onOpen }: {
   onOpen: (versionJobId?: string) => void
 }) {
   if (!groups.some((group) => group.versions.length > 0)) return null
-  const options = (group: VkTaskResultGroup) => group.versions.map((version, index) => (
-    <option key={version.jobId} value={version.jobId}>
-      {vkResultVersionLabel(version, index === 0)}
-    </option>
-  ))
+  const options = (group: VkTaskResultGroup): GlassOption[] => group.versions.map((version, index) => ({
+    value: version.jobId,
+    label: vkResultVersionLabel(version, index === 0),
+    group: groups.length > 1 ? `小任务${group.ordinal}` : undefined,
+  }))
   return (
     <div className="vk-result-actions">
       <button type="button" className="vk-task-open-output-button" onClick={() => onOpen()}>
@@ -19,21 +20,17 @@ export function VkResultActions({ groups, onOpen }: {
         <span>查看解析结果</span>
       </button>
       {groups.some((group) => group.versions.length > 1) && (
-        <select
+        <GlassSelect
           aria-label="查看历史结果"
           value=""
-          onChange={(event) => {
-            if (event.target.value) onOpen(event.target.value)
-            event.target.value = ''
+          onChange={(value) => {
+            if (value) onOpen(value)
           }}
-        >
-          <option value="" disabled>历史版本</option>
-          {groups.length > 1
-            ? groups.filter((group) => group.versions.length > 0).map((group) => (
-              <optgroup key={group.id} label={`小任务${group.ordinal}`}>{options(group)}</optgroup>
-            ))
-            : groups.map(options)}
-        </select>
+          options={[
+            { value: '', label: '历史版本', disabled: true },
+            ...groups.filter((group) => group.versions.length > 0).flatMap(options),
+          ]}
+        />
       )}
     </div>
   )

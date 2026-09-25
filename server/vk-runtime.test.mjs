@@ -2,9 +2,9 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkRuntimeManager } from './vk-runtime.mjs'
-import { writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
+import { removeOwnedRuntimeReceiptAsync, writeActiveRuntime, writeRuntimeReceipt } from './vk-runtime-resolver.mjs'
 
 const dirs = []
 function tempDir(prefix) {
@@ -185,6 +185,7 @@ describe('VkRuntimeManager', () => {
     })
     const first = manager.install().catch((err) => err)
     const second = manager.install().catch((err) => err)   // 单飞:共享同一次
+    await vi.waitFor(() => expect(calls).toBe(1))
     expect(manager.status().state).toBe('installing')
     release()
     await first
@@ -292,35 +293,164 @@ describe('VkRuntimeManager', () => {
     expect(error).toMatchObject({ statusCode: 400, reasonCode: 'candidate-not-detected' })
   })
 
-  it('lists sizes, rolls back atomically, and cleans all but active plus one fallback', async () => {
+  it('retains an old active runtime plus the two newest rollback versions', async () => {
+    const home = tempDir('vk-home-')
+    const first = ownedRuntime(home, 'v1', '2026-08-01T00:00:00Z')
+    ownedRuntime(home, 'v2', '2026-08-02T00:00:00Z')
+    const third = ownedRuntime(home, 'v3', '2026-08-03T00:00:00Z')
+    const fourth = ownedRuntime(home, 'v4', '2026-08-04T00:00:00Z')
+    writeActiveRuntime(home, first)
+    const manager = new VkRuntimeManager({ home, bundleDir: bundleDir() })
+
+    expect((await manager.versions()).versions).toEqual([
+      expect.objectContaining({ version: 'v4', retainedForRollback: true, removable: false }),
+      expect.objectContaining({ version: 'v3', retainedForRollback: false, removable: false }),
+      expect.objectContaining({ version: 'v1', active: true, removable: false }),
+    ])
+    expect(existsSync(join(home, 'runtime', 'versions', 'v2'))).toBe(false)
+    expect(third.version).toBe('v3')
+    expect(fourth.version).toBe('v4')
+  })
+
+  it('does not block construction on startup pruning and waits before installing', async () => {
+    const home = tempDir('vk-home-')
+    const active = ownedRuntime(home, 'v1', '2026-08-01T00:00:00Z')
+    ownedRuntime(home, 'v2', '2026-08-02T00:00:00Z')
+    ownedRuntime(home, 'v3', '2026-08-03T00:00:00Z')
+    ownedRuntime(home, 'v4', '2026-08-04T00:00:00Z')
+    writeActiveRuntime(home, active)
+    let release
+    const gate = new Promise((resolveGate) => { release = resolveGate })
+    const removals = []
+    let installs = 0
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      removeOwnedRuntimeImpl: async (options) => {
+        removals.push(options.runtime.version)
+        await gate
+        return removeOwnedRuntimeReceiptAsync(options)
+      },
+      installImpl: async () => { installs += 1; return { version: 'v1', pythonPath: active.pythonPath } },
+    })
+
+    expect(manager.status().version).toBe('v1')
+    const installing = manager.install({ rebuild: true })
+    await vi.waitFor(() => expect(removals).toEqual(['v2']))
+    expect(removals).not.toContain('v1')
+    expect(installs).toBe(0)
+
+    release()
+    await installing
+    expect(installs).toBe(1)
+    expect(existsSync(join(home, 'runtime', 'versions', 'v1'))).toBe(true)
+  })
+
+  it('continues startup pruning after one stale runtime cannot be removed', async () => {
+    const home = tempDir('vk-home-')
+    const active = ownedRuntime(home, 'v1', '2026-08-01T00:00:00Z')
+    ownedRuntime(home, 'v2', '2026-08-02T00:00:00Z')
+    ownedRuntime(home, 'v3', '2026-08-03T00:00:00Z')
+    ownedRuntime(home, 'v4', '2026-08-04T00:00:00Z')
+    ownedRuntime(home, 'v5', '2026-08-05T00:00:00Z')
+    writeActiveRuntime(home, active)
+    const removals = []
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      removeOwnedRuntimeImpl: async ({ runtime }) => {
+        removals.push(runtime.version)
+        if (runtime.version === 'v3') throw new Error('v3 directory is in use')
+        return { version: runtime.version }
+      },
+    })
+
+    await manager.versions()
+
+    expect(removals).toEqual(['v3', 'v2'])
+    expect(removals).not.toContain('v1')
+    expect(manager.status().log).toContain('runtime-prune: v3 directory is in use')
+  })
+
+  it('records invalid-directory prune failures without touching the active runtime', async () => {
+    const home = tempDir('vk-home-')
+    const active = ownedRuntime(home, 'active', '2026-08-01T00:00:00Z')
+    writeActiveRuntime(home, active)
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      pruneInvalidRuntimeDirsImpl: async () => ({
+        removed: [],
+        failures: [{ versionDir: 'stale', error: 'stale directory is busy' }],
+      }),
+    })
+
+    await manager.versions()
+
+    expect(manager.status().log).toContain('runtime-prune: stale directory is busy')
+    expect(existsSync(join(home, 'runtime', 'versions', 'active'))).toBe(true)
+  })
+
+  it('retains the newest three runtimes when no runtime is active', async () => {
+    const home = tempDir('vk-home-')
+    ownedRuntime(home, 'v1', '2026-08-01T00:00:00Z')
+    ownedRuntime(home, 'v2', '2026-08-02T00:00:00Z')
+    ownedRuntime(home, 'v3', '2026-08-03T00:00:00Z')
+    ownedRuntime(home, 'v4', '2026-08-04T00:00:00Z')
+
+    const manager = new VkRuntimeManager({ home, bundleDir: bundleDir() })
+    const versions = (await manager.versions()).versions
+
+    expect(versions.map((runtime) => runtime.version)).toEqual(['v4', 'v3', 'v2'])
+    expect(versions.every((runtime) => runtime.removable === false)).toBe(true)
+    expect(existsSync(join(home, 'runtime', 'versions', 'v1'))).toBe(false)
+  })
+
+  it('prunes to three runtimes after a successful install', async () => {
+    const home = tempDir('vk-home-')
+    const first = ownedRuntime(home, 'v1', '2026-08-01T00:00:00Z')
+    ownedRuntime(home, 'v2', '2026-08-02T00:00:00Z')
+    ownedRuntime(home, 'v3', '2026-08-03T00:00:00Z')
+    writeActiveRuntime(home, first)
+    const manager = new VkRuntimeManager({
+      home,
+      bundleDir: bundleDir(),
+      installImpl: async () => {
+        const installed = ownedRuntime(home, 'v4', '2026-08-04T00:00:00Z')
+        writeActiveRuntime(home, installed)
+        return { version: 'v4', pythonPath: installed.pythonPath }
+      },
+    })
+
+    await manager.install({ rebuild: true })
+
+    expect((await manager.versions()).versions.map((runtime) => runtime.version)).toEqual(['v4', 'v3', 'v2'])
+    expect(existsSync(join(home, 'runtime', 'versions', 'v1'))).toBe(false)
+  })
+
+  it('keeps rollback busy until activation finishes', async () => {
     const home = tempDir('vk-home-')
     const first = ownedRuntime(home, 'v1', '2026-08-01T00:00:00Z')
     const second = ownedRuntime(home, 'v2', '2026-08-02T00:00:00Z')
-    const third = ownedRuntime(home, 'v3', '2026-08-03T00:00:00Z')
-    writeActiveRuntime(home, third)
+    writeActiveRuntime(home, second)
+    let release
+    const gate = new Promise((resolveGate) => { release = resolveGate })
     const manager = new VkRuntimeManager({ home, bundleDir: bundleDir() })
 
-    expect((await manager.versions()).versions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ version: 'v3', active: true, removable: false }),
-      expect.objectContaining({ version: 'v2', retainedForRollback: true, removable: false }),
-      expect.objectContaining({ version: 'v1', removable: true, sizeBytes: expect.any(Number) }),
-    ]))
+    const rollingBack = manager.rollback('v1', { afterActivate: async () => { await gate } })
+    await Promise.resolve()
 
-    const stoppedAfterSwitch = []
-    const rolledBack = await manager.rollback('v1', {
-      afterActivate: async () => { stoppedAfterSwitch.push(manager.status().version) },
-    })
-    expect(rolledBack.version).toBe('v1')
-    expect(stoppedAfterSwitch).toEqual(['v1'])
+    await expect(manager.cleanup()).rejects.toMatchObject({ statusCode: 409, reasonCode: 'runtime-busy' })
+    await expect(manager.install({ rebuild: true })).rejects.toMatchObject({ statusCode: 409, reasonCode: 'runtime-busy' })
+    await expect(manager.rollback('v2')).rejects.toMatchObject({ statusCode: 409, reasonCode: 'runtime-busy' })
+    release()
+    await rollingBack
 
     const cleaned = await manager.cleanup()
-    expect(cleaned.removed).toEqual([expect.objectContaining({ version: 'v2' })])
-    expect(cleaned.reclaimedBytes).toBeGreaterThan(0)
+    expect(cleaned.removed).toEqual([])
     expect(existsSync(join(home, 'runtime', 'versions', 'v1'))).toBe(true)
-    expect(existsSync(join(home, 'runtime', 'versions', 'v3'))).toBe(true)
-    expect(existsSync(join(home, 'runtime', 'versions', 'v2'))).toBe(false)
+    expect(existsSync(join(home, 'runtime', 'versions', 'v2'))).toBe(true)
     expect(first.version).toBe('v1')
-    expect(second.version).toBe('v2')
   })
 
   it('rejects rollback to an unknown or invalid runtime receipt', async () => {

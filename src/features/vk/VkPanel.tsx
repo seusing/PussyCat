@@ -5,12 +5,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'motion/react'
+import { createPortal } from 'react-dom'
 import { BorderBeam } from 'border-beam'
 import { LoaderCircle, RefreshCw, Upload } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
+import { GlassCombobox, GlassSelect } from '../../components/GlassMenu'
 import { HostRequestError } from '../../host/errors'
 import {
   fetchVkHealth,
@@ -23,6 +25,7 @@ import {
   postVkJob,
   postVkJobAction,
   postVkPreview,
+  classifyVkIntent,
   postVkQuery,
   postVkRuntimeInstall,
   fetchVkProviderSettings,
@@ -36,6 +39,7 @@ import type {
   VkQueryAnswer,
   VkRuntimeStatus,
   VkRuntimeCandidate,
+  VkIntentClassification,
 } from '../../host/vkClient'
 import { BorderGlow } from '../../components/BorderGlow'
 import { runtimeToAdopt } from './runtimePick'
@@ -88,6 +92,16 @@ const AUTO_ROUTE_LABELS: Record<string, string> = {
   speaker_attribution: '说话人归属整理',
   evidence_grounded: '证据核验整理',
   generic_fallback: '通用整理',
+}
+const INTENT_LABELS: Record<string, string> = {
+  quick_overview: '快速了解重点',
+  learn_concepts_steps: '学习概念与步骤',
+  interview_attribution: '访谈观点与人物归属',
+  mechanism_causality: '机制、因果与边界',
+  compare_verify: '比较、评估与证据核验',
+  visual_ocr_demo: '画面、OCR 与演示',
+  speaker_attribution: '区分说话人',
+  general_summary: '通用总结',
 }
 const AUTO_ROUTE_REASON_LABELS: Record<string, string> = {
   asr_quality_passed: '语音转写质量良好',
@@ -437,6 +451,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   //    installing 期间 2s 轮询真实安装输出(不造百分比)——
   const [runtime, setRuntime] = useState<VkRuntimeStatus | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
+  const installPending = useRef(false)
   const previousRuntimeState = useRef<string | null>(null)
   const refreshRuntime = useCallback(async () => {
     try {
@@ -478,6 +493,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null)
   const [costTracking, setCostTracking] = useState<boolean | null>(null)
   const [capabilityPacksOpen, setCapabilityPacksOpen] = useState(false)
+  const [diagnosticOverridesOpen, setDiagnosticOverridesOpen] = useState(false)
+  const diagnosticOverridesHost = useRef<HTMLDivElement>(null)
   const [taskReasoningEfforts, setTaskReasoningEfforts] = useState<string[]>([])
   const [reasoningDiscovery, setReasoningDiscovery] = useState<string | null>(null)
   const [reasoningDiscovering, setReasoningDiscovering] = useState(false)
@@ -542,12 +559,24 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   }, [runtime?.state, refreshRuntimeCandidates])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const startInstall = async ({ rebuild = false }: { rebuild?: boolean } = {}) => {
+    if (installPending.current) return
+    installPending.current = true
+    const previousRuntime = runtime
     setInstallError(null)
+    setRuntime(previousRuntime ? {
+      ...previousRuntime,
+      state: 'installing',
+      reasonCode: null,
+      summary: '正在准备解析环境',
+    } : previousRuntime)
     try {
       // 已装状态下不带 rebuild 的话 Host 会按幂等直接返回现状 —— 按钮就成了空转。
       setRuntime(await postVkRuntimeInstall(base, { rebuild }))
     } catch (error) {
+      setRuntime(previousRuntime)
       setInstallError(errorText(error, '安装启动失败'))
+    } finally {
+      installPending.current = false
     }
   }
   const adoptRuntime = async (candidate: VkRuntimeCandidate) => {
@@ -561,6 +590,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   // —— 表单(组件本地;store 只承担跨模块 handoff)——
   const [source, setSource] = useState('')
   const [userGoal, setUserGoal] = useState('')
+  const userGoalRef = useRef(userGoal)
   const [preset, setPreset] = useState('quick-summary')
   const [contentType, setContentType] = useState('')
   const [mediaPolicy, setMediaPolicy] = useState('')
@@ -619,6 +649,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   // —— 预检 → 费用确认 → 提交 ——
   const [previewing, setPreviewing] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [intentSummary, setIntentSummary] = useState<VkIntentClassification | null>(null)
+  const [intentFallback, setIntentFallback] = useState(false)
+  const [intentClassifying, setIntentClassifying] = useState(false)
   const [taskBanners, setTaskBanners] = useState<TaskBanner[]>([])
   const submitInFlight = useRef(false)
   const dismissTaskBanner = useCallback((id: string) => {
@@ -632,10 +665,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   }, [])
 
   // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
-  const buildProjection = (sourceValue = source.trim()): VkPreviewProjection => {
+  const buildProjection = (sourceValue = source.trim(), classification?: VkIntentClassification, goalValue = userGoal): VkPreviewProjection => {
     const userMetadata = {
       processing_strategy: 'auto',
-      ...(userGoal.trim() ? { user_goal: userGoal.trim() } : {}),
+      ...(goalValue.trim() ? { user_goal: goalValue.trim() } : {}),
+      ...(classification ? {
+        intent_classification: {
+          intent_id: classification.intent_id,
+          confidence: classification.confidence,
+        },
+      } : {}),
       ...(provenance
         ? {
             origin: 'opencli-result',
@@ -664,6 +703,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     if (submitInFlight.current) return
     const sources = sourceLines(source)
     if (sources.length === 0) return
+    const goalSnapshot = userGoalRef.current.trim()
     submitInFlight.current = true
     setSubmitError(null)
     setPreviewing(true)
@@ -683,8 +723,40 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         }])
         return
       }
+      let intentClassification: VkIntentClassification | undefined
+      if (goalSnapshot) {
+        setIntentClassifying(true)
+        try {
+          const result = await Promise.race([
+            classifyVkIntent(goalSnapshot, base),
+            new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 1500)),
+          ])
+          if (result?.classification && !result.classification.fallback && result.classification.confidence >= 0.45) {
+            intentClassification = result.classification
+            if (userGoalRef.current.trim() === goalSnapshot) {
+              setIntentSummary(result.classification)
+              setIntentFallback(false)
+            }
+          } else {
+            if (userGoalRef.current.trim() === goalSnapshot) {
+              setIntentSummary(null)
+              setIntentFallback(true)
+            }
+          }
+        } catch {
+          if (userGoalRef.current.trim() === goalSnapshot) {
+            setIntentSummary(null)
+            setIntentFallback(true)
+          }
+        } finally {
+          setIntentClassifying(false)
+        }
+      } else {
+        setIntentSummary(null)
+        setIntentFallback(false)
+      }
       for (const sourceValue of sources) {
-        const previewedRequest = await postVkPreview(buildProjection(sourceValue), base)
+        const previewedRequest = await postVkPreview(buildProjection(sourceValue, intentClassification, goalSnapshot), base)
         const request = { ...previewedRequest, source: sourceValue }
         await postVkJob({
           request,
@@ -1049,7 +1121,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             : runtime?.state === 'installed' && runtime.current === false
               ? {
                 text: '解析引擎有更新', color: 'var(--color-warning)',
-                note: '更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移。',
+                note: installError ?? '更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移。',
                 action: { label: '立即更新', run: () => { void startInstall({ rebuild: false }) } },
               }
           : healthChecked && (!health || !['ok', 'ready'].includes(health.status))
@@ -1076,7 +1148,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       {taskBanners.length > 0 && (
         <AppNotificationPortal>
           <div className="vk-task-banners" aria-live="polite">
-            <AppNotificationStack>
+            <AppNotificationStack onOverflow={(count) => setTaskBanners((current) => current.slice(0, Math.max(1, current.length - count)))}>
               {taskBanners.map((banner) => (
                 <TaskBannerNotice key={banner.id} banner={banner} onDismiss={dismissTaskBanner} />
               ))}
@@ -1147,10 +1219,18 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           {capabilityPacksOpen ? '收起能力中心' : '能力中心'}
         </button>
         {capabilityPacksOpen && (
-          <VkCapabilityPacksPanel
-            baseUrl={base}
-            onRuntimeChanged={() => { void refreshEngineStatus() }}
-          />
+          <>
+            <VkCapabilityPacksPanel
+              baseUrl={base}
+              onRuntimeChanged={() => { void refreshEngineStatus() }}
+            />
+            <div className="mt-3 flex items-center gap-2">
+              <button type="button" data-testid="vk-diagnostic-overrides-toggle" onClick={() => setDiagnosticOverridesOpen((open) => !open)} className="rounded-lg px-3 py-1.5 text-xs" style={outlineStyle}>
+                {diagnosticOverridesOpen ? '收起诊断覆盖' : '诊断覆盖选项'}
+              </button>
+              <div ref={diagnosticOverridesHost} data-testid="vk-diagnostic-overrides-host" />
+            </div>
+          </>
         )}
       </div>
 
@@ -1204,14 +1284,20 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           <textarea
             data-testid="vk-user-goal"
             value={userGoal}
-            onChange={(event) => setUserGoal(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value
+              userGoalRef.current = next
+              setUserGoal(next)
+              setIntentSummary(null)
+              setIntentFallback(false)
+            }}
             placeholder="例如：重点比较价格、耗电和适用人群"
             rows={2}
             maxLength={1000}
             className={`${fieldClass} mt-1 resize-y`}
             style={fieldStyle}
           />
-          <span className="mt-1 block text-[11px]">不用填写也可以，爪爪会自动判断内容和最快可靠的处理方式。</span>
+          <span className="mt-1 block text-[11px]">这里填写的内容会作为本次分析目标，应用于分段提取和最终汇总；不会替换系统处理规则。</span>
         </label>
         <div data-testid="vk-smart-mode" className="vk-smart-mode text-xs">
           <div className="vk-smart-mode-heading">
@@ -1219,16 +1305,25 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             <span>一般无需修改设置</span>
           </div>
           <p>自动判断内容类型、字幕或语音质量、是否需要画面，以及处理深度。</p>
+          {intentClassifying && <p data-testid="vk-intent-classifying" className="mt-1">正在识别本次分析目标…</p>}
+          {intentSummary && (
+            <div data-testid="vk-intent-summary" className="mt-1">
+              <span>已识别目标：{INTENT_LABELS[intentSummary.intent_id] ?? INTENT_LABELS.general_summary}（置信度 {Math.round(intentSummary.confidence * 100)}%）</span>
+              <details className="mt-1">
+                <summary>判断说明</summary>
+                <span>系统会结合字幕、画面及说话人等视频事实决定实际处理链路；意图识别只提供目标偏好。</span>
+              </details>
+            </div>
+          )}
+          {intentFallback && <p data-testid="vk-intent-fallback" className="mt-1">意图识别暂不可用，已回退系统自动分流</p>}
         </div>
-        <details data-testid="vk-advanced-settings" className="vk-manual-settings mb-3 text-xs">
-          <summary className="vk-settings-summary">手动调整（一般无需修改）</summary>
+        {diagnosticOverridesOpen && diagnosticOverridesHost.current && createPortal(<details open data-testid="vk-advanced-settings" className="vk-manual-settings mt-3 text-xs">
+          <summary className="vk-settings-summary">手动覆盖</summary>
           <div className="vk-manual-settings-body">
             <div className="vk-preset-settings">
               <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
                 <span>你想得到什么</span>
-                <select data-testid="vk-preset" value={preset} onChange={(e) => setPreset(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                  {PRESETS.map((value) => <option key={value} value={value}>{PRESET_LABELS[value]}</option>)}
-                </select>
+                <GlassSelect data-testid="vk-preset" aria-label="你想得到什么" value={preset} onChange={setPreset} options={PRESETS.map((value) => ({ value, label: PRESET_LABELS[value] }))} className={`${fieldClass} mt-1`} style={fieldStyle} />
               </label>
               <p data-testid="vk-preset-description" className="vk-preset-description">{PRESET_DESCRIPTIONS[preset]}</p>
             </div>
@@ -1243,24 +1338,24 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
                   强制内容类型
-                  <select data-testid="vk-content-type" value={contentType} onChange={(e) => setContentType(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                    <option value="">跟随处理目的</option>
-                    {CONTENT_TYPES.map((value) => <option key={value} value={value}>{CONTENT_TYPE_LABELS[value]}</option>)}
-                  </select>
+                  <GlassSelect data-testid="vk-content-type" aria-label="强制内容类型" value={contentType} onChange={setContentType} options={[
+                    { value: '', label: '跟随处理目的' },
+                    ...CONTENT_TYPES.map((value) => ({ value, label: CONTENT_TYPE_LABELS[value] })),
+                  ]} className={`${fieldClass} mt-1`} style={fieldStyle} />
                 </label>
                 <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
                   强制媒体路径
-                  <select data-testid="vk-media-policy" value={mediaPolicy} onChange={(e) => setMediaPolicy(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                    <option value="">跟随处理目的</option>
-                    {MEDIA_POLICIES.map((value) => <option key={value} value={value}>{MEDIA_POLICY_LABELS[value]}</option>)}
-                  </select>
+                  <GlassSelect data-testid="vk-media-policy" aria-label="强制媒体路径" value={mediaPolicy} onChange={setMediaPolicy} options={[
+                    { value: '', label: '跟随处理目的' },
+                    ...MEDIA_POLICIES.map((value) => ({ value, label: MEDIA_POLICY_LABELS[value] })),
+                  ]} className={`${fieldClass} mt-1`} style={fieldStyle} />
                 </label>
                 <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
                   模型成本倾向
-                  <select data-testid="vk-budget-profile" value={budgetProfile} onChange={(e) => setBudgetProfile(e.target.value)} className={`${fieldClass} mt-1`} style={fieldStyle}>
-                    <option value="">跟随处理目的</option>
-                    {BUDGET_PROFILES.map((value) => <option key={value} value={value}>{BUDGET_LABELS[value]}</option>)}
-                  </select>
+                  <GlassSelect data-testid="vk-budget-profile" aria-label="模型成本倾向" value={budgetProfile} onChange={setBudgetProfile} options={[
+                    { value: '', label: '跟随处理目的' },
+                    ...BUDGET_PROFILES.map((value) => ({ value, label: BUDGET_LABELS[value] })),
+                  ]} className={`${fieldClass} mt-1`} style={fieldStyle} />
                 </label>
                 <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
                   最高费用（¥）
@@ -1272,18 +1367,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
                 <label className="block" style={{ color: 'var(--color-fg-dim)' }}>
                   覆盖模型推理强度
                   <div className="mt-1 flex gap-1.5">
-                    <input
+                    <GlassCombobox
                       data-testid="vk-reasoning-effort"
-                      list="vk-task-reasoning-options"
+                      aria-label="覆盖模型推理强度"
                       value={reasoningEffort}
-                      onChange={(event) => setReasoningEffort(event.target.value)}
+                      onChange={setReasoningEffort}
+                      options={taskReasoningEfforts.map((effort) => ({ value: effort, label: effort }))}
                       placeholder="自动（跟随通道）"
                       className={fieldClass}
                       style={fieldStyle}
                     />
-                    <datalist id="vk-task-reasoning-options">
-                      {taskReasoningEfforts.map((effort) => <option key={effort} value={effort} />)}
-                    </datalist>
                     <button
                       type="button"
                       data-testid="vk-reasoning-refresh"
@@ -1325,7 +1418,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               </fieldset>
             </details>
           </div>
-        </details>
+        </details>, diagnosticOverridesHost.current)}
         <div data-testid="vk-third-party-data-notice" className="mb-3 rounded-lg px-3 py-2 text-[11px] leading-relaxed" style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}>
           为完成解析，视频中提取的字幕或语音转写会发送到你在“模型配置”中选择的第三方模型服务；爪爪不会替该服务改变其数据处理规则。
         </div>

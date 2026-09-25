@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type Ref } from 'react'
 import {
-  BookOpen, Check, Download, Eye, FilePlus2, FileText, Folder, FolderOpen,
-  FolderPlus, Pencil, Search, Trash2, Video, X,
+  ArrowLeft, BookOpen, Check, Download, Eye, FilePlus2, FileText, Folder, FolderOpen,
+  FolderPlus, Pencil, Search, Trash2, X,
 } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
+import { AppNotificationStack } from '../../components/AppNotificationStack'
+import { EmptyState } from '../../components/EmptyState'
+import { GlassSelect } from '../../components/GlassMenu'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import {
   INSPIRATION_LIBRARY_EVENT,
@@ -13,12 +16,14 @@ import {
   addInspirationItem,
   inspirationKindLabel,
   loadInspirationLibrary,
+  makeUniqueInspirationName,
   saveInspirationLibrary,
   type InspirationFolder,
   type InspirationItem,
   type InspirationLibrary,
 } from './inspirationLibrary'
 import './InspirationLibraryPanel.css'
+import { InspirationFileCard, InspirationFolderCard } from './InspirationLibraryCards'
 
 type FolderFilter = 'all' | string
 type ViewMode = 'edit' | 'read'
@@ -27,26 +32,6 @@ type PendingDelete = { kind: 'item' | 'folder'; id: string; name: string }
 type SearchSuggestion = { kind: 'item' | 'folder'; id: string; label: string; detail: string }
 type FolderOption = { folder: InspirationFolder; depth: number }
 
-function InspirationEmptyState({
-  title,
-  description,
-  icon,
-  className = '',
-}: {
-  title: string
-  description?: string
-  icon?: ReactNode
-  className?: string
-}) {
-  return (
-    <div className={`inspiration-empty-state ${className}`.trim()} role="status" aria-label={title}>
-      {icon}
-      <strong>{title}</strong>
-      {description && <span>{description}</span>}
-    </div>
-  )
-}
-
 function formatDate(value: number): string {
   return new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
@@ -54,12 +39,6 @@ function formatDate(value: number): string {
 function fileNameFor(item: InspirationItem): string {
   const base = item.title.trim().replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || '灵感笔记'
   return `${base}.${item.format}`
-}
-
-function kindIcon(item: InspirationItem) {
-  if (item.kind === 'video') return <Video size={15} aria-hidden="true" />
-  if (item.kind === 'source') return <BookOpen size={15} aria-hidden="true" />
-  return <FileText size={15} aria-hidden="true" />
 }
 
 function isWebSource(value: string): boolean {
@@ -95,7 +74,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
   const [formatDraft, setFormatDraft] = useState<'md' | 'txt'>('md')
   const [itemFolderDraft, setItemFolderDraft] = useState<string>('')
   const [viewMode, setViewMode] = useState<ViewMode>('edit')
-  const [toast, setToast] = useState<ToastState | null>(null)
+  const [toast, setToast] = useState<ToastState[]>([])
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const searchContainerRef = useRef<HTMLDivElement>(null)
   const toastSequenceRef = useRef(0)
@@ -125,14 +104,11 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [pendingDelete])
 
-  const selectedItem = library.items.find((item) => item.id === selectedId) ?? null
+  const selectedItem = library.items.find((item) => item.id === selectedId
+    && item.folderId === (folderFilter === 'all' ? null : folderFilter)) ?? null
 
   useEffect(() => {
-    if (!selectedItem) {
-      const first = library.items.find((item) => item.folderId === null)
-      if (first) setSelectedId(first.id)
-      return
-    }
+    if (!selectedItem) { setSelectedId(null); return }
     setTitleDraft(selectedItem.title)
     setContentDraft(selectedItem.content)
     setFormatDraft(selectedItem.format)
@@ -152,10 +128,8 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
     if (folder.parentId !== parentId) return false
     return !normalizedQuery || folder.name.toLocaleLowerCase().includes(normalizedQuery)
   }).sort((a, b) => a.name.localeCompare(b.name)), [folderFilter, library.folders, normalizedQuery])
-
   const folderOptions = useMemo(() => flattenFolders(library.folders), [library.folders])
   const currentFolder = folderFilter === 'all' ? null : library.folders.find((folder) => folder.id === folderFilter) ?? null
-  const currentFolderTitle = currentFolder?.name ?? '全部灵感'
   const currentFolderPath = useMemo(() => {
     const path: InspirationFolder[] = []
     let folder = currentFolder
@@ -182,7 +156,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
   }, [library.folders, library.items, normalizedQuery])
 
   const showToast = (tone: AppAlertTone, title: string, description?: string) => {
-    setToast({ id: ++toastSequenceRef.current, tone, title, description })
+    setToast((current) => [{ id: ++toastSequenceRef.current, tone, title, description }, ...current])
   }
 
   const persist = (next: InspirationLibrary, success?: { title: string; description?: string }): boolean => {
@@ -190,7 +164,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
       showToast('error', '保存失败', '请检查本地存储空间后重试')
       return false
     }
-    setLibrary(next)
+    setLibrary(loadInspirationLibrary())
     if (success) showToast('success', success.title, success.description)
     return true
   }
@@ -198,7 +172,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
   const createNote = () => {
     const item = addInspirationItem({
       title: '未命名灵感',
-      content: '# 未命名灵感\n\n',
+      content: '',
       kind: 'note',
       format: 'md',
       folderId: folderFilter === 'all' ? null : folderFilter,
@@ -241,20 +215,54 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
     showToast('success', `已创建文件夹“${folder.name}”`)
   }
 
-  const saveSelected = () => {
-    if (!selectedItem) return
-    const title = titleDraft.trim() || '未命名灵感'
+  const selectedIsDirty = selectedItem !== null && (
+    (titleDraft.trim() || '未命名灵感') !== selectedItem.title
+    || contentDraft !== selectedItem.content
+    || formatDraft !== selectedItem.format
+    || (itemFolderDraft || null) !== selectedItem.folderId
+  )
+
+  const saveSelected = (): boolean => {
+    if (!selectedItem) return false
+    const targetFolderId = itemFolderDraft || null
+    const occupiedNames = [
+      ...library.items.filter((item) => item.id !== selectedItem.id && item.folderId === targetFolderId).map((item) => item.title),
+      ...library.folders.filter((folder) => folder.parentId === targetFolderId).map((folder) => folder.name),
+    ]
+    const title = makeUniqueInspirationName(titleDraft, occupiedNames, '未命名灵感')
     const next = updateItem(library, selectedItem.id, {
       title,
       content: contentDraft,
       format: formatDraft,
-      folderId: itemFolderDraft || null,
+      folderId: targetFolderId,
     })
-    persist(next, { title: `已保存“${title}”` })
+    const saved = persist(next, { title: `已保存“${title}”` })
+    if (saved) {
+      const persisted = loadInspirationLibrary().items.find((item) => item.id === selectedItem.id)
+      if (persisted) {
+        setTitleDraft(persisted.title)
+        setItemFolderDraft(persisted.folderId ?? '')
+      }
+    }
+    return saved
+  }
+
+  const leaveEditor = (nextView?: () => void): boolean => {
+    if (selectedIsDirty && !saveSelected()) return false
+    setSelectedId(null)
+    nextView?.()
+    return true
   }
 
   const requestDeleteSelected = () => {
     if (selectedItem) setPendingDelete({ kind: 'item', id: selectedItem.id, name: selectedItem.title || '未命名灵感' })
+  }
+
+  const deleteItemNow = (itemId: string): boolean => {
+    const item = library.items.find((candidate) => candidate.id === itemId)
+    if (!item) return false
+    const next = { ...library, items: library.items.filter((candidate) => candidate.id !== itemId) }
+    return persist(next, { title: `已删除笔记“${item.title || '未命名灵感'}”` })
   }
 
   const requestDeleteFolder = (folderId: string) => {
@@ -267,7 +275,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
     if (pendingDelete.kind === 'item') {
       const next = { ...library, items: library.items.filter((item) => item.id !== pendingDelete.id) }
       if (!persist(next, { title: `已删除笔记“${pendingDelete.name}”` })) return
-      setSelectedId(next.items[0]?.id ?? null)
+      setSelectedId(null)
       setPendingDelete(null)
       return
     }
@@ -279,12 +287,38 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
     }
     const parentId = folder.parentId
     const now = Date.now()
+    const remainingFolders = library.folders.filter((item) => item.id !== folder.id)
+    const remainingItems = library.items
+    const occupiedNames = [
+      ...remainingFolders.filter((item) => item.parentId === parentId).map((item) => item.name),
+      ...remainingItems.filter((item) => item.folderId === parentId).map((item) => item.title),
+    ]
+    const movedFolders = remainingFolders
+      .filter((item) => item.parentId === folder.id)
+      .sort((a, b) => a.createdAt - b.createdAt)
+    const movedItems = remainingItems
+      .filter((item) => item.folderId === folder.id)
+      .sort((a, b) => a.createdAt - b.createdAt)
+    const movedNames = new Map<string, string>()
+    for (const movedFolder of movedFolders) {
+      const name = makeUniqueInspirationName(movedFolder.name, occupiedNames, '未命名文件夹')
+      occupiedNames.push(name)
+      movedNames.set(movedFolder.id, name)
+    }
+    for (const movedItem of movedItems) {
+      const title = makeUniqueInspirationName(movedItem.title, occupiedNames, '未命名灵感')
+      occupiedNames.push(title)
+      movedNames.set(movedItem.id, title)
+    }
     const next: InspirationLibrary = {
       ...library,
-      folders: library.folders
-        .filter((item) => item.id !== folder.id)
-        .map((item) => item.parentId === folder.id ? { ...item, parentId } : item),
-      items: library.items.map((item) => item.folderId === folder.id ? { ...item, folderId: parentId, updatedAt: now } : item),
+      folders: remainingFolders
+        .map((item) => item.parentId === folder.id
+          ? { ...item, name: movedNames.get(item.id) ?? item.name, parentId }
+          : item),
+      items: remainingItems.map((item) => item.folderId === folder.id
+        ? { ...item, title: movedNames.get(item.id) ?? item.title, folderId: parentId, updatedAt: now }
+        : item),
     }
     if (!persist(next, { title: `已删除文件夹“${folder.name}”`, description: '其中的笔记和子文件夹已移到上一级' })) return
     setFolderFilter(parentId ?? 'all')
@@ -303,15 +337,16 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
   }
 
   const selectSuggestion = (suggestion: SearchSuggestion) => {
-    if (suggestion.kind === 'folder') {
-      setFolderFilter(suggestion.id)
-    } else {
-      const item = library.items.find((candidate) => candidate.id === suggestion.id)
-      if (item) {
-        setSelectedId(item.id)
+    const item = suggestion.kind === 'item' ? library.items.find((candidate) => candidate.id === suggestion.id) : null
+    const changedView = leaveEditor(() => {
+      if (suggestion.kind === 'folder') {
+        setFolderFilter(suggestion.id)
+      } else if (item) {
         setFolderFilter(item.folderId ?? 'all')
+        setSelectedId(item.id)
       }
-    }
+    })
+    if (!changedView) return
     setQuery('')
     setSearchOpen(false)
     setActiveSuggestion(-1)
@@ -336,48 +371,27 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
     }
   }
 
-  const renderFolderTree = (parentId: string | null, depth = 0): ReactNode => library.folders
-    .filter((folder) => folder.parentId === parentId)
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((folder) => (
-      <div key={folder.id} className="inspiration-library-folder-tree-node">
-        <div className="inspiration-library-folder-row" style={{ paddingLeft: `${depth * 14}px` }}>
-          <button
-            type="button"
-            data-testid={`inspiration-folder-${folder.id}`}
-            className={folderFilter === folder.id ? 'is-active' : ''}
-            onClick={() => setFolderFilter(folder.id)}
-          >
-            {folderFilter === folder.id ? <FolderOpen size={15} /> : <Folder size={15} />}
-            <span>{folder.name}</span>
-            <span>{library.items.filter((item) => item.folderId === folder.id).length}</span>
-          </button>
-          <button type="button" aria-label={`在 ${folder.name} 中新建子文件夹`} title="新建子文件夹" onClick={() => openFolderForm(folder.id)}><FolderPlus size={13} /></button>
-          <button type="button" aria-label={`删除文件夹 ${folder.name}`} title="删除文件夹" onClick={() => requestDeleteFolder(folder.id)}><Trash2 size={13} /></button>
-        </div>
-        {renderFolderTree(folder.id, depth + 1)}
-      </div>
-    ))
-
   const hasContent = library.items.length > 0 || library.folders.length > 0
   const listCount = visibleItems.length + visibleFolders.length
   const dialogTitleId = 'inspiration-delete-dialog-title'
 
   return (
     <div data-testid="inspiration-library" className="inspiration-library-page">
-      {toast && (
+      {toast.length > 0 && (
         <AppNotificationPortal>
-          <AppAlert
-            key={toast.id}
+          <AppNotificationStack onOverflow={(count) => setToast((current) => current.slice(0, Math.max(1, current.length - count)))}>
+          {toast.map((entry) => <AppAlert
+            key={entry.id}
             testId="inspiration-library-toast"
             className="inspiration-library-toast"
-            tone={toast.tone}
-            title={toast.title}
-            description={toast.description}
+            tone={entry.tone}
+            title={entry.title}
+            description={entry.description}
             durationMs={3200}
-            onExpire={() => setToast(null)}
-            onClose={() => setToast(null)}
-          />
+            onExpire={() => setToast((current) => current.filter((item) => item.id !== entry.id))}
+            onClose={() => setToast((current) => current.filter((item) => item.id !== entry.id))}
+          />)}
+          </AppNotificationStack>
         </AppNotificationPortal>
       )}
 
@@ -436,12 +450,37 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
                     {suggestion.kind === 'folder' ? <Folder size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
                     <span><strong>{suggestion.label}</strong><small>{suggestion.detail}</small></span>
                   </div>
-                )) : <InspirationEmptyState className="inspiration-library-search-empty" title="暂无匹配建议" />}
+                )) : <EmptyState className="inspiration-library-search-empty" icon={<Search size={18} />} title="暂无匹配建议" description="请尝试其他关键词" />}
               </div>
             )}
           </div>
         </div>
       </header>
+
+      {hasContent && (
+        <nav className="inspiration-library-breadcrumb-bar" aria-label="文件夹路径">
+          {folderFilter === 'all' && !selectedItem
+            ? <span data-testid="inspiration-breadcrumb-root" className="inspiration-library-breadcrumb-label is-current" aria-current="page" title="灵感库">灵感库</span>
+            : <button type="button" data-testid="inspiration-breadcrumb-root" className="inspiration-library-breadcrumb-label" title="灵感库" onClick={() => leaveEditor(() => setFolderFilter('all'))}>灵感库</button>}
+          {currentFolderPath.map((folder) => {
+            const isCurrent = folder.id === folderFilter
+            return (
+              <span key={`top-crumb-${folder.id}`} className="inspiration-library-breadcrumb-segment">
+                <span className="inspiration-library-breadcrumb-separator" aria-hidden="true">›</span>
+                {isCurrent && !selectedItem
+                  ? <span className="inspiration-library-breadcrumb-current"><span data-testid={`inspiration-breadcrumb-${folder.id}`} className="inspiration-library-breadcrumb-label is-current" aria-current="page" title={folder.name}>{folder.name}</span><button type="button" aria-label={`删除文件夹 ${folder.name}`} title="删除当前文件夹" onClick={() => requestDeleteFolder(folder.id)}><Trash2 size={13} /></button></span>
+                  : <button type="button" data-testid={`inspiration-breadcrumb-${folder.id}`} className="inspiration-library-breadcrumb-label" title={folder.name} onClick={() => leaveEditor(() => setFolderFilter(folder.id))}>{folder.name}</button>}
+              </span>
+            )
+          })}
+          {selectedItem && (
+            <span className="inspiration-library-breadcrumb-segment">
+              <span className="inspiration-library-breadcrumb-separator" aria-hidden="true">›</span>
+              <span data-testid="inspiration-breadcrumb-note" className="inspiration-library-breadcrumb-label is-current" aria-current="page" title={titleDraft || '未命名灵感'}>{titleDraft || '未命名灵感'}</span>
+            </span>
+          )}
+        </nav>
+      )}
 
       {!hasContent ? (
         <section data-testid="inspiration-library-empty" className="inspiration-library-empty">
@@ -462,64 +501,49 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
         </section>
       ) : (
         <div className="inspiration-library-workspace">
-          <aside className="inspiration-library-sidebar scroll-fade" aria-label="灵感文件夹">
-            <div className="inspiration-library-sidebar-heading">
-              <strong>文件夹</strong>
-              <button type="button" aria-label="新建文件夹" title="新建文件夹" onClick={() => openFolderForm()}><FolderPlus size={16} /></button>
+          {!selectedItem ? (
+          <section className="inspiration-library-list-pane" aria-label="灵感列表">
+            <div className="inspiration-library-pane-heading">
+              <div className="inspiration-library-pane-heading-main">
+                <span className="inspiration-library-pane-count">{listCount} 项</span>
+              </div>
+              <div className="inspiration-library-pane-actions">
+                <button type="button" className="inspiration-library-secondary-action" aria-label="新建文件夹" title="在当前目录新建文件夹" onClick={() => openFolderForm()}><FolderPlus size={15} aria-hidden="true" /></button>
+                <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} aria-hidden="true" />新建笔记</button>
+              </div>
             </div>
             {showFolderForm && (
               <form className="inspiration-library-folder-form" onSubmit={createFolder}>
                 <input autoFocus value={folderDraft} onChange={(event) => setFolderDraft(event.target.value)} placeholder="文件夹名称" aria-label="文件夹名称" />
-                {folderParentDraft && <small>位置：{library.folders.find((folder) => folder.id === folderParentDraft)?.name}</small>}
                 <button type="submit" aria-label="确认新建文件夹" title="确认"><Check size={14} /></button>
               </form>
             )}
-            <nav className="inspiration-library-folder-list">
-              <button type="button" className={folderFilter === 'all' ? 'is-active' : ''} onClick={() => setFolderFilter('all')}><FolderOpen size={15} />全部灵感<span>{library.items.filter((item) => item.folderId === null).length}</span></button>
-              {renderFolderTree(null)}
-            </nav>
-          </aside>
-
-          <section className="inspiration-library-list-pane" aria-label="灵感列表">
-            <div className="inspiration-library-pane-heading">
-              <div className="inspiration-library-pane-heading-main">
-                <nav className="inspiration-library-breadcrumb" aria-label="文件夹路径">
-                  <button type="button" data-testid="inspiration-breadcrumb-root" className={folderFilter === 'all' ? 'is-current' : ''} aria-current={folderFilter === 'all' ? 'page' : undefined} onClick={() => setFolderFilter('all')}>全部灵感</button>
-                  {currentFolderPath.map((folder) => (
-                    <span key={`crumb-${folder.id}`} className="inspiration-library-breadcrumb-segment">
-                      <span className="inspiration-library-breadcrumb-separator" aria-hidden="true">›</span>
-                      <button type="button" data-testid={`inspiration-breadcrumb-${folder.id}`} className={folder.id === folderFilter ? 'is-current' : ''} aria-current={folder.id === folderFilter ? 'page' : undefined} onClick={() => setFolderFilter(folder.id)}>{folder.name}</button>
-                    </span>
-                  ))}
-                </nav>
-                <div><strong>{currentFolderTitle}</strong><span>{listCount} 项</span></div>
-              </div>
-              <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} aria-hidden="true" />新建笔记</button>
-            </div>
             <div className="inspiration-library-items scroll-fade">
-              {listCount === 0 ? <InspirationEmptyState className="inspiration-library-no-results" title="没有匹配的灵感" /> : (
+              {listCount === 0 ? <EmptyState className="inspiration-library-no-results" icon={normalizedQuery ? <Search size={22} /> : <FolderOpen size={22} />} title={normalizedQuery ? '没有匹配的灵感' : '此文件夹为空'} description={normalizedQuery ? '请尝试其他关键词' : '新建笔记或文件夹，开始整理灵感'} /> : (
                 <>
                   {visibleFolders.map((folder) => (
-                    <button type="button" key={folder.id} data-testid={`inspiration-folder-item-${folder.id}`} className="inspiration-library-folder-item" onClick={() => setFolderFilter(folder.id)}>
-                      <span className="inspiration-library-item-icon"><FolderOpen size={15} aria-hidden="true" /></span>
-                      <span className="inspiration-library-item-copy"><strong>{folder.name}</strong><small>文件夹 · {library.items.filter((item) => item.folderId === folder.id).length} 项</small><em>打开文件夹</em></span>
-                    </button>
+                    <div key={folder.id} className="inspiration-library-folder-item-row">
+                      <InspirationFolderCard
+                        folder={folder}
+                        count={library.items.filter((item) => item.folderId === folder.id).length + library.folders.filter((item) => item.parentId === folder.id).length}
+                        paperCount={library.items.filter((item) => item.folderId === folder.id).length}
+                        onOpen={() => setFolderFilter(folder.id)}
+                      />
+                      <button type="button" aria-label={`删除文件夹 ${folder.name}`} title="删除文件夹" onClick={() => requestDeleteFolder(folder.id)}><Trash2 size={14} /></button>
+                    </div>
                   ))}
                   {visibleItems.map((item) => (
-                    <button type="button" key={item.id} data-testid={`inspiration-item-${item.id}`} className={`inspiration-library-item${item.id === selectedId ? ' is-selected' : ''}`} onClick={() => setSelectedId(item.id)}>
-                      <span className={`inspiration-library-item-icon is-${item.kind}`}>{kindIcon(item)}</span>
-                      <span className="inspiration-library-item-copy"><strong>{item.title || '未命名灵感'}</strong><small>{inspirationKindLabel(item.kind)} · {formatDate(item.updatedAt)}</small><em>{item.content.replace(/[#*_`\n]/g, ' ').trim() || '空白笔记'}</em></span>
-                    </button>
+                    <InspirationFileCard key={item.id} item={item} selected={item.id === selectedId} formattedDate={formatDate(item.updatedAt)} onOpen={() => setSelectedId(item.id)} onDelete={() => deleteItemNow(item.id)} />
                   ))}
                 </>
               )}
             </div>
           </section>
-
+          ) : (
           <section className="inspiration-library-editor" aria-label="灵感内容">
-            {selectedItem ? (
               <>
                 <div className="inspiration-library-editor-heading">
+                  <button type="button" className="inspiration-library-editor-return" title="保存修改并返回当前目录" onClick={() => leaveEditor()}><ArrowLeft size={16} aria-hidden="true" />返回目录</button>
                   <div className="inspiration-library-editor-title"><Pencil size={15} aria-hidden="true" /><input data-testid="inspiration-title-input" value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} aria-label="灵感标题" /></div>
                   <div className="inspiration-library-editor-actions">
                     <div className="inspiration-library-view-switch" role="group" aria-label="内容视图">
@@ -536,17 +560,17 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
                     ? <a href={selectedItem.source} target="_blank" rel="noreferrer">打开来源</a>
                     : <span>来源：{selectedItem.source}</span>)}
                   <label>文件夹
-                    <select value={itemFolderDraft} onChange={(event) => setItemFolderDraft(event.target.value)} aria-label="选择文件夹">
-                      <option value="">灵感库（根目录）</option>
-                      {folderOptions.map(({ folder, depth }) => <option key={folder.id} value={folder.id}>{`${'  '.repeat(depth)}${folder.name}`}</option>)}
-                    </select>
+                    <GlassSelect value={itemFolderDraft} onChange={setItemFolderDraft} aria-label="选择文件夹" options={[
+                      { value: '', label: '灵感库（根目录）' },
+                      ...folderOptions.map(({ folder, depth }) => ({ value: folder.id, label: `${'  '.repeat(depth)}${folder.name}` })),
+                    ]} />
                   </label>
                   <label>格式
-                    <select value={formatDraft} onChange={(event) => setFormatDraft(event.target.value as 'md' | 'txt')} aria-label="选择文件格式"><option value="md">Markdown</option><option value="txt">纯文本</option></select>
+                    <GlassSelect value={formatDraft} onChange={(value) => setFormatDraft(value as 'md' | 'txt')} aria-label="选择文件格式" options={[{ value: 'md', label: 'Markdown' }, { value: 'txt', label: '纯文本' }]} />
                   </label>
                 </div>
                 {viewMode === 'edit' ? (
-                  <textarea data-testid="inspiration-content-input" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} aria-label="灵感内容" placeholder="写下你的想法…" />
+                  <textarea data-testid="inspiration-content-input" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} aria-label="灵感内容" placeholder="写点什么..." />
                 ) : (
                   <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown>{contentDraft || '*还没有内容*'}</Markdown></div>
                 )}
@@ -555,14 +579,12 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
                   <button type="button" className="inspiration-library-primary-action" onClick={saveSelected}><Check size={15} aria-hidden="true" />保存</button>
                 </div>
               </>
-            ) : (
-              <div className="inspiration-library-editor-empty"><FileText size={22} /><span>选择一条灵感开始阅读或编辑</span></div>
-            )}
           </section>
+          )}
         </div>
       )}
 
-      {hasContent && <div className="inspiration-library-mobile-add"><button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} />新建笔记</button></div>}
+      {hasContent && !selectedItem && <div className="inspiration-library-mobile-add"><button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} />新建笔记</button></div>}
 
       {pendingDelete && (
         <div

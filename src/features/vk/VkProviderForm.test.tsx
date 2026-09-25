@@ -58,6 +58,7 @@ function settings(over: Record<string, unknown> = {}) {
     roles: { deep_analysis: 'cheap', basic: 'cheap' },
     role_assignments: {},
     role_fallbacks: {},
+    role_composite_enabled: { deep_analysis: false, basic: false },
     role_routes: { deep_analysis: ['cheap'], basic: ['cheap'] },
     role_route_warnings: {},
     role_labels: { deep_analysis: '深度分析', basic: '基础处理' },
@@ -73,6 +74,11 @@ function settings(over: Record<string, unknown> = {}) {
     configured: true,
     ...over,
   }
+}
+
+async function chooseGlass(trigger: HTMLElement, name: string | RegExp) {
+  await userEvent.click(trigger)
+  await userEvent.click(screen.getByRole('option', { name }))
 }
 
 function ccCandidate(over: Record<string, unknown> = {}) {
@@ -132,10 +138,312 @@ test('已保存的 key 以打码值示人 —— 空输入框会被当成"没设
   await waitFor(() => expect(screen.getByTestId('vk-channel-key-cheap')).toBeInTheDocument())
   const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
   expect(input.value).toBe('sk-rela••••••••••6789')
-  expect(input.type).toBe('text')
+  expect(input.type).toBe('password')
   expect(input.readOnly).toBe(true)
   expect(calls.some((c) => c.key.includes('reveal'))).toBe(false)
   expect(document.body.textContent).not.toContain(SECRET)
+})
+
+test('Jev Key is added and tested from its dialog', async () => {
+  const saved = { id: 'jev-new', name: '测试 Key', masked_key: 'jev••••••-key', enabled: true, test_status: 'unknown', input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 }
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/config': { body: { configured: false, model: 'jev-latest', intent_tree_version: 'intent-tree@1' } },
+    'POST /vk/v1/jev/configs': { body: { configured: true, configs: [saved], active_id: 'jev-new' } },
+    'POST /vk/v1/jev/configs/jev-new/test': { body: { ok: true, model: 'jev-latest', message: 'Jev 配置已就绪' } },
+    'GET /vk/v1/jev/configs': { body: { configured: true, configs: [saved], active_id: 'jev-new' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const addButton = await screen.findByTestId('vk-jev-add')
+  expect(addButton).toHaveAccessibleName('新增配置')
+  expect(addButton).toHaveAttribute('title', '新增配置')
+  await userEvent.click(addButton)
+  await userEvent.type(screen.getByLabelText('Jev 配置名称'), '测试 Key')
+  const input = await screen.findByTestId('vk-jev-key') as HTMLInputElement
+  expect(input.type).toBe('password')
+  await userEvent.type(input, 'jev-private-key')
+  await userEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jev/configs')).toBe(true))
+  expect(screen.queryByTestId('vk-jev-modal')).not.toBeInTheDocument()
+  await userEvent.click(within(screen.getByTestId('vk-jev-config-jev-new')).getByRole('button', { name: '测试连接' }))
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jev/configs/jev-new/test')).toBe(true))
+})
+
+test('保存接口 200 但未返回 configs 时刷新列表显示新配置', async () => {
+  const saved = { id: 'jev-refresh', name: '刷新 Key', masked_key: 'jev••••••resh', enabled: true, test_status: 'unknown', input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 }
+  const calls: Array<{ key: string; body: unknown }> = []
+  let configsGets = 0
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    calls.push({ key, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (key === 'GET /vk/v1/providers') return { ok: true, status: 200, json: async () => settings() }
+    if (key === 'GET /vk/v1/jev/config') return { ok: true, status: 200, json: async () => ({ configured: false, model: 'jev-latest', intent_tree_version: 'intent-tree@1' }) }
+    if (key === 'GET /vk/v1/jev/configs') {
+      configsGets += 1
+      return { ok: true, status: 200, json: async () => ({ configured: true, configs: configsGets > 1 ? [saved] : [], active_id: configsGets > 1 ? saved.id : null }) }
+    }
+    if (key === 'POST /vk/v1/jev/configs') return { ok: true, status: 200, json: async () => ({ configured: true }) }
+    return { ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) }
+  }))
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByRole('button', { name: '新增配置' }))
+  await userEvent.type(screen.getByLabelText('Jev 配置名称'), saved.name)
+  await userEvent.type(await screen.findByTestId('vk-jev-key'), 'jev-private-key')
+  await userEvent.click(screen.getByRole('button', { name: '保存' }))
+  expect(await screen.findByTestId('vk-jev-config-jev-refresh')).toBeInTheDocument()
+  expect(calls.filter((call) => call.key === 'GET /vk/v1/jev/configs')).toHaveLength(2)
+})
+
+test('Jev 多配置显示掩码、启用状态和估算消费', async () => {
+  const config = { id: 'jev-a', name: '主 Key', masked_key: 'jev••••••cret', enabled: true, input_tokens: 1_000_000, output_tokens: 50, estimated_cost_usd: 0.042 }
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/config': { body: { configured: true, model: 'jev-latest', intent_tree_version: 'intent-tree@1' } },
+    'GET /vk/v1/jev/configs': { body: { configured: true, configs: [config], active_id: 'jev-a', model: 'jev-latest', intent_tree_version: 'intent-tree@1' } },
+    'POST /vk/v1/jev/configs/jev-a/enable': { body: { configured: true, configs: [config], active_id: 'jev-a' } },
+    'POST /vk/v1/jev/configs/jev-a/test': { body: { ok: true, model: 'jev-latest', message: 'Jev 连接正常' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  expect(await screen.findByText('Jev配置')).toBeInTheDocument()
+  expect(screen.queryByText(/Key 仅用于服务端意图分类/)).not.toBeInTheDocument()
+  expect(await screen.findByText('jev••••••cret')).toBeInTheDocument()
+  const row = screen.getByTestId('vk-jev-config-jev-a')
+  expect(within(row).getByText('使用中')).toBeInTheDocument()
+  expect(within(row).getByTestId('vk-jev-status-light-jev-a')).toBeInTheDocument()
+  expect(row).not.toHaveTextContent('连接正常')
+  expect(row).not.toHaveTextContent('连接失败')
+  expect(row).not.toHaveTextContent('未测试')
+  expect(row).not.toHaveTextContent('尚未使用')
+  expect(screen.getByText('$0.042000')).toBeInTheDocument()
+  await userEvent.click(within(screen.getByTestId('vk-jev-config-jev-a')).getByRole('button', { name: '测试连接' }))
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jev/configs/jev-a/test')).toBe(true))
+})
+
+test('Jev 测试连接按配置独立异步执行，不锁住其他 Key', async () => {
+  const configs = [
+    { id: 'jev-a', name: '主 Key', masked_key: 'jev••••••a', enabled: true, test_status: 'unknown', input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 },
+    { id: 'jev-b', name: '备用 Key', masked_key: 'jev••••••b', enabled: false, test_status: 'unknown', input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 },
+  ]
+  const first = deferred<{ ok: boolean; model: string; message: string }>()
+  const second = deferred<{ ok: boolean; model: string; message: string }>()
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    calls.push(key)
+    if (key === 'GET /vk/v1/providers') return { ok: true, status: 200, json: async () => settings() }
+    if (key === 'GET /vk/v1/jev/config') return { ok: true, status: 200, json: async () => ({ configured: true }) }
+    if (key === 'GET /vk/v1/jev/configs') return { ok: true, status: 200, json: async () => ({ configured: true, configs, active_id: 'jev-a' }) }
+    if (key === 'POST /vk/v1/jev/configs/jev-a/test') return { ok: true, status: 200, json: () => first.promise }
+    if (key === 'POST /vk/v1/jev/configs/jev-b/test') return { ok: true, status: 200, json: () => second.promise }
+    return { ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) }
+  }))
+  render(<VkProviderForm baseUrl={BASE} />)
+  const rowA = await screen.findByTestId('vk-jev-config-jev-a')
+  const rowB = screen.getByTestId('vk-jev-config-jev-b')
+  await userEvent.click(within(rowA).getByRole('button', { name: '测试连接' }))
+  await userEvent.click(within(rowB).getByRole('button', { name: '测试连接' }))
+  await waitFor(() => {
+    expect(calls).toContain('POST /vk/v1/jev/configs/jev-a/test')
+    expect(calls).toContain('POST /vk/v1/jev/configs/jev-b/test')
+  })
+  expect(within(rowA).getByRole('button', { name: '测试连接' })).toBeDisabled()
+  expect(within(rowB).getByRole('button', { name: '测试连接' })).toBeDisabled()
+  first.resolve({ ok: true, model: 'jev-latest', message: 'A 已连接' })
+  second.resolve({ ok: true, model: 'jev-latest', message: 'B 已连接' })
+  await waitFor(() => {
+    expect(within(screen.getByTestId('vk-jev-config-jev-a')).getByRole('button', { name: '测试连接' })).toBeEnabled()
+    expect(within(screen.getByTestId('vk-jev-config-jev-b')).getByRole('button', { name: '测试连接' })).toBeEnabled()
+  })
+})
+
+test('Jev 操作列使用带可访问名称的图标按钮', async () => {
+  const enabled = { id: 'jev-enabled', name: '启用 Key', masked_key: 'jev••••••one', enabled: true, test_status: 'passed', input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 }
+  const disabled = { id: 'jev-disabled', name: '停用 Key', masked_key: 'jev••••••two', enabled: false, test_status: 'unknown', input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 }
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/configs': { body: { configured: true, configs: [enabled, disabled], active_id: enabled.id } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const enabledRow = await screen.findByTestId('vk-jev-config-jev-enabled')
+  const disabledRow = screen.getByTestId('vk-jev-config-jev-disabled')
+  expect(within(enabledRow).getAllByRole('button')).toHaveLength(4)
+  expect(within(enabledRow).getByRole('button', { name: '禁用' })).toBeDisabled()
+  expect(within(disabledRow).getAllByRole('button')).toHaveLength(4)
+  for (const row of [enabledRow, disabledRow]) {
+    for (const button of within(row).getAllByRole('button')) expect(button).toHaveTextContent('')
+  }
+  expect(within(enabledRow).getByRole('button', { name: '测试连接' })).toHaveAttribute('title', '测试连接')
+  expect(within(enabledRow).getByRole('button', { name: '编辑' })).toHaveAttribute('title', '编辑')
+  expect(within(enabledRow).getByRole('button', { name: '删除' })).toHaveAttribute('title', '删除')
+  expect(within(enabledRow).getByText('使用中')).toBeInTheDocument()
+  expect(within(enabledRow).getByTestId('vk-jev-status-light-jev-enabled')).toBeInTheDocument()
+  expect(within(disabledRow).getByRole('button', { name: '启用' })).toHaveAttribute('title', '启用')
+  expect(within(disabledRow).getByRole('button', { name: '测试连接' })).toHaveAttribute('title', '测试连接')
+  expect(within(disabledRow).queryByText('未启用')).not.toBeInTheDocument()
+  expect(within(disabledRow).queryByText('未测试')).not.toBeInTheDocument()
+})
+
+test('Jev 切换启用项后新的使用中按钮仍保持置灰，旧项恢复可用', async () => {
+  const configs = [
+    { id: 'jev-a', name: '主 Key', masked_key: 'jev••••••a', enabled: true, input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 },
+    { id: 'jev-b', name: '备用 Key', masked_key: 'jev••••••b', enabled: false, input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 },
+  ]
+  let activeId = 'jev-a'
+  const { calls } = (() => {
+    const calls: Array<{ key: string; body: unknown }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+      calls.push({ key, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      const response = () => ({ configured: true, configs: configs.map((item) => ({ ...item, enabled: item.id === activeId })), active_id: activeId })
+      if (key === 'GET /vk/v1/providers') return { ok: true, status: 200, json: async () => settings() }
+      if (key === 'GET /vk/v1/jev/configs') return { ok: true, status: 200, json: async () => response() }
+      if (key === 'POST /vk/v1/jev/configs/jev-b/enable') {
+        activeId = 'jev-b'
+        return { ok: true, status: 200, json: async () => ({ data: response() }) }
+      }
+      return { ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) }
+    }))
+    return { calls }
+  })()
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  const rowA = await screen.findByTestId('vk-jev-config-jev-a')
+  const rowB = screen.getByTestId('vk-jev-config-jev-b')
+  const buttonA = within(rowA).getByRole('button', { name: '禁用' })
+  expect(buttonA).toBeDisabled()
+  expect(buttonA).toHaveAttribute('data-state', 'active-disabled')
+  await waitFor(() => expect(buttonA).toHaveStyle({ opacity: '0.5' }))
+  expect(within(rowB).getByRole('button', { name: '启用' })).toBeEnabled()
+
+  await userEvent.click(within(rowB).getByRole('button', { name: '启用' }))
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jev/configs/jev-b/enable')).toBe(true))
+  await waitFor(() => expect(within(screen.getByTestId('vk-jev-config-jev-b')).getByRole('button', { name: '禁用' })).toBeDisabled())
+
+  const nextA = within(screen.getByTestId('vk-jev-config-jev-a')).getByRole('button', { name: '启用' })
+  const nextB = within(screen.getByTestId('vk-jev-config-jev-b')).getByRole('button', { name: '禁用' })
+  expect(nextA).toBeEnabled()
+  expect(nextA).toHaveAttribute('data-state', 'available')
+  expect(nextB).toHaveAttribute('data-state', 'active-disabled')
+  await waitFor(() => expect(nextB).toHaveStyle({ opacity: '0.5' }))
+  await waitFor(() => expect(nextA).toHaveStyle({ opacity: '1' }))
+})
+
+test('Jev 编辑详情默认全密文并可用眼睛切换，启用项按钮保留且置灰', async () => {
+  const config = { id: 'jev-eye', name: 'Jev 主 Key', masked_key: 'jev••••••cret', enabled: true, input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 }
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/config': { body: { configured: true, model: 'jev-latest', intent_tree_version: 'intent-tree@1' } },
+    'GET /vk/v1/jev/configs': { body: { configured: true, configs: [config], active_id: config.id } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const row = await screen.findByTestId('vk-jev-config-jev-eye')
+  const toggle = within(row).getByRole('button', { name: '禁用' })
+  expect(toggle).toBeDisabled()
+  await userEvent.click(within(row).getByRole('button', { name: '编辑' }))
+  const input = screen.getByTestId('vk-jev-key') as HTMLInputElement
+  expect(input.type).toBe('password')
+  expect(input.value).toBe(config.masked_key)
+  const eye = screen.getByTestId('vk-jev-reveal')
+  expect(eye).toBeEnabled()
+  await userEvent.click(eye)
+  expect(input.type).toBe('text')
+  await userEvent.click(eye)
+  expect(input.type).toBe('password')
+})
+
+test('编辑 Jev 配置通过弹窗改名且留空 Key 时保留原密钥', async () => {
+  const config = { id: 'jev-edit', name: '原名称', masked_key: 'jev••••••cret', enabled: true, input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 }
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/configs': { body: { configured: true, configs: [config], active_id: 'jev-edit' } },
+    'PUT /vk/v1/jev/configs/jev-edit': { body: { configured: true, configs: [{ ...config, name: '新名称' }], active_id: 'jev-edit' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const jevRow = await screen.findByTestId('vk-jev-config-jev-edit')
+  await userEvent.click(within(jevRow).getByRole('button', { name: '编辑' }))
+  expect(screen.getByTestId('vk-jev-modal')).toBeInTheDocument()
+  expect((screen.getByTestId('vk-jev-key') as HTMLInputElement).placeholder).toContain('留空以保留当前 Key')
+  await userEvent.clear(screen.getByLabelText('Jev 配置名称'))
+  await userEvent.type(screen.getByLabelText('Jev 配置名称'), '新名称')
+  await userEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(calls.some((call) => call.key === 'PUT /vk/v1/jev/configs/jev-edit')).toBe(true))
+  const body = calls.find((call) => call.key === 'PUT /vk/v1/jev/configs/jev-edit')?.body as Record<string, unknown>
+  expect(body).not.toHaveProperty('api_key')
+  expect(await screen.findByText('新名称')).toBeInTheDocument()
+})
+
+test('旧解析引擎的 Jev 配置接口返回 not found 时自动更新一次', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/configs': { status: 404, body: { error: 'not found' } },
+    'GET /vk/v1/runtime/status': { body: { state: 'installed', current: false } },
+    'POST /vk/v1/runtime/install': { body: { state: 'installing' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByRole('button', { name: '新增配置' }))
+
+  await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/runtime/install')).toHaveLength(1))
+  expect(calls.filter((call) => call.key === 'GET /vk/v1/runtime/status')).toHaveLength(1)
+  expect(await screen.findByTestId('vk-provider-error')).toHaveTextContent('解析引擎版本过旧，正在更新')
+})
+
+test('保存 Jev Key 遇到旧引擎 404 时显示升级提示并只提交一次安装', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/config': { body: { configured: false, model: 'jev-latest', intent_tree_version: 'intent-tree@1' } },
+    'GET /vk/v1/jev/configs': { body: { configured: false, configs: [], active_id: null } },
+    'POST /vk/v1/jev/configs': { status: 404, body: { error: 'not found' } },
+    'POST /vk/v1/jev/config': { status: 404, body: { error: 'not found' } },
+    'GET /vk/v1/runtime/status': { body: { state: 'installed', current: false } },
+    'POST /vk/v1/runtime/install': { body: { state: 'installing' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByRole('button', { name: '新增配置' }))
+  const input = await screen.findByTestId('vk-jev-key') as HTMLInputElement
+  await userEvent.type(input, 'jev-key')
+  await userEvent.click(screen.getByRole('button', { name: '保存' }))
+
+  await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/runtime/install')).toHaveLength(1))
+  expect(calls.filter((call) => call.key === 'GET /vk/v1/runtime/status')).toHaveLength(1)
+  expect(await screen.findByTestId('vk-provider-error')).toHaveTextContent('解析引擎版本过旧，正在更新')
+})
+
+test('Jev 404 但解析引擎已是当前版本时不启动安装', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/config': { body: { configured: false, model: 'jev-latest', intent_tree_version: 'intent-tree@1' } },
+    'GET /vk/v1/jev/configs': { body: { configured: false, configs: [], active_id: null } },
+    'POST /vk/v1/jev/configs': { status: 404, body: { error: 'not found' } },
+    'POST /vk/v1/jev/config': { status: 404, body: { error: 'not found' } },
+    'GET /vk/v1/runtime/status': { body: { state: 'installed', current: true } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByRole('button', { name: '新增配置' }))
+  const input = await screen.findByTestId('vk-jev-key') as HTMLInputElement
+  await userEvent.type(input, 'jev-key')
+  await userEvent.click(screen.getByRole('button', { name: '保存' }))
+
+  expect(await screen.findByTestId('vk-provider-error')).toHaveTextContent('not found')
+  expect(calls.filter((call) => call.key === 'POST /vk/v1/runtime/install')).toHaveLength(0)
+})
+
+test('保存 Jev Key 的普通接口错误原样显示且不检查或更新解析引擎', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/config': { body: { configured: false, model: 'jev-latest', intent_tree_version: 'intent-tree@1' } },
+    'GET /vk/v1/jev/configs': { body: { configured: false, configs: [], active_id: null } },
+    'POST /vk/v1/jev/configs': { status: 503, body: { error: 'Jev service unavailable' } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByRole('button', { name: '新增配置' }))
+  const input = await screen.findByTestId('vk-jev-key') as HTMLInputElement
+  await userEvent.type(input, 'jev-key')
+  await userEvent.click(screen.getByRole('button', { name: '保存' }))
+
+  expect(await screen.findByTestId('vk-provider-error')).toHaveTextContent('Jev service unavailable')
+  expect(calls.filter((call) => call.key.startsWith('GET /vk/v1/runtime/status'))).toHaveLength(0)
+  expect(calls.filter((call) => call.key === 'POST /vk/v1/runtime/install')).toHaveLength(0)
 })
 
 test('点击已保存 key 输入框会先取回明文,未修改保存不提交 api_key', async () => {
@@ -264,10 +572,9 @@ test('推理强度使用接口返回的档位并随通道保存', async () => {
   expect(effort).toBeEnabled()
   await userEvent.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
   await waitFor(() => expect(effort).toBeEnabled())
-  const options = document.querySelectorAll('#vk-channel-reasoning-options-cheap option')
-  expect([...options].map((option) => (option as HTMLOptionElement).value))
-    .toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   await userEvent.clear(effort)
+  expect(screen.getAllByRole('option').map((option) => option.textContent))
+    .toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   await userEvent.type(effort, 'max')
   await commitChannelEditor()
 
@@ -409,8 +716,8 @@ test('确认删除模型配置后才保存,并解绑主角色和备用设置', a
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string>; role_fallbacks: Record<string, string[]> }
-  expect(body.roles).toEqual({ basic: 'smart' })
-  expect(body.role_fallbacks).toEqual({ deep_analysis: ['smart'], basic: [] })
+  expect(body.roles).toEqual({ deep_analysis: 'smart', basic: 'smart' })
+  expect(body.role_fallbacks).toEqual({ deep_analysis: [], basic: [] })
 })
 
 test('删除确认点击弹窗外关闭且不写入', async () => {
@@ -457,7 +764,7 @@ test('删除保存失败保留配置和确认弹窗,错误留在弹窗内且可�
   await userEvent.click(within(dialog).getByRole('button', { name: '删除配置' }))
   expect(await within(dialog).findByRole('alert')).toHaveTextContent('删除保存失败')
   expect(screen.getByTestId('vk-channel-cheap')).toBeInTheDocument()
-  expect(screen.getByTestId('vk-role-basic')).toHaveValue('cheap')
+  expect(screen.getByTestId('vk-role-basic')).toHaveAttribute('data-value', 'cheap')
   expect(screen.queryByTestId('vk-provider-error')).not.toBeInTheDocument()
   routes['POST /vk/v1/providers'] = { status: 200, body: SAVE_OK }
   await userEvent.click(within(dialog).getByRole('button', { name: '删除配置' }))
@@ -527,9 +834,8 @@ test('配置清单移除旧说明,创建弹窗与关键操作都有可访问名�
   expect(rowTest).toHaveTextContent('')
   expect(rowTest.querySelector('svg')).not.toBeNull()
 
-  const fallbackAdd = screen.getByTestId('vk-role-fallback-add-basic')
-  expect(fallbackAdd).toHaveAccessibleName('添加基础处理备用通道')
-  expect(fallbackAdd).toHaveTextContent('')
+  expect(screen.getByTestId('vk-role-composite-basic')).toHaveAccessibleName('基础处理启用复合key')
+  expect(screen.getByTestId('vk-role-composite-deep_analysis')).toHaveAccessibleName('深度分析启用复合key')
 
   await user.click(create)
   const dialog = screen.getByRole('dialog', { name: '创建配置' })
@@ -745,20 +1051,20 @@ test('接口风格随模型名自动填上 —— 别让用户在三个技术名
   await userEvent.click(screen.getByTestId('vk-channel-add'))
 
   const model = screen.getByPlaceholderText(/模型名称/)
-  const style = () => screen.getByDisplayValue(/OpenAI|Anthropic/) as HTMLSelectElement
+  const style = () => screen.getByRole('combobox', { name: '接口协议' })
 
   await userEvent.type(model, 'gpt-5.6-luna')
-  expect(style().value).toBe('openai_responses')
+  expect(style()).toHaveAttribute('data-value', 'openai_responses')
 
   await userEvent.clear(model)
   await userEvent.type(model, 'claude-opus-4-6')
-  expect(style().value).toBe('anthropic_messages')
+  expect(style()).toHaveAttribute('data-value', 'anthropic_messages')
 
   // 用户自己选过之后,再改模型名不再覆盖他的选择。
-  await userEvent.selectOptions(style(), 'openai_completions')
+  await chooseGlass(style(), /OpenAI 兼容/)
   await userEvent.clear(model)
   await userEvent.type(model, 'gpt-5.6-sol')
-  expect(style().value).toBe('openai_completions')
+  expect(style()).toHaveAttribute('data-value', 'openai_completions')
 })
 
 
@@ -789,7 +1095,7 @@ test('两个角色各有主通道下拉,未指派时明确为空', async () => {
   // 中文名由后端给,前端不自己编
   expect(screen.getByText('深度分析')).toBeInTheDocument()
   expect(screen.getByText('基础处理')).toBeInTheDocument()
-  expect((screen.getByTestId('vk-role-deep_analysis') as HTMLSelectElement).value).toBe('')
+  expect(screen.getByTestId('vk-role-deep_analysis')).toHaveAttribute('data-value', '')
   expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('不会换通道掩盖配置问题')
 })
 
@@ -803,14 +1109,158 @@ test('指派角色后立即提交，不再要求页面底部保存', async () =>
   render(<VkProviderForm baseUrl={BASE} />)
   await waitFor(() => expect(screen.getByTestId('vk-role-deep_analysis')).toBeInTheDocument())
 
-  await userEvent.selectOptions(screen.getByTestId('vk-role-deep_analysis'), 'smart')
+  await chooseGlass(screen.getByTestId('vk-role-deep_analysis'), 'Sol')
 
   await waitFor(() => expect(calls.some((c) => c.key === 'POST /vk/v1/providers')).toBe(true))
   const body = calls.find((c) => c.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string> }
   expect(body.roles).toEqual({ deep_analysis: 'smart' })
 })
 
-test('备用通道按用户排序保存,并明确只在临时上游错误时切换', async () => {
+test('两个角色的复合开关独立，关闭与重开保留完整顺序', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
+      channels: [channel(), channel({ id: 'backup', name: '备用', base_url: 'https://backup.example/v1' })],
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: ['backup'] },
+      role_composite_enabled: { basic: true, deep_analysis: false },
+    }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  const basic = await screen.findByTestId('vk-role-composite-basic')
+  const deep = screen.getByTestId('vk-role-composite-deep_analysis')
+  expect(basic).toBeChecked()
+  expect(deep).not.toBeChecked()
+  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+
+  await user.click(basic)
+  expect(deep).not.toBeChecked()
+  expect(screen.getByTestId('vk-role-basic')).toHaveAttribute('data-value', 'cheap')
+  await user.click(basic)
+  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+
+  await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(2))
+  const posts = calls.filter((call) => call.key === 'POST /vk/v1/providers')
+  expect((posts[0].body as { role_fallbacks: Record<string, string[]> }).role_fallbacks.basic).toEqual(['backup'])
+  expect((posts[0].body as { role_composite_enabled: Record<string, boolean> }).role_composite_enabled.basic).toBe(false)
+  expect((posts[1].body as { role_composite_enabled: Record<string, boolean> }).role_composite_enabled.basic).toBe(true)
+})
+
+test('复合菜单列出停用配置并明确标注为不可选', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+    channels: [channel(), channel({ id: 'stopped', name: '已停的配置', enabled: false })],
+    role_assignments: { basic: 'cheap' },
+    role_composite_enabled: { basic: true, deep_analysis: false },
+  }) } })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  await user.click(await screen.findByTestId('vk-role-basic'))
+  expect(screen.getByRole('option', { name: /已停的配置（已停用）/ })).toBeDisabled()
+})
+
+test('复合菜单移除主项后自动晋升下一项并允许清空路线', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
+      channels: [channel(), channel({ id: 'backup', name: '备用', base_url: 'https://backup.example/v1' })],
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: ['backup'] },
+      role_composite_enabled: { basic: true, deep_analysis: false },
+    }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  await user.click(await screen.findByTestId('vk-role-basic'))
+  await user.click(screen.getByRole('option', { name: /GPT 5.6 Luna/ }))
+  await user.click(screen.getByRole('option', { name: /备用/ }))
+
+  await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(2))
+  const posts = calls.filter((call) => call.key === 'POST /vk/v1/providers')
+  expect((posts[0].body as { roles: Record<string, string> }).roles.basic).toBe('backup')
+  expect((posts.at(-1)!.body as { roles: Record<string, string> }).roles.basic).toBeUndefined()
+  expect((posts.at(-1)!.body as { role_fallbacks: Record<string, string[]> }).role_fallbacks.basic).toEqual([])
+})
+
+test('首个路由保存未完成时只追加最新快照且不丢连续选择', async () => {
+  const firstSave = deferred<unknown>()
+  const posts: Array<{ role_fallbacks: Record<string, string[]> }> = []
+  let postCount = 0
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const path = new URL(url).pathname
+    const response = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => body })
+    if (!init?.method && path === '/vk/v1/providers') return response(settings({
+      channels: [
+        channel(),
+        channel({ id: 'backup-a', name: '备用 A', base_url: 'https://a.example/v1' }),
+        channel({ id: 'backup-b', name: '备用 B', base_url: 'https://b.example/v1' }),
+      ],
+      role_assignments: { basic: 'cheap' },
+      role_composite_enabled: { basic: true, deep_analysis: false },
+    }))
+    if (init?.method === 'POST' && path === '/vk/v1/providers') {
+      posts.push(JSON.parse(String(init.body)))
+      postCount += 1
+      if (postCount === 1) return firstSave.promise.then(() => ({ ok: true, status: 200, json: async () => SAVE_OK }))
+      return response(SAVE_OK)
+    }
+    return response({})
+  }))
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  await user.click(await screen.findByTestId('vk-role-basic'))
+  await user.click(screen.getByRole('option', { name: /备用 A/ }))
+  await waitFor(() => expect(posts).toHaveLength(1))
+  await user.click(screen.getByRole('option', { name: /备用 B/ }))
+  expect(posts).toHaveLength(1)
+
+  firstSave.resolve(SAVE_OK)
+  await waitFor(() => expect(posts).toHaveLength(2))
+  expect(posts[0].role_fallbacks.basic).toEqual(['backup-a'])
+  expect(posts[1].role_fallbacks.basic).toEqual(['backup-a', 'backup-b'])
+})
+
+test('停用已选主项时备用项晋升并压紧保存路线', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
+      channels: [channel(), channel({ id: 'backup', name: '备用', base_url: 'https://backup.example/v1' })],
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: ['backup'] },
+      role_composite_enabled: { basic: true, deep_analysis: false },
+    }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  await user.click(await screen.findByTestId('vk-channel-toggle-cheap'))
+
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
+    roles: Record<string, string>
+    role_fallbacks: Record<string, string[]>
+    channels: Array<{ id: string; enabled: boolean }>
+  }
+  expect(body.roles.basic).toBe('backup')
+  expect(body.role_fallbacks.basic).toEqual([])
+  expect(body.channels.find((item) => item.id === 'cheap')?.enabled).toBe(false)
+})
+
+test('复合路由保存失败后回读服务端状态', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings({ role_composite_enabled: { basic: false, deep_analysis: false } }) },
+    'POST /vk/v1/providers': { status: 500, body: { error: '路由保存失败' } },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  const toggle = await screen.findByTestId('vk-role-composite-basic')
+  await user.click(toggle)
+  expect(await screen.findByTestId('vk-provider-error')).toHaveTextContent('路由保存失败')
+  const post = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as { role_composite_enabled: Record<string, boolean> }
+  expect(post.role_composite_enabled.basic).toBe(true)
+  await waitFor(() => expect(screen.getByTestId('vk-role-composite-basic')).not.toBeChecked())
+})
+
+test('复合通道按用户选择顺序保存,取消后重选会追加到末尾', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings({
       channels: [
@@ -820,6 +1270,7 @@ test('备用通道按用户排序保存,并明确只在临时上游错误时切�
       ],
       role_assignments: { basic: 'cheap' },
       role_fallbacks: { basic: ['backup-a', 'backup-b'] },
+      role_composite_enabled: { basic: true, deep_analysis: false },
       role_routes: { basic: ['cheap', 'backup-a', 'backup-b'] },
     }) },
     'POST /vk/v1/providers': { body: SAVE_OK },
@@ -827,21 +1278,21 @@ test('备用通道按用户排序保存,并明确只在临时上游错误时切�
   const user = userEvent.setup()
   render(<VkProviderForm baseUrl={BASE} />)
 
-  const first = await screen.findByTestId('vk-role-fallback-basic-0')
-  expect(first).toHaveValue('backup-a')
-  expect(screen.getByTestId('vk-role-fallback-basic-1')).toHaveValue('backup-b')
-  await user.click(screen.getByRole('button', { name: '下移基础处理备用 1' }))
-  expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup-b')
+  const trigger = await screen.findByTestId('vk-role-basic')
+  expect(trigger).toHaveTextContent('已选 3 个')
+  await user.click(trigger)
+  await user.click(screen.getByRole('option', { name: /备用 A/ }))
+  await user.click(screen.getByRole('option', { name: /备用 A/ }))
 
-  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
-  const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as {
+  await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(2))
+  const body = calls.filter((call) => call.key === 'POST /vk/v1/providers').at(-1)!.body as {
     role_fallbacks: Record<string, string[]>
   }
   expect(body.role_fallbacks.basic).toEqual(['backup-b', 'backup-a'])
   expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('仅超时、429 或上游 5xx')
 })
 
-test('添加备用不会提供主通道或已经选过的通道，并立即提交', async () => {
+test('复合选择不会重复添加主通道或已选通道，并立即提交', async () => {
   const { calls } = stubRoutes({
     'GET /vk/v1/providers': { body: settings({
       channels: [channel(), channel({ id: 'backup', name: '备用' })],
@@ -852,21 +1303,24 @@ test('添加备用不会提供主通道或已经选过的通道，并立即提�
   const user = userEvent.setup()
   render(<VkProviderForm baseUrl={BASE} />)
 
-  await user.click(await screen.findByTestId('vk-role-fallback-add-basic'))
-  expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup')
+  await user.click(await screen.findByTestId('vk-role-composite-basic'))
+  await user.click(screen.getByTestId('vk-role-basic'))
+  await user.click(screen.getByRole('option', { name: /备用/ }))
+  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
 })
 
-test('有主通道但没有备用时显示本地失败风险警告', async () => {
+test('开启复合但只有主通道时提示至少选择两个配置', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings({
     channels: [channel()],
     role_assignments: { basic: 'cheap' },
     role_fallbacks: { basic: [] },
+    role_composite_enabled: { basic: true, deep_analysis: false },
   }) } })
   render(<VkProviderForm baseUrl={BASE} />)
 
   expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(
-    '未设置备用上游；当前通道超时后任务会失败。请添加一个 Base URL 不同的备用配置。',
+    '至少选择 2 个配置才能形成故障切换',
   )
 })
 
@@ -875,24 +1329,32 @@ test('已有备用通道时不显示缺失备用警告', async () => {
     channels: [channel(), channel({ id: 'backup', name: '备用', base_url: 'https://backup.example/v1' })],
     role_assignments: { basic: 'cheap' },
     role_fallbacks: { basic: ['backup'] },
+    role_composite_enabled: { basic: true, deep_analysis: false },
   }) } })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  await screen.findByTestId('vk-role-fallback-basic-0')
+  expect(await screen.findByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
   expect(screen.queryByText('未设置备用上游；当前通道超时后任务会失败。请添加一个 Base URL 不同的备用配置。')).not.toBeInTheDocument()
 })
 
 test('同一上游的主备只提醒不替用户改配置', async () => {
-  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
     channels: [channel(), channel({ id: 'backup', name: '备用' })],
     role_assignments: { basic: 'cheap' },
     role_fallbacks: { basic: ['backup'] },
+    role_composite_enabled: { basic: true, deep_analysis: false },
     role_route_warnings: { basic: ['主通道和备用 1 来自同一上游，故障时可能一起不可用'] },
-  }) } })
+    }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
   render(<VkProviderForm baseUrl={BASE} />)
 
-  expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent('同一上游')
-  expect(screen.getByTestId('vk-role-fallback-basic-0')).toHaveValue('backup')
+  expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent('同一服务')
+  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+  await user.click(screen.getByTestId('vk-role-composite-basic'))
+  expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
 })
 
 test('连接确认永久失效后可禁用且不会自动删除', async () => {
@@ -1148,7 +1610,6 @@ test('获取模型列表与测试连接独立发送请求，连接测试不覆�
     api_style: 'openai_completions',
     probe_generation: false,
   })
-  expect(document.querySelectorAll('#vk-models-cheap option')).toHaveLength(1)
 
   await user.click(within(dialog).getByRole('button', { name: '测试连接' }))
   await waitFor(() => expect(bodies).toHaveLength(2))
@@ -1166,8 +1627,40 @@ test('获取模型列表与测试连接独立发送请求，连接测试不覆�
   expect(notices).toHaveLength(2)
   expect(notices[0]).toHaveTextContent('连接成功 · 同步 · 总耗时 88 ms')
   expect(notices[1]).toHaveTextContent('获取到 1 个模型')
-  await waitFor(() => expect(document.querySelector('#vk-models-cheap option')?.getAttribute('value'))
-    .toBe('listed-model'))
+  const model = screen.getByTestId('vk-channel-model-cheap')
+  await user.clear(model)
+  expect(screen.getByRole('option', { name: 'listed-model' })).toBeInTheDocument()
+})
+
+test('model labels change display while selection and save keep the original ID', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers/test': { body: {
+      ok: true, reason_code: 'ok', message: 'listed',
+      models: ['gpt-6-sol', 'gpt-6-luna', 'unlabeled-model'],
+      model_labels: { 'gpt-6-sol': 'GPT-6 Sol', 'gpt-6-luna': 'GPT-6 Luna' },
+      reasoning_efforts: {}, normalization_notes: [],
+    } },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
+
+  await user.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
+  const model = screen.getByTestId('vk-channel-model-cheap')
+  await user.clear(model)
+  expect(screen.getByRole('option', { name: 'GPT-6 Sol' })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: 'GPT-6 Luna' })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: 'unlabeled-model' })).toBeInTheDocument()
+
+  await user.click(screen.getByRole('option', { name: 'GPT-6 Sol' }))
+  expect(model).toHaveValue('gpt-6-sol')
+  await commitChannelEditor()
+
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+  const saved = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as { channels: { model_id: string }[] }
+  expect(saved.channels[0].model_id).toBe('gpt-6-sol')
 })
 
 test('同一配置获取模型时仍可测试连接，两个按钮各自结束', async () => {
@@ -1204,7 +1697,6 @@ test('同一配置获取模型时仍可测试连接，两个按钮各自结束',
   })
   await waitFor(() => expect(fetchModels).toBeEnabled())
   expect(testConnection).toBeDisabled()
-  expect(document.querySelector('#vk-models-cheap option')).toHaveValue('listed-model')
 
   tested.resolve({
     ok: true, reason_code: 'ok', message: '连接正常', models: ['test-only-model'], normalization_notes: [],
@@ -1216,7 +1708,9 @@ test('同一配置获取模型时仍可测试连接，两个按钮各自结束',
     },
   })
   await waitFor(() => expect(testConnection).toBeEnabled())
-  expect(document.querySelector('#vk-models-cheap option')).toHaveValue('listed-model')
+  const model = screen.getByTestId('vk-channel-model-cheap')
+  await user.clear(model)
+  expect(screen.getByRole('option', { name: 'listed-model' })).toBeInTheDocument()
 })
 
 test('测试失败时给根因和下一步,不是一段原始日志', async () => {
@@ -1271,7 +1765,9 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
   await userEvent.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
   await screen.findByText('获取到 2 个模型')
   // 获取模型列表的结果做成下拉,省掉手抄。
-  expect(document.querySelectorAll('#vk-models-cheap option')).toHaveLength(2)
+  const model = screen.getByTestId('vk-channel-model-cheap')
+  await userEvent.clear(model)
+  expect(screen.getAllByRole('option')).toHaveLength(2)
 })
 
 // ── 其余 ────────────────────────────────────────────────────────────────
@@ -1305,7 +1801,7 @@ test('接口风格可选并随保存/测试一起提交 —— 漏掉它,respons
   await openChannelEditor()
   await waitFor(() => expect(screen.getByTestId('vk-channel-style-cheap')).toBeInTheDocument())
 
-  await userEvent.selectOptions(screen.getByTestId('vk-channel-style-cheap'), 'openai_responses')
+  await chooseGlass(screen.getByTestId('vk-channel-style-cheap'), 'OpenAI Responses')
   await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
   await waitFor(() => expect(calls.some((c) => c.key.includes('providers/test'))).toBe(true))
   const test = calls.find((c) => c.key.includes('providers/test'))!.body as { api_style: string }
@@ -1366,6 +1862,8 @@ test('cc-switch 候选菜单点击内部保留，点击外部自动收起', asyn
 
   await user.click(await screen.findByTestId('vk-ccswitch-import'))
   const menu = screen.getByTestId('vk-ccswitch-picker')
+  expect(menu).toHaveClass('glass-menu-effect')
+  expect(menu.parentElement).toBe(document.body)
   await user.click(menu)
   expect(screen.getByTestId('vk-ccswitch-picker')).toBeInTheDocument()
 
@@ -1387,7 +1885,9 @@ test('模型列表菜单点击内部保留，点击外部自动收起', async ()
 
   await openChannelEditor()
   await user.click(screen.getByTestId('vk-channel-models-fetch-cheap'))
-  await user.click(await screen.findByTestId('vk-channel-models-menu-cheap'))
+  const model = screen.getByTestId('vk-channel-model-cheap')
+  await user.click(model)
+  await user.clear(model)
   const listbox = screen.getByRole('listbox')
   await user.click(listbox)
   expect(screen.getByRole('listbox')).toBeInTheDocument()
@@ -1417,7 +1917,7 @@ test('点某一条才拉明文,并把地址/模型/接口风格/请求头一起�
   await userEvent.click(screen.getByTestId('vk-ccswitch-codex:242d3850'))
   await waitFor(() => expect(screen.getByTestId('vk-channel-hhcoding-sol')).toBeInTheDocument())
   expect(screen.getByTestId('vk-channel-url-hhcoding-sol')).toHaveValue('https://hhcoding.fun')
-  expect(screen.getByTestId('vk-channel-style-hhcoding-sol')).toHaveValue('openai_responses')
+  expect(screen.getByTestId('vk-channel-style-hhcoding-sol')).toHaveAttribute('data-value', 'openai_responses')
   const keyInput = screen.getByTestId('vk-channel-key-hhcoding-sol') as HTMLInputElement
   const reveal = screen.getByTestId('vk-channel-reveal-hhcoding-sol')
   expect(keyInput.type).toBe('password')

@@ -60,6 +60,16 @@ function resolvedRequest(overrides: Partial<VkProcessingRequest> = {}): VkProces
 
 type Route = { status?: number; body: unknown | (() => unknown | Promise<unknown>) }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function stubRoutes(routes: Record<string, Route>) {
   const calls: Array<{ key: string; init?: RequestInit }> = []
   // 显式参数类型:calls[i] 才能被 tsc 正确推断(仓内 BrowserBridgeStatus.test 同款)
@@ -463,12 +473,12 @@ describe('VkPanel', () => {
     await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
 
     expect(screen.getByText('你想重点了解什么（选填）')).toBeInTheDocument()
-    expect(screen.getByText('不用填写也可以，爪爪会自动判断内容和最快可靠的处理方式。')).toBeInTheDocument()
+    expect(screen.getByText('这里填写的内容会作为本次分析目标，应用于分段提取和最终汇总；不会替换系统处理规则。')).toBeInTheDocument()
     expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent('智能处理已开启')
     expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent('一般无需修改设置')
-    expect(screen.getByTestId('vk-advanced-settings')).not.toHaveAttribute('open')
-
-    await user.click(screen.getByText('手动调整（一般无需修改）'))
+    expect(screen.queryByTestId('vk-advanced-settings')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('vk-capability-toggle'))
+    await user.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
     expect(screen.getByTestId('vk-advanced-settings')).toHaveAttribute('open')
     expect(screen.getByTestId('vk-preset')).toHaveAccessibleName('你想得到什么')
     expect(screen.getByTestId('vk-preset-description')).toHaveTextContent('先看重点，通常最快')
@@ -491,7 +501,9 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-developer-settings')).toContainElement(
       screen.getByTestId('vk-reasoning-effort'),
     )
-    expect(screen.getByRole('option', { name: '快速总结' })).toHaveValue('quick-summary')
+    await user.click(screen.getByTestId('vk-preset'))
+    expect(screen.getByRole('option', { name: '快速总结' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: '快速总结' }))
     expect(screen.queryByText('新解析任务')).not.toBeInTheDocument()
     expect(screen.queryByText('视频链接')).not.toBeInTheDocument()
     expect(screen.getByTestId('vk-source-border-glow')).toBeInTheDocument()
@@ -545,12 +557,17 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
 
-    await user.click(screen.getByText('手动调整（一般无需修改）'))
+    await user.click(screen.getByTestId('vk-capability-toggle'))
+    await user.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
     await user.click(screen.getByText('开发者选项（原始参数）'))
-    await user.selectOptions(screen.getByTestId('vk-preset'), 'course-learning')
-    await user.selectOptions(screen.getByTestId('vk-content-type'), 'course_lecture')
-    await user.selectOptions(screen.getByTestId('vk-media-policy'), 'video_required')
-    await user.selectOptions(screen.getByTestId('vk-budget-profile'), 'quality')
+    await user.click(screen.getByTestId('vk-preset'))
+    await user.click(screen.getByRole('option', { name: '课程学习笔记' }))
+    await user.click(screen.getByTestId('vk-content-type'))
+    await user.click(screen.getByRole('option', { name: '课程/讲座' }))
+    await user.click(screen.getByTestId('vk-media-policy'))
+    await user.click(screen.getByRole('option', { name: '下载完整视频并分析画面' }))
+    await user.click(screen.getByTestId('vk-budget-profile'))
+    await user.click(screen.getByRole('option', { name: '质量优先' }))
     await user.type(screen.getByTestId('vk-max-cost'), '2')
     await user.type(screen.getByTestId('vk-reasoning-effort'), 'max')
     await user.click(screen.getByTestId('vk-cap-visual_evidence'))
@@ -559,10 +576,10 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-preset-description')).toHaveTextContent('整理概念、步骤、例子和复习问题')
     await user.click(screen.getByTestId('vk-reset-smart-defaults'))
 
-    expect(screen.getByTestId('vk-preset')).toHaveValue('quick-summary')
-    expect(screen.getByTestId('vk-content-type')).toHaveValue('')
-    expect(screen.getByTestId('vk-media-policy')).toHaveValue('')
-    expect(screen.getByTestId('vk-budget-profile')).toHaveValue('')
+    expect(screen.getByTestId('vk-preset')).toHaveAttribute('data-value', 'quick-summary')
+    expect(screen.getByTestId('vk-content-type')).toHaveAttribute('data-value', '')
+    expect(screen.getByTestId('vk-media-policy')).toHaveAttribute('data-value', '')
+    expect(screen.getByTestId('vk-budget-profile')).toHaveAttribute('data-value', '')
     expect(screen.getByTestId('vk-max-cost')).toHaveValue('')
     expect(screen.getByTestId('vk-reasoning-effort')).toHaveValue('')
     expect(screen.getByTestId('vk-cap-visual_evidence')).not.toBeChecked()
@@ -615,6 +632,8 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), 'https://example.com/v')
     await user.type(screen.getByTestId('vk-user-goal'), '重点比较价格和耗电')
+    await user.click(screen.getByTestId('vk-capability-toggle'))
+    await user.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
     await user.type(screen.getByTestId('vk-max-cost'), '1.5')
     await user.type(screen.getByTestId('vk-reasoning-effort'), 'max')
     await user.click(screen.getByTestId('vk-submit-button'))
@@ -677,6 +696,133 @@ describe('VkPanel', () => {
     expect(projection).not.toHaveProperty('quality_profile')
   })
 
+  it('shows a Chinese intent summary with expandable explanation and sends the bounded classification', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/intent-classify': { body: { classified: true, classification: { intent_id: 'learn_concepts_steps', confidence: 0.91, reason_codes: ['goal_learning'] } } },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'intent-job', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/one')
+    await user.type(screen.getByTestId('vk-user-goal'), '学习步骤')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    expect(await screen.findByTestId('vk-intent-summary')).toHaveTextContent('学习概念与步骤')
+    await user.click(screen.getByText('判断说明'))
+    expect(screen.getByText(/结合字幕、画面及说话人/)).toBeInTheDocument()
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/preview')).toBe(true))
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true))
+    const projection = JSON.parse(String(calls.find((call) => call.key === 'POST /vk/v1/preview')?.init?.body))
+    expect(projection.user_metadata.intent_classification).toEqual({ intent_id: 'learn_concepts_steps', confidence: 0.91 })
+  })
+
+  it('classifies a multi-source batch once and reclassifies after the user goal changes', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/intent-classify': { body: { classified: true, classification: { intent_id: 'quick_overview', confidence: 0.8 } } },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'batch-intent', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/a\nhttps://example.com/b')
+    const goal = screen.getByTestId('vk-user-goal')
+    await user.type(goal, '快速了解重点')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/jobs')).toHaveLength(2))
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/intent-classify')).toHaveLength(1)
+    await user.clear(goal)
+    await user.type(goal, '再比较证据')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/intent-classify')).toHaveLength(2))
+  })
+
+  it('keeps the submitted goal snapshot consistent when the user edits it during classification', async () => {
+    const user = userEvent.setup()
+    const classification = deferred<unknown>()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/providers': { body: { configured: true } },
+      'POST /vk/v1/intent-classify': { body: () => classification.promise },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'goal-snapshot', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/snapshot')
+    const goal = screen.getByTestId('vk-user-goal')
+    await user.type(goal, '快速了解重点')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/intent-classify')).toBe(true))
+
+    await user.clear(goal)
+    await user.type(goal, '比较证据')
+    expect(screen.queryByTestId('vk-intent-summary')).not.toBeInTheDocument()
+    await act(async () => classification.resolve({
+      classified: true,
+      classification: { intent_id: 'quick_overview', confidence: 0.9 },
+    }))
+
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true))
+    const projection = JSON.parse(String(calls.find((call) => call.key === 'POST /vk/v1/preview')?.init?.body))
+    expect(projection.user_metadata).toMatchObject({
+      user_goal: '快速了解重点',
+      intent_classification: { intent_id: 'quick_overview', confidence: 0.9 },
+    })
+    expect(screen.queryByTestId('vk-intent-summary')).not.toBeInTheDocument()
+  })
+
+  it('continues submission after the 1.5 second intent classification timeout', async () => {
+    vi.useFakeTimers()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/providers': { body: { configured: true } },
+      'POST /vk/v1/intent-classify': { body: () => new Promise(() => {}) },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'intent-timeout', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: 'https://example.com/timeout' } })
+    fireEvent.change(screen.getByTestId('vk-user-goal'), { target: { value: '学习基本原理' } })
+    fireEvent.click(screen.getByTestId('vk-submit-button'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(calls.some((call) => call.key === 'POST /vk/v1/intent-classify')).toBe(true)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true)
+    expect(screen.getByTestId('vk-intent-fallback')).toHaveTextContent('已回退系统自动分流')
+    const projection = JSON.parse(String(calls.find((call) => call.key === 'POST /vk/v1/preview')?.init?.body))
+    expect(projection.user_metadata).toMatchObject({ processing_strategy: 'auto', user_goal: '学习基本原理' })
+    expect(projection.user_metadata).not.toHaveProperty('intent_classification')
+  })
+
+  it('falls back on classifier failure and still submits; overrides live only in diagnostics', async () => {
+    const user = userEvent.setup()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/intent-classify': { status: 503, body: { error: 'offline' } },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'fallback-intent', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    expect(screen.queryByTestId('vk-advanced-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-preset')).not.toBeInTheDocument()
+    await user.type(screen.getByTestId('vk-source'), 'https://example.com/fallback')
+    await user.type(screen.getByTestId('vk-user-goal'), '比较证据')
+    await user.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true))
+    expect(screen.getByTestId('vk-intent-fallback')).toHaveTextContent('已回退系统自动分流')
+    await user.click(screen.getByTestId('vk-capability-toggle'))
+    await user.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
+    expect(screen.getByTestId('vk-preset')).toBeInTheDocument()
+    expect(screen.getByTestId('vk-developer-settings')).toBeInTheDocument()
+  })
+
   it('submits each imported link as its own durable job after inline previews', async () => {
     const user = userEvent.setup()
     const first = 'https://youtu.be/video-1'
@@ -689,6 +835,8 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await user.type(screen.getByTestId('vk-source'), `${first}\n${second}`)
+    await user.click(screen.getByTestId('vk-capability-toggle'))
+    await user.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
     await user.type(screen.getByTestId('vk-reasoning-effort'), 'max')
     await user.click(screen.getByTestId('vk-submit-button'))
     await waitFor(() => {
@@ -1076,7 +1224,8 @@ describe('VkPanel', () => {
 
     expect(await screen.findByTestId('vk-third-party-data-notice')).toHaveTextContent('字幕或语音转写')
     expect(screen.getByTestId('vk-third-party-data-notice')).toHaveTextContent('第三方模型服务')
-    await userEvent.click(screen.getByText('手动调整（一般无需修改）'))
+    await userEvent.click(screen.getByTestId('vk-capability-toggle'))
+    await userEvent.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
     await userEvent.click(screen.getByText('开发者选项（原始参数）'))
     expect(screen.getByTestId('vk-max-cost')).toBeDisabled()
     expect(screen.getByText('当前通道未配置可靠单价，不能使用人民币费用上限')).toBeInTheDocument()
@@ -1169,6 +1318,31 @@ describe('VkPanel', () => {
     expect(card).not.toHaveClass('mb-4')
     expect(beam).toContainElement(card as HTMLElement)
     expect(beam?.parentElement).toHaveClass('vk-verdict-spacing')
+  })
+
+  it('shows installation optimistically, submits once, and restores the previous runtime on rejection', async () => {
+    const request = deferred<unknown>()
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { ...RUNTIME_INSTALLED, current: false } },
+      'POST /vk/v1/runtime/detect': { body: { candidates: [candidate({ active: true })], checkedAt: 'x' } },
+      'GET /vk/v1/providers': { body: { channels: [], roles: {}, role_assignments: {}, role_labels: {}, role_hints: {}, unassigned_roles: [], api_styles: [], importable: [], cc_switch: { available: false, path: '', reason: '', skipped: [], candidates: [] }, configured: false } },
+      'POST /vk/v1/runtime/install': { status: 503, body: () => request.promise },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const action = await screen.findByRole('button', { name: '立即更新' })
+
+    fireEvent.click(action)
+    fireEvent.click(action)
+
+    expect(screen.getByTestId('vk-verdict')).toHaveTextContent('正在准备解析环境')
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/runtime/install')).toHaveLength(1)
+
+    request.resolve({ error: '磁盘空间不足' })
+    await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎有更新'))
+    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('磁盘空间不足')
+    expect(screen.getByRole('button', { name: '立即更新' })).toBeInTheDocument()
   })
 
   it('first-run: failed install shows typed reason with retry', async () => {
@@ -1436,7 +1610,8 @@ it.each(['cancelled', 'failed'])('opens previous successful versions after a %s 
   await screen.findByRole('heading', { name: 'Version two' })
   expect(screen.getAllByRole('tab')).toHaveLength(1)
   expect(calls.some((call) => call.key === 'GET /vk/v1/outputs/v3.md')).toBe(false)
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '选择结果版本' }), 'v1')
+  await userEvent.click(screen.getByRole('combobox', { name: '选择结果版本' }))
+  await userEvent.click(screen.getByRole('option', { name: /第 1 次/ }))
   await screen.findByRole('heading', { name: 'Version one' })
   expect(calls.some((call) => call.key === 'GET /vk/v1/outputs/v1.md')).toBe(true)
 })

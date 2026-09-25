@@ -54,6 +54,7 @@ export interface VkPreviewProjection {
   max_cost_cny?: number
   user_metadata?: Record<string, unknown>
   reasoning_effort?: string
+  intent_classification?: VkIntentClassification
 }
 
 export interface VkJobRow {
@@ -272,6 +273,101 @@ export async function postVkPreview(
 ): Promise<VkProcessingRequest> {
   const response = await fetch(`${baseUrl}/vk/v1/preview`, jsonInit(projection))
   return parseVkResponse<VkProcessingRequest>(response, '预检失败')
+}
+
+export interface VkIntentClassification {
+  intent_id: string
+  confidence: number
+  reason_codes?: string[]
+  rule_version?: string
+  fallback?: boolean
+}
+
+export interface VkIntentResult {
+  classified: boolean
+  intent_tree_version?: string
+  intent_labels?: Record<string, string>
+  classification?: VkIntentClassification | null
+}
+
+export async function classifyVkIntent(userGoal: string, baseUrl = DEFAULT_BASE_URL): Promise<VkIntentResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/intent-classify`, jsonInit({ user_goal: userGoal.slice(0, 1000) }))
+  return parseVkResponse<VkIntentResult>(response, '意图识别失败')
+}
+
+export async function fetchVkJevConfig(baseUrl = DEFAULT_BASE_URL): Promise<{ configured: boolean; model: string; intent_tree_version: string }> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/config`)
+  return parseVkResponse(response, 'Jev 配置读取失败')
+}
+
+export async function saveVkJevConfig(apiKey: string, baseUrl = DEFAULT_BASE_URL): Promise<{ saved: boolean; configured: boolean }> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/config`, jsonInit({ api_key: apiKey }))
+  return parseVkResponse(response, 'Jev 配置保存失败')
+}
+
+export async function clearVkJevConfig(baseUrl = DEFAULT_BASE_URL): Promise<{ saved: boolean; configured: boolean }> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/config/clear`, jsonInit({}))
+  return parseVkResponse(response, 'Jev Key 清除失败')
+}
+
+export async function testVkJev(baseUrl = DEFAULT_BASE_URL): Promise<{ ok: boolean; model: string; message: string }> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/test`, jsonInit({}))
+  return parseVkResponse(response, 'Jev 连接测试失败')
+}
+
+export interface VkJevConfig {
+  id: string
+  name: string
+  masked_key: string
+  enabled: boolean
+  test_status?: string
+  last_test_at?: string | null
+  last_used_at?: string | null
+  input_tokens?: number
+  output_tokens?: number
+  estimated_cost_usd?: number
+}
+
+export interface VkJevConfigsResult {
+  configured: boolean
+  model: string
+  intent_tree_version: string
+  configs: VkJevConfig[]
+  active_id: string | null
+  balance_status?: string
+}
+
+export async function fetchVkJevConfigs(baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs`)
+  return parseVkResponse(response, 'Jev 配置读取失败')
+}
+
+export async function saveVkJevConfigItem(name: string, apiKey: string, id?: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs${id ? `/${encodePathSegment(id)}` : ''}`, { ...jsonInit({ name, ...(apiKey ? { api_key: apiKey } : {}), ...(id ? { id } : {}) }), method: id ? 'PUT' : 'POST' })
+  return parseVkResponse(response, 'Jev 配置保存失败')
+}
+
+async function postJevConfigAction(id: string, action: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult | { ok: boolean; model: string; message: string }> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs/${encodePathSegment(id)}/${action}`, jsonInit({}))
+  return parseVkResponse(response, 'Jev 配置操作失败')
+}
+
+export async function enableVkJevConfig(id: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  return await postJevConfigAction(id, 'enable', baseUrl) as VkJevConfigsResult
+}
+
+export async function deleteVkJevConfig(id: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs/${encodePathSegment(id)}`, { method: 'DELETE' })
+  return parseVkResponse(response, 'Jev 配置删除失败')
+}
+
+export async function testVkJevConfig(id: string, baseUrl = DEFAULT_BASE_URL): Promise<{ ok: boolean; model: string; message: string }> {
+  return await postJevConfigAction(id, 'test', baseUrl) as { ok: boolean; model: string; message: string }
+}
+
+export async function fetchVkJevUsage(baseUrl = DEFAULT_BASE_URL): Promise<Record<string, unknown>> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/usage`)
+  return parseVkResponse(response, 'Jev 用量读取失败')
 }
 
 export async function postVkJob(
@@ -595,6 +691,7 @@ export interface VkProviderSettings {
   role_assignments: Record<string, string>
   /** 角色 → 用户显式排序的备用通道，不含主通道。 */
   role_fallbacks: Record<string, string[]>
+  role_composite_enabled: Record<string, boolean>
   /** 角色 → 实际可用的完整顺序（主通道在前）。 */
   role_routes: Record<string, string[]>
   /** 同一上游等不会阻止保存、但会削弱冗余的提醒。 */
@@ -618,6 +715,8 @@ export interface VkProviderTestResult {
   retryable?: boolean
   detail?: string | null
   models?: string[]
+  /** Optional per-model friendly labels keyed by the original model ID. */
+  model_labels?: Record<string, string>
   /** Optional per-model capability metadata returned by compatible providers' /models extensions. */
   reasoning_efforts?: Record<string, string[]>
   base_url?: string
@@ -678,6 +777,7 @@ export async function saveVkProviderSettings(
     channels: VkChannelPayload[]
     roles?: Record<string, string>
     role_fallbacks?: Record<string, string[]>
+    role_composite_enabled?: Record<string, boolean>
   },
   baseUrl = DEFAULT_BASE_URL,
 ): Promise<VkProviderSaveResult> {

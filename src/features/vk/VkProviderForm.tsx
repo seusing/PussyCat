@@ -1,17 +1,26 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import { MorphIcon } from 'morphicons/react'
 import { Activity as MorphActivity, Download as MorphDownload, Plus as MorphPlus, type IconNode } from 'lucide'
 import {
-  Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Lock, LockOpen, Pen, Trash2, X,
+  Check, Copy, Eye, EyeOff, Lock, LockOpen, Pen, Trash2, X,
 } from 'lucide-react'
 import './VkProviderForm.css'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
+import { GlassCombobox, GlassMultiSelect, GlassSelect } from '../../components/GlassMenu'
+import { useGlassMenuSurface } from '../../components/GlassMenu'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
 import {
   fetchVkProviderSettings,
+  fetchVkJevConfigs,
+  saveVkJevConfigItem,
+  enableVkJevConfig,
+  deleteVkJevConfig,
+  testVkJevConfig,
+  saveVkJevConfig,
   importVkCcSwitchChannel,
   revealVkProviderKey,
   saveVkProviderSettings,
@@ -19,7 +28,11 @@ import {
   type VkChannelPayload,
   type VkProviderSettings,
   type VkProviderTestResult,
+  type VkJevConfig,
+  fetchVkRuntimeStatus,
+  postVkRuntimeInstall,
 } from '../../host/vkClient'
+import { HostRequestError } from '../../host/errors'
 
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
 const fieldStyle = {
@@ -46,15 +59,22 @@ type ChannelBusyState = {
 
 type ScopedError = { message: string; location: AlertLocation }
 type PersistResult = { ok: boolean; noticeMessage?: string; error?: string }
+type RouteSnapshot = {
+  drafts: Draft[]
+  roles: Record<string, string>
+  roleFallbacks: Record<string, string[]>
+  roleCompositeEnabled: Record<string, boolean>
+}
 
 const NOTICE_DURATION_MS = 2000
+const ROUTING_ROLES = ['deep_analysis', 'basic'] as const
 
-function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean, dismiss: () => void) {
+function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean, dismiss: () => void, portalRef?: { current: HTMLElement | null }) {
   useEffect(() => {
     if (!open) return
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target
-      if (target instanceof Node && !ref.current?.contains(target)) dismiss()
+      if (target instanceof Node && !ref.current?.contains(target) && !portalRef?.current?.contains(target)) dismiss()
     }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') dismiss()
@@ -65,7 +85,7 @@ function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean
       document.removeEventListener('mousedown', onMouseDown)
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [ref, open, dismiss])
+  }, [ref, portalRef, open, dismiss])
 }
 
 function VisibilityButton({
@@ -181,6 +201,16 @@ function cloneDraft(draft: Draft): Draft {
   return { ...draft, extra_headers: { ...draft.extra_headers } }
 }
 
+function routeHasDuplicateHost(route: string[], drafts: Draft[]): boolean {
+  const byId = new Map(drafts.filter((draft) => draft.enabled).map((draft) => [draft.id, draft]))
+  const hosts = route.flatMap((id) => {
+    const baseUrl = byId.get(id)?.base_url
+    if (!baseUrl) return []
+    try { return [new URL(baseUrl).hostname.toLocaleLowerCase()] } catch { return [] }
+  })
+  return hosts.length !== new Set(hosts).size
+}
+
 function ActionIconButton({
   testId,
   label,
@@ -192,6 +222,9 @@ function ActionIconButton({
   iconState,
   appearance = 'default',
   size = 'sm',
+  state,
+  className = '',
+  opacity,
 }: {
   testId: string
   label: string
@@ -203,6 +236,9 @@ function ActionIconButton({
   iconState?: string
   appearance?: 'default' | 'primary'
   size?: 'sm' | 'md'
+  state?: string
+  className?: string
+  opacity?: number
 }) {
   const color = appearance === 'primary'
     ? 'var(--color-on-accent)'
@@ -216,15 +252,17 @@ function ActionIconButton({
       type="button"
       data-testid={testId}
       data-icon={iconState}
+      data-state={state}
       aria-label={label}
       title={label}
       onClick={onClick}
       onMouseEnter={() => { if (!disabled) onHoverChange?.(true) }}
       onMouseLeave={() => onHoverChange?.(false)}
       disabled={disabled}
+      animate={opacity === undefined ? undefined : { opacity }}
       whileTap={disabled ? undefined : { opacity: 0.78 }}
       data-tooltip={label}
-      className={`vk-icon-action inline-flex ${size === 'md' ? 'h-9 w-9' : 'h-8 w-8'} items-center justify-center rounded-lg p-0 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${appearance === 'primary' ? 'vk-icon-action--primary' : ''}`}
+      className={`vk-icon-action inline-flex ${size === 'md' ? 'h-9 w-9' : 'h-8 w-8'} items-center justify-center rounded-lg p-0 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${appearance === 'primary' ? 'vk-icon-action--primary' : ''} ${className}`}
       style={{
         border: appearance === 'primary' ? '1px solid transparent' : '1px solid var(--color-line)',
         color,
@@ -269,12 +307,13 @@ function EditActionButton({ testId, onClick, disabled = false }: { testId: strin
   )
 }
 
-function EnableActionButton({ testId, enabled, onClick, disabled = false }: { testId: string; enabled: boolean; onClick: () => void; disabled?: boolean }) {
+function EnableActionButton({ testId, enabled, onClick, disabled = false, mutedWhenDisabled = false }: { testId: string; enabled: boolean; onClick: () => void; disabled?: boolean; mutedWhenDisabled?: boolean }) {
   const [hovered, setHovered] = useState(false)
   const icon = enabled ? 'lock' : 'lock-open'
   const Icon = enabled ? Lock : LockOpen
+  const activeDisabled = mutedWhenDisabled && enabled && disabled
   return (
-    <ActionIconButton testId={testId} label={enabled ? '禁用' : '启用'} onClick={onClick} disabled={disabled} tone={enabled ? 'warning' : 'default'} onHoverChange={setHovered} iconState={icon}>
+    <ActionIconButton testId={testId} label={enabled ? '禁用' : '启用'} onClick={onClick} disabled={disabled} tone={enabled ? 'warning' : 'default'} onHoverChange={setHovered} iconState={icon} state={activeDisabled ? 'active-disabled' : enabled ? 'enabled' : 'available'} className={activeDisabled ? 'vk-jev-enable-action vk-jev-enable-action--active' : undefined} opacity={disabled ? 0.5 : 1}>
       <span className="inline-flex h-4 w-4 items-center justify-center" aria-hidden="true">
         <motion.span animate={hovered ? { x: [0, -1.5, 1.5, -1, 1, 0], rotate: [0, -5, 5, -3, 3, 0] } : { x: 0, rotate: 0 }} transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} className="inline-flex">
           <Icon size={14} />
@@ -304,12 +343,42 @@ function formatTestNotice(result: VkProviderTestResult): string {
   ].filter(Boolean).join('；')
 }
 
+function getModelLabel(modelId: string, labels?: Record<string, string>): string {
+  return labels?.[modelId] ?? modelId
+}
+
+function isJevNotFound(error: unknown): boolean {
+  if (!(error instanceof HostRequestError)) return false
+  if (error.status !== 404) return false
+  return /not\s*found/i.test(error.summary)
+}
+
+function normalizeJevConfigsResult(value: unknown): Partial<{
+  configured: boolean
+  configs: VkJevConfig[]
+  active_id: string | null
+}> {
+  if (!value || typeof value !== 'object') return {}
+  let record = value as Record<string, unknown>
+  for (let depth = 0; depth < 3; depth += 1) {
+    const wrapped = record.data ?? record.result
+    if (!wrapped || typeof wrapped !== 'object' || Array.isArray(wrapped)) break
+    record = wrapped as Record<string, unknown>
+  }
+  const activeId = typeof record.active_id === 'string' ? record.active_id : null
+  const configs = Array.isArray(record.configs)
+    ? (record.configs as VkJevConfig[]).map((item) => ({ ...item, enabled: activeId ? item.id === activeId : item.enabled === true }))
+    : undefined
+  return { ...record, ...(configs ? { configs } : {}), ...(activeId !== null || 'active_id' in record ? { active_id: activeId } : {}) } as Partial<{ configured: boolean; configs: VkJevConfig[]; active_id: string | null }>
+}
+
 type ChannelEditorProps = {
   draft: Draft
   settings: VkProviderSettings
   saved?: VkProviderSettings['channels'][number]
   result?: VkProviderTestResult
   models: string[]
+  modelLabels: Record<string, string>
   availableReasoningEfforts: string[]
   channelBusy?: ChannelBusyState
   onPatch: (id: string, next: Partial<Draft>) => void
@@ -326,6 +395,7 @@ function ChannelEditor({
   saved,
   result,
   models,
+  modelLabels,
   availableReasoningEfforts,
   channelBusy,
   onPatch,
@@ -338,13 +408,10 @@ function ChannelEditor({
   const showSavedMask = !draft.key_loaded && !draft.key_touched && draft.key_masked !== ''
   const canRevealOrToggle = draft.key_loaded || Boolean(saved?.key_stored || draft.key_masked)
   const keyValue = showSavedMask ? draft.key_masked : draft.api_key
-  const keyType = showSavedMask || draft.key_visible ? 'text' : 'password'
+  const keyType = draft.key_visible ? 'text' : 'password'
   const channelIsBusy = Boolean(channelBusy?.models || channelBusy?.test || channelBusy?.reveal)
   const modelsBusy = Boolean(channelBusy?.models)
   const testBusy = Boolean(channelBusy?.test)
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
-  const modelMenuRef = useRef<HTMLDivElement>(null)
-  useDismissOnOutside(modelMenuRef, modelMenuOpen, () => setModelMenuOpen(false))
   const field = (name: keyof typeof errors, label: string, child: ReactNode) => (
     <div className={`vk-validation-field ${errors[name] ? 'is-error' : ''}`}>
       <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>{label}</div>
@@ -362,14 +429,15 @@ function ChannelEditor({
         onChange={(e) => { onPatch(draft.id, { base_url: e.target.value }); onClearError?.('base_url') }}
       />)}
       {field('model_id', '模型 ID', <div className="relative flex items-start gap-2">
-        <input
+        <GlassCombobox
           data-testid={`vk-channel-model-${draft.id}`}
+          aria-label="模型 ID"
           className={fieldClass}
           style={{ ...fieldStyle, flex: 1, minWidth: 0 }}
-          list={models.length ? `vk-models-${draft.id}` : undefined}
+          options={models.map((model) => ({ value: model, label: getModelLabel(model, modelLabels) }))}
           placeholder="模型名称，例如 gpt-5.6-luna，可直接输入"
           value={draft.model_id}
-          onChange={(e) => { onPatchModel(draft, e.target.value); onClearError?.('model_id') }}
+          onChange={(value) => { onPatchModel(draft, value); onClearError?.('model_id') }}
         />
         <ActionIconButton
           testId={`vk-channel-models-fetch-${draft.id}`}
@@ -381,21 +449,6 @@ function ChannelEditor({
         >
           <MorphActionGlyph icon={MorphDownload} size={15} className={modelsBusy ? 'vk-provider-icon--busy' : ''} />
         </ActionIconButton>
-        {models.length > 0 && (
-          <div ref={modelMenuRef} className="relative shrink-0">
-            <button type="button" data-testid={`vk-channel-models-menu-${draft.id}`} aria-label="选择模型" title="选择模型" className="vk-icon-action inline-flex h-9 w-9 items-center justify-center rounded-lg" style={outlineStyle} onClick={() => setModelMenuOpen((open) => !open)}>
-              <ChevronDown size={16} aria-hidden="true" />
-            </button>
-            {modelMenuOpen && <div role="listbox" className="vk-glass-menu absolute right-0 top-[calc(100%+0.35rem)] z-20 max-h-48 min-w-[14rem] overflow-auto rounded-lg p-1">
-              {models.map((model) => <button key={model} type="button" role="option" aria-selected={model === draft.model_id} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-white/5" onClick={() => { onPatchModel(draft, model); setModelMenuOpen(false) }}>
-                <OverflowTooltip text={model} />
-              </button>)}
-            </div>}
-          </div>
-        )}
-        <datalist id={`vk-models-${draft.id}`}>
-          {models.map((model) => <option key={model} value={model} />)}
-        </datalist>
       </div>)}
 
       <div className={`vk-validation-field vk-key-field ${errors.api_key ? 'is-error' : ''}`}>
@@ -439,31 +492,29 @@ function ChannelEditor({
       </div>
 
       <div className="vk-provider-protocol-row" data-testid={`vk-channel-protocol-row-${draft.id}`}>
-        {field('api_style', '接口协议', <select
+        {field('api_style', '接口协议', <GlassSelect
           data-testid={`vk-channel-style-${draft.id}`}
+          aria-label="接口协议"
           className="vk-provider-protocol-control rounded-lg px-2 py-1.5 text-xs outline-none"
           style={fieldStyle}
           value={draft.api_style}
-          onChange={(e) => { onPatch(draft.id, { api_style: e.target.value, api_style_touched: true }); onClearError?.('api_style') }}
-        >
-          {settings.api_styles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
-        </select>)}
+          onChange={(value) => { onPatch(draft.id, { api_style: value, api_style_touched: true }); onClearError?.('api_style') }}
+          options={settings.api_styles.map((style) => ({ value: style.id, label: style.label }))}
+        />)}
         <div className={`vk-validation-field ${errors.reasoning_effort ? 'is-error' : ''}`}>
           <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>推理强度</div>
-          <input
+          <GlassCombobox
             data-testid={`vk-channel-reasoning-${draft.id}`}
-            list={`vk-channel-reasoning-options-${draft.id}`}
+            aria-label="推理强度"
             className="vk-provider-protocol-control rounded-lg px-2 py-1.5 text-xs outline-none"
             style={fieldStyle}
             value={draft.reasoning_effort}
             disabled={testBusy}
             placeholder="默认 medium"
             title={availableReasoningEfforts.length ? '默认 medium；下拉建议来自本次接口请求，也可以输入接口支持的其他值' : '默认 medium，也可输入中转站支持的值'}
-            onChange={(e) => { onPatch(draft.id, { reasoning_effort: e.target.value }); onClearError?.('reasoning_effort') }}
+            onChange={(value) => { onPatch(draft.id, { reasoning_effort: value }); onClearError?.('reasoning_effort') }}
+            options={availableReasoningEfforts.map((effort) => ({ value: effort, label: effort }))}
           />
-          <datalist id={`vk-channel-reasoning-options-${draft.id}`}>
-            {availableReasoningEfforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
-          </datalist>
           {errors.reasoning_effort && <div className="vk-validation-message" role="alert">{errors.reasoning_effort}</div>}
         </div>
         <div className="vk-provider-protocol-action">
@@ -502,11 +553,24 @@ function ChannelEditor({
  */
 export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved?: () => void }) {
   const [settings, setSettings] = useState<VkProviderSettings | null>(null)
+  const [jevConfigs, setJevConfigs] = useState<VkJevConfig[]>([])
+  const [jevActiveId, setJevActiveId] = useState<string | null>(null)
+  const [jevName, setJevName] = useState('')
+  const [jevEditingId, setJevEditingId] = useState<string | null>(null)
+  const [jevModalOpen, setJevModalOpen] = useState(false)
+  const [jevKey, setJevKey] = useState('')
+  const [jevKeyMasked, setJevKeyMasked] = useState('')
+  const [jevKeyTouched, setJevKeyTouched] = useState(false)
+  const [jevKeyVisible, setJevKeyVisible] = useState(false)
+  const [jevBusy, setJevBusy] = useState(false)
+  const [jevTesting, setJevTesting] = useState<Record<string, boolean>>({})
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [roles, setRoles] = useState<Record<string, string>>({})
   const [roleFallbacks, setRoleFallbacks] = useState<Record<string, string[]>>({})
+  const [roleCompositeEnabled, setRoleCompositeEnabled] = useState<Record<string, boolean>>({})
   const [results, setResults] = useState<Record<string, VkProviderTestResult>>({})
   const [models, setModels] = useState<Record<string, string[]>>({})
+  const [modelLabels, setModelLabels] = useState<Record<string, Record<string, string>>>({})
   const [reasoningEfforts, setReasoningEfforts] = useState<Record<string, Record<string, string[]>>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [channelBusy, setChannelBusy] = useState<Record<string, ChannelBusyState>>({})
@@ -522,11 +586,43 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
   const savingRef = useRef(false)
+  const routeSaveRunning = useRef(false)
+  const pendingRouteSnapshot = useRef<RouteSnapshot | null>(null)
   const noticeSeq = useRef(0)
   const settingsLoaded = useRef(false)
+  const runtimeSyncRef = useRef<Promise<boolean> | null>(null)
   const ccSwitchPickerRef = useRef<HTMLDivElement>(null)
+  const ccSwitchPickerMenuRef = useRef<HTMLDivElement>(null)
+  const [ccSwitchPickerPosition, setCcSwitchPickerPosition] = useState({ top: 0, left: 0, width: 224, maxHeight: 320 })
   const modalId = modalSession?.id ?? null
-  useDismissOnOutside(ccSwitchPickerRef, ccSwitchPickerOpen, () => setCcSwitchPickerOpen(false))
+  useDismissOnOutside(ccSwitchPickerRef, ccSwitchPickerOpen, () => setCcSwitchPickerOpen(false), ccSwitchPickerMenuRef)
+  useGlassMenuSurface(ccSwitchPickerMenuRef, ccSwitchPickerOpen)
+  useLayoutEffect(() => {
+    if (!ccSwitchPickerOpen || !ccSwitchPickerRef.current || !ccSwitchPickerMenuRef.current) return
+    const anchor = ccSwitchPickerRef.current.getBoundingClientRect()
+    const menuHeight = ccSwitchPickerMenuRef.current.getBoundingClientRect().height
+    const margin = 8
+    const width = Math.min(224, window.innerWidth - margin * 2)
+    const below = window.innerHeight - anchor.bottom - margin - 6
+    const above = anchor.top - margin - 6
+    const openAbove = below < Math.min(menuHeight, 200) && above > below
+    setCcSwitchPickerPosition({
+      top: openAbove ? Math.max(margin, anchor.top - menuHeight - 6) : anchor.bottom + 6,
+      left: Math.max(margin, Math.min(anchor.right - width, window.innerWidth - width - margin)),
+      width,
+      maxHeight: Math.max(96, openAbove ? above : below),
+    })
+  }, [ccSwitchPickerOpen])
+  useEffect(() => {
+    if (!ccSwitchPickerOpen) return
+    const close = () => setCcSwitchPickerOpen(false)
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [ccSwitchPickerOpen])
 
   useEffect(() => {
     if (!pendingDelete) return
@@ -539,6 +635,19 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setNotices((current) => [notice, ...current])
   }, [])
 
+  const syncLegacyRuntime = useCallback(() => {
+    if (runtimeSyncRef.current) return runtimeSyncRef.current
+    const task = (async () => {
+      const status = await fetchVkRuntimeStatus(baseUrl)
+      if (status.state !== 'installed' || status.current !== false) return false
+      showNotice('error', '解析引擎版本过旧，正在更新，请稍后重试', 'form', true)
+      await postVkRuntimeInstall(baseUrl, { rebuild: false })
+      return true
+    })().finally(() => { runtimeSyncRef.current = null })
+    runtimeSyncRef.current = task
+    return task
+  }, [baseUrl, showNotice])
+
   const load = useCallback(async () => {
     try {
       const loaded = await fetchVkProviderSettings(baseUrl)
@@ -549,6 +658,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       setRoleFallbacks(Object.fromEntries(
         Object.entries(loaded.role_fallbacks ?? {}).map(([role, ids]) => [role, [...ids]]),
       ))
+      setRoleCompositeEnabled(Object.fromEntries(
+        Object.keys(loaded.role_labels).map((role) => [
+          role,
+          loaded.role_composite_enabled?.[role] ?? Boolean(loaded.role_fallbacks?.[role]?.length),
+        ]),
+      ))
     } catch (err) {
       const message = err instanceof Error ? err.message : '模型配置读取失败'
       if (settingsLoaded.current) showNotice('error', message, 'form', true)
@@ -556,6 +671,80 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }, [baseUrl, showNotice])
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void fetchVkJevConfigs(baseUrl)
+      .then((value) => { const normalized = normalizeJevConfigsResult(value); setJevConfigs(Array.isArray(normalized.configs) ? normalized.configs : []); setJevActiveId(normalized.active_id ?? null) })
+      .catch(async (err) => {
+        if (!isJevNotFound(err)) return
+        try {
+          await syncLegacyRuntime()
+        } catch (runtimeError) {
+          showNotice('error', `解析引擎更新失败：${runtimeError instanceof Error ? runtimeError.message : '未知错误'}`, 'form', true)
+        }
+      })
+  }, [baseUrl, showNotice, syncLegacyRuntime])
+
+  const reloadJevConfigs = async () => {
+    const value = await fetchVkJevConfigs(baseUrl)
+    const normalized = normalizeJevConfigsResult(value)
+    setJevConfigs(Array.isArray(normalized.configs) ? normalized.configs : []); setJevActiveId(normalized.active_id ?? null)
+  }
+
+  const saveJev = async () => {
+    setJevBusy(true)
+    try {
+      const requestedName = jevName.trim() || `Jev ${jevConfigs.length + 1}`
+      let usedLegacyFallback = false
+      let result: { configured: boolean; configs: VkJevConfig[]; active_id: string | null }
+      try { result = await saveVkJevConfigItem(requestedName, jevKeyTouched ? jevKey.trim() : '', jevEditingId ?? undefined, baseUrl) }
+      catch (err) {
+        if (!isJevNotFound(err)) throw err
+        usedLegacyFallback = true
+        try { if (await syncLegacyRuntime()) return } catch (runtimeError) { showNotice('error', `解析引擎更新失败：${runtimeError instanceof Error ? runtimeError.message : '未知错误'}`, 'form', true); return }
+        const legacy = await saveVkJevConfig(jevKeyTouched ? jevKey.trim() : '', baseUrl)
+        result = { ...legacy, configs: jevConfigs, active_id: jevActiveId }
+      }
+      const normalized = normalizeJevConfigsResult(result)
+      let configs = Array.isArray(normalized.configs) ? normalized.configs : []
+      let activeId = normalized.active_id ?? null
+      const hasSavedItem = configs.length > 0 && (jevEditingId
+        ? configs.some((item) => item.id === jevEditingId)
+        : configs.some((item) => item.name === requestedName))
+      if (!usedLegacyFallback && !hasSavedItem) {
+        const refreshed = normalizeJevConfigsResult(await fetchVkJevConfigs(baseUrl))
+        configs = Array.isArray(refreshed.configs) ? refreshed.configs : []
+        activeId = refreshed.active_id ?? null
+      }
+      setJevConfigs(configs); setJevActiveId(activeId)
+      setJevKey('')
+      setJevName(''); setJevEditingId(null); setJevModalOpen(false)
+      showNotice('success', result.configured ? 'Jev Key 已安全保存' : 'Jev Key 已清除', 'form')
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Jev Key 保存失败', 'form', true)
+    } finally { setJevBusy(false) }
+  }
+
+  const enableJev = async (id: string) => { setJevBusy(true); try { const result = normalizeJevConfigsResult(await enableVkJevConfig(id, baseUrl)); setJevConfigs(result.configs ?? []); setJevActiveId(result.active_id ?? null) } catch (err) { showNotice('error', err instanceof Error ? err.message : 'Jev 启用失败', 'form', true) } finally { setJevBusy(false) } }
+  const removeJev = async (id: string) => { setJevBusy(true); try { const result = normalizeJevConfigsResult(await deleteVkJevConfig(id, baseUrl)); setJevConfigs(result.configs ?? []); setJevActiveId(result.active_id ?? null) } catch (err) { showNotice('error', err instanceof Error ? err.message : 'Jev 删除失败', 'form', true) } finally { setJevBusy(false) } }
+  const testJevItem = async (id: string) => {
+    if (jevTesting[id]) return
+    setJevTesting((current) => ({ ...current, [id]: true }))
+    try {
+      const result = await testVkJevConfig(id, baseUrl)
+      showNotice(result.ok ? 'success' : 'error', result.message, 'form', !result.ok)
+      await reloadJevConfigs()
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Jev 测试失败', 'form', true)
+    } finally {
+      setJevTesting((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+    }
+  }
+  const openNewJev = () => { setJevEditingId(null); setJevName(`Jev ${jevConfigs.length + 1}`); setJevKey(''); setJevKeyMasked(''); setJevKeyTouched(false); setJevKeyVisible(false); setJevModalOpen(true) }
+  const openEditJev = (item: VkJevConfig) => { setJevEditingId(item.id); setJevName(item.name); setJevKey(''); setJevKeyMasked(item.masked_key); setJevKeyTouched(false); setJevKeyVisible(false); setJevModalOpen(true) }
 
   const patch = (id: string, next: Partial<Draft>) =>
     setDrafts((list) => list.map((d) => (d.id === id ? { ...d, ...next } : d)))
@@ -667,6 +856,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     nextDrafts: Draft[],
     nextRoles: Record<string, string>,
     nextRoleFallbacks: Record<string, string[]>,
+    nextRoleCompositeEnabled = roleCompositeEnabled,
     withNotice = false,
     errorLocation: AlertLocation | null = 'form',
   ): Promise<PersistResult> => {
@@ -676,6 +866,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     try {
       const result = await saveVkProviderSettings({
         channels: channelPayload(nextDrafts), roles: nextRoles, role_fallbacks: nextRoleFallbacks,
+        role_composite_enabled: nextRoleCompositeEnabled,
       }, baseUrl)
       let noticeMessage: string | undefined
       if (withNotice) {
@@ -703,17 +894,59 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }
 
-  const save = (errorLocation: AlertLocation) => persist(drafts, roles, roleFallbacks, true, errorLocation)
+  const save = (errorLocation: AlertLocation) => persist(drafts, roles, roleFallbacks, roleCompositeEnabled, true, errorLocation)
+
+  const queueRouteSave = (snapshot: RouteSnapshot) => {
+    pendingRouteSnapshot.current = snapshot
+    if (routeSaveRunning.current) return
+    routeSaveRunning.current = true
+    void (async () => {
+      try {
+        while (pendingRouteSnapshot.current) {
+          const next = pendingRouteSnapshot.current
+          pendingRouteSnapshot.current = null
+          await saveVkProviderSettings({
+            channels: channelPayload(next.drafts), roles: next.roles,
+            role_fallbacks: next.roleFallbacks,
+            role_composite_enabled: next.roleCompositeEnabled,
+          }, baseUrl)
+        }
+        onSaved?.()
+      } catch (err) {
+        pendingRouteSnapshot.current = null
+        showNotice('error', err instanceof Error ? err.message : '模型配置保存失败', 'form', true)
+        await load()
+      } finally {
+        routeSaveRunning.current = false
+        if (pendingRouteSnapshot.current) queueRouteSave(pendingRouteSnapshot.current)
+      }
+    })()
+  }
+
+  const applyRoute = (role: string, route: string[], composite = roleCompositeEnabled) => {
+    const nextRoles = { ...roles }
+    const nextFallbacks = { ...roleFallbacks }
+    if (route.length) nextRoles[role] = route[0]
+    else delete nextRoles[role]
+    nextFallbacks[role] = route.slice(1)
+    setRoles(nextRoles)
+    setRoleFallbacks(nextFallbacks)
+    queueRouteSave({ drafts, roles: nextRoles, roleFallbacks: nextFallbacks, roleCompositeEnabled: composite })
+  }
 
   const removeChannel = async (id: string) => {
     if (savingRef.current) return
     setDeleteError(null)
     const nextDrafts = drafts.filter((draft) => draft.id !== id)
-    const nextRoles = Object.fromEntries(Object.entries(roles).filter(([, value]) => value !== id))
-    const nextRoleFallbacks = Object.fromEntries(
-      Object.entries(roleFallbacks).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
-    )
-    const result = await persist(nextDrafts, nextRoles, nextRoleFallbacks, false, null)
+    const nextRoles = { ...roles }
+    const nextRoleFallbacks = { ...roleFallbacks }
+    for (const role of ROUTING_ROLES) {
+      const route = [roles[role], ...(roleFallbacks[role] ?? [])].filter((item): item is string => Boolean(item) && item !== id)
+      if (route.length) nextRoles[role] = route[0]
+      else delete nextRoles[role]
+      nextRoleFallbacks[role] = route.slice(1)
+    }
+    const result = await persist(nextDrafts, nextRoles, nextRoleFallbacks, roleCompositeEnabled, false, null)
     if (!result.ok) {
       setDeleteError(result.error ?? '模型配置保存失败')
       return
@@ -744,47 +977,30 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
 
   const setChannelEnabled = (id: string, enabled: boolean) => {
     const nextDrafts = drafts.map((draft) => draft.id === id ? { ...draft, enabled } : draft)
-    const nextRoles = enabled ? roles : Object.fromEntries(Object.entries(roles).filter(([, value]) => value !== id))
-    const nextRoleFallbacks = enabled ? roleFallbacks : Object.fromEntries(
-      Object.entries(roleFallbacks).map(([role, ids]) => [role, ids.filter((item) => item !== id)]),
-    )
+    const nextRoles = { ...roles }
+    const nextRoleFallbacks = { ...roleFallbacks }
+    if (!enabled) for (const role of ROUTING_ROLES) {
+      const route = [roles[role], ...(roleFallbacks[role] ?? [])].filter((item): item is string => Boolean(item) && item !== id)
+      if (route.length) nextRoles[role] = route[0]
+      else delete nextRoles[role]
+      nextRoleFallbacks[role] = route.slice(1)
+    }
     setDrafts(nextDrafts)
     setRoles(nextRoles)
     setRoleFallbacks(nextRoleFallbacks)
-    void persist(nextDrafts, nextRoles, nextRoleFallbacks)
+    queueRouteSave({ drafts: nextDrafts, roles: nextRoles, roleFallbacks: nextRoleFallbacks, roleCompositeEnabled })
   }
 
   const setRole = (role: string, value: string) => {
-    const nextRoles = { ...roles }
-    if (value) nextRoles[role] = value
-    else delete nextRoles[role]
-    setRoles(nextRoles)
-    void persist(drafts, nextRoles, roleFallbacks)
+    if (!value) { applyRoute(role, []); return }
+    const previous = [roles[role], ...(roleFallbacks[role] ?? [])].filter(Boolean) as string[]
+    applyRoute(role, [value, ...previous.slice(1).filter((item) => item !== value)])
   }
 
-  const patchRoleFallback = (role: string, index: number, value: string) => {
-    const next = [...(roleFallbacks[role] ?? [])]
-    if (value) next[index] = value
-    else next.splice(index, 1)
-    const nextRoleFallbacks = { ...roleFallbacks, [role]: next }
-    setRoleFallbacks(nextRoleFallbacks)
-    void persist(drafts, roles, nextRoleFallbacks)
-  }
-
-  const moveRoleFallback = (role: string, index: number, offset: -1 | 1) => {
-    const next = [...(roleFallbacks[role] ?? [])]
-    const target = index + offset
-    if (target < 0 || target >= next.length) return
-    ;[next[index], next[target]] = [next[target], next[index]]
-    const nextRoleFallbacks = { ...roleFallbacks, [role]: next }
-    setRoleFallbacks(nextRoleFallbacks)
-    void persist(drafts, roles, nextRoleFallbacks)
-  }
-
-  const addRoleFallback = (role: string, channelId: string) => {
-    const nextRoleFallbacks = { ...roleFallbacks, [role]: [...(roleFallbacks[role] ?? []), channelId] }
-    setRoleFallbacks(nextRoleFallbacks)
-    void persist(drafts, roles, nextRoleFallbacks)
+  const setCompositeEnabled = (role: string, enabled: boolean) => {
+    const next = { ...roleCompositeEnabled, [role]: enabled }
+    setRoleCompositeEnabled(next)
+    queueRouteSave({ drafts, roles, roleFallbacks, roleCompositeEnabled: next })
   }
 
   const reveal = async (draft: Draft) => {
@@ -851,6 +1067,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         // Discovery owns the model menu. A generation probe must not replace or
         // clear the list that the separate discovery action just produced.
         setModels((prev) => ({ ...prev, [draft.id]: result.models ?? [] }))
+        setModelLabels((prev) => ({ ...prev, [draft.id]: result.model_labels ?? {} }))
         setReasoningEfforts((prev) => ({
           ...prev,
           [draft.id]: result.reasoning_efforts ?? {},
@@ -912,7 +1129,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     if (!scopedNotices.length) return null
     const alerts = (
       <div className={`vk-provider-alert-slot vk-provider-alert-slot--${location}`}>
-        <AppNotificationStack>
+        <AppNotificationStack onOverflow={location === 'form' ? (count) => setNotices((current) => {
+          const scoped = current.filter((notice) => notice.location === 'form')
+          const remove = new Set(scoped.slice(Math.max(1, scoped.length - count)).map((notice) => notice.id))
+          return current.filter((notice) => !remove.has(notice.id))
+        }) : undefined}>
           {scopedNotices.map((scopedNotice) => (
             <AppAlert
               key={scopedNotice.id}
@@ -940,6 +1161,15 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   return (
     <div data-testid="vk-provider-form" className="space-y-4">
       {alertSlot('form')}
+      <section data-testid="vk-jev-settings" className="rounded-xl p-4" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+        <div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-medium">Jev配置</div><ActionIconButton testId="vk-jev-add" label="新增配置" onClick={openNewJev} disabled={jevBusy} appearance="primary" size="md"><MorphActionGlyph icon={MorphPlus} size={16} /></ActionIconButton></div>
+        <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
+          <div className="grid min-w-[48rem] grid-cols-[1fr_1.3fr_.8fr_1fr_minmax(16rem,auto)] gap-3 px-3 py-2 text-xs font-medium" style={{ color: 'var(--color-fg-dim)', borderBottom: '1px solid var(--color-line)' }}><span>名称</span><span>API Key</span><span>模型</span><span>累计消费估算</span><span className="text-right pr-2">操作</span></div>
+          {jevConfigs.length === 0 && <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无 Jev 配置</div>}
+          {jevConfigs.map((item) => { const testing = Boolean(jevTesting[item.id]); const active = jevActiveId ? item.id === jevActiveId : item.enabled === true; return <div key={item.id} data-testid={`vk-jev-config-${item.id}`} className="grid min-w-[48rem] grid-cols-[1fr_1.3fr_.8fr_1fr_minmax(16rem,auto)] items-center gap-3 px-3 py-3" style={{ background: active ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-canvas))' : 'var(--color-canvas)', borderBottom: '1px solid var(--color-line)' }}><div><div className="text-sm font-medium">{item.name}</div>{active && <div className="flex items-center gap-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}><span data-testid={`vk-jev-status-light-${item.id}`} className="inline-block h-2 w-2 rounded-full" style={{ background: '#22c55e' }} aria-hidden="true" />使用中</div>}</div><span className="text-sm">{item.masked_key}</span><span className="text-sm">jev-latest</span><div className="text-sm">${(item.estimated_cost_usd ?? 0).toFixed(6)}<div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{(item.input_tokens ?? 0).toLocaleString()} 输入 Token</div>{item.last_used_at && <div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{`最近使用 ${new Date(item.last_used_at).toLocaleString()}`}</div>}</div><div className="flex justify-end gap-2"><EnableActionButton testId={`vk-jev-enable-${item.id}`} enabled={active} onClick={() => void enableJev(item.id)} disabled={jevBusy || testing || active} mutedWhenDisabled /><ActionIconButton testId={`vk-jev-test-${item.id}`} label="测试连接" onClick={() => void testJevItem(item.id)} disabled={jevBusy || testing} iconState="activity"><MorphActionGlyph icon={MorphActivity} size={14} className={testing ? 'vk-provider-icon--busy' : ''} /></ActionIconButton><EditActionButton testId={`vk-jev-edit-${item.id}`} onClick={() => openEditJev(item)} disabled={jevBusy || testing} /><DeleteActionButton testId={`vk-jev-delete-${item.id}`} onClick={() => void removeJev(item.id)} disabled={jevBusy || testing} /></div></div> })}
+        </div>
+      </section>
+      {jevModalOpen && <div className="vk-provider-modal-backdrop" data-testid="vk-jev-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !jevBusy) setJevModalOpen(false) }}><div className="vk-provider-modal-shell"><div role="dialog" aria-modal="true" aria-labelledby="vk-jev-modal-title" data-testid="vk-jev-modal" className="vk-provider-modal"><h3 id="vk-jev-modal-title" className="text-lg font-semibold">{jevEditingId ? '编辑 Jev 配置' : '新增 Jev 配置'}</h3><div className="mt-4 space-y-3"><label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>配置名称<input aria-label="Jev 配置名称" value={jevName} onChange={(event) => setJevName(event.target.value)} placeholder="配置名称" className={`${fieldClass} mt-1`} style={fieldStyle} /></label><label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>API Key<div className="vk-key-control-row mt-1"><input data-testid="vk-jev-key" type={jevKeyVisible ? 'text' : 'password'} value={jevKeyTouched ? jevKey : jevKeyMasked} onChange={(event) => { setJevKey(event.target.value); setJevKeyTouched(true) }} placeholder={jevEditingId ? '留空以保留当前 Key；输入新 Key 可替换' : '粘贴 Jev Key'} className={`${fieldClass} vk-key-input`} style={fieldStyle} /><VisibilityButton testId="vk-jev-reveal" visible={jevKeyVisible} disabled={jevBusy || (!jevKeyTouched && !jevKeyMasked)} onClick={() => setJevKeyVisible((value) => !value)} /></div></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => { if (!jevBusy) { setJevModalOpen(false); setJevName(''); setJevKey(''); setJevKeyMasked(''); setJevKeyTouched(false); setJevKeyVisible(false); setJevEditingId(null) } }} className={outlineButton} style={outlineStyle}>取消</button><button type="button" onClick={() => void saveJev()} disabled={jevBusy || !jevName.trim() || (!jevEditingId && !jevKeyTouched && !jevKey.trim())} className={outlineButton} style={outlineStyle}>保存</button></div></div></div></div>}
       <section data-testid="vk-provider-channels-section" className="rounded-xl p-4"
         style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -955,8 +1185,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               >
                 <img src="/cc-switch-icon.png" alt="" aria-hidden="true" className="h-4 w-4" />
               </ActionIconButton>
-              {ccSwitchPickerOpen && (
-                <div data-testid="vk-ccswitch-picker" role="menu" className="vk-glass-menu absolute right-0 top-10 z-20 min-w-56 rounded-lg p-1">
+              {ccSwitchPickerOpen && createPortal(
+                <div ref={ccSwitchPickerMenuRef} data-testid="vk-ccswitch-picker" role="menu" className="glass-menu-effect fixed z-20 overflow-auto rounded-lg p-1" style={ccSwitchPickerPosition}>
                   {settings.cc_switch.candidates.map((candidate) => (
                     <button
                       key={candidate.ref}
@@ -979,7 +1209,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   {settings.cc_switch.candidates.length === 0 && settings.cc_switch.skipped.length === 0 && (
                     <div className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-fg-dim)' }}>未发现可导入配置</div>
                   )}
-                </div>
+                </div>,
+                document.body,
               )}
             </div>
           )}
@@ -1002,7 +1233,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           className="grid min-w-[56rem] grid-cols-[1fr_1.35fr_1fr_.7fr_minmax(22rem,auto)] gap-3 px-3 py-2 text-xs font-medium"
           style={{ color: 'var(--color-fg-dim)', borderBottom: '1px solid var(--color-line)' }}
         >
-          <span>名称</span><span>API key / 上游</span><span>模型</span><span>状态</span><span>操作</span>
+          <span>名称</span><span>API key / 上游</span><span>模型</span><span>状态</span><span className="text-right pr-2">操作</span>
         </div>
         <div className="divide-y" style={{ borderColor: 'var(--color-line)' }}>
           {drafts.length === 0 && (
@@ -1015,6 +1246,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             try { upstream = draft.base_url ? new URL(draft.base_url).hostname : upstream } catch { /* show the raw draft */ }
             const statusLabel = draft.enabled ? '已启用' : '已禁用'
             const statusColor = draft.enabled ? 'var(--color-success)' : 'var(--color-warning)'
+            const configuredModelLabel = draft.model_id
+              ? getModelLabel(draft.model_id, modelLabels[draft.id])
+            : '未指定模型'
             return (
               <div key={draft.id} data-testid={`vk-channel-${draft.id}`} className="min-w-[56rem] px-3 py-3"
                 style={{ background: 'var(--color-canvas)' }}>
@@ -1041,7 +1275,15 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                     )}
                   </div>
                   <div className="min-w-0">
-                    <OverflowTooltip text={draft.model_id || '未指定模型'} labelClassName="text-sm" labelStyle={{ color: 'var(--color-fg)' }} />
+                    <OverflowTooltip
+                      text={configuredModelLabel}
+                      testId={`vk-channel-model-label-${draft.id}`}
+                      labelClassName="text-sm"
+                      labelStyle={{ color: 'var(--color-fg)' }}
+                    />
+                    {draft.model_id && configuredModelLabel !== draft.model_id && (
+                      <div className="truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>{draft.model_id}</div>
+                    )}
                     <div className="mt-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>{draft.api_style}</div>
                   </div>
                   <div className="flex items-center gap-2 text-xs" style={{ color: statusColor }}>
@@ -1152,6 +1394,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 saved={modalSaved}
                 result={modalResult}
                 models={models[modalDraft.id] ?? []}
+                modelLabels={modelLabels[modalDraft.id] ?? {}}
                 availableReasoningEfforts={modalEfforts}
                 channelBusy={channelBusy[modalDraft.id]}
                 onPatch={patch}
@@ -1181,68 +1424,47 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           {roleKeys.map((role) => {
             const fallbacks = roleFallbacks[role] ?? []
             const primary = roles[role] ?? ''
-            const selected = new Set([primary, ...fallbacks].filter(Boolean))
+            const route = [primary, ...fallbacks].filter(Boolean)
+            const compositeEnabled = roleCompositeEnabled[role] ?? false
             const available = drafts.filter((draft) => draft.enabled)
             const routeWarnings = [...new Set([
-              ...(primary && fallbacks.length === 0
-                ? ['未设置备用上游；当前通道超时后任务会失败。请添加一个 Base URL 不同的备用配置。']
+              ...(compositeEnabled && route.length === 1
+                ? ['至少选择 2 个配置才能形成故障切换']
                 : []),
-              ...(settings.role_route_warnings?.[role] ?? []),
+              ...(compositeEnabled && routeHasDuplicateHost(route, drafts)
+                ? ['主通道与备用通道实际指向同一服务，故障时可能同时不可用']
+                : []),
             ])]
             return (
             <div key={role} data-testid={`vk-role-routing-${role}`} className="rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
-              <div className="flex flex-wrap items-center gap-2">
-              <span className="w-16 shrink-0 text-sm">{settings.role_labels[role]}</span>
-              <select
-                data-testid={`vk-role-${role}`}
-                className="rounded-lg px-2 py-1.5 text-sm outline-none"
-                style={{ ...fieldStyle, minWidth: '12rem' }}
-                value={roles[role] ?? ''}
-                disabled={saving}
-                onChange={(event) => setRole(role, event.target.value)}
-              >
-                {/* 没有"跟随默认"了 —— 没指就是没指,跑到那一步会失败,得说出来。 */}
-                <option value="">— 还没指定 —</option>
-                {available.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-              <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{settings.role_hints[role]}</span>
+              <div className="vk-role-header">
+                <span className="w-16 shrink-0 text-sm">{settings.role_labels[role]}</span>
+                {compositeEnabled ? <GlassMultiSelect
+                  data-testid={`vk-role-${role}`}
+                  aria-label={`${settings.role_labels[role]}模型优先级`}
+                  className="vk-role-selector text-sm"
+                  style={fieldStyle}
+                  value={route}
+                  disabled={saving}
+                  onChange={(value) => applyRoute(role, value)}
+                  options={drafts.map((draft) => ({ value: draft.id, label: draft.name, disabled: !draft.enabled }))}
+                /> : <GlassSelect
+                  data-testid={`vk-role-${role}`}
+                  aria-label={`${settings.role_labels[role]}主模型`}
+                  className="vk-role-selector text-sm"
+                  style={fieldStyle}
+                  value={primary}
+                  disabled={saving}
+                  onChange={(value) => setRole(role, value)}
+                  options={[{ value: '', label: '— 还没指定 —' }, ...available.map((draft) => ({ value: draft.id, label: draft.name }))]}
+                />}
+                <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{settings.role_hints[role]}</span>
+                <label className="vk-role-composite-toggle text-xs">
+                  <input data-testid={`vk-role-composite-${role}`} type="checkbox" aria-label={`${settings.role_labels[role]}启用复合key`} checked={compositeEnabled} disabled={saving} onChange={(event) => setCompositeEnabled(role, event.target.checked)} />
+                  启用复合key
+                </label>
               </div>
-              <div className="mt-2 space-y-1.5 pl-0 sm:pl-[4.5rem]">
-                {fallbacks.map((channelId, index) => (
-                  <div key={`${role}-${index}`} className="flex flex-wrap items-center gap-1.5">
-                    <span className="w-14 text-xs" style={{ color: 'var(--color-fg-dim)' }}>备用 {index + 1}</span>
-                    <select
-                      data-testid={`vk-role-fallback-${role}-${index}`}
-                      className="rounded-lg px-2 py-1.5 text-xs outline-none"
-                      style={{ ...fieldStyle, minWidth: '12rem' }}
-                      value={channelId}
-                      disabled={saving}
-                      onChange={(event) => patchRoleFallback(role, index, event.target.value)}
-                    >
-                      <option value="">— 删除这条备用 —</option>
-                      {available.map((draft) => (
-                        <option key={draft.id} value={draft.id} disabled={draft.id !== channelId && selected.has(draft.id)}>{draft.name}</option>
-                      ))}
-                    </select>
-                    <button type="button" aria-label={`上移${settings.role_labels[role]}备用 ${index + 1}`} disabled={saving || index === 0}
-                      onClick={() => moveRoleFallback(role, index, -1)} className={outlineButton} style={outlineStyle}><ChevronUp size={13} /></button>
-                    <button type="button" aria-label={`下移${settings.role_labels[role]}备用 ${index + 1}`} disabled={saving || index === fallbacks.length - 1}
-                      onClick={() => moveRoleFallback(role, index, 1)} className={outlineButton} style={outlineStyle}><ChevronDown size={13} /></button>
-                    <button type="button" aria-label={`删除${settings.role_labels[role]}备用 ${index + 1}`} disabled={saving}
-                      onClick={() => patchRoleFallback(role, index, '')} className={outlineButton} style={outlineStyle}><Trash2 size={13} /></button>
-                  </div>
-                ))}
-                <ActionIconButton
-                  testId={`vk-role-fallback-add-${role}`}
-                  label={`添加${settings.role_labels[role]}备用通道`}
-                  disabled={saving || !primary || !available.some((draft) => !selected.has(draft.id))}
-                  onClick={() => {
-                    const next = available.find((draft) => !selected.has(draft.id))
-                    if (next) addRoleFallback(role, next.id)
-                  }}
-                >
-                  <MorphActionGlyph icon={MorphPlus} size={14} />
-                </ActionIconButton>
+              <div className="mt-2 space-y-1.5">
                 {routeWarnings.map((warning) => (
                   <div key={warning} data-testid={`vk-role-warning-${role}`} className="text-xs" style={{ color: 'var(--color-warning)' }}>{warning}</div>
                 ))}

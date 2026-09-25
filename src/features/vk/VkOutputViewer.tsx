@@ -6,6 +6,7 @@ import { fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
+import { GlassSelect } from '../../components/GlassMenu'
 import { addInspirationItem } from '../inspiration/inspirationLibrary'
 import { vkPrimaryOutput, vkResultVersionLabel, type VkResultVersion } from './taskResults'
 import './VkOutputViewer.css'
@@ -297,12 +298,9 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
         {onSelectVersion && activeTab?.versions && activeTab.versions.length > 1 && (
           <label className="vk-output-version-bar">
             <span>结果版本</span>
-            <select aria-label="选择结果版本" value={activeTab.jobId}
-              onChange={(event) => onSelectVersion(activeTab.id, event.target.value)}>
-              {activeTab.versions.map((version, index) => (
-                <option key={version.jobId} value={version.jobId}>{vkResultVersionLabel(version, index === 0)}</option>
-              ))}
-            </select>
+            <GlassSelect aria-label="选择结果版本" value={activeTab.jobId ?? ''}
+              onChange={(value) => onSelectVersion(activeTab.id, value)}
+              options={activeTab.versions.map((version, index) => ({ value: version.jobId, label: vkResultVersionLabel(version, index === 0) }))} />
           </label>
         )}
         <div className={`vk-output-body${verticalTabs ? ' is-vertical' : ''}`}>

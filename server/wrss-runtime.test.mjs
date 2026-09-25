@@ -163,7 +163,7 @@ describe('extractTarGzipSecure', () => {
     { name: 'C:\\absolute.txt', type: '0', linkname: '' },
     { name: 'safe-link', type: '2', linkname: '../../escaped.txt' },
     { name: 'safe-hardlink', type: '1', linkname: '../../escaped.txt' },
-  ])('rejects an unsafe archive entry before writing: $name', async (unsafeEntry) => {
+  ])('rejects an unsafe archive entry before writing', async (unsafeEntry) => {
     const { root } = await fixture()
     const archive = join(root, 'unsafe.tar.gz')
     const destination = join(root, 'extract')
@@ -188,7 +188,31 @@ describe('resolveWrssConfigTemplate', () => {
   })
 })
 
+it('distributes Motion before the UI script and keeps repeated injection idempotent', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+
+  ensureWrssStaticAssets(sourceDir)
+  ensureWrssStaticAssets(sourceDir)
+
+  const staticDir = join(sourceDir, 'static')
+  const index = readFileSync(join(staticDir, 'index.html'), 'utf8')
+  const motionPath = join(staticDir, 'pussycat-motion.js')
+  expect(existsSync(motionPath)).toBe(true)
+  expect(readFileSync(motionPath)).toEqual(readFileSync(join(process.cwd(), 'node_modules', 'motion', 'dist', 'motion.js')))
+  expect(occurrences(index, '/static/pussycat-motion.js')).toBe(1)
+  expect(occurrences(index, 'id="pussycat-critical-theme"')).toBe(1)
+  expect(index.indexOf('id="pussycat-critical-theme"')).toBeLessThan(index.indexOf('/static/pussycat-theme.css'))
+  expect(index.indexOf('/static/pussycat-motion.js')).toBeLessThan(index.indexOf('/static/pussycat-ui.js'))
+})
+
 describe('WrssRuntimeManager', () => {
+  it('proxies source avatars with auth only for local files and restricts article image domains',async()=>{
+    const {root,bundle}=await fixture();writeInstalled(root);const calls=[];const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>child.emit('close',0)
+    const manager=new WrssRuntimeManager({home:root,bundleDir:bundle,probePythonImpl:()=>true,getPortImpl:async()=>4399,fetchImpl:async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/api/v1/wx/auth/login'))return ok({data:{access_token:'token'}});if(String(url).endsWith('/api/v1/wx/mps/remote'))return ok({data:{mp_cover:'https://mmbiz.qpic.cn/avatar.jpg'}});if(String(url).endsWith('/api/v1/wx/mps/local'))return ok({data:{mp_cover:'data/files/avatars/local.png'}});return new Response('image',{status:200,headers:{'content-type':'image/png'}})},spawnImpl:()=>child,readyTimeoutMs:100,readyPollMs:1})
+    await manager.enable();await manager.requestSourceAvatar('remote');await manager.requestSourceAvatar('local');await manager.requestArticleImage('https://mmbiz.qpic.cn/article.jpg');await expect(manager.requestArticleImage('https://example.com/image.jpg')).rejects.toThrow('文章图片地址无效')
+    const remote=calls.find(call=>call.url==='https://mmbiz.qpic.cn/avatar.jpg'),local=calls.find(call=>call.url.endsWith('/files/avatars/local.png'));expect(new Headers(remote.options.headers).has('Authorization')).toBe(false);expect(new Headers(local.options.headers).get('Authorization')).toBe('Bearer token');await manager.close()
+  })
   it('rejects a source SHA mismatch without an activation receipt', async () => {
     const { root, bundle } = await fixture()
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => weRssArchive() }))
@@ -669,6 +693,11 @@ it('keeps injected navigation stable across observer frames and preserves drawer
   const { sourceDir } = writeInstalled(root)
   ensureWrssStaticAssets(sourceDir)
   const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  expect(script).not.toContain('animateView(')
+  expect(script).not.toContain('startViewTransition')
+  expect(script).toContain("duration: 0.16")
+  expect(script).toContain('translateX(-50%) translateY(0) translateZ')
+  expect(script).not.toContain('cards.replaceChildren')
   const css = readFileSync(join(sourceDir, 'static', 'pussycat-theme.css'), 'utf8')
   const dom = new JSDOM(`<style>${css}</style><div id="main">
     <header class="arco-layout-header"><div class="arco-menu arco-menu-horizontal">
@@ -766,67 +795,281 @@ it('keeps injected navigation stable across observer frames and preserves drawer
   }
 })
 
-it('preserves original article controls when moving the toolbar and restores it on teardown', async () => {
+it('keeps Vue article actions in place and moves only article search controls into the page header', async () => {
   const { root } = await fixture()
   const { sourceDir } = writeInstalled(root)
   ensureWrssStaticAssets(sourceDir)
   const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
   const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header>
-    <section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item active-mp">全部</button><button class="arco-list-item">新智元</button></div></aside>
-      <div class="arco-page-header"><div class="arco-page-header-extra"><button id="export">导出</button><button id="delete" disabled>批量删除</button></div></div>
+    <section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item active-mp"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button><button class="arco-list-item" data-mp-id="mp-1"><span class="arco-typography">新智元</span><span class="arco-typography-secondary">3 篇文章</span></button></div><div class="arco-pagination"><span class="arco-pagination-total">共 40 条</span><button class="arco-pagination-item-previous">上一页</button><span class="arco-pagination-jumper">1 / 2</span><button class="arco-pagination-item-next">下一页</button></div></aside>
+      <main class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-header"><span class="arco-page-header-main"><span class="arco-page-header-title">全部</span></span><div class="arco-page-header-extra"><button id="export">导出</button><button id="delete" disabled>批量删除</button></div></div></div><div class="search-bar"><span class="arco-input-search search-input"><input id="article-search" placeholder="搜索文章标题"></span><span class="article-filter-select">个别内容</span><button id="columns">列设置</button></div></main>
     </section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
   const { window } = dom
   const { document } = window
   const toolbar = document.querySelector('.arco-page-header-extra')
   const header = toolbar.parentElement
+  const searchBar = document.querySelector('.search-bar')
+  const searchInput = document.getElementById('article-search')
   const exportAction = vi.fn()
+  const searchAction = vi.fn()
   toolbar.querySelector('#export').addEventListener('click', exportAction)
+  searchInput.addEventListener('input', searchAction)
   try {
     window.eval(script)
-    await vi.waitFor(() => expect(toolbar.parentElement.className).toBe('pussycat-article-actions'))
-    expect(header.childNodes[0].nodeType).toBe(window.Node.COMMENT_NODE)
+    await vi.waitFor(() => expect(document.querySelector('.pussycat-article-search')).not.toBeNull())
+    expect(toolbar.parentElement).toBe(header)
+    expect(document.querySelector('.pussycat-article-actions').hidden).toBe(true)
+    expect(document.querySelector('.pussycat-article-search').parentElement).toBe(header)
+    expect(searchBar.querySelector('#columns')).not.toBeNull()
+    searchInput.value = '保留 Vue 输入事件'
+    searchInput.dispatchEvent(new window.Event('input', { bubbles: true }))
+    expect(searchAction).toHaveBeenCalledOnce()
     expect(document.querySelector('.arco-list').getAttribute('aria-label')).toBe('公众号')
-    const accounts = [...document.querySelectorAll('.arco-list-item')]
-    accounts[0].classList.remove('active-mp')
-    accounts[1].classList.add('active-mp')
-    await vi.waitFor(() => expect(accounts[1].getAttribute('aria-current')).toBe('page'))
-    expect(accounts[0].hasAttribute('aria-current')).toBe(false)
+    expect([...document.querySelectorAll('.pussycat-source-entry .arco-typography')].map((node) => node.textContent)).toEqual(['最新文章', '我的收藏', '已订阅公众号'])
+    const account = document.querySelector('.pussycat-source-account')
+    expect(account).not.toBeNull()
 
     const trigger = document.querySelector('.pussycat-more-button')
     trigger.click()
     toolbar.querySelector('#export').click()
     expect(exportAction).toHaveBeenCalledOnce()
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(document.body.style.overflow).toBe('')
     toolbar.querySelector('#delete').disabled = false
-    expect(document.querySelector('.pussycat-article-actions #delete').disabled).toBe(false)
+    expect(document.querySelector('.arco-page-header-extra #delete').disabled).toBe(false)
     const modal = document.createElement('div')
     modal.className = 'arco-modal-wrapper'
     modal.innerHTML = '<input aria-label="导出文件名">'
     document.body.append(modal)
     modal.querySelector('input').focus()
     modal.querySelector('input').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    expect(document.body.style.overflow).toBe('hidden')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(document.body.style.overflow).toBe('')
     expect(document.activeElement).toBe(modal.querySelector('input'))
     expect(modal.closest('[inert]')).toBeNull()
     modal.remove()
     document.querySelector('.pussycat-drawer-close').click()
     expect(document.body.style.overflow).toBe('')
 
-    window.history.pushState({}, '', '/export/records')
-    window.dispatchEvent(new window.PopStateEvent('popstate'))
-    await vi.waitFor(() => expect(toolbar.parentElement).toBe(header))
-    window.history.pushState({}, '', '/')
-    window.dispatchEvent(new window.PopStateEvent('popstate'))
-    await vi.waitFor(() => expect(toolbar.parentElement.className).toBe('pussycat-article-actions'))
-    const article = document.querySelector('.article-list')
-    const replacement = article.cloneNode(true)
-    replacement.querySelector('.arco-page-header').innerHTML = '<div class="arco-page-header-extra"><button>新的导出</button></div>'
-    article.replaceWith(replacement)
-    await vi.waitFor(() => expect(document.querySelector('.pussycat-article-actions').textContent).toContain('新的导出'))
-    expect(toolbar.isConnected).toBe(false)
-    expect(document.querySelectorAll('.arco-page-header-extra')).toHaveLength(1)
+    document.querySelector('.pussycat-sources-entry').click()
+    await vi.waitFor(() => expect(document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources'))
+    const cards = document.querySelector('.pussycat-source-cards')
+    expect(cards.hidden).toBe(false)
+    expect(cards.querySelector('.pussycat-source-card-title').textContent).toBe('新智元')
+    expect(cards.querySelector('.pussycat-source-card-meta').textContent).toBe('3 篇文章')
+    const cardControls = [...document.querySelectorAll('.pussycat-source-card-controls .pussycat-source-card-control')]
+    expect(cardControls).toHaveLength(2)
+    expect(cardControls.every((button) => button.disabled)).toBe(true)
+    expect(document.querySelector('.pussycat-source-account').classList.contains('pussycat-source-account')).toBe(true)
+    cards.querySelector('.pussycat-source-card').click()
+    await vi.waitFor(() => expect(document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('account'))
+    expect(cards.hidden).toBe(true)
+    expect(document.querySelector('.arco-pagination-item-next')).not.toBeNull()
     window.__PUSSYCAT_WRSS_UI__.destroy()
-    expect(replacement.querySelector('.arco-page-header-extra')?.textContent).toBe('新的导出')
+    expect(searchBar.querySelector('#article-search')).toBe(searchInput)
+    expect(searchBar.querySelector('.article-filter-select')).not.toBeNull()
+    expect(toolbar.parentElement).toBe(header)
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('keeps per-account cache stable, refreshes card targets, and returns focus to the selected source', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header>
+    <section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item active-mp"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button><button class="arco-list-item" data-mp-id="mp-1"><span class="arco-typography">账号一</span></button></div></aside>
+      <main class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-header"><span class="arco-page-header-title">全部</span><div class="arco-page-header-extra"></div></div></div><div class="search-bar"><span class="search-input"><input id="article-search" placeholder="搜索文章标题"></span></div><div class="arco-table-container"><div class="arco-table-body"><div class="arco-table-tr">文章</div></div></div></main>
+    </section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  const { document } = window
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(document.querySelector('.pussycat-sources-entry')).not.toBeNull())
+    document.querySelector('.pussycat-source-account').click()
+    await vi.waitFor(() => expect(window.__PUSSYCAT_WRSS_CONTENT__.getState().view).toBe('account:mp-1'))
+    const search = document.getElementById('article-search')
+    search.value = '账号一查询'
+    search.dispatchEvent(new window.Event('input', { bubbles: true }))
+    document.querySelector('[data-pussycat-builtin="latest"]').click()
+    await vi.waitFor(() => expect(window.__PUSSYCAT_WRSS_CONTENT__.getState().cache).toContain('account:mp-1'))
+    document.querySelector('.pussycat-source-account').click()
+    await vi.waitFor(() => expect(window.__PUSSYCAT_WRSS_CONTENT__.getState().view).toBe('account:mp-1'))
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    expect(search.value).toBe('账号一查询')
+    search.value = '用户新查询'
+    search.dispatchEvent(new window.Event('input', { bubbles: true }))
+    document.querySelector('.arco-layout-content .arco-table-body').append(document.createElement('span'))
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    expect(search.value).toBe('用户新查询')
+
+    document.querySelector('.pussycat-sources-entry').click()
+    await vi.waitFor(() => expect(document.querySelector('.pussycat-source-cards').hidden).toBe(false))
+    const oldAccount = document.querySelector('.pussycat-source-account')
+    const replacement = oldAccount.cloneNode(true)
+    const replacementClick = vi.fn()
+    replacement.addEventListener('click', replacementClick)
+    oldAccount.replaceWith(replacement)
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    document.querySelector('.pussycat-source-card').click()
+    expect(replacementClick).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(document.querySelector('.pussycat-account-back').hidden).toBe(false))
+    document.querySelector('.pussycat-account-back').click()
+    await vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector('.pussycat-source-card')))
+    expect(window.__PUSSYCAT_WRSS_CONTENT__.getState().view).toBe('sources')
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('does not restart source-card springs when the focused layout is unchanged', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header><section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button><button class="arco-list-item" data-mp-id="a"><span class="arco-typography">A</span></button><button class="arco-list-item" data-mp-id="b"><span class="arco-typography">B</span></button></div></aside><main class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-header"><div class="arco-page-header-extra"></div></div></div><div class="arco-table-container"><div class="arco-table-body"><div class="arco-table-tr">文章</div></div></div></main></section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  const animate = vi.fn(() => ({ stop: vi.fn() }))
+  window.Motion = { animate }
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(window.document.querySelectorAll('.pussycat-source-card')).toHaveLength(2))
+    window.document.querySelector('.pussycat-sources-entry').click()
+    await vi.waitFor(() => expect(window.document.querySelector('.pussycat-source-card-controls').hidden).toBe(false))
+    animate.mockClear()
+    window.document.querySelector('.pussycat-source-card-controls').querySelectorAll('.pussycat-source-card-control')[1].click()
+    expect(animate).toHaveBeenCalledTimes(2)
+    window.document.querySelector('.arco-layout-content .arco-table-body').append(window.document.createElement('span'))
+    await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    expect(animate).toHaveBeenCalledTimes(2)
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('renders cards from bridge records, defers account commit, and resets a filtered focus', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header><section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button><button class="arco-list-item"><span class="arco-typography">错误A</span></button><button class="arco-list-item"><span class="arco-typography">错误B</span></button></div></aside><main class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-header"><div class="arco-page-header-extra"></div></div></div><div class="arco-table-container"><div class="arco-table-body"></div></div></main></section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  let finishAccount
+  const accountPending = new Promise((resolve) => { finishAccount = resolve })
+  const bridgeState = { view: 'latest', error: null, articleLoading: false, articles: [], sources: [
+    { id: 'a', name: '桥接A', avatar: '/bridge-a.png', mp_intro: '简介A', article_count: 7, status: 0 },
+    { id: 'b', name: '桥接B', avatar: '/bridge-b.png', mp_intro: '简介B', article_count: 3, status: 1 },
+  ] }
+  const bridge = { getState: () => bridgeState, fetchArticles: vi.fn(), fetchSources: vi.fn(), loadMoreSources: vi.fn(), selectView: vi.fn(async (view) => { if (view.startsWith('account:')) await accountPending; bridgeState.view = view }) }
+  window.__PUSSYCAT_WRSS_BRIDGE__ = bridge
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(window.document.querySelector('.pussycat-sources-entry')).not.toBeNull())
+    window.document.querySelector('.pussycat-sources-entry').click()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources'))
+    const first = window.document.querySelector('.pussycat-source-card')
+    expect(first.dataset.pussycatSourceId).toBe('a')
+    expect(first.querySelector('.pussycat-source-card-title').textContent).toBe('桥接A')
+    expect(first.querySelector('.pussycat-source-card-description').textContent).toBe('简介A')
+    expect(first.querySelector('.pussycat-source-card-meta').textContent).toBe('7 篇文章')
+    expect(first.querySelector('.pussycat-source-card-status').textContent).toBe('停用')
+    expect(first.querySelector('img').src).toContain('/bridge-a.png')
+    first.click()
+    expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources')
+    finishAccount()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('account'))
+    window.document.querySelector('.pussycat-account-back').click()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources'))
+    bridgeState.sources = [bridgeState.sources[1]]
+    window.document.querySelectorAll('.pussycat-source-account')[0].remove()
+    await vi.waitFor(() => expect(window.document.querySelectorAll('.pussycat-source-card')).toHaveLength(1))
+    expect(window.document.querySelector('.pussycat-source-cards').dataset.pussycatFocused).toBe('b')
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('coalesces rapid view changes and computes the pending direction at execution time', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header><section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button><button class="arco-list-item" data-mp-id="a"><span class="arco-typography">A</span></button></div></aside><main class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-header"><div class="arco-page-header-extra"></div></div></div><div class="arco-card"><div class="arco-table-container"><div class="arco-table-body"></div></div></div></main></section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  const transforms = []
+  const finishes = []
+  window.Motion = { animate: vi.fn((node, keyframes) => {
+    transforms.push(keyframes.transform)
+    let finish
+    const finished = new Promise((resolve) => { finish = resolve })
+    finishes.push(finish)
+    return { finished }
+  }) }
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(window.document.querySelector('.pussycat-sources-entry')).not.toBeNull())
+    window.document.querySelector('.pussycat-sources-entry').click()
+    window.document.querySelector('[data-pussycat-builtin="latest"]').click()
+    await vi.waitFor(() => expect(window.Motion.animate).toHaveBeenCalledTimes(1))
+    finishes[0]()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources'))
+    await vi.waitFor(() => expect(window.Motion.animate).toHaveBeenCalledTimes(2))
+    finishes[1]()
+    await vi.waitFor(() => expect(window.Motion.animate).toHaveBeenCalledTimes(3))
+    finishes[2]()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('latest'))
+    await vi.waitFor(() => expect(window.Motion.animate).toHaveBeenCalledTimes(4))
+    expect(transforms.some((value) => value[1].includes('translate3d(-8%'))).toBe(true)
+    expect(transforms.some((value) => value[0].includes('translate3d(8%'))).toBe(true)
+    finishes[3]()
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('wraps content entries, keeps passive descriptions click-through, and exposes four-card depth', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const css = readFileSync(join(sourceDir, 'static', 'pussycat-theme.css'), 'utf8')
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  expect(css).toMatch(/\.article-list \.arco-layout-sider \.arco-list\s*\{[^}]*overflow-x:\s*hidden;/s)
+  expect(css).toMatch(/\.article-list \.arco-layout-sider \.arco-list-content\s*\{[^}]*flex-wrap:\s*wrap;[^}]*min-width:\s*0;/s)
+  expect(css).toMatch(/\.pussycat-passive-tooltip\s*\{[^}]*pointer-events:\s*none\s*!important;[^}]*opacity:\s*1\s*!important;/s)
+  expect(css).toMatch(/\.pussycat-source-cards\s*\{[^}]*perspective:\s*800px;[^}]*min-height:\s*420px;/s)
+  expect(css).toMatch(/\.pussycat-source-card\s*\{[^}]*top:\s*150px;/s)
+  expect(script).toContain('depth <= 3')
+  expect(script).toContain("n.inert = depth > 3")
+})
+
+it('keeps four stacked source cards visible and focuses a rear card before opening it', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const sources = ['a', 'b', 'c', 'd', 'e'].map((id) => `<button class="arco-list-item" data-mp-id="${id}"><span class="arco-typography">${id.toUpperCase()}</span></button>`).join('')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header><section class="article-list"><aside class="arco-layout-sider"><div class="arco-card"><div class="arco-card-body"><div><div class="arco-list"><div class="arco-list-content"><button class="arco-list-item"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button>${sources}</div></div></div></div></div></aside><main class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-header"><div class="arco-page-header-extra"></div></div></div><div class="arco-table-container"><div class="arco-table-body"></div></div></main></section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(window.document.querySelectorAll('.pussycat-source-card')).toHaveLength(5))
+    window.document.querySelector('.pussycat-sources-entry').click()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources'))
+    const cards = [...window.document.querySelectorAll('.pussycat-source-card')]
+    expect(cards.filter((card) => card.style.visibility === 'visible')).toHaveLength(4)
+    expect(cards.slice(0, 4).map((card) => card.inert)).toEqual([false, false, false, false])
+    cards[2].click()
+    expect(window.document.querySelector('.pussycat-source-cards').dataset.pussycatFocused).toBe('c')
+    expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources')
+    cards[2].click()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('account'))
   } finally {
     window.__PUSSYCAT_WRSS_UI__?.destroy()
     window.close()
@@ -839,19 +1082,58 @@ it('renders scoped empty states for missing公众号 and empty article results',
   ensureWrssStaticAssets(sourceDir)
   const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
   const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header>
-    <section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><input placeholder="搜索公众号" value="不存在" /></div></aside>
-      <div class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-extra"><button>导出</button></div></div><div class="arco-list"></div></div>
+    <section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><input placeholder="搜索公众号" value="不存在" /><button class="arco-list-item"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button></div></aside>
+      <div class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-extra"><button>导出</button></div></div><div class="arco-empty">上方重复提示</div><div class="arco-table-container"><div class="arco-table-body"></div></div></div>
     </section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
   const { window } = dom
   const { document } = window
   try {
     window.eval(script)
     await new Promise((resolve) => window.requestAnimationFrame(resolve))
-    await vi.waitFor(() => expect(document.querySelector('[data-pussycat-empty="source-search"]')).not.toBeNull())
+    document.querySelector('.pussycat-sources-entry').click()
+    await vi.waitFor(() => expect(document.querySelector('.pussycat-source-cards-empty [data-pussycat-empty="source-search"]')).not.toBeNull())
     expect(document.querySelector('[data-pussycat-empty="source-search"]')).toHaveAttribute('role', 'status')
     expect(document.querySelector('[data-pussycat-empty="source-search"]').textContent).toBe('没有匹配的公众号')
+    expect(document.querySelector('.pussycat-source-cards-empty [data-pussycat-empty="source-search"]')).not.toBeNull()
+    expect(document.querySelector('.arco-layout-sider .arco-list [data-pussycat-empty="source-search"]')).toBeNull()
+    expect(document.querySelector('[data-pussycat-empty="article-results"]')).toBeNull()
+    document.querySelector('[data-pussycat-builtin="latest"]').click()
+    await vi.waitFor(() => expect(document.querySelector('[data-pussycat-empty="article-results"]')).not.toBeNull())
     expect(document.querySelector('[data-pussycat-empty="article-results"]')).toHaveAttribute('role', 'status')
     expect(document.querySelector('[data-pussycat-empty="article-results"]').textContent).toBe('暂无文章')
+    expect(document.querySelector('.arco-empty')).toHaveClass('pussycat-native-empty-hidden')
+  } finally {
+    window.__PUSSYCAT_WRSS_UI__?.destroy()
+    window.close()
+  }
+})
+
+it('renders bridge-backed table empty and retry states without relying on list rows', async () => {
+  const { root } = await fixture()
+  const { sourceDir } = writeInstalled(root)
+  ensureWrssStaticAssets(sourceDir)
+  const script = readFileSync(join(sourceDir, 'static', 'pussycat-ui.js'), 'utf8')
+  const dom = new JSDOM(`<div id="main"><header class="arco-layout-header"><div class="arco-menu"><button class="arco-menu-item">订阅管理</button></div></header><section class="article-list"><aside class="arco-layout-sider"><div class="arco-list"><button class="arco-list-item"><span class="arco-typography">全部</span></button><button class="arco-list-item"><span class="arco-typography">精选文章</span></button></div></aside><main class="arco-layout-content"><div class="arco-page-header"><div class="arco-page-header-header"><div class="arco-page-header-extra"></div></div></div><div class="arco-table-container"><div class="arco-table-body"></div></div></main></section></div>`, { url: 'http://127.0.0.1:43202/', pretendToBeVisual: true, runScripts: 'outside-only' })
+  const { window } = dom
+  const bridgeState = { view: 'latest', sources: [], articles: [], articleLoading: false, error: null }
+  const bridge = { getState: () => bridgeState, selectView: vi.fn(async (view) => { bridgeState.view = view }), fetchArticles: vi.fn(), fetchSources: vi.fn(), loadMoreSources: vi.fn(), dispose: vi.fn() }
+  window.__PUSSYCAT_WRSS_BRIDGE__ = bridge
+  try {
+    window.eval(script)
+    await vi.waitFor(() => expect(window.document.querySelector('.arco-table-container [data-pussycat-empty="article-results"]')).not.toBeNull())
+    bridgeState.error = new Error('offline')
+    window.document.querySelector('.arco-table-body').append(window.document.createElement('span'))
+    await vi.waitFor(() => expect(window.document.querySelector('.pussycat-content-retry')).not.toBeNull())
+    window.document.querySelector('.pussycat-content-retry').click()
+    expect(bridge.fetchArticles).toHaveBeenCalledOnce()
+    window.document.querySelector('.pussycat-sources-entry').click()
+    await vi.waitFor(() => expect(window.document.querySelector('.article-list').dataset.pussycatSourceMode).toBe('sources'))
+    bridgeState.error = new Error('sources offline')
+    window.document.querySelector('.arco-layout-sider .arco-list').append(window.document.createElement('span'))
+    await vi.waitFor(() => expect(window.document.querySelector('.pussycat-source-card-controls .pussycat-content-retry')).not.toBeNull())
+    expect(window.document.querySelector('.pussycat-source-card-controls').hidden).toBe(false)
+    window.document.querySelector('.pussycat-source-card-controls .pussycat-content-retry').click()
+    expect(bridge.fetchSources).toHaveBeenCalledOnce()
   } finally {
     window.__PUSSYCAT_WRSS_UI__?.destroy()
     window.close()

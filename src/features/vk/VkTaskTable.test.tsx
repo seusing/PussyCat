@@ -173,6 +173,9 @@ describe('VkTaskTable', () => {
     render(<VkTaskTable {...makeProps({ onDelete })} />)
 
     await user.click(screen.getByRole('button', { name: '任务 3 更多操作' }))
+    const operationMenu = screen.getByRole('menu')
+    expect(operationMenu).toHaveClass('glass-menu-effect')
+    expect(operationMenu.parentElement).toBe(document.body)
     await user.click(screen.getByRole('menuitem', { name: '删除执行记录' }))
     const firstDialog = screen.getByRole('alertdialog')
     expect(onDelete).not.toHaveBeenCalled()
@@ -239,7 +242,8 @@ describe('VkTaskTable', () => {
   it('每页条数可切到全部,翻页条随之消失', async () => {
     render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
 
-    await userEvent.selectOptions(screen.getByLabelText('每页展示条数'), 'all')
+    await userEvent.click(screen.getByLabelText('每页展示条数'))
+    await userEvent.click(screen.getByRole('option', { name: '全部' }))
 
     expect(screen.getAllByTestId('vk-job-row')).toHaveLength(25)
     expect(screen.queryByTestId('vk-task-table-page')).not.toBeInTheDocument()
@@ -249,7 +253,8 @@ describe('VkTaskTable', () => {
     render(<VkTaskTable {...makeProps({ jobs: manyJobs(25) })} />)
 
     await userEvent.click(screen.getByRole('button', { name: '最后一页' }))
-    await userEvent.selectOptions(screen.getByLabelText('按任务状态筛选'), 'failed')
+    await userEvent.click(screen.getByLabelText('按任务状态筛选'))
+    await userEvent.click(screen.getByRole('option', { name: '失败' }))
 
     // 25 条里单数下标是 failed,共 12 条;筛完必须回第 1 页,否则会停在一个已不存在的页上。
     expect(screen.getByTestId('vk-task-table-count')).toHaveTextContent('筛出 12 条 / 共 25 条')
@@ -272,7 +277,8 @@ describe('VkTaskTable', () => {
   it('筛不出任何任务时给出与"暂无任务"不同的提示', async () => {
     render(<VkTaskTable {...makeProps({ jobs: JOBS })} />)
 
-    await userEvent.selectOptions(screen.getByLabelText('按任务状态筛选'), 'interrupted')
+    await userEvent.click(screen.getByLabelText('按任务状态筛选'))
+    await userEvent.click(screen.getByRole('option', { name: '已中断' }))
 
     expect(screen.getByText('没有符合筛选条件的任务')).toBeInTheDocument()
     expect(screen.queryByText('暂无任务')).not.toBeInTheDocument()

@@ -12,4 +12,4 @@
 
 .command-search:focus-within { border-color: #6f8fd8; outline: 2px solid #8fb2ff; outline-offset: 2px; }
 .command-search input:focus-visible { outline: 0; }
-.inspiration-empty-state { display: grid; min-height: 96px; place-items: center; margin: 24px auto; border: 1px dashed var(--color-line); border-radius: 8px; color: var(--color-fg-dim); }
+.inspiration-empty { margin: 24px 0; }

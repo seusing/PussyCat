@@ -66,9 +66,12 @@ describe('WeRSS authorization client', () => {
     let imageCalls = 0
     const { auth, fetch } = harness(async (url) => {
       if (url.endsWith('/code')) return response({ code: '/static/wx_qrcode.png', is_exists: false })
-      imageCalls += 1
-      if (imageCalls === 1) return pending.promise
-      return response(imageCalls > 2)
+      if (url.endsWith('/image')) {
+        imageCalls += 1
+        if (imageCalls === 1) return pending.promise
+        return response(true)
+      }
+      return response({ qr_code: imageCalls > 1, version: imageCalls > 1 ? 1 : 0, expires_at: 9999999999 })
     })
     const ready = auth.qrCode()
     await vi.advanceTimersByTimeAsync(0)
@@ -83,15 +86,25 @@ describe('WeRSS authorization client', () => {
     expect(imageCalls).toBe(2)
     await vi.advanceTimersByTimeAsync(250)
     await expect(ready).resolves.toMatchObject({ code: '/static/wx_qrcode.png' })
-    expect(fetch).toHaveBeenCalledTimes(4)
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/wx/auth/qr/code',
+      '/api/v1/wx/auth/qr/image',
+      '/api/v1/wx/auth/qr/image',
+      '/api/v1/wx/auth/qr/status',
+    ])
     expect(vi.getTimerCount()).toBe(0)
   })
 
   it('accepts the locked-login response without is_exists and uses image readiness', async () => {
     const { auth, fetch } = harness(async (url) => response(url.endsWith('/code')
-      ? { code: 'static/wx_qrcode.png?t=2', msg: 'running' } : true))
+      ? { code: 'static/wx_qrcode.png?t=2', msg: 'running' }
+      : url.endsWith('/image')
+        ? true
+        : { qr_code: true, version: 1, expires_at: 9999999999 }))
     await expect(auth.qrCode()).resolves.toMatchObject({ code: '/static/wx_qrcode.png?t=2' })
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v1/wx/auth/qr/code', '/api/v1/wx/auth/qr/image'])
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/wx/auth/qr/code', '/api/v1/wx/auth/qr/image', '/api/v1/wx/auth/qr/status',
+    ])
   })
 
   it('times out QR readiness after 45 seconds and stops all polling', async () => {
@@ -116,7 +129,8 @@ describe('WeRSS authorization client', () => {
     pending.resolve(response({ code: '/static/wx_qrcode.png', is_exists: false }))
     await vi.advanceTimersByTimeAsync(60_000)
     expect((await outcome).name).toBe('AbortError')
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[1][0]).toBe('/api/v1/wx/auth/qr/over')
     expect(vi.getTimerCount()).toBe(0)
   })
 

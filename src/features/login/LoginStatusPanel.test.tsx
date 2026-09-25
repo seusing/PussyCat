@@ -59,6 +59,26 @@ test('只渲染一张五列表格，不再出现登录状态分组', () => {
   expect(screen.queryByTestId('login-group-other')).not.toBeInTheDocument()
 })
 
+test('通用登录信息不显示微信公众号与视频号登录行', () => {
+  setup({
+    commands: [
+      command('weixin', 'whoami'),
+      command('wechat-channels', 'whoami'),
+      command('xiaohongshu', 'whoami'),
+    ],
+    decisions: new Map([
+      ['weixin/whoami', unknownDecision('weixin')],
+      ['wechat-channels/whoami', unknownDecision('wechat-channels')],
+      ['xiaohongshu/whoami', unknownDecision('xiaohongshu')],
+    ]),
+  })
+  render(<LoginStatusPanel />)
+
+  expect(screen.queryByTestId('login-row-weixin')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('login-row-wechat-channels')).not.toBeInTheDocument()
+  expect(screen.getByTestId('login-row-xiaohongshu')).toBeInTheDocument()
+})
+
 test('站点名前使用原版彩色 logo', () => {
   render(<LoginStatusPanel />)
   expect(screen.getByTestId('login-logo-xiaohongshu')).toHaveAttribute('src', '/site-logos/xiaohongshu.svg')
@@ -96,6 +116,8 @@ test('刷新状态直接执行，只有独立箭头打开账号菜单', async ()
   expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
   await userEvent.click(trigger)
   const menu = screen.getByRole('menu', { name: '小红书账号操作' })
+  expect(menu).toHaveClass('glass-menu-effect')
+  expect(menu.parentElement).toBe(document.body)
   expect(within(menu).getAllByRole('menuitem')).toHaveLength(2)
   expect(within(menu).queryByText('刷新状态')).not.toBeInTheDocument()
   expect(within(menu).getByText('退出当前账号')).toBeInTheDocument()

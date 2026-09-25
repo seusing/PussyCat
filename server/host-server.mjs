@@ -32,6 +32,17 @@ const VK_ROUTES = [
   { method: 'GET', pattern: /^\/vk\/v1\/outputs\/([^/]+)\/([^/]+)$/, target: (m) => `/api/outputs/${m[1]}/${m[2]}` },
   { method: 'GET', pattern: /^\/vk\/v1\/diagnostic$/, target: () => '/api/diagnostic' },
   { method: 'POST', pattern: /^\/vk\/v1\/preview$/, target: () => '/api/preview', kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/intent-classify$/, target: () => '/api/intent-classify', kind: 'json' },
+  { method: 'GET', pattern: /^\/vk\/v1\/jev\/config$/, target: () => '/api/jev/config' },
+  { method: 'POST', pattern: /^\/vk\/v1\/jev\/config$/, target: () => '/api/jev/config', kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/jev\/config\/clear$/, target: () => '/api/jev/config', kind: 'json' },
+  { method: 'POST', pattern: /^\/vk\/v1\/jev\/test$/, target: () => '/api/jev/test', kind: 'json' },
+  { method: 'GET', pattern: /^\/vk\/v1\/jev\/configs$/, target: () => '/api/jev/configs' },
+  { method: 'GET', pattern: /^\/vk\/v1\/jev\/usage$/, target: () => '/api/jev/usage' },
+  { method: 'POST', pattern: /^\/vk\/v1\/jev\/configs$/, target: () => '/api/jev/configs', kind: 'json' },
+  { method: 'PUT', pattern: /^\/vk\/v1\/jev\/configs\/([^/]+)$/, target: (m) => `/api/jev/configs/${m[1]}`, kind: 'json' },
+  { method: 'DELETE', pattern: /^\/vk\/v1\/jev\/configs\/([^/]+)$/, target: (m) => `/api/jev/configs/${m[1]}` },
+  { method: 'POST', pattern: /^\/vk\/v1\/jev\/configs\/([^/]+)\/(enable|test)$/, target: (m) => `/api/jev/configs/${m[1]}/${m[2]}`, kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/jobs$/, target: () => '/api/jobs', kind: 'json', tap: 'submit' },
   { method: 'POST', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/(cancel|retry|refresh)$/, target: (m) => `/api/jobs/${m[1]}/${m[2]}`, kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/query$/, target: () => '/api/query', kind: 'json' },
@@ -140,6 +151,41 @@ function writeJson(response, statusCode, value, extraHeaders = {}) {
     ...extraHeaders,
   })
   response.end(JSON.stringify(value))
+}
+
+const WRSS_API_ROUTES = [
+  ['GET', /^\/articles$/],
+  ['GET', /^\/articles\/[^/]+(?:\/(?:prev|next))?$/],
+  ['PUT', /^\/articles\/[^/]+\/favorite$/],
+  ['PUT', /^\/articles\/[^/]+\/read$/],
+  ['POST', /^\/articles\/[^/]+\/refresh$/],
+  ['GET', /^\/articles\/refresh\/tasks\/[^/]+$/],
+  ['DELETE', /^\/articles\/[^/]+$/],
+  ['DELETE', /^\/articles\/(?:clean|clean_duplicate_articles|clean-old)$/],
+  ['GET', /^\/mps$/],
+  ['GET', /^\/mps\/search\/[^/]+$/],
+  ['POST', /^\/mps$/],
+  ['PUT', /^\/mps\/[^/]+$/],
+  ['GET', /^\/mps\/update\/[^/]+$/],
+  ['GET', /^\/mps\/update\/tasks\/[^/]+$/],
+  ['DELETE', /^\/mps\/[^/]+$/],
+  ['POST', /^\/mps\/by_article$/],
+  ['POST', /^\/mps\/featured\/article$/],
+  ['GET', /^\/mps\/featured\/article\/tasks\/[^/]+$/],
+  ['GET', /^\/auth\/qr\/(?:code|image|status)$/],
+  ['POST', /^\/auth\/qr\/(?:refresh|over)$/],
+  ['POST', /^\/auth\/wechat\/logout$/],
+  ['GET', /^\/sys\/info$/],
+  ['GET', /^\/export\/mps\/(?:opml|export)$/],
+  ['POST', /^\/export\/mps\/import$/],
+  ['GET', /^\/tools\/export\/list$/],
+  ['POST', /^\/tools\/export\/articles$/],
+  ['DELETE', /^\/tools\/export\/delete$/],
+  ['GET', /^\/tools\/export\/download$/],
+]
+
+function isAllowedWrssApi(method, path) {
+  return WRSS_API_ROUTES.some(([allowedMethod, pattern]) => allowedMethod === method && pattern.test(path))
 }
 
 function requestOrigin(request) {
@@ -252,7 +298,7 @@ export function createHostServer({
           return
         }
         response.writeHead(204, {
-          'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+          'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type',
           'Access-Control-Max-Age': '600',
         })
@@ -457,6 +503,78 @@ export function createHostServer({
         await readJson(request, maxBodyBytes)
         if (!wrssIntegration) throw new WrssIntegrationError(503, 'not-configured', 'WeRSS 集成未接线')
         writeJson(response, 200, await wrssIntegration.test())
+        return
+      }
+
+      if (url.pathname === '/wrss/qr-image' && request.method === 'GET') {
+        if (!wrssRuntime?.requestApi) {
+          writeJson(response, 503, { error: 'WeRSS runtime not available' })
+          return
+        }
+        const upstream = await wrssRuntime.requestApi('/static/wx_qrcode.png')
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        response.writeHead(upstream.status, {
+          'Content-Type': upstream.headers.get('content-type') ?? 'image/png',
+          'Cache-Control': 'no-store',
+        })
+        response.end(buffer)
+        return
+      }
+
+      const avatarMatch = url.pathname.match(/^\/wrss\/source-avatar\/([^/]+)$/)
+      if (avatarMatch && request.method === 'GET') {
+        if (!wrssRuntime?.requestSourceAvatar) {
+          writeJson(response, 503, { error: 'WeRSS runtime not available' })
+          return
+        }
+        const upstream = await wrssRuntime.requestSourceAvatar(decodeURIComponent(avatarMatch[1]))
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        response.writeHead(upstream.status, {
+          'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+          'Cache-Control': 'private, max-age=300',
+        })
+        response.end(buffer)
+        return
+      }
+
+      if (url.pathname === '/wrss/article-image' && request.method === 'GET') {
+        if (!wrssRuntime?.requestArticleImage) {
+          writeJson(response, 503, { error: 'WeRSS runtime not available' })
+          return
+        }
+        const upstream = await wrssRuntime.requestArticleImage(url.searchParams.get('url') ?? '')
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        response.writeHead(upstream.status, {
+          'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+          'Cache-Control': 'private, max-age=300',
+        })
+        response.end(buffer)
+        return
+      }
+
+      if (url.pathname.startsWith('/wrss/api/')) {
+        const apiPath = `/${url.pathname.slice('/wrss/api/'.length)}`
+        if (!isAllowedWrssApi(request.method, apiPath)) {
+          writeJson(response, 404, { error: 'WeRSS API route is not available' })
+          return
+        }
+        if (!wrssRuntime?.requestApi) {
+          writeJson(response, 503, { error: 'WeRSS runtime not available' })
+          return
+        }
+        const init = { method: request.method, headers: {} }
+        if (!['GET', 'HEAD'].includes(request.method)) {
+          init.headers['Content-Type'] = request.headers['content-type'] ?? 'application/json'
+          init.body = await readRawBody(request, maxBodyBytes)
+        }
+        const upstream = await wrssRuntime.requestApi(`/api/v1/wx${apiPath}${url.search}`, init)
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        response.writeHead(upstream.status, {
+          'Content-Type': upstream.headers.get('content-type') ?? JSON_CONTENT_TYPE,
+          'Cache-Control': 'no-store',
+          ...(upstream.headers.get('content-disposition') ? { 'Content-Disposition': upstream.headers.get('content-disposition') } : {}),
+        })
+        response.end(buffer)
         return
       }
 

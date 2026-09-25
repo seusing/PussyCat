@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import {
   existsSync, mkdirSync, promises as fsPromises, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs'
+import { rm as rmAsync } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
   RUNTIME_RECEIPT_SCHEMA,
@@ -321,6 +322,32 @@ export function listOwnedRuntimeReceipts({ home, bundleDir } = {}) {
   return receipts.sort((a, b) => String(b.installedAt ?? '').localeCompare(String(a.installedAt ?? '')))
 }
 
+export async function pruneInvalidOwnedRuntimeDirs({ home, bundleDir, removeDirImpl = rmAsync } = {}) {
+  if (!home) return { removed: [], failures: [] }
+  const versions = join(resolve(home), 'runtime', 'versions')
+  let entries
+  try { entries = await fsPromises.readdir(versions, { withFileTypes: true }) } catch { return { removed: [], failures: [] } }
+  const bundleManifest = manifestOf(bundleDir)
+  const activeReceiptPath = readJson(join(resolve(home), 'runtime', 'active.json'))?.receiptPath
+  const removed = []
+  const failures = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const versionDir = versionDirForLabel(home, entry.name)
+    if (!versionDir) continue
+    const receiptPath = join(versionDir, RECEIPT_FILE)
+    if (activeReceiptPath && canonical(activeReceiptPath) === canonical(receiptPath)) continue
+    if (validateReceipt(home, readJson(receiptPath), { bundleManifest })) continue
+    try {
+      await removeDirImpl(versionDir, { recursive: true, force: false })
+      removed.push(versionDir)
+    } catch (error) {
+      failures.push({ versionDir, error: String(error?.message ?? error) })
+    }
+  }
+  return { removed, failures }
+}
+
 // 体积报的是**删掉它真正释放的字节**。拆层后共享底座不算在任何一个版本头上——
 // 把 2.4 GB 记到每个 2 MB 的版本上,清理界面就会承诺一个它兑现不了的数字。
 export function ownedRuntimeSizeBytes({ home, runtime } = {}) {
@@ -335,7 +362,7 @@ export async function ownedRuntimeSizeBytesAsync({ home, runtime } = {}) {
   return versionDir ? directorySizeBytesAsync(versionDir) : 0
 }
 
-export function removeOwnedRuntimeReceipt({ home, runtime } = {}) {
+function validatedOwnedRuntimeRemoval({ home, runtime } = {}) {
   if (!home || runtime?.source !== 'app-owned') throw new Error('只能清理 app-owned runtime')
   const versionDir = ownedVersionDirFor(home, runtime)
   const receiptPath = versionDir ? join(versionDir, RECEIPT_FILE) : null
@@ -356,9 +383,21 @@ export function removeOwnedRuntimeReceipt({ home, runtime } = {}) {
   if (sameReceipt || samePython) {
     throw new Error('活动 runtime 不允许清理')
   }
+  return { versionDir, version: String(runtime.version ?? 'unknown') }
+}
+
+export function removeOwnedRuntimeReceipt({ home, runtime } = {}) {
+  const { versionDir, version } = validatedOwnedRuntimeRemoval({ home, runtime })
   const sizeBytes = directorySizeBytes(versionDir)
   rmSync(versionDir, { recursive: true, force: false })
-  return { version: String(runtime.version ?? 'unknown'), sizeBytes }
+  return { version, sizeBytes }
+}
+
+export async function removeOwnedRuntimeReceiptAsync({ home, runtime, calculateSize = false } = {}) {
+  const { versionDir, version } = validatedOwnedRuntimeRemoval({ home, runtime })
+  const sizeBytes = calculateSize ? await directorySizeBytesAsync(versionDir) : null
+  await rmAsync(versionDir, { recursive: true, force: false })
+  return calculateSize ? { version, sizeBytes } : { version }
 }
 
 // —— 底座回收 ——

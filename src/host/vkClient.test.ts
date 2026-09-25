@@ -1,5 +1,5 @@
 import { HostRequestError } from './errors'
-import { fetchVkJobs, fetchVkOutputText, postVkJob, vkOutputPath } from './vkClient'
+import { clearVkJevConfig, classifyVkIntent, fetchVkJobs, fetchVkOutputText, postVkJob, saveVkJevConfig, vkOutputPath } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
   const impl = vi.fn(async (_url: string, _init?: RequestInit) => ({
@@ -47,5 +47,23 @@ describe('vkClient', () => {
 
     await expect(fetchVkOutputText('notes/a.md', 'http://127.0.0.1:9999')).resolves.toBe(markdown)
     expect(impl).toHaveBeenCalledWith('http://127.0.0.1:9999/vk/v1/outputs/notes%2Fa.md')
+  })
+
+  it('classifies only the bounded user goal through the Host proxy', async () => {
+    const impl = stubFetch(200, { classified: true, classification: { intent_id: 'quick_overview', confidence: 0.9 } })
+    await classifyVkIntent('重点'.repeat(600), 'http://127.0.0.1:9999')
+    expect(impl.mock.calls[0][0]).toBe('http://127.0.0.1:9999/vk/v1/intent-classify')
+    expect(JSON.parse(String(impl.mock.calls[0][1]?.body)).user_goal).toHaveLength(1000)
+  })
+
+  it('saves and clears Jev credentials without requesting a reveal', async () => {
+    const impl = stubFetch(200, { saved: true, configured: false })
+    await saveVkJevConfig('jev-secret', 'http://127.0.0.1:9999')
+    await clearVkJevConfig('http://127.0.0.1:9999')
+    expect(impl.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:9999/vk/v1/jev/config',
+      'http://127.0.0.1:9999/vk/v1/jev/config/clear',
+    ])
+    expect(impl.mock.calls.some(([url]) => String(url).includes('reveal'))).toBe(false)
   })
 })

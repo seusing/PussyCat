@@ -1,6 +1,7 @@
 import type { ManifestArg } from '../../data/types'
 import { inputKind } from '../../data/inputKind'
 import { argHelp } from '../../data/zhCopy'
+import { GlassSelect } from '../../components/GlassMenu'
 
 export function DynamicField({ arg, value, error, onChange, commandKey }: {
   arg: ManifestArg; value: unknown; error?: string; onChange: (v: unknown) => void; commandKey?: string
@@ -20,14 +21,13 @@ export function DynamicField({ arg, value, error, onChange, commandKey }: {
       {kind === 'switch' ? (
         <input data-testid={`field-${arg.name}`} type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
       ) : kind === 'select' ? (
-        <select data-testid={`field-${arg.name}`} className={base} style={style} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
-          <option value="" />
-          {(arg.choices ?? []).map((ch) => {
-            const val = typeof ch === 'string' ? ch : ch.value
-            const label = typeof ch === 'string' ? ch : ch.label
-            return <option key={val} value={val}>{label}</option>
-          })}
-        </select>
+        <GlassSelect data-testid={`field-${arg.name}`} aria-label={arg.name} className={base} style={style} value={String(value ?? '')} onChange={onChange} options={[
+          { value: '', label: '' },
+          ...(arg.choices ?? []).map((ch) => ({
+            value: typeof ch === 'string' ? ch : ch.value,
+            label: typeof ch === 'string' ? ch : ch.label,
+          })),
+        ]} />
       ) : (
         <input data-testid={`field-${arg.name}`} className={base} style={style}
           type={kind === 'number' ? 'number' : 'text'}

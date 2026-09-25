@@ -122,6 +122,8 @@ describe('VkTaskDetailSidebar', () => {
     const button = await screen.findByRole('button', { name: '重新提交全部任务' })
     await user.hover(button)
     const menu = await screen.findByRole('menu')
+    expect(menu).toHaveClass('glass-menu-effect')
+    expect(menu.parentElement).toBe(document.body)
     await user.hover(menu)
     await user.unhover(menu)
     await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 180)) })
@@ -168,6 +170,24 @@ describe('VkTaskDetailSidebar', () => {
     }
   })
 
+  it('为长视频分段与汇总调用显示中文阶段名', async () => {
+    const { details } = memberProgressFixture()
+    const detail = details.get('member-a')!
+    detail.status = 'running'
+    detail.progress = {
+      completed_stages: ['summary_map'], current_stage: 'summary_reduce',
+      stage_metrics: ['summary_map', 'summary_reduce'].map((stage) => ({
+        stage, status: stage === 'summary_reduce' ? 'running' : 'success',
+        elapsed_s: 2, input_tokens: 10, output_tokens: 5, cached_tokens: 0, model_calls: 1,
+      })),
+    }
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
+    const steps = screen.getByRole('list', { name: '解析阶段' })
+    expect(steps).toHaveTextContent('分段提取')
+    expect(steps).toHaveTextContent('分层汇总')
+  })
+
   it.each(['failed', 'cancelled', 'running'])('最新尝试为 %s 时仍能打开单任务parent链的历史结果', async (status) => {
     resultHistoryFixture(status)
     const dispatched = vi.spyOn(window, 'dispatchEvent')
@@ -180,7 +200,8 @@ describe('VkTaskDetailSidebar', () => {
     expect(resultEvent().detail.versionJobId).toBeUndefined()
     const versions = screen.getByRole('combobox', { name: '查看历史结果' })
     expect(versions.querySelector('option[value="result-unrelated"]')).toBeNull()
-    await userEvent.selectOptions(versions, 'result-original')
+    await userEvent.click(versions)
+    await userEvent.click(screen.getByRole('option', { name: /第 1 次/ }))
     expect(resultEvent().detail).toEqual({ jobId: 'result-current', versionJobId: 'result-original', title: '解析结果' })
     expect(resultEvent().detail).not.toHaveProperty('outputId')
     expect(versions).toHaveValue('')
@@ -190,9 +211,11 @@ describe('VkTaskDetailSidebar', () => {
     resultHistoryFixture('done')
     render(<VkTaskDetailSidebar jobId="result-current" baseUrl={BASE} onClose={() => {}} />)
     const versions = await screen.findByRole('combobox', { name: '查看历史结果' })
-    expect(versions.querySelector('option[value="result-current"]')).toBeNull()
-    expect(versions.querySelector('option[value="result-middle"]')).not.toBeNull()
-    expect(versions.querySelector('option[value="result-original"]')).not.toBeNull()
+    await userEvent.click(versions)
+    const listbox = screen.getByRole('listbox')
+    expect(listbox.querySelector('[data-value="result-current"]')).toBeNull()
+    expect(listbox.querySelector('[data-value="result-middle"]')).not.toBeNull()
+    expect(listbox.querySelector('[data-value="result-original"]')).not.toBeNull()
   })
 
   it('主按钮兼容当前输出路径,历史选择不携带当前输出路径', async () => {
@@ -204,7 +227,8 @@ describe('VkTaskDetailSidebar', () => {
     const events = () => dispatched.mock.calls.map(([event]) => event as CustomEvent)
       .filter((event) => event.type === 'vk:open-output')
     expect(events().at(-1)!.detail).toMatchObject({ jobId: 'result-current', outputId: 'notes/current.md' })
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: '查看历史结果' }), 'result-original')
+    await userEvent.click(screen.getByRole('combobox', { name: '查看历史结果' }))
+    await userEvent.click(screen.getByRole('option', { name: /第 1 次/ }))
     expect(events().at(-1)!.detail).toEqual({ jobId: 'result-current', versionJobId: 'result-original', title: '解析结果' })
   })
 

@@ -295,12 +295,17 @@ function VersionHarness() {
     baseUrl="http://host" onClose={() => {}} />
 }
 
+async function chooseVersion(name: RegExp) {
+  await userEvent.click(screen.getByRole('combobox', { name: '选择结果版本' }))
+  await userEvent.click(screen.getByRole('option', { name }))
+}
+
 it('selects versions within one tab and caches, copies, and downloads each version independently', async () => {
   render(<VersionHarness />)
   await screen.findByRole('heading', { name: 'latest.md' })
   const version = screen.getByRole('combobox', { name: '选择结果版本' })
-  expect(version).toHaveValue('latest')
-  expect(screen.getByRole('option', { name: /第 2 次.*最新结果/ })).toHaveValue('latest')
+  expect(version).toHaveAttribute('data-value', 'latest')
+  expect(version).toHaveTextContent(/第 2 次.*最新结果/)
   expect(screen.getAllByRole('tab')).toHaveLength(1)
   await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
   expect(copyText).toHaveBeenLastCalledWith('# latest.md\n\n正文 latest.md')
@@ -308,7 +313,7 @@ it('selects versions within one tab and caches, copies, and downloads each versi
   expect(saveTextFileAs).toHaveBeenLastCalledWith('latest.md', '# latest.md\n\n正文 latest.md', expect.any(Object))
   const content = screen.getByRole('tabpanel')
   content.scrollTop = 150
-  await userEvent.selectOptions(version, 'previous')
+  await chooseVersion(/第 1 次/)
   expect(content.scrollTop).toBe(0)
   await screen.findByRole('heading', { name: 'previous.md' })
   expect(screen.getByTestId('vk-output-viewer-copy')).toHaveAccessibleName('复制内容')
@@ -317,10 +322,10 @@ it('selects versions within one tab and caches, copies, and downloads each versi
   await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
   expect(saveTextFileAs).toHaveBeenLastCalledWith('previous.md', '# previous.md\n\n正文 previous.md', expect.any(Object))
   content.scrollTop = 80
-  await userEvent.selectOptions(version, 'latest')
+  await chooseVersion(/第 2 次.*最新结果/)
   expect(content.scrollTop).toBe(0)
   await screen.findByRole('heading', { name: 'latest.md' })
-  await userEvent.selectOptions(version, 'previous')
+  await chooseVersion(/第 1 次/)
   await screen.findByRole('heading', { name: 'previous.md' })
   expect(fetchVkJob).toHaveBeenCalledTimes(2)
   expect(fetchVkOutputText).toHaveBeenCalledTimes(2)
@@ -333,17 +338,16 @@ it('ignores a slow old version and aborts a version download when selecting anot
   vi.mocked(fetchVkOutputText).mockImplementation((id) => id === 'previous.md' ? oldVersion.promise : Promise.resolve('# Latest'))
   render(<VersionHarness />)
   await screen.findByRole('heading', { name: 'Latest' })
-  const version = screen.getByRole('combobox', { name: '选择结果版本' })
-  await userEvent.selectOptions(version, 'previous')
+  await chooseVersion(/第 1 次/)
   await waitFor(() => expect(fetchVkOutputText).toHaveBeenCalledWith('previous.md', 'http://host'))
   expect(screen.getByTestId('vk-output-viewer-copy')).toBeDisabled()
   expect(screen.queryByRole('heading', { name: 'Latest' })).not.toBeInTheDocument()
-  await userEvent.selectOptions(version, 'latest')
+  await chooseVersion(/第 2 次.*最新结果/)
   await act(async () => { oldVersion.resolve('# Previous') })
   expect(screen.getByRole('heading', { name: 'Latest' })).toBeInTheDocument()
   expect(screen.queryByRole('heading', { name: 'Previous' })).not.toBeInTheDocument()
   vi.mocked(fetchVkOutputText).mockResolvedValueOnce('# Previous')
-  await userEvent.selectOptions(version, 'previous')
+  await chooseVersion(/第 1 次/)
   await screen.findByRole('heading', { name: 'Previous' })
   vi.mocked(saveTextFileAs).mockImplementation((_name, _content, options) => {
     options?.onProgress?.(37)
@@ -352,7 +356,7 @@ it('ignores a slow old version and aborts a version download when selecting anot
   await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
   const signal = vi.mocked(saveTextFileAs).mock.calls[0][2]?.signal
   expect(signal?.aborted).toBe(false)
-  await userEvent.selectOptions(version, 'latest')
+  await chooseVersion(/第 2 次.*最新结果/)
   expect(signal?.aborted).toBe(true)
   await act(async () => { saving.reject(new Error('旧版本下载失败')) })
   expect(screen.getByRole('heading', { name: 'Latest' })).toBeInTheDocument()

@@ -12,6 +12,7 @@ import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vk
 import { HostRequestError } from '../../host/errors'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
+import { useGlassMenuSurface } from '../../components/GlassMenu'
 import { copyText } from '../../lib/clipboard'
 import {
   isVkJobRerun, markVkJobAsRerun, vkDurationLabel, vkElapsedLabel, vkTaskNumberFor, vkTaskNumberForBatch,
@@ -170,6 +171,8 @@ const STAGE_LABELS: Record<string, string> = {
   acquire: '采集与转写',
   normalize: '整理字幕',
   chapter: '理解视频',
+  summary_map: '分段提取',
+  summary_reduce: '分层汇总',
   claim: '提取关键信息',
   qc: '核对关键信息',
   note: '整理知识笔记',
@@ -590,9 +593,11 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const [rerunMenuPinned, setRerunMenuPinned] = useState(false)
   const rerunMenuPinnedRef = useRef(false)
   const rerunMenuRef = useRef<HTMLDivElement | null>(null)
+  const rerunSurfaceRef = useRef<HTMLDivElement | null>(null)
   const rerunMenuCloseTimer = useRef<number | null>(null)
   const [rerunMenuPosition, setRerunMenuPosition] = useState<{ left: number; bottom: number; width: number } | null>(null)
   const [rerunPicked, setRerunPicked] = useState<Set<string> | null>(null)
+  useGlassMenuSurface(rerunSurfaceRef, rerunMenuOpen)
   const batchStateSignature = useMemo(
     () => batchMembers.map((member) => `${member.job_id}:${member.state}`).join('|'),
     [batchMembers],
@@ -899,7 +904,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     <section className="vk-task-detail-sidebar" data-testid="vk-task-detail-sidebar" aria-label="任务执行详情">
       {copyNotices.length > 0 && (
         <div className="vk-task-detail-notification" data-testid="vk-task-detail-notification">
-          <AppNotificationStack>
+          <AppNotificationStack onOverflow={(count) => setCopyNotices((notices) => notices.slice(0, Math.max(1, notices.length - count)))}>
             {copyNotices.map((id) => <AppAlert
               key={id}
               testId="vk-copy-notice"
@@ -1033,15 +1038,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                 {rerunMenuPosition && typeof document !== 'undefined' && createPortal(
                   <AnimatePresence>
                   {rerunMenuOpen && <motion.div
+                    ref={rerunSurfaceRef}
                     key="rerun-menu"
-                    className="vk-task-operation-menu vk-task-batch-rerun-menu"
+                    className="vk-task-operation-menu vk-task-batch-rerun-menu glass-menu-effect"
                     role="menu"
                     style={{ ...rerunMenuPosition, originY: 1 }}
                     onMouseEnter={openRerunMenu}
                     onMouseLeave={scheduleRerunMenuClose}
-                    initial={{ opacity: 0, y: 5, scaleY: 0.96 }}
+                    initial={{ opacity: 0.96, y: 5, scaleY: 0.96 }}
                     animate={{ opacity: 1, y: 0, scaleY: 1, pointerEvents: 'auto' }}
-                    exit={{ opacity: 0, y: 5, scaleY: 0.96, pointerEvents: 'none' }}
+                    exit={{ opacity: 0.96, y: 5, scaleY: 0.96, pointerEvents: 'none' }}
                     transition={{ duration: reduceMotion ? 0 : 0.2 }}
                   >
                     {batchMembers.map((member, index) => {
