@@ -1,11 +1,12 @@
 @import "tailwindcss";
 
+@import "misans/lib/Normal/MiSansVF.min.css";
+
+/* MiSans 的 • 是全角字形，会把 API Key 掩码(apik••••36ff)拉散；只把这个字符交给系统西文字体。 */
 @font-face {
-  font-family: "Helvetica";
-  src: url("./assets/fonts/Helvetica.ttf") format("truetype");
-  font-display: swap;
-  font-style: oblique;
-  font-weight: 700;
+  font-family: "Mask Bullet";
+  src: local("Segoe UI"), local("Arial");
+  unicode-range: U+2022;
 }
 
 @theme {
@@ -49,13 +50,13 @@ html,
 body,
 #root,
 #root * {
-  font-family: "Helvetica" !important;
+  font-family: "Mask Bullet", "MiSans VF", sans-serif !important;
 }
 body {
   margin: 0;
   background: var(--color-canvas);
   color: var(--color-fg);
-  font-family: "Helvetica";
+  font-family: "Mask Bullet", "MiSans VF", sans-serif;
   font-size: var(--text-body);
   font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
