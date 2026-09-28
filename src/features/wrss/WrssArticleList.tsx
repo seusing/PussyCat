@@ -5,20 +5,22 @@ import { EmptyState } from "../../components/EmptyState";
 import { GlassSelect } from "../../components/GlassMenu";
 import { openWrssExternal } from "./wrssExternal";
 import {
-  articleImageUrl,
   deleteWrssArticle,
   fetchWrssArticle,
   fetchWrssArticles,
   fetchWrssAuth,
+  loadWrssImage,
   refreshWrssArticle,
   setWrssFavorite,
   setWrssRead,
+  wrssImageRemote,
   type ArticleFilter,
   type WrssArticle,
   type WrssPage,
   type WrssView,
 } from "./wrssClient";
 import type { WrssSyncManager } from "./useWrssSyncManager";
+import { saveWrssArticleToInspiration } from "./wrssInspiration";
 
 const REFRESH_COOLDOWN = 300000;
 const errorText = (cause: unknown) =>
@@ -51,36 +53,13 @@ function ArticleHtml({
       controller = new AbortController();
     let disposed = false;
     const load = async (image: HTMLImageElement) => {
-      const lazy = image.getAttribute("data-src") || "",
-        source = image.getAttribute("src") || "";
-      let remote =
-        lazy.startsWith("http://") || lazy.startsWith("https://")
-          ? lazy
-          : source.startsWith("/static/res/logo/")
-            ? decodeURIComponent(source.slice("/static/res/logo/".length))
-            : "";
+      const remote = wrssImageRemote(
+        image.getAttribute("src"),
+        image.getAttribute("data-src"),
+      );
       if (!remote) return;
       try {
-        const url = new URL(remote);
-        if (
-          !["http:", "https:"].includes(url.protocol) ||
-          !["mmbiz.qpic.cn", "mmbiz.qlogo.cn", "mmecoa.qpic.cn"].includes(
-            url.hostname,
-          )
-        )
-          return;
-        const response = await fetch(articleImageUrl(baseUrl, url.href), {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("文章图片加载失败");
-        const blob = await response.blob(),
-          data = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-          });
+        const data = await loadWrssImage(baseUrl, remote, controller.signal);
         if (disposed) return;
         image.setAttribute("src", data);
         image.removeAttribute("data-src");
@@ -150,6 +129,7 @@ export default function WrssArticleList({
     [error, setError] = useState<string | null>(null),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [detail, setDetail] = useState<WrssArticle | null>(null),
+    [detailMessage, setDetailMessage] = useState(""),
     [columns, setColumns] = useState({
       source: true,
       time: true,
@@ -417,6 +397,7 @@ export default function WrssArticleList({
       const next = await fetchWrssArticle(baseUrl, id, direction);
       if (request !== detailRequestId.current || !active) return;
       setDetail(next);
+      setDetailMessage("");
       setError(null);
       try {
         await setWrssRead(baseUrl, next.id, true);
@@ -479,7 +460,18 @@ export default function WrssArticleList({
   const closeDetail = () => {
     detailRequestId.current++;
     setDetail(null);
+    setDetailMessage("");
     setError(null);
+  };
+  const saveDetailToInspiration = () => {
+    if (!detail) return;
+    try {
+      const { created } = saveWrssArticleToInspiration(detail);
+      setDetailMessage(created ? "已存入灵感库" : "这篇文章已在灵感库中");
+      setError(null);
+    } catch (cause) {
+      setError(errorText(cause));
+    }
   };
   const toggleAll = () =>
     setSelected((current) =>
@@ -529,12 +521,14 @@ export default function WrssArticleList({
               查看原文
             </button>
           )}
+          <button onClick={saveDetailToInspiration}>存入灵感库</button>
         </header>
         {error && (
           <div className="wrss-native-error" role="alert">
             {error}
           </div>
         )}
+        {detailMessage && <p role="status">{detailMessage}</p>}
         <article>
           <h2>{detail.title}</h2>
           <p>

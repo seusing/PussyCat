@@ -210,6 +210,13 @@
 .inspiration-library-preview { min-height: 0; flex: 1; overflow: auto; color: #dce2eb; padding: 16px; font-size: 13px; line-height: 1.7; }
 .inspiration-library-preview h1, .inspiration-library-preview h2, .inspiration-library-preview h3 { color: #f0f2f5; }
 .inspiration-library-preview a { color: #8fb2ff; }
+.inspiration-library-preview img { max-width: 100%; height: auto; border-radius: 6px; }
+.inspiration-library-preview :is(p, ul, ol, blockquote, pre) { margin: 0 0 0.9em; }
+.inspiration-library-preview h1 { margin: 0 0 0.6em; font-size: 20px; font-weight: 650; }
+.inspiration-library-preview h2 { margin: 1.2em 0 0.5em; font-size: 16px; font-weight: 650; }
+.inspiration-library-preview h3 { margin: 1em 0 0.4em; font-size: 14px; font-weight: 650; }
+.inspiration-library-preview :is(ul, ol) { padding-left: 1.4em; list-style: revert; }
+.inspiration-library-preview blockquote { border-left: 3px solid #3a4350; padding-left: 10px; color: #9ca6b5; }
 .inspiration-library-editor-footer { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid #292f39; padding: 0 14px; color: #7e8796; font-size: 10px; }
 .inspiration-library-mobile-add { display: none; }
 
@@ -222,6 +229,9 @@
 .inspiration-library-dialog p { margin: 18px 0 0; color: #d8dee8; font-size: 13px; line-height: 1.55; }
 .inspiration-library-dialog .inspiration-library-dialog-detail { margin-top: 6px; color: #8f99a8; font-size: 12px; }
 .inspiration-library-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #2b313c; margin-top: 20px; padding-top: 14px; }
+.inspiration-library-article-dialog input { width: 100%; margin-top: 12px; border: 1px solid #3a4350; border-radius: 6px; outline: 0; background: #101217; color: #eef0f4; padding: 8px 10px; font-size: 13px; }
+.inspiration-library-article-dialog input:focus-visible { border-color: #8fb2ff; }
+.inspiration-library-dialog .inspiration-library-article-error { margin-top: 8px; color: #f28b82; font-size: 12px; }
 .inspiration-library-danger-action { min-height: 34px; border: 1px solid #b54c4c; border-radius: 7px; background: #bd4f4f; color: #fff; padding: 0 14px; font-size: 12px; font-weight: 600; }
 .inspiration-library-danger-action:hover { background: #d15a5a; }
 

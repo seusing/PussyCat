@@ -700,6 +700,40 @@ export async function fetchFeaturedTask(
     ),
   );
 }
+export interface WrssFeaturedTask {
+  status?: string;
+  message?: string;
+  id?: string;
+}
+const pause = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", cancel);
+        resolve();
+      },
+      cancel = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", cancel);
+        reject(new DOMException("已取消", "AbortError"));
+      },
+      timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", cancel, { once: true });
+  });
+export async function waitFeaturedTask(
+  base: string | undefined,
+  id: string,
+  signal?: AbortSignal,
+): Promise<WrssFeaturedTask> {
+  let current: WrssFeaturedTask = { status: "pending" };
+  for (let attempt = 0; attempt < 60; attempt++) {
+    current = (await fetchFeaturedTask(base, id, signal)) ?? {};
+    if (["success", "completed", "failed"].includes(current.status ?? ""))
+      return current;
+    await pause(1000, signal);
+  }
+  return current;
+}
 export function subscriptionExportUrl(
   base: string | undefined,
   format: "csv" | "opml",
@@ -714,6 +748,47 @@ export function sourceAvatarUrl(base: string | undefined, id: string) {
 }
 export function articleImageUrl(base: string | undefined, url: string) {
   return `${(base || DEFAULT_BASE).replace(/\/$/, "")}/wrss/article-image?url=${encodeURIComponent(url)}`;
+}
+const WRSS_IMAGE_HOSTS = ["mmbiz.qpic.cn", "mmbiz.qlogo.cn", "mmecoa.qpic.cn"];
+const isRemote = (value: string) =>
+  value.startsWith("http://") || value.startsWith("https://");
+export function wrssImageRemote(src?: string | null, lazy?: string | null) {
+  const source = src || "";
+  try {
+    const candidate = isRemote(lazy || "")
+      ? lazy || ""
+      : source.startsWith("/static/res/logo/")
+        ? decodeURIComponent(source.slice("/static/res/logo/".length))
+        : isRemote(source)
+          ? source
+          : "";
+    if (!candidate) return "";
+    const url = new URL(candidate);
+    return ["http:", "https:"].includes(url.protocol) &&
+      WRSS_IMAGE_HOSTS.includes(url.hostname)
+      ? url.href
+      : "";
+  } catch {
+    return "";
+  }
+}
+export async function loadWrssImage(
+  base: string | undefined,
+  remote: string,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(articleImageUrl(base, remote), {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new Error("文章图片加载失败");
+  const blob = await response.blob();
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 export async function importSubscriptions(
   base: string | undefined,

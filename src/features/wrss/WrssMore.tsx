@@ -17,32 +17,19 @@ import {
   addFeaturedArticle,
   cleanWrssArticles,
   clearWrssCache,
-  fetchFeaturedTask,
+  fetchWrssArticle,
   importSubscriptions,
   logoutWechat,
   subscriptionExportUrl,
+  waitFeaturedTask,
   type WrssAuthState,
   type WrssView,
 } from "./wrssClient";
 import { downloadWrssFile } from "./wrssExternal";
+import { saveWrssArticleToInspiration } from "./wrssInspiration";
 
 const text = (error: unknown) =>
   error instanceof Error ? error.message : "操作失败";
-const wait = (signal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    const done = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", cancel);
-        resolve();
-      },
-      cancel = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", cancel);
-        reject(new DOMException("已取消", "AbortError"));
-      },
-      timer = window.setTimeout(done, 1000);
-    signal.addEventListener("abort", cancel, { once: true });
-  });
 
 export default function WrssMore({
   baseUrl,
@@ -70,6 +57,7 @@ export default function WrssMore({
     [url, setUrl] = useState(""),
     [task, setTask] = useState(""),
     [taskPending, setTaskPending] = useState(false),
+    [collectedId, setCollectedId] = useState(""),
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
     [diagnostics, setDiagnostics] = useState<WrssManagedStatus | null>(null),
@@ -140,19 +128,15 @@ export default function WrssMore({
     if (open && diagnosticOpen) void loadDiagnostics();
   }, [diagnosticOpen, loadDiagnostics, open]);
   const pollTask = async (taskId: string, controller: AbortController) => {
-    let current: any = { status: "pending" };
-    for (let i = 0; i < 60 && !controller.signal.aborted; i++) {
-      current = await fetchFeaturedTask(baseUrl, taskId, controller.signal);
-      if (["success", "completed", "failed"].includes(current?.status)) break;
-      await wait(controller.signal);
-    }
+    const current = await waitFeaturedTask(baseUrl, taskId, controller.signal);
     if (controller.signal.aborted) return;
-    if (current?.status === "failed") {
+    if (current.status === "failed") {
       setTaskPending(false);
       throw new Error(current.message || "单篇收录失败");
     }
-    if (current?.status === "success" || current?.status === "completed") {
+    if (current.status === "success" || current.status === "completed") {
       setTaskPending(false);
+      setCollectedId(current.id || "");
       setMessage("单篇收录完成");
       onRefresh();
     } else {
@@ -165,6 +149,7 @@ export default function WrssMore({
     const controller = new AbortController();
     poll.current = controller;
     setBusy(true);
+    setCollectedId("");
     try {
       let taskId = task;
       if (!taskPending || !taskId) {
@@ -252,6 +237,19 @@ export default function WrssMore({
   const closeArticle = () => {
     poll.current?.abort();
     setArticleOpen(false);
+  };
+  const saveCollected = async () => {
+    setBusy(true);
+    try {
+      const { created } = saveWrssArticleToInspiration(
+        await fetchWrssArticle(baseUrl, collectedId),
+      );
+      setMessage(created ? "已存入灵感库" : "这篇文章已在灵感库中");
+    } catch (error) {
+      fail(error);
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="wrss-more" ref={root}>
@@ -384,6 +382,7 @@ export default function WrssMore({
               if (event.target.value !== url) {
                 setTask("");
                 setTaskPending(false);
+                setCollectedId("");
               }
             }}
             placeholder="粘贴公众号文章链接"
@@ -391,6 +390,11 @@ export default function WrssMore({
           <button disabled={busy || !url.trim()} onClick={() => void collect()}>
             {taskPending ? "继续查询" : "提交收录"}
           </button>
+          {collectedId && (
+            <button disabled={busy} onClick={() => void saveCollected()}>
+              存入灵感库
+            </button>
+          )}
           {task && <p>任务：{task}</p>}
           {message && <p role="status">{message}</p>}
           <button onClick={closeArticle}>关闭</button>

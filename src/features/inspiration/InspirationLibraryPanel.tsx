@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type Ref } from 'react'
 import {
   ArrowLeft, BookOpen, Check, Download, Eye, FilePlus2, FileText, Folder, FolderOpen,
-  FolderPlus, Pencil, Search, Trash2, X,
+  FolderPlus, Newspaper, Pencil, Search, Trash2, X,
 } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
@@ -10,6 +10,8 @@ import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { EmptyState } from '../../components/EmptyState'
 import { GlassSelect } from '../../components/GlassMenu'
 import { saveTextFileAs } from '../../lib/saveTextFile'
+import { WrssMarkdownImage } from '../wrss/WrssMarkdownImage'
+import { collectWechatArticle } from '../wrss/wrssInspiration'
 import {
   INSPIRATION_LIBRARY_EVENT,
   addInspirationFolder,
@@ -59,7 +61,7 @@ function flattenFolders(folders: InspirationFolder[], parentId: string | null = 
     .flatMap((folder) => [{ folder, depth }, ...flattenFolders(folders, folder.id, depth + 1)])
 }
 
-export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSources: () => void; searchRef?: Ref<HTMLInputElement> }) {
+export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: { baseUrl?: string; onOpenSources: () => void; searchRef?: Ref<HTMLInputElement> }) {
   const [library, setLibrary] = useState<InspirationLibrary>(() => loadInspirationLibrary())
   const [folderFilter, setFolderFilter] = useState<FolderFilter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -76,9 +78,16 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
   const [viewMode, setViewMode] = useState<ViewMode>('edit')
   const [toast, setToast] = useState<ToastState[]>([])
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
+  const [articleDialogOpen, setArticleDialogOpen] = useState(false)
+  const [articleUrlDraft, setArticleUrlDraft] = useState('')
+  const [articleBusy, setArticleBusy] = useState(false)
+  const [articleError, setArticleError] = useState('')
   const searchContainerRef = useRef<HTMLDivElement>(null)
   const toastSequenceRef = useRef(0)
   const deleteConfirmRef = useRef<HTMLButtonElement>(null)
+  const articleControllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => () => articleControllerRef.current?.abort(), [])
 
   useEffect(() => {
     const reload = () => setLibrary(loadInspirationLibrary())
@@ -185,6 +194,46 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
     setSelectedId(item.id)
     setViewMode('edit')
     showToast('success', '已新建笔记', '可以开始记录你的想法了')
+  }
+
+  const openArticleDialog = () => {
+    setArticleUrlDraft('')
+    setArticleError('')
+    setArticleDialogOpen(true)
+  }
+
+  const closeArticleDialog = () => {
+    articleControllerRef.current?.abort()
+    articleControllerRef.current = null
+    setArticleBusy(false)
+    setArticleDialogOpen(false)
+  }
+
+  const collectArticle = async (event: FormEvent) => {
+    event.preventDefault()
+    articleControllerRef.current?.abort()
+    const controller = new AbortController()
+    articleControllerRef.current = controller
+    setArticleBusy(true)
+    setArticleError('')
+    try {
+      const { item, created } = await collectWechatArticle(baseUrl, articleUrlDraft, controller.signal, folderFilter === 'all' ? null : folderFilter)
+      if (controller.signal.aborted) return
+      setLibrary(loadInspirationLibrary())
+      setFolderFilter(item.folderId ?? 'all')
+      setSelectedId(item.id)
+      setViewMode('read')
+      setArticleDialogOpen(false)
+      showToast(created ? 'success' : 'info', created ? '已存入灵感库' : '这篇文章已在灵感库中', item.title)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      setArticleError(error instanceof Error ? error.message : '添加公众号文章失败')
+    } finally {
+      if (articleControllerRef.current === controller) {
+        articleControllerRef.current = null
+        setArticleBusy(false)
+      }
+    }
   }
 
   const openFolderForm = (parentId: string | null = folderFilter === 'all' ? null : folderFilter) => {
@@ -374,6 +423,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
   const hasContent = library.items.length > 0 || library.folders.length > 0
   const listCount = visibleItems.length + visibleFolders.length
   const dialogTitleId = 'inspiration-delete-dialog-title'
+  const articleDialogTitleId = 'inspiration-article-dialog-title'
 
   return (
     <div data-testid="inspiration-library" className="inspiration-library-page">
@@ -489,6 +539,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
           <p>先去获取灵感，或写下一个想法。视频解析结果也可以直接收进这里。</p>
           <div className="inspiration-library-empty-actions">
             <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={16} aria-hidden="true" />新建笔记</button>
+            <button type="button" className="inspiration-library-secondary-action" onClick={openArticleDialog}><Newspaper size={16} aria-hidden="true" />添加公众号文章</button>
             <button type="button" className="inspiration-library-secondary-action" onClick={() => openFolderForm(null)}><FolderPlus size={16} aria-hidden="true" />新建文件夹</button>
             <button type="button" className="inspiration-library-secondary-action" onClick={onOpenSources}><BookOpen size={16} aria-hidden="true" />去找灵感</button>
           </div>
@@ -508,6 +559,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
                 <span className="inspiration-library-pane-count">{listCount} 项</span>
               </div>
               <div className="inspiration-library-pane-actions">
+                <button type="button" className="inspiration-library-secondary-action" aria-label="添加公众号文章" title="粘贴公众号文章链接，存入灵感库" onClick={openArticleDialog}><Newspaper size={15} aria-hidden="true" /></button>
                 <button type="button" className="inspiration-library-secondary-action" aria-label="新建文件夹" title="在当前目录新建文件夹" onClick={() => openFolderForm()}><FolderPlus size={15} aria-hidden="true" /></button>
                 <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} aria-hidden="true" />新建笔记</button>
               </div>
@@ -572,7 +624,7 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
                 {viewMode === 'edit' ? (
                   <textarea data-testid="inspiration-content-input" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} aria-label="灵感内容" placeholder="写点什么..." />
                 ) : (
-                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown>{contentDraft || '*还没有内容*'}</Markdown></div>
+                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown components={{ img: ({ src, alt }) => <WrssMarkdownImage baseUrl={baseUrl} src={typeof src === 'string' ? src : undefined} alt={alt} /> }}>{contentDraft || '*还没有内容*'}</Markdown></div>
                 )}
                 <div className="inspiration-library-editor-footer">
                   <span>更新于 {formatDate(selectedItem.updatedAt)}</span>
@@ -585,6 +637,29 @@ export function InspirationLibraryPanel({ onOpenSources, searchRef }: { onOpenSo
       )}
 
       {hasContent && !selectedItem && <div className="inspiration-library-mobile-add"><button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} />新建笔记</button></div>}
+
+      {articleDialogOpen && (
+        <div
+          className="inspiration-library-dialog-backdrop"
+          data-testid="inspiration-article-dialog-backdrop"
+          onClick={(event) => { if (event.target === event.currentTarget) closeArticleDialog() }}
+          onKeyDown={(event) => { if (event.key === 'Escape') closeArticleDialog() }}
+        >
+          <form className="inspiration-library-dialog inspiration-library-article-dialog" role="dialog" aria-modal="true" aria-labelledby={articleDialogTitleId} onSubmit={(event) => { void collectArticle(event) }}>
+            <div className="inspiration-library-dialog-heading">
+              <h2 id={articleDialogTitleId}>添加公众号文章</h2>
+              <button type="button" aria-label="关闭添加文章窗口" title="关闭" onClick={closeArticleDialog}><X size={18} /></button>
+            </div>
+            <p>粘贴公众号文章链接，抓取正文后存入灵感库。</p>
+            <input autoFocus value={articleUrlDraft} onChange={(event) => setArticleUrlDraft(event.target.value)} placeholder="https://mp.weixin.qq.com/s/…" aria-label="公众号文章链接" disabled={articleBusy} />
+            {articleError && <p role="alert" className="inspiration-library-article-error">{articleError}</p>}
+            <div className="inspiration-library-dialog-actions">
+              <button type="button" className="inspiration-library-secondary-action" onClick={closeArticleDialog}>取消</button>
+              <button type="submit" className="inspiration-library-primary-action" disabled={articleBusy || !articleUrlDraft.trim()}>{articleBusy ? '抓取中…' : '添加'}</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {pendingDelete && (
         <div

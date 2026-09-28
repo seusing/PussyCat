@@ -5,16 +5,18 @@ import "@testing-library/jest-dom/vitest";
 import type { WrssSyncManager } from "./useWrssSyncManager";
 
 const api = vi.hoisted(() => ({
-  articleImageUrl: vi.fn((_base: string | undefined, url: string) => url),
   deleteWrssArticle: vi.fn(),
   fetchWrssArticle: vi.fn(),
   fetchWrssArticles: vi.fn(),
   fetchWrssAuth: vi.fn(),
+  loadWrssImage: vi.fn(),
   refreshWrssArticle: vi.fn(),
   setWrssFavorite: vi.fn(),
   setWrssRead: vi.fn(),
+  wrssImageRemote: vi.fn(),
 }));
 vi.mock("./wrssClient", () => api);
+import { loadInspirationLibrary } from "../inspiration/inspirationLibrary";
 import WrssArticleList from "./WrssArticleList";
 
 const article = (id = "1", title = "Article") => ({
@@ -160,6 +162,21 @@ describe("WrssArticleList", () => {
     expect(screen.getByText("Body")).not.toHaveAttribute("onclick");
     expect(document.querySelector("script")).toBeNull();
     expect(document.querySelector("iframe")).toBeNull();
+  });
+
+  it("saves the open article to the inspiration library once", async () => {
+    localStorage.clear();
+    api.fetchWrssArticle.mockResolvedValue({ ...article(), link: "https://mp.weixin.qq.com/s/abc", content: "<p>Body</p>" });
+    render(<WrssArticleList {...props} />);
+    fireEvent.click(await screen.findByText("Article"));
+    fireEvent.click(await screen.findByRole("button", { name: "存入灵感库" }));
+    expect(screen.getByRole("status")).toHaveTextContent("已存入灵感库");
+    expect(loadInspirationLibrary().items).toEqual([
+      expect.objectContaining({ title: "Article", kind: "article", source: "https://mp.weixin.qq.com/s/abc" }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "存入灵感库" }));
+    expect(screen.getByRole("status")).toHaveTextContent("这篇文章已在灵感库中");
+    expect(loadInspirationLibrary().items).toHaveLength(1);
   });
 
   it("keeps failed batch items selected and removes successful IDs", async () => {

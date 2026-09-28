@@ -50,12 +50,14 @@ function matchesCommand(command: CommandManifest, query: string): boolean {
 }
 
 export function InspirationPanel({
+  baseUrl,
   onRun,
   onCancel,
   onRerun,
   registerSubmit,
   searchRef,
 }: {
+  baseUrl?: string
   onRun: () => void
   onCancel: () => void
   onRerun: () => void
@@ -149,7 +151,7 @@ export function InspirationPanel({
   }
 
   if (workspace === 'library') {
-    return <InspirationLibraryPanel onOpenSources={openSources} searchRef={searchRef} />
+    return <InspirationLibraryPanel baseUrl={baseUrl} onOpenSources={openSources} searchRef={searchRef} />
   }
 
   if (stage === 'execute' && selected) {

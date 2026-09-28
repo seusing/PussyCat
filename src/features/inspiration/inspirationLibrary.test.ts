@@ -2,6 +2,8 @@ import {
   INSPIRATION_LIBRARY_KEY,
   addInspirationFolder,
   addInspirationItem,
+  findInspirationItemBySource,
+  inspirationKindLabel,
   loadInspirationLibrary,
   saveInspirationLibrary,
   type InspirationLibrary,
@@ -81,4 +83,15 @@ test('保存编辑后的冲突名称时仍保持唯一', () => {
   const saved = loadInspirationLibrary()
   expect(saved.items.find((entry) => entry.id === first.id)?.title).toBe('已有')
   expect(saved.items.find((entry) => entry.id === second.id)?.title).toBe('已有(1)')
+})
+
+test('公众号文章条目重新加载后保留，并可按来源查找', () => {
+  const saved = addInspirationItem({ ...item('一篇文章'), kind: 'article', source: 'https://mp.weixin.qq.com/s/abc' })!
+
+  const reloaded = loadInspirationLibrary()
+  expect(reloaded.items).toHaveLength(1)
+  expect(reloaded.items[0].kind).toBe('article')
+  expect(inspirationKindLabel('article')).toBe('公众号文章')
+  expect(findInspirationItemBySource('https://mp.weixin.qq.com/s/abc')?.id).toBe(saved.id)
+  expect(findInspirationItemBySource('https://mp.weixin.qq.com/s/other')).toBeNull()
 })

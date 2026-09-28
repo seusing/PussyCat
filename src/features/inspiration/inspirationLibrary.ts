@@ -1,4 +1,4 @@
-export type InspirationItemKind = 'note' | 'video' | 'source'
+export type InspirationItemKind = 'note' | 'video' | 'source' | 'article'
 
 export type InspirationFolder = {
   id: string
@@ -62,7 +62,7 @@ function validItem(value: unknown): value is InspirationItem {
   return !!item && typeof item === 'object'
     && typeof item.id === 'string' && typeof item.title === 'string'
     && typeof item.content === 'string'
-    && (item.kind === 'note' || item.kind === 'video' || item.kind === 'source')
+    && (item.kind === 'note' || item.kind === 'video' || item.kind === 'source' || item.kind === 'article')
     && (item.format === 'md' || item.format === 'txt')
     && (item.folderId === null || typeof item.folderId === 'string')
     && (item.source === undefined || typeof item.source === 'string')
@@ -213,6 +213,10 @@ export function addInspirationFolder(name: string, parentIdOrStorage?: string | 
   return saveInspirationLibrary(next, targetStorage) ? actual : null
 }
 
+export function findInspirationItemBySource(source: string, storage?: Storage): InspirationItem | null {
+  return loadInspirationLibrary(storage).items.find((item) => item.source === source) ?? null
+}
+
 export function inspirationKindLabel(kind: InspirationItemKind): string {
-  return kind === 'video' ? '视频解析' : kind === 'source' ? '灵感来源' : '笔记'
+  return kind === 'video' ? '视频解析' : kind === 'source' ? '灵感来源' : kind === 'article' ? '公众号文章' : '笔记'
 }

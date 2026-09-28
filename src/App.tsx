@@ -319,6 +319,7 @@ export default function App({
       <div className="app-page-stack-panel" hidden={activeModule !== 'commands'}>
         {(visitedModules.has('commands') || activeModule === 'commands') && (
           <InspirationPanel
+            baseUrl={baseUrl}
             onRun={executeSelected}
             onCancel={onCancel}
             onRerun={executeSelected}

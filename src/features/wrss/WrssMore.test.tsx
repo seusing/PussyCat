@@ -6,15 +6,18 @@ const api = vi.hoisted(() => ({
   addFeaturedArticle: vi.fn(),
   cleanWrssArticles: vi.fn(),
   clearWrssCache: vi.fn(),
-  fetchFeaturedTask: vi.fn(),
+  fetchWrssArticle: vi.fn(),
   importSubscriptions: vi.fn(),
   logoutWechat: vi.fn(),
   subscriptionExportUrl: vi.fn(),
+  waitFeaturedTask: vi.fn(),
 }));
 const host = vi.hoisted(() => ({ fetchVkWrssManagedStatus: vi.fn() }));
+const inspiration = vi.hoisted(() => ({ saveWrssArticleToInspiration: vi.fn() }));
 vi.mock("./wrssClient", () => api);
 vi.mock("../../host/vkClient", () => host);
 vi.mock("./wrssExternal", () => ({ downloadWrssFile: vi.fn() }));
+vi.mock("./wrssInspiration", () => inspiration);
 import WrssMore from "./WrssMore";
 
 const props = {
@@ -29,6 +32,7 @@ const props = {
 
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
+  inspiration.saveWrssArticleToInspiration.mockReset();
   host.fetchVkWrssManagedStatus.mockReset();
   host.fetchVkWrssManagedStatus.mockResolvedValue({
     state: "running",
@@ -58,6 +62,24 @@ describe("WrssMore", () => {
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(props.onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("offers to save a collected article to the inspiration library", async () => {
+    api.addFeaturedArticle.mockResolvedValue({ task_id: "t1" });
+    api.waitFeaturedTask.mockResolvedValue({ status: "success", id: "FEATURED_ARTICLES-abc" });
+    api.fetchWrssArticle.mockResolvedValue({ id: "FEATURED_ARTICLES-abc", title: "文章" });
+    inspiration.saveWrssArticleToInspiration.mockReturnValue({ created: true });
+    render(<WrssMore {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    fireEvent.click(screen.getByRole("button", { name: "单篇收录" }));
+    fireEvent.change(screen.getByLabelText("公众号文章链接"), { target: { value: "https://mp.weixin.qq.com/s/abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交收录" }));
+    expect(await screen.findByText("单篇收录完成")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "存入灵感库" }));
+    expect(await screen.findByText("已存入灵感库")).toBeInTheDocument();
+    expect(api.fetchWrssArticle).toHaveBeenCalledWith(undefined, "FEATURED_ARTICLES-abc");
+    expect(inspiration.saveWrssArticleToInspiration).toHaveBeenCalledWith({ id: "FEATURED_ARTICLES-abc", title: "文章" });
   });
 
   it("loads diagnostics only after its collapsed group opens", async () => {

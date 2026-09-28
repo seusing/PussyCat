@@ -6,6 +6,7 @@ import {
   fetchWrssSources,
   setWrssFavorite,
   updateAllWrssSources,
+  wrssImageRemote,
 } from "./wrssClient";
 function reply(body: any) {
   return Promise.resolve(
@@ -20,6 +21,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("wrssClient", () => {
+  it("resolves WeChat image addresses and ignores everything else", () => {
+    const image = "https://mmbiz.qpic.cn/x/640?wx_fmt=png";
+    expect(wrssImageRemote("data:image/svg+xml,placeholder", image)).toBe(image);
+    expect(wrssImageRemote(`/static/res/logo/${encodeURIComponent(image)}`)).toBe(image);
+    expect(wrssImageRemote(image)).toBe(image);
+    expect(wrssImageRemote("https://example.com/a.png")).toBe("");
+    expect(wrssImageRemote("/static/res/logo/%E0%A4%A")).toBe("");
+  });
   it("uses the exact initial latest request and preserves server order", async () => {
     const fetchMock = vi.fn((..._args: any[]) =>
       reply({
