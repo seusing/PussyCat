@@ -224,14 +224,19 @@ const TERMINAL_JOB_STATUSES = new Set([
   'cancelled', 'interrupted', 'completed_after_cancel_request',
 ])
 
-/** 一批里若还有没跑完的,整批算「正在执行」;都跑完了但有失败的,整批算失败。 */
+/** 一批里若还有没跑完的,整批算「正在执行」。都跑完了:全成功、全失败、全中断各算各的;
+ * 结果混杂但至少有一条产出了结果(done/partial),整批算合成状态 `partial_success`,
+ * 不能因为一条失败就把另外几条的成果一并说成失败。没有任何产出的混合(失败 + 中断)仍按失败。 */
 function aggregateBatchStatus(members: VkJobRow[]): string {
   const pending = members.find((row) => !TERMINAL_JOB_STATUSES.has(row.status.trim().toLowerCase()))
   if (pending) return pending.status
-  const failed = members.find((row) => /fail|error|quarantin/.test(row.status.trim().toLowerCase()))
-  if (failed) return failed.status
-  const interrupted = members.find((row) => /cancel|interrupt/.test(row.status.trim().toLowerCase()))
-  return interrupted?.status ?? members[0].status
+  const statusOf = (row: VkJobRow) => row.status.trim().toLowerCase()
+  const failed = members.find((row) => /fail|error|quarantin/.test(statusOf(row)))
+  const interrupted = members.find((row) => /cancel|interrupt/.test(statusOf(row)))
+  const done = members.some((row) => statusOf(row) === 'done')
+  const partial = members.some((row) => statusOf(row) === 'partial')
+  if ((done || partial) && (failed || interrupted || (done && partial))) return 'partial_success'
+  return failed?.status ?? interrupted?.status ?? members[0].status
 }
 
 /** The sidecar exposes pipeline runs for historical inspection. They are not

@@ -193,6 +193,8 @@ export interface VkStageMetric {
   output_tokens: number
   cached_tokens: number
   model_calls: number
+  /** 阶段 failed/quarantined 时引擎给的脱敏原因(最多 300 字),其余为 null;旧引擎不下发。 */
+  error?: string | null
 }
 
 export interface VkRunUsage {

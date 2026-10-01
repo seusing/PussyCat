@@ -1573,7 +1573,8 @@ it('opens only the selected batch and keeps its result snapshot across backgroun
   expect(screen.getByRole('heading', { name: 'Batch A' })).toBeInTheDocument()
   jobs[jobs.length - 1] = { ...jobs[jobs.length - 1], status: 'failed' }
   await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
-  await waitFor(() => expect(screen.getByTestId('vk-job-open-failed').closest('tr')).toHaveTextContent('失败'))
+  // 失败的那条拖不垮整批:另外两个视频是有结果的,整批算部分成功。
+  await waitFor(() => expect(screen.getByTestId('vk-job-open-failed').closest('tr')).toHaveTextContent('部分成功'))
   expect(screen.getAllByRole('tab')).toHaveLength(2)
   expect(screen.getByRole('heading', { name: 'Batch A' })).toBeInTheDocument()
   await userEvent.click(screen.getByTestId('vk-output-viewer-close'))
@@ -1590,6 +1591,65 @@ it('opens only the selected batch and keeps its result snapshot across backgroun
   expect(screen.getAllByRole('tab')).toHaveLength(1)
   expect(screen.getByRole('tab', { name: 'JSON' })).toBeInTheDocument()
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
+})
+
+describe('批量任务的整批状态', () => {
+  const common = {
+    kind: 'request', finished_at: '2026-08-01T00:10:00Z', parent_job_id: null,
+    cache_bypass: false, run_id: null, cost_cny: 0,
+  }
+  const batchRows = (batchId: string, statuses: string[]) => statuses.map((status, index) => ({
+    ...common, job_id: `${batchId}-${index}`, batch_id: batchId, status,
+    source: `https://example.com/${batchId}/${index}`,
+    submitted_at: `2026-08-01T00:00:0${index}Z`,
+    finished_at: status === 'running' ? null : common.finished_at,
+  }))
+  const stubJobs = (rows: ReturnType<typeof batchRows>) => stubRoutes({
+    'GET /vk/v1/health': { body: HEALTH },
+    'GET /vk/v1/jobs': { body: rows },
+  })
+  const badgeOf = (batchId: string) => screen.getByTestId(`vk-job-open-${batchId}-0`)
+    .closest('tr')!.querySelector('.vk-task-badge')!
+
+  it('任务 97 同形态:两个完成、一个部分完成、一个失败,整批是「部分成功」且能被筛出来', async () => {
+    stubJobs([
+      ...batchRows('b97', ['done', 'done', 'partial', 'failed']),
+      ...batchRows('all-failed', ['failed', 'failed']),
+      ...batchRows('all-done', ['done', 'done']),
+    ])
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-b97-0')
+
+    expect(badgeOf('b97')).toHaveTextContent('部分成功')
+    expect(badgeOf('b97')).toHaveAttribute('data-status', 'partial-success')
+    expect(badgeOf('all-failed')).toHaveTextContent('失败')
+    expect(badgeOf('all-done')).toHaveTextContent('已完成')
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(3)
+
+    await userEvent.click(screen.getByLabelText('按任务状态筛选'))
+    await userEvent.click(screen.getByRole('option', { name: '部分成功' }))
+    expect(screen.getAllByTestId('vk-job-row')).toHaveLength(1)
+    expect(screen.getByTestId('vk-job-open-b97-0')).toBeInTheDocument()
+  })
+
+  it.each([
+    [['done', 'done'], '已完成'],
+    [['failed', 'failed'], '失败'],
+    [['cancelled', 'interrupted'], '已中断'],
+    [['partial', 'partial'], '部分完成'],
+    [['done', 'failed'], '部分成功'],
+    [['done', 'partial'], '部分成功'],
+    [['done', 'cancelled'], '部分成功'],
+    [['partial', 'failed'], '部分成功'],
+    [['failed', 'cancelled'], '失败'],
+    [['done', 'running'], '正在执行'],
+    [['failed', 'running'], '正在执行'],
+  ])('成员 %j 聚合出「%s」', async (statuses, label) => {
+    stubJobs(batchRows('mix', statuses))
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-mix-0')
+    expect(badgeOf('mix')).toHaveTextContent(label)
+  })
 })
 
 it.each(['cancelled', 'failed'])('opens previous successful versions after a %s retry', async (status) => {

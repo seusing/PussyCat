@@ -266,6 +266,13 @@
   color: #edc66b;
 }
 
+.vk-task-badge.is-partial,
+.vk-task-badge.is-partial-success {
+  border-color: color-mix(in srgb, var(--color-warning) 42%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 13%, transparent);
+  color: #edc66b;
+}
+
 .vk-task-badge.is-completed {
   border-color: color-mix(in srgb, var(--color-success) 34%, transparent);
   background: color-mix(in srgb, var(--color-success) 11%, transparent);

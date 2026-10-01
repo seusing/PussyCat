@@ -736,6 +736,137 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByTestId('vk-task-detail-task-row-b-3')).toHaveAttribute('aria-expanded', 'true')
   })
 
+  describe('部分完成', () => {
+    const metric = (stage: string, status: string, error?: string) => ({
+      stage, status, elapsed_s: 3, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0,
+      ...(error === undefined ? {} : { error }),
+    })
+    const member = (
+      jobId: string, status: string, stages: Array<[string, string, string?]>, batchId: string | null = 'batch-97',
+    ) => ({
+      job_id: jobId, kind: 'run', status, batch_id: batchId,
+      submitted_at: '2026-09-03T00:00:00Z', finished_at: '2026-09-03T00:05:00Z',
+      parent_job_id: null, cache_bypass: false,
+      request: { source: `https://example.com/${jobId}`, preset: 'quick-summary' },
+      progress: {
+        completed_stages: stages.filter(([, stageStatus]) => stageStatus === 'done').map(([stage]) => stage),
+        stage_metrics: stages.map(([stage, stageStatus, error]) => metric(stage, stageStatus, error)),
+      },
+    })
+    // 与真实任务 97 同形态:两个完成、一个只有转写(理解视频阶段被引擎隔离)、一个失败。
+    const task97 = () => [
+      member('m97-1', 'done', [['acquire', 'done'], ['normalize', 'done'], ['chapter', 'done']]),
+      member('m97-2', 'done', [['acquire', 'done'], ['normalize', 'done'], ['chapter', 'done']]),
+      member('m97-3', 'partial', [['acquire', 'done'], ['normalize', 'done'], ['chapter', 'quarantined']]),
+      member('m97-4', 'failed', [['acquire', 'done'], ['normalize', 'failed']]),
+    ]
+    const stubMembers = (members: ReturnType<typeof task97>, onAction?: (action: string) => void) => {
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        const action = url.match(/\/vk\/v1\/jobs\/([^/]+)\/(retry|refresh)$/)
+        if (action) {
+          onAction?.(`${action[2]}:${action[1]}`)
+          return new Response(JSON.stringify({ job_id: `${action[1]}-${action[2]}` }), { status: 200 })
+        }
+        const hit = members.find((item) => url.endsWith(`/vk/v1/jobs/${item.job_id}`))
+        if (hit) return new Response(JSON.stringify(hit), { status: 200 })
+        if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+        if (url.endsWith('/vk/v1/jobs')) {
+          return new Response(JSON.stringify(members.map((item) => ({ ...item, source: item.request.source }))), { status: 200 })
+        }
+        return new Response('{}', { status: 404 })
+      }))
+    }
+
+    it('成员行把 partial 标成「部分完成」(琥珀色),不再是「已完成」', async () => {
+      stubMembers(task97())
+      render(<VkTaskDetailSidebar jobId="m97-3" baseUrl={BASE} onClose={() => {}} />)
+      await screen.findByTestId('vk-task-detail-task-row-m97-3')
+
+      const rowOf = (jobId: string) => screen.getByTestId(`vk-task-detail-task-row-${jobId}`).closest('li')!
+      expect(rowOf('m97-1')).toHaveAttribute('data-state', 'done')
+      expect(rowOf('m97-1')).toHaveTextContent('已完成')
+      expect(rowOf('m97-3')).toHaveAttribute('data-state', 'partial')
+      expect(rowOf('m97-3')).toHaveAttribute('data-color', 'warning')
+      expect(rowOf('m97-3')).toHaveTextContent('部分完成')
+      expect(rowOf('m97-3')).not.toHaveTextContent('已完成')
+      expect(rowOf('m97-4')).toHaveAttribute('data-state', 'failed')
+      expect(rowOf('m97-4')).toHaveTextContent('失败')
+      expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('共 4 个视频 · 已处理 4/4')
+    })
+
+    it('被隔离的阶段显示失败图标与原因,其余阶段照旧;失败成员的失败阶段同样标出', async () => {
+      const user = userEvent.setup()
+      stubMembers(task97())
+      render(<VkTaskDetailSidebar jobId="m97-3" baseUrl={BASE} onClose={() => {}} />)
+      await user.click(await screen.findByTestId('vk-task-detail-task-row-m97-3'))
+      await user.click(screen.getByTestId('vk-task-detail-task-row-m97-4'))
+
+      const stepsOf = async (jobId: string) => {
+        const row = screen.getByTestId(`vk-task-detail-task-row-${jobId}`).closest('li')!
+        return within(await within(row).findByRole('list', { name: '解析阶段' }))
+      }
+      const partialSteps = await stepsOf('m97-3')
+      const chapter = partialSteps.getAllByRole('listitem').find((item) => item.dataset.stage === 'chapter')!
+      expect(chapter).toHaveAttribute('data-stage-state', 'failed')
+      expect(within(chapter).getByLabelText('失败')).toBeInTheDocument()
+      expect(chapter).toHaveTextContent('这一步没有产出可用结果')
+      const acquire = partialSteps.getAllByRole('listitem').find((item) => item.dataset.stage === 'acquire')!
+      expect(acquire).toHaveAttribute('data-stage-state', 'completed')
+      expect(acquire).not.toHaveTextContent('这一步没有产出可用结果')
+
+      const failedSteps = await stepsOf('m97-4')
+      const normalize = failedSteps.getAllByRole('listitem').find((item) => item.dataset.stage === 'normalize')!
+      expect(normalize).toHaveAttribute('data-stage-state', 'failed')
+      expect(within(normalize).getByLabelText('失败')).toBeInTheDocument()
+    })
+
+    it('引擎给了阶段错误原因就显示它,没给时才用兜底文案', async () => {
+      const user = userEvent.setup()
+      stubMembers([member('single', 'partial', [
+        ['acquire', 'done'],
+        ['chapter', 'quarantined', '模型两次输出都无法解析为章节结构'],
+        ['note', 'failed'],
+      ], null)])
+      render(<VkTaskDetailSidebar jobId="single" baseUrl={BASE} onClose={() => {}} />)
+      await user.click(await screen.findByTestId('vk-task-detail-task-row-source-0'))
+
+      const steps = within(screen.getByRole('list', { name: '解析阶段' })).getAllByRole('listitem')
+      const chapter = steps.find((item) => item.dataset.stage === 'chapter')!
+      expect(chapter).toHaveAttribute('data-stage-state', 'failed')
+      expect(chapter).toHaveTextContent('模型两次输出都无法解析为章节结构')
+      expect(chapter).not.toHaveTextContent('这一步没有产出可用结果')
+      const note = steps.find((item) => item.dataset.stage === 'note')!
+      expect(note).toHaveAttribute('data-stage-state', 'failed')
+      expect(note).toHaveTextContent('这一步没有产出可用结果')
+    })
+
+    it('单条 partial 任务的状态徽章是「部分完成」', async () => {
+      stubMembers([member('single', 'partial', [['acquire', 'done'], ['chapter', 'quarantined']], null)])
+      render(<VkTaskDetailSidebar jobId="single" baseUrl={BASE} onClose={() => {}} />)
+
+      const badge = await screen.findByRole('status')
+      expect(badge).toHaveTextContent('部分完成')
+      expect(badge).toHaveClass('is-partial')
+      expect(screen.getByTestId('vk-task-detail-task-row-source-0')).toHaveTextContent('部分完成')
+    })
+
+    it('整批重跑时 partial 成员仍按有结果的走 refresh,并标明会再计费', async () => {
+      const user = userEvent.setup()
+      const actions: string[] = []
+      stubMembers([task97()[2], task97()[3]], (action) => actions.push(action))
+      render(<VkTaskDetailSidebar jobId="m97-3" baseUrl={BASE} onClose={() => {}} />)
+
+      const button = await screen.findByRole('button', { name: '重新提交全部任务' })
+      await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+      const option = within(await screen.findByRole('menu')).getByRole('menuitemcheckbox', { name: /小任务1/ })
+      expect(option).toHaveTextContent('部分完成 · 再计费')
+      expect(option).toHaveAttribute('data-color', 'warning')
+      await user.click(button)
+      await waitFor(() => expect(actions).toEqual(['refresh:m97-3', 'retry:m97-4']))
+    })
+  })
+
   it('双击任务卡复制链接并显示已复制提示', async () => {
     const user = userEvent.setup()
     const writeText = vi.fn().mockResolvedValue(undefined)

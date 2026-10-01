@@ -92,6 +92,51 @@ describe('VkTaskTable', () => {
     expect(within(table).getByText('已中断')).toHaveAttribute('data-status', 'interrupted')
   })
 
+  it('整批「部分成功」与单条「部分完成」各有文案,共用琥珀色徽章', () => {
+    render(<VkTaskTable {...makeProps({
+      jobs: [
+        { ...JOBS[1], job_id: 'batch-mixed', status: 'partial_success' },
+        { ...JOBS[1], job_id: 'single-partial', status: 'partial' },
+      ],
+    })} />)
+
+    const table = screen.getByRole('table')
+    const success = within(table).getByText('部分成功')
+    const partial = within(table).getByText('部分完成')
+    expect(success).toHaveAttribute('data-status', 'partial-success')
+    expect(success).toHaveClass('vk-task-badge', 'is-partial-success')
+    expect(partial).toHaveAttribute('data-status', 'partial')
+    expect(partial).toHaveClass('vk-task-badge', 'is-partial')
+    expect(within(table).queryByText('已完成')).not.toBeInTheDocument()
+    expect(within(table).queryByText('失败')).not.toBeInTheDocument()
+  })
+
+  it('筛选「部分成功」同时筛出整批部分成功与单条部分完成', async () => {
+    render(<VkTaskTable {...makeProps({
+      jobs: [
+        ...JOBS,
+        { ...JOBS[1], job_id: 'batch-mixed', status: 'partial_success' },
+        { ...JOBS[1], job_id: 'single-partial', status: 'partial' },
+      ],
+    })} />)
+
+    await userEvent.click(screen.getByLabelText('按任务状态筛选'))
+    await userEvent.click(screen.getByRole('option', { name: '部分成功' }))
+
+    expect(screen.getByTestId('vk-task-table-count')).toHaveTextContent('筛出 2 条 / 共 5 条')
+    expect(screen.getByTestId('vk-job-open-batch-mixed')).toBeInTheDocument()
+    expect(screen.getByTestId('vk-job-open-single-partial')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-job-open-job-done')).not.toBeInTheDocument()
+  })
+
+  it.each(['partial', 'partial_success'])('%s 任务默认可存到本地', async (status) => {
+    const user = userEvent.setup()
+    render(<VkTaskTable {...makeProps({ jobs: [{ ...JOBS[1], status }] })} />)
+
+    await user.click(screen.getByRole('button', { name: '任务 1 更多操作' }))
+    expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: '存到本地' })).toBeEnabled()
+  })
+
   it('selects a row by click and keyboard', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()

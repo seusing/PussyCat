@@ -40,11 +40,12 @@ function detailError(error: unknown): string {
   return '任务详情获取失败'
 }
 
-type BatchState = 'running' | 'done' | 'failed' | 'interrupted'
+type BatchState = 'running' | 'done' | 'partial' | 'failed' | 'interrupted'
 
 const BATCH_STATE_LABELS: Record<BatchState, string> = {
   running: '进行中',
   done: '已完成',
+  partial: '部分完成',
   failed: '失败',
   interrupted: '已中断',
 }
@@ -52,16 +53,23 @@ const BATCH_STATE_LABELS: Record<BatchState, string> = {
 const BATCH_STATE_COLORS: Record<BatchState, 'primary' | 'success' | 'warning' | 'danger'> = {
   running: 'primary',
   done: 'success',
+  partial: 'warning',
   failed: 'danger',
   interrupted: 'warning',
 }
 
 function batchState(status: string): BatchState {
   const value = status.trim().toLowerCase()
+  if (value === 'partial') return 'partial'
   if (SUCCESS_STATUSES.has(value)) return 'done'
   if (INTERRUPTED_STATUSES.has(value)) return 'interrupted'
   if (FAILED_STATUSES.has(value) || /fail|error|quarantin/.test(value)) return 'failed'
   return 'running'
+}
+
+/** done 与 partial 都有可用结果:重跑走 refresh 且会再计费,串联分析也算它。 */
+function producedResult(state: BatchState): boolean {
+  return state === 'done' || state === 'partial'
 }
 
 type BatchMember = {
@@ -227,7 +235,13 @@ type StageDisplay = {
   stage: string
   metric: VkStageMetric | null
   state: 'completed' | 'active' | 'interrupted' | 'failed' | 'recorded'
+  /** 只在引擎明确判了这一阶段隔离/失败时有值。 */
+  failureReason: string | null
 }
+
+// 原因优先取引擎随 stage_metrics 下发的 error;旧引擎或引擎没给时,如实说「没有产出」。
+const STAGE_NO_RESULT_REASON = '这一步没有产出可用结果'
+const FAILED_STAGE_METRIC_STATUSES = new Set(['quarantined', 'failed'])
 
 /**
  * 只返回后端已经触及的阶段。阶段列表不是预先绘制的计划清单：
@@ -275,12 +289,18 @@ function stageDisplayEntries(job: VkJobView): StageDisplay[] {
   return orderedStages.map((stage) => {
     const metric = metricByStage.get(stage) ?? null
     let state: StageDisplay['state'] = isCompleted(stage) ? 'completed' : 'recorded'
-    if (stage === latestStage && state !== 'completed') {
+    let failureReason: string | null = null
+    // 被隔离/失败的阶段不论是不是最后一个、任务整体算不算失败(partial 任务就带着
+    // 一个被隔离的阶段),都要显示成失败,否则只会落成一个看不出含义的序号。
+    if (state !== 'completed' && FAILED_STAGE_METRIC_STATUSES.has((metric?.status ?? '').toLowerCase())) {
+      state = 'failed'
+      failureReason = metric?.error?.trim() || STAGE_NO_RESULT_REASON
+    } else if (stage === latestStage && state !== 'completed') {
       if (ACTIVE_STATUSES.has(status)) state = 'active'
       else if (INTERRUPTED_STATUSES.has(status)) state = 'interrupted'
       else if (batchState(status) === 'failed') state = 'failed'
     }
-    return { stage, metric, state }
+    return { stage, metric, state, failureReason }
   })
 }
 
@@ -452,6 +472,9 @@ function TaskProgressDetails({
                 <strong>{stageLabel(entry.stage)}</strong>
                 <span>{elapsed}</span>
               </div>
+              {entry.failureReason && (
+                <span className="vk-task-detail-step-reason">{entry.failureReason}</span>
+              )}
             </li>
             )
           })}
@@ -816,6 +839,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const active = !!job && ACTIVE_STATUSES.has(job.status)
   const interrupted = !!job && INTERRUPTED_STATUSES.has(job.status)
   const completedSuccessfully = !!job && SUCCESS_STATUSES.has(job.status)
+  const partial = job?.status === 'partial'
   const failed = !!job && (FAILED_STATUSES.has(job.status) || (!active && !interrupted && !completedSuccessfully))
   const stopping = job?.status === 'cancel_requested'
   const rerunning = active && !!job && (!!job.parent_job_id || isVkJobRerun(job.job_id))
@@ -872,7 +896,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
         // parent**,于是前端按重试链折叠时认不出它是同一个视频的又一次尝试,小任务
         // 列表就一次比一次长(用户看到 2 条变 3 条、3 条变 4 条)。
         const result = await postVkJobAction(
-          member.job_id, member.state === 'done' ? 'refresh' : 'retry', baseUrl,
+          member.job_id, producedResult(member.state) ? 'refresh' : 'retry', baseUrl,
         )
         const newId = typeof result.job_id === 'string' ? result.job_id : null
         if (newId) {
@@ -942,8 +966,8 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
       {job && (
         <div className="vk-task-detail-body">
           <div className="vk-task-detail-summary">
-            <span role="status" aria-live="polite" className={`vk-task-detail-badge ${failed ? 'is-failed' : interrupted ? 'is-interrupted' : rerunning ? 'is-rerunning' : active ? 'is-running' : 'is-completed'}`}>
-              {failed ? '失败' : interrupted ? '已中断' : stopping ? '正在停止' : rerunning ? '重跑中' : active ? '正在执行' : '已完成'}
+            <span role="status" aria-live="polite" className={`vk-task-detail-badge ${failed ? 'is-failed' : interrupted ? 'is-interrupted' : rerunning ? 'is-rerunning' : active ? 'is-running' : partial ? 'is-partial' : 'is-completed'}`}>
+              {failed ? '失败' : interrupted ? '已中断' : stopping ? '正在停止' : rerunning ? '重跑中' : active ? '正在执行' : partial ? '部分完成' : '已完成'}
             </span>
             <button type="button" onClick={() => { void load() }} aria-label="刷新任务详情" title="刷新">
               <RefreshCw size={15} aria-hidden="true" />
@@ -1012,7 +1036,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
               key={job.batch_id}
               batchId={job.batch_id}
               baseUrl={baseUrl}
-              parsedCount={batchMembers.filter((member) => member.state === 'done').length}
+              parsedCount={batchMembers.filter((member) => producedResult(member.state)).length}
               onView={() => {
                 window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
                   detail: { jobId, title: '解析结果', storyline: true },
@@ -1092,7 +1116,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                           </span>
                           {/* 重跑已完成的会再花一次额度,选之前得看得见 */}
                           <span className={`vk-task-detail-batch-status is-${member.state}`} data-state={member.state}>
-                            {member.state === 'done' ? '已完成 · 再计费' : BATCH_STATE_LABELS[member.state]}
+                            {producedResult(member.state)
+                              ? `${BATCH_STATE_LABELS[member.state]} · 再计费`
+                              : BATCH_STATE_LABELS[member.state]}
                           </span>
                         </button>
                       )

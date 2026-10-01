@@ -280,6 +280,8 @@
 .vk-task-detail-task-row[data-state='done'] { --batch-state-color: var(--color-success); }
 .vk-task-detail-batch-member[data-state='interrupted'],
 .vk-task-detail-task-row[data-state='interrupted'] { --batch-state-color: var(--color-warning); }
+.vk-task-detail-batch-member[data-state='partial'],
+.vk-task-detail-task-row[data-state='partial'] { --batch-state-color: var(--color-warning); }
 .vk-task-detail-batch-member[data-state='failed'],
 .vk-task-detail-task-row[data-state='failed'] { --batch-state-color: var(--color-danger); }
 .vk-task-detail-batch-member[data-state='running'],
@@ -309,6 +311,7 @@
 .vk-task-detail-batch-status.is-done { color: var(--color-success); }
 .vk-task-detail-batch-status.is-failed { color: var(--color-danger); }
 .vk-task-detail-batch-status.is-interrupted { color: var(--color-warning); }
+.vk-task-detail-batch-status.is-partial { color: var(--color-warning); }
 .vk-task-detail-batch-status.is-running { color: var(--color-accent); }
 
 .vk-task-detail-task-disclosure {
@@ -339,6 +342,7 @@
 .vk-task-detail-step-content { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; padding-top: 3px; }
 .vk-task-detail-step-content strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .vk-task-detail-step-content > span { flex: 0 0 auto; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.vk-task-detail-step-reason { grid-column: 2; margin-top: -4px; color: color-mix(in srgb, var(--color-danger) 72%, var(--color-fg-dim)); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .vk-task-detail-stage-empty { margin: 0; color: var(--color-fg-dim); font-size: 11px; }
 .vk-task-detail-task-empty { list-style: none; color: var(--color-fg-dim); font-size: 12px; }
 
@@ -385,6 +389,7 @@
 
 .vk-task-detail-badge.is-rerunning { border-color: rgb(139 92 246 / 46%); background: rgb(139 92 246 / 15%); color: #cdb8ff; }
 .vk-task-detail-badge.is-interrupted { border-color: rgb(214 171 74 / 42%); background: rgb(214 171 74 / 13%); color: #edc66b; }
+.vk-task-detail-badge.is-partial { border-color: rgb(214 171 74 / 42%); background: rgb(214 171 74 / 13%); color: #edc66b; }
 
 @media (prefers-reduced-motion: reduce) {
   .vk-task-detail-task-disclosure,
@@ -426,6 +431,7 @@
 .vk-task-batch-rerun-option { border-color: color-mix(in srgb, var(--batch-state-color) 48%, var(--color-line)) !important; background: color-mix(in srgb, var(--batch-state-color) 8%, #20232a) !important; }
 .vk-task-batch-rerun-option.is-done { --batch-state-color: var(--color-success); }
 .vk-task-batch-rerun-option.is-interrupted { --batch-state-color: var(--color-warning); }
+.vk-task-batch-rerun-option.is-partial { --batch-state-color: var(--color-warning); }
 .vk-task-batch-rerun-option.is-failed { --batch-state-color: var(--color-danger); }
 .vk-task-batch-rerun-option.is-running { --batch-state-color: var(--color-accent); }
 .vk-task-batch-rerun-option:hover:not(:disabled),

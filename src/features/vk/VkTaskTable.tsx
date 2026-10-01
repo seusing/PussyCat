@@ -23,18 +23,22 @@ export interface VkTaskTableProps {
   onDelete: (row: VkJobRow) => void
 }
 
-type NormalizedStatus = 'failed' | 'running' | 'rerunning' | 'stopping' | 'interrupted' | 'completed'
+type NormalizedStatus =
+  | 'failed' | 'running' | 'rerunning' | 'stopping' | 'interrupted' | 'partial' | 'partial-success' | 'completed'
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancel_requested', 'submitted', 'processing'])
 const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
 const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted', 'completed_after_cancel_request'])
-const OUTPUT_STATUSES = new Set(['done', 'partial'])
+// partial_success 不是引擎状态:VkPanel 把一批里结果混杂的任务折成一行时合成的。
+const OUTPUT_STATUSES = new Set(['done', 'partial', 'partial_success'])
 
 function normalizeStatus(row: VkJobRow): NormalizedStatus {
   const value = row.status.trim().toLowerCase()
   if (value === 'cancel_requested') return 'stopping'
   if (ACTIVE_STATUSES.has(value)) return row.parent_job_id || row.isRerun ? 'rerunning' : 'running'
   if (INTERRUPTED_STATUSES.has(value)) return 'interrupted'
+  if (value === 'partial_success') return 'partial-success'
+  if (value === 'partial') return 'partial'
   if (FAILED_STATUSES.has(value) || /fail|error|cancel|interrupt|quarantin/.test(value)) return 'failed'
   if (/queue|run|process|pending|submit/.test(value)) return 'running'
   return 'completed'
@@ -46,6 +50,8 @@ const STATUS_LABELS: Record<NormalizedStatus, string> = {
   rerunning: '重跑中',
   stopping: '正在停止',
   interrupted: '已中断',
+  partial: '部分完成',
+  'partial-success': '部分成功',
   completed: '已完成',
 }
 
@@ -57,14 +63,17 @@ type PageSize = (typeof PAGE_SIZES)[number] | typeof ALL_PAGE_SIZE
 const STATUS_FILTERS: readonly { value: string; label: string }[] = [
   { value: 'all', label: '全部状态' },
   { value: 'completed', label: '已完成' },
+  { value: 'partial', label: '部分成功' },
   { value: 'failed', label: '失败' },
   { value: 'running', label: '正在执行' },
   { value: 'interrupted', label: '已中断' },
 ]
 
 // 「重跑中」归到「正在执行」、「正在停止」也是,筛选器上再分这么细只会让人挑不中。
+// 「部分成功」同理:单条的「部分完成」与整批的「部分成功」在筛选里是一类。
 const STATUS_FILTER_MATCH: Record<string, ReadonlySet<NormalizedStatus>> = {
   completed: new Set<NormalizedStatus>(['completed']),
+  partial: new Set<NormalizedStatus>(['partial', 'partial-success']),
   failed: new Set<NormalizedStatus>(['failed']),
   running: new Set<NormalizedStatus>(['running', 'rerunning', 'stopping']),
   interrupted: new Set<NormalizedStatus>(['interrupted']),
