@@ -1,9 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 
-vi.mock('./SplashCursor.jsx', () => ({
-  default: ({ RAINBOW_MODE, EMITTERS }: { RAINBOW_MODE?: boolean; EMITTERS?: unknown[] }) => (
-    <canvas data-testid="splash-cursor" data-rainbow={String(RAINBOW_MODE)} data-emitters={EMITTERS?.length ?? 0} />
-  ),
+vi.mock('./Prism', () => ({
+  default: ({ animationType }: { animationType?: string }) => <canvas data-testid="prism" data-animation={animationType} />,
 }))
 
 import { StartupSplash } from './StartupSplash'
@@ -26,8 +24,7 @@ test('holds the splash until input and then fades it out', () => {
   expect(splash).toHaveAttribute('aria-label', '按任意键进入爪爪')
   expect(splash).toHaveTextContent('爪爪')
   expect(splash).toHaveTextContent('按任意键进入')
-  expect(screen.getByTestId('splash-cursor')).toHaveAttribute('data-rainbow', 'false')
-  expect(Number(screen.getByTestId('splash-cursor').dataset.emitters)).toBeGreaterThan(0)
+  expect(screen.getByTestId('prism')).toHaveAttribute('data-animation', 'rotate')
 
   act(() => vi.advanceTimersByTime(3_000))
   expect(screen.getByTestId('startup-splash')).toBeInTheDocument()
@@ -54,7 +51,7 @@ test('a click on the splash also enters the app', () => {
   expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument()
 })
 
-test('skips the smoke when reduced motion is requested', () => {
+test('skips the prism when reduced motion is requested', () => {
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion'), media: query }))
   render(
     <StartupSplash>
@@ -63,5 +60,5 @@ test('skips the smoke when reduced motion is requested', () => {
   )
 
   expect(screen.getByTestId('startup-splash')).toHaveTextContent('按任意键进入')
-  expect(screen.queryByTestId('splash-cursor')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('prism')).not.toBeInTheDocument()
 })

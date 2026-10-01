@@ -23,11 +23,17 @@
   outline-offset: -8px;
 }
 
-.startup-splash canvas {
+.startup-splash__prism {
   position: absolute;
   inset: 0;
-  width: 100vw !important;
-  height: 100vh !important;
+}
+
+.startup-splash__prism::after {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 42% 30% at 50% 44%, rgb(7 8 11 / 62%), transparent);
+  content: "";
+  pointer-events: none;
 }
 
 .startup-splash__brand {
@@ -73,7 +79,7 @@
   gap: 8px;
   border: 1px solid rgb(255 255 255 / 10%);
   border-radius: 999px;
-  background: rgb(255 255 255 / 4%);
+  background: rgb(9 11 16 / 58%);
   backdrop-filter: blur(10px);
   color: #c3cad6;
   font-size: 13px;
