@@ -3,7 +3,7 @@
 // 边界:React 只访问 Node 的 /vk/v1/* 代理,永不直连 Python、永不接触 sidecar
 // token。进度只显示真实状态/已耗时/实际费用,不造百分比(拍板 4)。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ClipboardEvent, ReactNode } from 'react'
 import { motion } from 'motion/react'
 import { createPortal } from 'react-dom'
 import { BorderBeam } from 'border-beam'
@@ -25,7 +25,6 @@ import {
   postVkJob,
   postVkJobAction,
   postVkPreview,
-  classifyVkIntent,
   postVkQuery,
   postVkRuntimeInstall,
   fetchVkProviderSettings,
@@ -39,7 +38,6 @@ import type {
   VkQueryAnswer,
   VkRuntimeStatus,
   VkRuntimeCandidate,
-  VkIntentClassification,
 } from '../../host/vkClient'
 import { BorderGlow } from '../../components/BorderGlow'
 import { runtimeToAdopt } from './runtimePick'
@@ -49,6 +47,7 @@ import { VkTaskTable } from './VkTaskTable'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { vkJobRowFromView, vkPrimaryOutput as primaryOutput, vkTaskResultGroups } from './taskResults'
 import { loadStorylineTabs } from './storyline'
+import { cleanPastedSources, extractSources } from './sourceInput'
 import { DEFAULT_BASE_URL } from '../../host/nodeBridgeHost'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import {
@@ -94,16 +93,6 @@ const AUTO_ROUTE_LABELS: Record<string, string> = {
   evidence_grounded: '证据核验整理',
   generic_fallback: '通用整理',
 }
-const INTENT_LABELS: Record<string, string> = {
-  quick_overview: '快速了解重点',
-  learn_concepts_steps: '学习概念与步骤',
-  interview_attribution: '访谈观点与人物归属',
-  mechanism_causality: '机制、因果与边界',
-  compare_verify: '比较、评估与证据核验',
-  visual_ocr_demo: '画面、OCR 与演示',
-  speaker_attribution: '区分说话人',
-  general_summary: '通用总结',
-}
 const AUTO_ROUTE_REASON_LABELS: Record<string, string> = {
   asr_quality_passed: '语音转写质量良好',
   captions_available: '已找到可用字幕',
@@ -124,6 +113,7 @@ const ACTIVE_STATUSES = new Set([
 const SUCCESS_STATUSES = new Set(['done', 'partial'])
 const INTERRUPTED_STATUSES = new Set(['cancelled', 'completed_after_cancel_request', 'interrupted'])
 const TASK_BANNER_DURATION_MS = 3_000
+const PASTE_NOTICE_DURATION_MS = 4_000
 const VK_JOB_DETAIL_TERMINAL_EVENT = 'vk:job-detail-terminal'
 const VK_JOB_TERMINAL_EVENT = 'vk:job-terminal'
 const VK_JOB_RETRY_SUBMITTED_EVENT = 'vk:job-retry-submitted'
@@ -323,7 +313,7 @@ function outputFileName(outputId: string): string {
 }
 
 function sourceLines(value: string): string[] {
-  return [...new Set(value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))]
+  return extractSources(value).sources
 }
 
 function errorText(error: unknown, fallback: string): string {
@@ -609,7 +599,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
   const [storyline, setStoryline] = useState(false)
-  const sourceCount = useMemo(() => sourceLines(source).length, [source])
+  const sourceList = useMemo(() => sourceLines(source), [source])
+  const sourceCount = sourceList.length
+  const [pasteNotice, setPasteNotice] = useState<{ sources: number; dropped: number } | null>(null)
   const sourceFileInputRef = useRef<HTMLInputElement>(null)
   const hasManualOverrides = preset !== 'quick-summary'
     || contentType !== ''
@@ -639,6 +631,31 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     useAppStore.getState().clearVkHandoff()
   }, [handoff])
 
+  useEffect(() => {
+    if (!pasteNotice) return
+    const timer = window.setTimeout(() => setPasteNotice(null), PASTE_NOTICE_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [pasteNotice])
+
+  // 微信多选复制、分享文案会把发送人、时间、说明文字一起带进来:只留链接,一行一个。
+  const pasteSources = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const cleaned = cleanPastedSources(event.clipboardData.getData('text/plain'))
+    if (!cleaned) return
+    event.preventDefault()
+    const field = event.currentTarget
+    const { value, selectionStart, selectionEnd } = field
+    const before = value.slice(0, selectionStart)
+    const after = value.slice(selectionEnd)
+    field.setRangeText(
+      `${before && !before.endsWith('\n') ? '\n' : ''}${cleaned.sources.join('\n')}${after && !after.startsWith('\n') ? '\n' : ''}`,
+      selectionStart,
+      selectionEnd,
+      'end',
+    )
+    setSource(field.value)
+    setPasteNotice({ sources: cleaned.sources.length, dropped: cleaned.dropped })
+  }
+
   const importSourceFile = async (file: File | undefined) => {
     if (!file) return
     setSubmitError(null)
@@ -660,9 +677,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   // —— 预检 → 费用确认 → 提交 ——
   const [previewing, setPreviewing] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [intentSummary, setIntentSummary] = useState<VkIntentClassification | null>(null)
-  const [intentFallback, setIntentFallback] = useState(false)
-  const [intentClassifying, setIntentClassifying] = useState(false)
   const [taskBanners, setTaskBanners] = useState<TaskBanner[]>([])
   const submitInFlight = useRef(false)
   const dismissTaskBanner = useCallback((id: string) => {
@@ -676,16 +690,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   }, [])
 
   // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
-  const buildProjection = (sourceValue = source.trim(), classification?: VkIntentClassification, goalValue = userGoal): VkPreviewProjection => {
+  const buildProjection = (sourceValue = source.trim(), goalValue = userGoal): VkPreviewProjection => {
     const userMetadata = {
       processing_strategy: 'auto',
       ...(goalValue.trim() ? { user_goal: goalValue.trim() } : {}),
-      ...(classification ? {
-        intent_classification: {
-          intent_id: classification.intent_id,
-          confidence: classification.confidence,
-        },
-      } : {}),
       ...(provenance
         ? {
             origin: 'opencli-result',
@@ -735,40 +743,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         }])
         return
       }
-      let intentClassification: VkIntentClassification | undefined
-      if (goalSnapshot) {
-        setIntentClassifying(true)
-        try {
-          const result = await Promise.race([
-            classifyVkIntent(goalSnapshot, base),
-            new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 1500)),
-          ])
-          if (result?.classification && !result.classification.fallback && result.classification.confidence >= 0.45) {
-            intentClassification = result.classification
-            if (userGoalRef.current.trim() === goalSnapshot) {
-              setIntentSummary(result.classification)
-              setIntentFallback(false)
-            }
-          } else {
-            if (userGoalRef.current.trim() === goalSnapshot) {
-              setIntentSummary(null)
-              setIntentFallback(true)
-            }
-          }
-        } catch {
-          if (userGoalRef.current.trim() === goalSnapshot) {
-            setIntentSummary(null)
-            setIntentFallback(true)
-          }
-        } finally {
-          setIntentClassifying(false)
-        }
-      } else {
-        setIntentSummary(null)
-        setIntentFallback(false)
-      }
       for (const [index, sourceValue] of sources.entries()) {
-        const previewedRequest = await postVkPreview(buildProjection(sourceValue, intentClassification, goalSnapshot), base)
+        const previewedRequest = await postVkPreview(buildProjection(sourceValue, goalSnapshot), base)
         const request = { ...previewedRequest, source: sourceValue }
         // 引擎在「该批没有排队/运行中的任务」时触发自动串联,且每批只触发一次。job 是逐条提交的,
         // 前几条若很快跑完(如命中缓存),串联会带着已完成的成员提前跑掉、之后不再补跑。
@@ -1287,12 +1263,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
                 data-testid="vk-source"
                 value={source}
                 onChange={(event) => setSource(event.target.value)}
+                onPaste={pasteSources}
                 placeholder={'每行一个视频链接\nhttps://…'}
                 rows={6}
                 className={fieldClass}
                 style={fieldStyle}
               />
-              <VideoSourceCoverFlow source={source} />
+              <VideoSourceCoverFlow source={sourceList.join('\n')} />
               <button
                 type="button"
                 className="vk-source-file-input"
@@ -1316,6 +1293,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               />
             </div>
           </BorderGlow>
+          {pasteNotice && (
+            <p data-testid="vk-paste-notice" role="status" className="vk-paste-notice">
+              {`已自动提取 ${pasteNotice.sources} 个链接${pasteNotice.dropped > 0 ? `，忽略 ${pasteNotice.dropped} 行无关内容` : ''}`}
+            </p>
+          )}
         </div>
         {sourceCount >= 2 && (
           <div data-testid="vk-storyline-option" className="vk-storyline-option mb-2">
@@ -1340,8 +1322,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               const next = event.target.value
               userGoalRef.current = next
               setUserGoal(next)
-              setIntentSummary(null)
-              setIntentFallback(false)
             }}
             placeholder="例如：重点比较价格、耗电和适用人群"
             rows={2}
@@ -1357,17 +1337,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             <span>一般无需修改设置</span>
           </div>
           <p>自动判断内容类型、字幕或语音质量、是否需要画面，以及处理深度。</p>
-          {intentClassifying && <p data-testid="vk-intent-classifying" className="mt-1">正在识别本次分析目标…</p>}
-          {intentSummary && (
-            <div data-testid="vk-intent-summary" className="mt-1">
-              <span>已识别目标：{INTENT_LABELS[intentSummary.intent_id] ?? INTENT_LABELS.general_summary}（置信度 {Math.round(intentSummary.confidence * 100)}%）</span>
-              <details className="mt-1">
-                <summary>判断说明</summary>
-                <span>系统会结合字幕、画面及说话人等视频事实决定实际处理链路；意图识别只提供目标偏好。</span>
-              </details>
-            </div>
-          )}
-          {intentFallback && <p data-testid="vk-intent-fallback" className="mt-1">意图识别暂不可用，已回退系统自动分流</p>}
         </div>
         {diagnosticOverridesOpen && diagnosticOverridesHost.current && createPortal(<details open data-testid="vk-advanced-settings" className="vk-manual-settings mt-3 text-xs">
           <summary className="vk-settings-summary">手动覆盖</summary>
@@ -1478,7 +1447,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           <button
             type="button"
             data-testid="vk-submit-button"
-            disabled={!source.trim() || previewing}
+            disabled={sourceCount === 0 || previewing}
             onClick={() => { void requestSubmit() }}
             className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}

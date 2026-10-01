@@ -695,133 +695,146 @@ describe('VkPanel', () => {
       user_goal: '整理操作步骤',
     })
     expect(projection).not.toHaveProperty('quality_profile')
+    expect(calls.filter((item) => item.init?.method === 'POST').map((item) => item.key)).toEqual([
+      'POST /vk/v1/preview',
+      'POST /vk/v1/jobs',
+    ])
   })
 
-  it('shows a Chinese intent summary with expandable explanation and sends the bounded classification', async () => {
-    const user = userEvent.setup()
-    const { calls } = stubRoutes({
+  describe('链接框的粘贴与来源整理', () => {
+    const WECHAT_LINKS = ['http://xhslink.com/o/7jNHVIMi1N3', 'http://xhslink.com/o/6gtmNhcgSDT']
+    const WECHAT_PASTE = [
+      'Ceoi Wingsam 🐂', '2026年10月01日 13:14', WECHAT_LINKS[0], '',
+      'Ceoi Wingsam 🐂', '2026年10月01日 13:14', WECHAT_LINKS[1],
+    ].join('\n')
+    const pasteInto = (field: HTMLElement, text: string) =>
+      fireEvent.paste(field, { clipboardData: { getData: () => text } })
+    const sourceField = () => screen.getByTestId('vk-source') as HTMLTextAreaElement
+    const stubIdleRoutes = () => stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { body: [] },
-      'POST /vk/v1/intent-classify': { body: { classified: true, classification: { intent_id: 'learn_concepts_steps', confidence: 0.91, reason_codes: ['goal_learning'] } } },
-      'POST /vk/v1/preview': { body: resolvedRequest() },
-      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'intent-job', kind: 'request' } },
     })
-    render(<VkPanel baseUrl={BASE} />)
-    await user.type(screen.getByTestId('vk-source'), 'https://example.com/one')
-    await user.type(screen.getByTestId('vk-user-goal'), '学习步骤')
-    await user.click(screen.getByTestId('vk-submit-button'))
-    expect(await screen.findByTestId('vk-intent-summary')).toHaveTextContent('学习概念与步骤')
-    await user.click(screen.getByText('判断说明'))
-    expect(screen.getByText(/结合字幕、画面及说话人/)).toBeInTheDocument()
-    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/preview')).toBe(true))
-    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true))
-    const projection = JSON.parse(String(calls.find((call) => call.key === 'POST /vk/v1/preview')?.init?.body))
-    expect(projection.user_metadata.intent_classification).toEqual({ intent_id: 'learn_concepts_steps', confidence: 0.91 })
-  })
+    const renderPanel = async () => {
+      render(<VkPanel baseUrl={BASE} />)
+      await act(async () => {})
+    }
 
-  it('classifies a multi-source batch once and reclassifies after the user goal changes', async () => {
-    const user = userEvent.setup()
-    const { calls } = stubRoutes({
-      'GET /vk/v1/health': { body: HEALTH },
-      'GET /vk/v1/jobs': { body: [] },
-      'POST /vk/v1/intent-classify': { body: { classified: true, classification: { intent_id: 'quick_overview', confidence: 0.8 } } },
-      'POST /vk/v1/preview': { body: resolvedRequest() },
-      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'batch-intent', kind: 'request' } },
+    it('pastes a multi-selected WeChat conversation as one link per line and says what it did', async () => {
+      stubIdleRoutes()
+      await renderPanel()
+
+      expect(pasteInto(sourceField(), WECHAT_PASTE)).toBe(false)
+
+      expect(sourceField().value).toBe(WECHAT_LINKS.join('\n'))
+      expect(screen.getByTestId('vk-paste-notice')).toHaveTextContent('已自动提取 2 个链接，忽略 4 行无关内容')
+      expect(screen.getByTestId('video-source-card-xiaohongshu')).toHaveAttribute('data-count', '2')
     })
-    render(<VkPanel baseUrl={BASE} />)
-    await user.type(screen.getByTestId('vk-source'), 'https://example.com/a\nhttps://example.com/b')
-    const goal = screen.getByTestId('vk-user-goal')
-    await user.type(goal, '快速了解重点')
-    await user.click(screen.getByTestId('vk-submit-button'))
-    await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/jobs')).toHaveLength(2))
-    expect(calls.filter((call) => call.key === 'POST /vk/v1/intent-classify')).toHaveLength(1)
-    await user.clear(goal)
-    await user.type(goal, '再比较证据')
-    await user.click(screen.getByTestId('vk-submit-button'))
-    await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/intent-classify')).toHaveLength(2))
-  })
 
-  it('keeps the submitted goal snapshot consistent when the user edits it during classification', async () => {
-    const user = userEvent.setup()
-    const classification = deferred<unknown>()
-    const { calls } = stubRoutes({
-      'GET /vk/v1/health': { body: HEALTH },
-      'GET /vk/v1/jobs': { body: [] },
-      'GET /vk/v1/providers': { body: { configured: true } },
-      'POST /vk/v1/intent-classify': { body: () => classification.promise },
-      'POST /vk/v1/preview': { body: resolvedRequest() },
-      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'goal-snapshot', kind: 'request' } },
+    it('only reports the extracted links when nothing but surrounding words was dropped', async () => {
+      stubIdleRoutes()
+      await renderPanel()
+
+      pasteInto(sourceField(), '48 【标题 - 小红书】 😆 abc http://xhslink.com/o/xxx 复制本条信息，打开【小红书】App查看精彩内容！')
+
+      expect(sourceField().value).toBe('http://xhslink.com/o/xxx')
+      expect(screen.getByTestId('vk-paste-notice')).toHaveTextContent(/^已自动提取 1 个链接$/)
     })
-    render(<VkPanel baseUrl={BASE} />)
-    await user.type(screen.getByTestId('vk-source'), 'https://example.com/snapshot')
-    const goal = screen.getByTestId('vk-user-goal')
-    await user.type(goal, '快速了解重点')
-    await user.click(screen.getByTestId('vk-submit-button'))
-    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/intent-classify')).toBe(true))
 
-    await user.clear(goal)
-    await user.type(goal, '比较证据')
-    expect(screen.queryByTestId('vk-intent-summary')).not.toBeInTheDocument()
-    await act(async () => classification.resolve({
-      classified: true,
-      classification: { intent_id: 'quick_overview', confidence: 0.9 },
-    }))
+    it('inserts at the caret on its own lines without leaving blank lines', async () => {
+      stubIdleRoutes()
+      await renderPanel()
+      const field = sourceField()
 
-    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true))
-    const projection = JSON.parse(String(calls.find((call) => call.key === 'POST /vk/v1/preview')?.init?.body))
-    expect(projection.user_metadata).toMatchObject({
-      user_goal: '快速了解重点',
-      intent_classification: { intent_id: 'quick_overview', confidence: 0.9 },
+      fireEvent.change(field, { target: { value: 'https://youtu.be/a' } })
+      field.setSelectionRange(field.value.length, field.value.length)
+      pasteInto(field, WECHAT_PASTE)
+      expect(field.value).toBe(`https://youtu.be/a\n${WECHAT_LINKS.join('\n')}`)
+      expect(field.selectionStart).toBe(field.value.length)
+
+      field.setSelectionRange(field.value.length, field.value.length)
+      pasteInto(field, '发送人\nhttps://b23.tv/AbC】')
+      expect(field.value).toBe(`https://youtu.be/a\n${WECHAT_LINKS.join('\n')}\nhttps://b23.tv/AbC`)
+
+      const afterFirstLine = 'https://youtu.be/a\n'.length
+      field.setSelectionRange(afterFirstLine, afterFirstLine)
+      pasteInto(field, '时间 13:14\nhttps://youtu.be/b')
+      expect(field.value).toBe(`https://youtu.be/a\nhttps://youtu.be/b\n${WECHAT_LINKS.join('\n')}\nhttps://b23.tv/AbC`)
+      expect(field.selectionStart).toBe(`https://youtu.be/a\nhttps://youtu.be/b\n`.length)
     })
-    expect(screen.queryByTestId('vk-intent-summary')).not.toBeInTheDocument()
-  })
 
-  it('continues submission after the 1.5 second intent classification timeout', async () => {
-    vi.useFakeTimers()
-    const { calls } = stubRoutes({
-      'GET /vk/v1/health': { body: HEALTH },
-      'GET /vk/v1/jobs': { body: [] },
-      'GET /vk/v1/providers': { body: { configured: true } },
-      'POST /vk/v1/intent-classify': { body: () => new Promise(() => {}) },
-      'POST /vk/v1/preview': { body: resolvedRequest() },
-      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'intent-timeout', kind: 'request' } },
-    })
-    render(<VkPanel baseUrl={BASE} />)
-    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: 'https://example.com/timeout' } })
-    fireEvent.change(screen.getByTestId('vk-user-goal'), { target: { value: '学习基本原理' } })
-    fireEvent.click(screen.getByTestId('vk-submit-button'))
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    expect(calls.some((call) => call.key === 'POST /vk/v1/intent-classify')).toBe(true)
-    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true)
-    expect(screen.getByTestId('vk-intent-fallback')).toHaveTextContent('已回退系统自动分流')
-    const projection = JSON.parse(String(calls.find((call) => call.key === 'POST /vk/v1/preview')?.init?.body))
-    expect(projection.user_metadata).toMatchObject({ processing_strategy: 'auto', user_goal: '学习基本原理' })
-    expect(projection.user_metadata).not.toHaveProperty('intent_classification')
-  })
+    it('replaces the selected text with the extracted links', async () => {
+      stubIdleRoutes()
+      await renderPanel()
+      const field = sourceField()
 
-  it('falls back on classifier failure and still submits; overrides live only in diagnostics', async () => {
-    const user = userEvent.setup()
-    const { calls } = stubRoutes({
-      'GET /vk/v1/health': { body: HEALTH },
-      'GET /vk/v1/jobs': { body: [] },
-      'POST /vk/v1/intent-classify': { status: 503, body: { error: 'offline' } },
-      'POST /vk/v1/preview': { body: resolvedRequest() },
-      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'fallback-intent', kind: 'request' } },
+      fireEvent.change(field, { target: { value: 'https://youtu.be/a\n旧内容\nhttps://youtu.be/c' } })
+      const start = 'https://youtu.be/a\n'.length
+      field.setSelectionRange(start, start + '旧内容'.length)
+      pasteInto(field, '备注\nhttps://youtu.be/b')
+
+      expect(field.value).toBe('https://youtu.be/a\nhttps://youtu.be/b\nhttps://youtu.be/c')
     })
-    render(<VkPanel baseUrl={BASE} />)
-    expect(screen.queryByTestId('vk-advanced-settings')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('vk-preset')).not.toBeInTheDocument()
-    await user.type(screen.getByTestId('vk-source'), 'https://example.com/fallback')
-    await user.type(screen.getByTestId('vk-user-goal'), '比较证据')
-    await user.click(screen.getByTestId('vk-submit-button'))
-    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/jobs')).toBe(true))
-    expect(screen.getByTestId('vk-intent-fallback')).toHaveTextContent('已回退系统自动分流')
-    await user.click(screen.getByTestId('vk-capability-toggle'))
-    await user.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
-    expect(screen.getByTestId('vk-preset')).toBeInTheDocument()
-    expect(screen.getByTestId('vk-developer-settings')).toBeInTheDocument()
+
+    it('leaves plain text and already clean links to the browser default', async () => {
+      const user = userEvent.setup()
+      stubIdleRoutes()
+      await renderPanel()
+
+      await user.click(sourceField())
+      await user.paste('只是几个字')
+      expect(sourceField().value).toBe('只是几个字')
+      expect(screen.queryByTestId('vk-paste-notice')).not.toBeInTheDocument()
+
+      await user.clear(sourceField())
+      await user.paste('https://youtu.be/a\n\nhttps://youtu.be/b')
+      expect(sourceField().value).toBe('https://youtu.be/a\n\nhttps://youtu.be/b')
+      expect(screen.queryByTestId('vk-paste-notice')).not.toBeInTheDocument()
+      expect(pasteInto(sourceField(), '只是几个字')).toBe(true)
+    })
+
+    it('hides the notice after four seconds', async () => {
+      vi.useFakeTimers()
+      stubIdleRoutes()
+      await renderPanel()
+
+      pasteInto(sourceField(), WECHAT_PASTE)
+      expect(screen.getByTestId('vk-paste-notice')).toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(3900) })
+      expect(screen.getByTestId('vk-paste-notice')).toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(200) })
+      expect(screen.queryByTestId('vk-paste-notice')).not.toBeInTheDocument()
+    })
+
+    it('submits only the links of hand-typed mixed text and counts only those', async () => {
+      const user = userEvent.setup()
+      const { calls } = stubRoutes({
+        'GET /vk/v1/health': { body: HEALTH },
+        'GET /vk/v1/jobs': { body: [] },
+        'POST /vk/v1/preview': { body: resolvedRequest() },
+        'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-mixed', kind: 'request' } },
+      })
+      await renderPanel()
+
+      fireEvent.change(sourceField(), { target: { value: `${WECHAT_PASTE}\n【标题】 ${WECHAT_LINKS[0]} 复制打开` } })
+      expect(screen.getByTestId('video-source-card-xiaohongshu')).toHaveAttribute('data-count', '2')
+      await user.click(screen.getByTestId('vk-submit-button'))
+
+      await waitFor(() => expect(calls.filter((item) => item.key === 'POST /vk/v1/jobs')).toHaveLength(2))
+      expect(calls.filter((item) => item.key === 'POST /vk/v1/preview')).toHaveLength(2)
+      expect(calls
+        .filter((item) => item.key === 'POST /vk/v1/jobs')
+        .map((item) => JSON.parse(String(item.init?.body)).request.source)).toEqual(WECHAT_LINKS)
+    })
+
+    it('does not offer to submit text that holds no source', async () => {
+      stubIdleRoutes()
+      await renderPanel()
+
+      fireEvent.change(sourceField(), { target: { value: 'Ceoi Wingsam 🐂\n2026年10月01日 13:14' } })
+      expect(screen.getByTestId('vk-submit-button')).toBeDisabled()
+      fireEvent.change(sourceField(), { target: { value: 'C:\\videos\\a.mp4' } })
+      expect(screen.getByTestId('vk-submit-button')).toBeEnabled()
+    })
   })
 
   it('submits each imported link as its own durable job after inline previews', async () => {

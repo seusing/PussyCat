@@ -88,6 +88,14 @@
   outline-offset: 2px;
 }
 
+/* 粘贴后自动清理的提示。 */
+.vk-paste-notice {
+  margin: 4px 0 0;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* 多个链接时出现的「解析完成后串联」开关。 */
 .vk-storyline-option label {
   display: inline-flex;

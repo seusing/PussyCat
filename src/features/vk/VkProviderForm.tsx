@@ -15,12 +15,6 @@ import { useGlassMenuSurface } from '../../components/GlassMenu'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
 import {
   fetchVkProviderSettings,
-  fetchVkJevConfigs,
-  saveVkJevConfigItem,
-  enableVkJevConfig,
-  deleteVkJevConfig,
-  testVkJevConfig,
-  saveVkJevConfig,
   importVkCcSwitchChannel,
   revealVkProviderKey,
   saveVkProviderSettings,
@@ -28,11 +22,7 @@ import {
   type VkChannelPayload,
   type VkProviderSettings,
   type VkProviderTestResult,
-  type VkJevConfig,
-  fetchVkRuntimeStatus,
-  postVkRuntimeInstall,
 } from '../../host/vkClient'
-import { HostRequestError } from '../../host/errors'
 
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
 const fieldStyle = {
@@ -223,7 +213,6 @@ function ActionIconButton({
   appearance = 'default',
   size = 'sm',
   state,
-  className = '',
   opacity,
 }: {
   testId: string
@@ -237,7 +226,6 @@ function ActionIconButton({
   appearance?: 'default' | 'primary'
   size?: 'sm' | 'md'
   state?: string
-  className?: string
   opacity?: number
 }) {
   const color = appearance === 'primary'
@@ -262,7 +250,7 @@ function ActionIconButton({
       animate={opacity === undefined ? undefined : { opacity }}
       whileTap={disabled ? undefined : { opacity: 0.78 }}
       data-tooltip={label}
-      className={`vk-icon-action inline-flex ${size === 'md' ? 'h-9 w-9' : 'h-8 w-8'} items-center justify-center rounded-lg p-0 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${appearance === 'primary' ? 'vk-icon-action--primary' : ''} ${className}`}
+      className={`vk-icon-action inline-flex ${size === 'md' ? 'h-9 w-9' : 'h-8 w-8'} items-center justify-center rounded-lg p-0 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${appearance === 'primary' ? 'vk-icon-action--primary' : ''}`}
       style={{
         border: appearance === 'primary' ? '1px solid transparent' : '1px solid var(--color-line)',
         color,
@@ -307,13 +295,12 @@ function EditActionButton({ testId, onClick, disabled = false }: { testId: strin
   )
 }
 
-function EnableActionButton({ testId, enabled, onClick, disabled = false, mutedWhenDisabled = false }: { testId: string; enabled: boolean; onClick: () => void; disabled?: boolean; mutedWhenDisabled?: boolean }) {
+function EnableActionButton({ testId, enabled, onClick, disabled = false }: { testId: string; enabled: boolean; onClick: () => void; disabled?: boolean }) {
   const [hovered, setHovered] = useState(false)
   const icon = enabled ? 'lock' : 'lock-open'
   const Icon = enabled ? Lock : LockOpen
-  const activeDisabled = mutedWhenDisabled && enabled && disabled
   return (
-    <ActionIconButton testId={testId} label={enabled ? '禁用' : '启用'} onClick={onClick} disabled={disabled} tone={enabled ? 'warning' : 'default'} onHoverChange={setHovered} iconState={icon} state={activeDisabled ? 'active-disabled' : enabled ? 'enabled' : 'available'} className={activeDisabled ? 'vk-jev-enable-action vk-jev-enable-action--active' : undefined} opacity={disabled ? 0.5 : 1}>
+    <ActionIconButton testId={testId} label={enabled ? '禁用' : '启用'} onClick={onClick} disabled={disabled} tone={enabled ? 'warning' : 'default'} onHoverChange={setHovered} iconState={icon} state={enabled ? 'enabled' : 'available'} opacity={disabled ? 0.5 : 1}>
       <span className="inline-flex h-4 w-4 items-center justify-center" aria-hidden="true">
         <motion.span animate={hovered ? { x: [0, -1.5, 1.5, -1, 1, 0], rotate: [0, -5, 5, -3, 3, 0] } : { x: 0, rotate: 0 }} transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} className="inline-flex">
           <Icon size={14} />
@@ -345,31 +332,6 @@ function formatTestNotice(result: VkProviderTestResult): string {
 
 function getModelLabel(modelId: string, labels?: Record<string, string>): string {
   return labels?.[modelId] ?? modelId
-}
-
-function isJevNotFound(error: unknown): boolean {
-  if (!(error instanceof HostRequestError)) return false
-  if (error.status !== 404) return false
-  return /not\s*found/i.test(error.summary)
-}
-
-function normalizeJevConfigsResult(value: unknown): Partial<{
-  configured: boolean
-  configs: VkJevConfig[]
-  active_id: string | null
-}> {
-  if (!value || typeof value !== 'object') return {}
-  let record = value as Record<string, unknown>
-  for (let depth = 0; depth < 3; depth += 1) {
-    const wrapped = record.data ?? record.result
-    if (!wrapped || typeof wrapped !== 'object' || Array.isArray(wrapped)) break
-    record = wrapped as Record<string, unknown>
-  }
-  const activeId = typeof record.active_id === 'string' ? record.active_id : null
-  const configs = Array.isArray(record.configs)
-    ? (record.configs as VkJevConfig[]).map((item) => ({ ...item, enabled: activeId ? item.id === activeId : item.enabled === true }))
-    : undefined
-  return { ...record, ...(configs ? { configs } : {}), ...(activeId !== null || 'active_id' in record ? { active_id: activeId } : {}) } as Partial<{ configured: boolean; configs: VkJevConfig[]; active_id: string | null }>
 }
 
 type ChannelEditorProps = {
@@ -553,17 +515,6 @@ function ChannelEditor({
  */
 export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved?: () => void }) {
   const [settings, setSettings] = useState<VkProviderSettings | null>(null)
-  const [jevConfigs, setJevConfigs] = useState<VkJevConfig[]>([])
-  const [jevActiveId, setJevActiveId] = useState<string | null>(null)
-  const [jevName, setJevName] = useState('')
-  const [jevEditingId, setJevEditingId] = useState<string | null>(null)
-  const [jevModalOpen, setJevModalOpen] = useState(false)
-  const [jevKey, setJevKey] = useState('')
-  const [jevKeyMasked, setJevKeyMasked] = useState('')
-  const [jevKeyTouched, setJevKeyTouched] = useState(false)
-  const [jevKeyVisible, setJevKeyVisible] = useState(false)
-  const [jevBusy, setJevBusy] = useState(false)
-  const [jevTesting, setJevTesting] = useState<Record<string, boolean>>({})
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [roles, setRoles] = useState<Record<string, string>>({})
   const [roleFallbacks, setRoleFallbacks] = useState<Record<string, string[]>>({})
@@ -590,7 +541,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const pendingRouteSnapshot = useRef<RouteSnapshot | null>(null)
   const noticeSeq = useRef(0)
   const settingsLoaded = useRef(false)
-  const runtimeSyncRef = useRef<Promise<boolean> | null>(null)
   const ccSwitchPickerRef = useRef<HTMLDivElement>(null)
   const ccSwitchPickerMenuRef = useRef<HTMLDivElement>(null)
   const [ccSwitchPickerPosition, setCcSwitchPickerPosition] = useState({ top: 0, left: 0, width: 224, maxHeight: 320 })
@@ -635,19 +585,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setNotices((current) => [notice, ...current])
   }, [])
 
-  const syncLegacyRuntime = useCallback(() => {
-    if (runtimeSyncRef.current) return runtimeSyncRef.current
-    const task = (async () => {
-      const status = await fetchVkRuntimeStatus(baseUrl)
-      if (status.state !== 'installed' || status.current !== false) return false
-      showNotice('error', '解析引擎版本过旧，正在更新，请稍后重试', 'form', true)
-      await postVkRuntimeInstall(baseUrl, { rebuild: false })
-      return true
-    })().finally(() => { runtimeSyncRef.current = null })
-    runtimeSyncRef.current = task
-    return task
-  }, [baseUrl, showNotice])
-
   const load = useCallback(async () => {
     try {
       const loaded = await fetchVkProviderSettings(baseUrl)
@@ -671,82 +608,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }, [baseUrl, showNotice])
   useEffect(() => { void load() }, [load])
-  useEffect(() => {
-    void fetchVkJevConfigs(baseUrl)
-      .then((value) => { const normalized = normalizeJevConfigsResult(value); setJevConfigs(Array.isArray(normalized.configs) ? normalized.configs : []); setJevActiveId(normalized.active_id ?? null) })
-      .catch(async (err) => {
-        if (!isJevNotFound(err)) return
-        try {
-          await syncLegacyRuntime()
-        } catch (runtimeError) {
-          showNotice('error', `解析引擎更新失败：${runtimeError instanceof Error ? runtimeError.message : '未知错误'}`, 'form', true)
-        }
-      })
-  }, [baseUrl, showNotice, syncLegacyRuntime])
 
-  const reloadJevConfigs = async () => {
-    const value = await fetchVkJevConfigs(baseUrl)
-    const normalized = normalizeJevConfigsResult(value)
-    setJevConfigs(Array.isArray(normalized.configs) ? normalized.configs : []); setJevActiveId(normalized.active_id ?? null)
-  }
-
-  const saveJev = async () => {
-    setJevBusy(true)
-    try {
-      const requestedName = jevName.trim() || `Jev ${jevConfigs.length + 1}`
-      let usedLegacyFallback = false
-      let result: { configured: boolean; configs: VkJevConfig[]; active_id: string | null }
-      try { result = await saveVkJevConfigItem(requestedName, jevKeyTouched ? jevKey.trim() : '', jevEditingId ?? undefined, baseUrl) }
-      catch (err) {
-        if (!isJevNotFound(err)) throw err
-        usedLegacyFallback = true
-        try { if (await syncLegacyRuntime()) return } catch (runtimeError) { showNotice('error', `解析引擎更新失败：${runtimeError instanceof Error ? runtimeError.message : '未知错误'}`, 'form', true); return }
-        const legacy = await saveVkJevConfig(jevKeyTouched ? jevKey.trim() : '', baseUrl)
-        result = { ...legacy, configs: jevConfigs, active_id: jevActiveId }
-      }
-      const normalized = normalizeJevConfigsResult(result)
-      let configs = Array.isArray(normalized.configs) ? normalized.configs : []
-      let activeId = normalized.active_id ?? null
-      const hasSavedItem = configs.length > 0 && (jevEditingId
-        ? configs.some((item) => item.id === jevEditingId)
-        : configs.some((item) => item.name === requestedName))
-      if (!usedLegacyFallback && !hasSavedItem) {
-        const refreshed = normalizeJevConfigsResult(await fetchVkJevConfigs(baseUrl))
-        configs = Array.isArray(refreshed.configs) ? refreshed.configs : []
-        activeId = refreshed.active_id ?? null
-      }
-      setJevConfigs(configs); setJevActiveId(activeId)
-      setJevKey('')
-      setJevName(''); setJevEditingId(null); setJevModalOpen(false)
-      showNotice('success', result.configured ? 'Jev Key 已安全保存' : 'Jev Key 已清除', 'form')
-    } catch (err) {
-      showNotice('error', err instanceof Error ? err.message : 'Jev Key 保存失败', 'form', true)
-    } finally { setJevBusy(false) }
-  }
-
-  const enableJev = async (id: string) => { setJevBusy(true); try { const result = normalizeJevConfigsResult(await enableVkJevConfig(id, baseUrl)); setJevConfigs(result.configs ?? []); setJevActiveId(result.active_id ?? null) } catch (err) { showNotice('error', err instanceof Error ? err.message : 'Jev 启用失败', 'form', true) } finally { setJevBusy(false) } }
-  const removeJev = async (id: string) => { setJevBusy(true); try { const result = normalizeJevConfigsResult(await deleteVkJevConfig(id, baseUrl)); setJevConfigs(result.configs ?? []); setJevActiveId(result.active_id ?? null) } catch (err) { showNotice('error', err instanceof Error ? err.message : 'Jev 删除失败', 'form', true) } finally { setJevBusy(false) } }
-  const testJevItem = async (id: string) => {
-    if (jevTesting[id]) return
-    setJevTesting((current) => ({ ...current, [id]: true }))
-    try {
-      const result = await testVkJevConfig(id, baseUrl)
-      showNotice(result.ok ? 'success' : 'error', result.message, 'form', !result.ok)
-      await reloadJevConfigs()
-    } catch (err) {
-      showNotice('error', err instanceof Error ? err.message : 'Jev 测试失败', 'form', true)
-    } finally {
-      setJevTesting((current) => {
-        const next = { ...current }
-        delete next[id]
-        return next
-      })
-    }
-  }
-  const openNewJev = () => { setJevEditingId(null); setJevName(`Jev ${jevConfigs.length + 1}`); setJevKey(''); setJevKeyMasked(''); setJevKeyTouched(false); setJevKeyVisible(false); setJevModalOpen(true) }
-  const openEditJev = (item: VkJevConfig) => { setJevEditingId(item.id); setJevName(item.name); setJevKey(''); setJevKeyMasked(item.masked_key); setJevKeyTouched(false); setJevKeyVisible(false); setJevModalOpen(true) }
-
-  const patch = (id: string, next: Partial<Draft>) =>
+  const patch =(id: string, next: Partial<Draft>) =>
     setDrafts((list) => list.map((d) => (d.id === id ? { ...d, ...next } : d)))
 
   /** 改模型名时顺手把风格填对 —— 除非用户自己选过。 */
@@ -1161,15 +1024,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   return (
     <div data-testid="vk-provider-form" className="space-y-4">
       {alertSlot('form')}
-      <section data-testid="vk-jev-settings" className="rounded-xl p-4" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-        <div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-medium">Jev配置</div><ActionIconButton testId="vk-jev-add" label="新增配置" onClick={openNewJev} disabled={jevBusy} appearance="primary" size="md"><MorphActionGlyph icon={MorphPlus} size={16} /></ActionIconButton></div>
-        <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
-          <div className="grid min-w-[48rem] grid-cols-[1fr_1.3fr_.8fr_1fr_minmax(16rem,auto)] gap-3 px-3 py-2 text-xs font-medium" style={{ color: 'var(--color-fg-dim)', borderBottom: '1px solid var(--color-line)' }}><span>名称</span><span>API Key</span><span>模型</span><span>累计消费估算</span><span className="text-right pr-2">操作</span></div>
-          {jevConfigs.length === 0 && <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无 Jev 配置</div>}
-          {jevConfigs.map((item) => { const testing = Boolean(jevTesting[item.id]); const active = jevActiveId ? item.id === jevActiveId : item.enabled === true; return <div key={item.id} data-testid={`vk-jev-config-${item.id}`} className="grid min-w-[48rem] grid-cols-[1fr_1.3fr_.8fr_1fr_minmax(16rem,auto)] items-center gap-3 px-3 py-3" style={{ background: active ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-canvas))' : 'var(--color-canvas)', borderBottom: '1px solid var(--color-line)' }}><div><div className="text-sm font-medium">{item.name}</div>{active && <div className="flex items-center gap-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}><span data-testid={`vk-jev-status-light-${item.id}`} className="inline-block h-2 w-2 rounded-full" style={{ background: '#22c55e' }} aria-hidden="true" />使用中</div>}</div><span className="text-sm">{item.masked_key}</span><span className="text-sm">jev-latest</span><div className="text-sm">${(item.estimated_cost_usd ?? 0).toFixed(6)}<div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{(item.input_tokens ?? 0).toLocaleString()} 输入 Token</div>{item.last_used_at && <div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{`最近使用 ${new Date(item.last_used_at).toLocaleString()}`}</div>}</div><div className="flex justify-end gap-2"><EnableActionButton testId={`vk-jev-enable-${item.id}`} enabled={active} onClick={() => void enableJev(item.id)} disabled={jevBusy || testing || active} mutedWhenDisabled /><ActionIconButton testId={`vk-jev-test-${item.id}`} label="测试连接" onClick={() => void testJevItem(item.id)} disabled={jevBusy || testing} iconState="activity"><MorphActionGlyph icon={MorphActivity} size={14} className={testing ? 'vk-provider-icon--busy' : ''} /></ActionIconButton><EditActionButton testId={`vk-jev-edit-${item.id}`} onClick={() => openEditJev(item)} disabled={jevBusy || testing} /><DeleteActionButton testId={`vk-jev-delete-${item.id}`} onClick={() => void removeJev(item.id)} disabled={jevBusy || testing} /></div></div> })}
-        </div>
-      </section>
-      {jevModalOpen && <div className="vk-provider-modal-backdrop" data-testid="vk-jev-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !jevBusy) setJevModalOpen(false) }}><div className="vk-provider-modal-shell"><div role="dialog" aria-modal="true" aria-labelledby="vk-jev-modal-title" data-testid="vk-jev-modal" className="vk-provider-modal"><h3 id="vk-jev-modal-title" className="text-lg font-semibold">{jevEditingId ? '编辑 Jev 配置' : '新增 Jev 配置'}</h3><div className="mt-4 space-y-3"><label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>配置名称<input aria-label="Jev 配置名称" value={jevName} onChange={(event) => setJevName(event.target.value)} placeholder="配置名称" className={`${fieldClass} mt-1`} style={fieldStyle} /></label><label className="block text-xs" style={{ color: 'var(--color-fg-dim)' }}>API Key<div className="vk-key-control-row mt-1"><input data-testid="vk-jev-key" type={jevKeyVisible ? 'text' : 'password'} value={jevKeyTouched ? jevKey : jevKeyMasked} onChange={(event) => { setJevKey(event.target.value); setJevKeyTouched(true) }} placeholder={jevEditingId ? '留空以保留当前 Key；输入新 Key 可替换' : '粘贴 Jev Key'} className={`${fieldClass} vk-key-input`} style={fieldStyle} /><VisibilityButton testId="vk-jev-reveal" visible={jevKeyVisible} disabled={jevBusy || (!jevKeyTouched && !jevKeyMasked)} onClick={() => setJevKeyVisible((value) => !value)} /></div></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => { if (!jevBusy) { setJevModalOpen(false); setJevName(''); setJevKey(''); setJevKeyMasked(''); setJevKeyTouched(false); setJevKeyVisible(false); setJevEditingId(null) } }} className={outlineButton} style={outlineStyle}>取消</button><button type="button" onClick={() => void saveJev()} disabled={jevBusy || !jevName.trim() || (!jevEditingId && !jevKeyTouched && !jevKey.trim())} className={outlineButton} style={outlineStyle}>保存</button></div></div></div></div>}
       <section data-testid="vk-provider-channels-section" className="rounded-xl p-4"
         style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">
