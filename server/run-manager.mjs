@@ -116,6 +116,7 @@ export class RunManager {
       outputLimitExceeded: false,
       forceTimer: undefined,
       timeoutTimer: undefined,
+      timeoutMs: request.timeoutMs ?? this.commandTimeoutMs,
     }
     this.active.set(request.runId, record)
 
@@ -171,7 +172,7 @@ export class RunManager {
       if (record.finished) return
       record.timedOut = true
       this.#terminate(record)
-    }, this.commandTimeoutMs)
+    }, record.timeoutMs)
     record.timeoutTimer.unref?.()
 
     return { runId: request.runId }
@@ -281,7 +282,7 @@ export class RunManager {
       this.#finish(record, {
         ...base,
         outcome: 'error',
-        error: { summary: `OpenCLI timed out after ${this.commandTimeoutMs}ms`, detail: errorDetail(record.stderr) },
+        error: { summary: `OpenCLI timed out after ${record.timeoutMs}ms`, detail: errorDetail(record.stderr) },
       })
       return
     }

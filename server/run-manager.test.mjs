@@ -156,6 +156,18 @@ describe('RunManager', () => {
     })
   })
 
+  it('uses the per-request time budget when the policy supplies one', async () => {
+    vi.useFakeTimers()
+    const { child, events, manager } = setup({ commandTimeoutMs: 10, cancelGraceMs: 5 })
+    manager.start({ ...request, timeoutMs: 50 })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(child.kills).toEqual([])
+    await vi.advanceTimersByTimeAsync(40)
+    expect(child.kills).toEqual(['SIGTERM'])
+    child.emit('close', null, 'SIGTERM')
+    expect(events.at(-1)).toMatchObject({ event: { error: { summary: 'OpenCLI timed out after 50ms' } } })
+  })
+
   it('rejects duplicate ids and excess concurrency', () => {
     // 显式压到 1:并发上限默认已提到 4(登录体检要并行),但这条用例考的是
     // "超出上限必须 429",与上限取值无关,所以把它钉在一个确定的边界上。

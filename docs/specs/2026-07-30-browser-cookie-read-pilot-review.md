@@ -263,6 +263,46 @@ legacy 基线重合度（实测）：八条**均不在** `server/policy-legacy-b
 - **credentialFlow**：不显式取 cookie，经页面会话消费 → `consume`。
 - **residues**：`[]`（ephemeral + keepTab=false）。
 
+### 2.9 `xiaohongshu/search`（2026-09-29 追加）
+
+源码是本仓覆盖文件 `opencli-overrides/xiaohongshu/search.js`（由 `scripts/apply-opencli-overrides.mjs` 替换上游同名文件）。
+
+| 轴 | 取值 |
+|---|---|
+| executionPath | `browser-bridge` |
+| authorities | `['browser-profile', 'public-network']` |
+| exposure | **`public`** |
+| effects | `[]` |
+| credentialFlow | `consume` |
+| residues | `[]` |
+
+- **public-network**：`search.js:351` `page.goto('https://www.xiaohongshu.com/search_result?keyword=…')`。
+- **browser-profile**：搜索结果页需要登录态，经页面会话消费 cookie。
+- **effects**：筛选只是点击页面自带的「筛选」面板选项（`:360`，脚本在 `:109-141`），改变的是本页的展示状态，不写任何账号数据；其余是滚动与读 DOM（`:369-376`）。页面自发请求按口径 B 不计。
+- **exposure = public**：输出列 `rank/title/author/likes/type/published_at/url`（`:346`），全是他人公开笔记的元数据，**没有本机账号字段**；`url` 内嵌 note 级 `xsec_token`，按口径 D 不升 `secret`。
+- **residues**：`[]`（ephemeral + keepTab=false）。
+- **位置参数**：`query` 一个，argv 白名单按 manifest 放行 1 个位置参数。
+
+### 2.10 `xiaohongshu/user-posts`（2026-09-29 追加）
+
+本仓新增命令，源码 `opencli-overrides/xiaohongshu/user-posts.js` 与 `user-posts-helpers.js`。
+
+| 轴 | 取值 |
+|---|---|
+| executionPath | `browser-bridge` |
+| authorities | `['browser-profile', 'public-network']` |
+| exposure | **`public`** |
+| effects | `[]` |
+| credentialFlow | `consume` |
+| residues | `[]` |
+
+- **public-network**：`user-posts.js:41-42` 先 `goto /explore`，再 `goto` 博主主页（扩展会拒绝新自动化标签页直接打开他人主页）。
+- **effects**：只读注水的 Pinia store（`user-posts-helpers.js` 的 `POSTED_STATE_JS`，`user-posts.js:25`）并滚动加载（`:54`），每次间隔 1.2–2.5s。
+- **exposure = public**：输出列 `rank/title/type/likes/published_at/url`（`:84`）加 JSON 里的 `likes_count`，都是博主公开笔记的元数据；`url` 的 `xsec_token` 按口径 D 处理。
+- **residues**：`[]`（ephemeral + keepTab=false）。
+- **位置参数**：`id` 一个（博主 ID 或主页链接）。
+- **执行预算**：见 §4.5。
+
 ---
 
 ## 3. 汇总表
@@ -277,6 +317,8 @@ legacy 基线重合度（实测）：八条**均不在** `server/policy-legacy-b
 | `twitter/timeline` | browser-bridge | browser-profile, public-network | personal | `[]` | consume | `[]` | 第 9 步 → ack |
 | `youtube/whoami` | browser-bridge | browser-profile, public-network | personal | `[]` | consume | `[persistent-session]` | 第 9 步 → ack |
 | `youtube/subscriptions` | browser-bridge | browser-profile, public-network | personal | `[]` | consume | `[]` | 第 9 步 → ack |
+| `xiaohongshu/search` | browser-bridge | browser-profile, public-network | public | `[]` | consume | `[]` | 第 9 步 → ack（browser-profile） |
+| `xiaohongshu/user-posts` | browser-bridge | browser-profile, public-network | public | `[]` | consume | `[]` | 第 9 步 → ack（browser-profile） |
 
 六轴无一处 `unknown`；无一处「证明不了」。八条的 `authorities` 完全同值；差异只落在 `exposure`（`bilibili/hot`）与 `residues`（四条 whoami）两列。
 
@@ -340,6 +382,12 @@ legacy 基线重合度（实测）：八条**均不在** `server/policy-legacy-b
 2. **超时路径不做租约清理**：Windows 上 `kill()` 走 `TerminateProcess`，`closeWindow()` 不执行，ephemeral 命令的标签租约等扩展 30s 空闲回收。这是既有行为，与本裁决无关，但一并记账。
 
 **重新裁决的触发条件（写死，免得下次靠感觉）**：真机门实测 `twitter/timeline` 的 P95 耗时超过 90s。§4.3 已点名它是八条里唯一有现实概率触到 opencli 自己那道 60s 闸的（pre-nav SPA + 5s GitHub 超时 + 最多 30 个脚本包回退 + 至多 100 页分页）。**用实测决定，不先验加长。** 届时若确需加长，只允许由 Host 侧受信策略元数据设置，**客户端参数不得扩大 Host 上限**——这一条与 argv 白名单（§1.2 口径 F）同源：请求方不得自行放大自己的执行预算。
+
+### 4.5 `xiaohongshu/user-posts` 的执行预算（2026-09-29）
+
+这是第一条源码明确要求长时的试点命令：抓完整个博主主页要持续滚动，一百多条笔记就要数分钟。它声明了名为 `timeout` 的参数（默认 600，取值 30–600），opencli 据此把自身的命令闸放宽到该值加 30s（`execution.js:507-519`）；命令内部在截止前 20s 停止滚动并返回已加载的笔记。
+
+按 §4.4 的口径，更长预算只能由 Host 侧受信元数据设置：`policy-metadata.mjs` 的审定记录带 `commandTimeoutMs: 630_000`，`buildExecutionPolicy` 汇成 `timeoutMsByKey`，`validateStartRequest` 把它交给 `RunManager` 作为本次运行的时限。客户端的 `--timeout` 最大 600，碰不到 Host 的 630s，**客户端参数不能扩大 Host 上限**。其余命令仍是 90s。
 
 ---
 

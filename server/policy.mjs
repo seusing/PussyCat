@@ -303,6 +303,12 @@ export function buildExecutionPolicy(snapshot) {
     argvConstraintByKey.set(command.command, buildArgvConstraint(command))
   }
 
+  // 同样只在 Host 内部:审定记录里显式声明了更长执行预算的命令(审定 §4.5)。
+  const timeoutMsByKey = new Map()
+  for (const [commandKey, record] of REVIEWED_RECORDS) {
+    if (record.commandTimeoutMs) timeoutMsByKey.set(commandKey, record.commandTimeoutMs)
+  }
+
   // allowedCommands 改由判决派生 —— 与 decisions **单一事实源**,不再是并行的第二套规则。
   //
   // **它是「判决可执行」的计数视图,不是准入依据。** 准入的唯一入口是
@@ -346,6 +352,7 @@ export function buildExecutionPolicy(snapshot) {
     decisions,
     decisionByKey,
     argvConstraintByKey,
+    timeoutMsByKey,
     description: `逐命令判决:legacy 基线 ${legacyCount} 条 + tier 审定放行 ${tierCount} 条;`
       + `显式 deny ${deniedCommands.size} 条,其余一律 unknown 拒绝(fail-closed)`,
   }
@@ -439,7 +446,8 @@ export function validateStartRequest(value, policy, {
     throw new RequestPolicyError(400, 'P0-B requires explicit JSON output', 'append -f json to argv')
   }
 
-  return { runId, commandKey, argv: [...argv] }
+  const timeoutMs = policy.timeoutMsByKey?.get(commandKey)
+  return { runId, commandKey, argv: [...argv], ...(timeoutMs ? { timeoutMs } : {}) }
 }
 
 export function validateCancelRequest(value) {

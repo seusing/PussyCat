@@ -127,9 +127,9 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(policy.allowedCommands.size).toBe(runnable.size)
   })
 
-  it('执行面增量恰为三条 local-direct 加十一条试点命令,且没有任何条目被移除', () => {
+  it('执行面增量恰为三条 local-direct 加十三条试点命令,且没有任何条目被移除', () => {
     // 只断言总数 287 挡不住「减掉一条 legacy、多进来两条别的」——必须钉住**增量本身**。
-    // 试点开放后增量从 3 条变 14 条:多出的十一条**逐条列名**,任何额外命令都会红。
+    // 试点开放后增量从 3 条变 16 条:多出的十三条**逐条列名**,任何额外命令都会红。
     const legacyDerived = new Set(snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
       .map((c) => c.command)
@@ -140,11 +140,11 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
       'antigravity/recent-paths', 'bilibili/hot', 'bilibili/whoami',
       'mercury/reimbursement-plan', 'trae-cn/setup', 'twitter/timeline', 'twitter/whoami',
       'xiaohongshu/collections', 'xiaohongshu/feed', 'xiaohongshu/liked', 'xiaohongshu/saved',
-      'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
+      'xiaohongshu/search', 'xiaohongshu/user-posts', 'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
     ])
     expect(removed).toEqual([])
     expect(legacyDerived.size).toBe(276)
-    expect(policy.allowedCommands.size).toBe(290)
+    expect(policy.allowedCommands.size).toBe(292)
   })
 
   it('注入缝不经 buildExecutionPolicy 透传 —— 传第二参也不改变任何判决', () => {
@@ -318,6 +318,15 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
     expect(start(['xiaohongshu', 'feed', '-f', 'json']).commandKey).toBe('xiaohongshu/feed')
   })
 
+  it('只有审定记录声明了执行预算的命令才带 timeoutMs(客户端 --timeout 不影响它)', () => {
+    expect(start(['xiaohongshu', 'feed', '-f', 'json'])).not.toHaveProperty('timeoutMs')
+    expect(validateStartRequest({
+      runId: 'r', commandKey: 'xiaohongshu/user-posts',
+      argv: ['xiaohongshu', 'user-posts', 'u1', '--timeout', '30', '-f', 'json'],
+      acknowledgement: { fingerprint: policy.decisionByKey.get('xiaohongshu/user-posts').fingerprint },
+    }, policy).timeoutMs).toBe(630_000)
+  })
+
   it.each([
     ['--trace', ['xiaohongshu', 'feed', '--trace', 'on', '-f', 'json']],
     ['--site-session', ['xiaohongshu', 'feed', '--site-session', 'persistent', '-f', 'json']],
@@ -360,25 +369,27 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
     }, policy).commandKey).toBe('36kr/news')
   })
 
-  it('十一条试点命令都挂上了约束,且 flags 恰为各自 manifest 声明的集合', () => {
+  it('十三条试点命令都挂上了约束,且 flags 与位置参数数恰为各自 manifest 声明的', () => {
     const expected = new Map([
-      ['xiaohongshu/whoami', []],
-      ['xiaohongshu/feed', ['--limit']],
-      ['xiaohongshu/saved', ['--collection', '--id', '--limit', '--list-collections']],
-      ['xiaohongshu/collections', ['--id', '--limit']],
-      ['xiaohongshu/liked', ['--id', '--limit']],
-      ['bilibili/whoami', []],
-      ['bilibili/hot', ['--limit']],
-      ['twitter/whoami', []],
-      ['twitter/timeline', ['--limit', '--top-by-engagement', '--type']],
-      ['youtube/whoami', []],
-      ['youtube/subscriptions', ['--limit']],
+      ['xiaohongshu/whoami', [[], 0]],
+      ['xiaohongshu/feed', [['--limit'], 0]],
+      ['xiaohongshu/saved', [['--collection', '--id', '--limit', '--list-collections'], 0]],
+      ['xiaohongshu/collections', [['--id', '--limit'], 0]],
+      ['xiaohongshu/liked', [['--id', '--limit'], 0]],
+      ['xiaohongshu/search', [['--limit', '--sort', '--time', '--type'], 1]],
+      ['xiaohongshu/user-posts', [['--range', '--sort', '--timeout'], 1]],
+      ['bilibili/whoami', [[], 0]],
+      ['bilibili/hot', [['--limit'], 0]],
+      ['twitter/whoami', [[], 0]],
+      ['twitter/timeline', [['--limit', '--top-by-engagement', '--type'], 0]],
+      ['youtube/whoami', [[], 0]],
+      ['youtube/subscriptions', [['--limit'], 0]],
     ])
     expect([...policy.argvConstraintByKey.keys()].sort()).toEqual([...expected.keys()].sort())
-    for (const [key, flags] of expected) {
+    for (const [key, [flags, positionals]] of expected) {
       const constraint = policy.argvConstraintByKey.get(key)
       expect([...constraint.flags].sort(), key).toEqual(flags)
-      expect(constraint.positionals, key).toBe(0)
+      expect(constraint.positionals, key).toBe(positionals)
     }
   })
 

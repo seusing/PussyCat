@@ -9,7 +9,12 @@
 // 例:timeline 的 top-by-engagement 原文列了完整加权公式(likes×1 + retweets×3 + …),
 // 那是实现说明不是使用说明——用户要知道的是「按互动量重排、取前 N 条」,公式留给文档。
 
-type CommandCopy = { description: string; args?: Record<string, string> }
+// choices:下拉选项值 → 中文标签。选项值本身保持英文(opencli 要求 choices 是纯字符串)。
+type CommandCopy = {
+  description: string
+  args?: Record<string, string>
+  choices?: Record<string, Record<string, string>>
+}
 
 const ZH: Record<string, CommandCopy> = {
   'xiaohongshu/whoami': {
@@ -39,6 +44,34 @@ const ZH: Record<string, CommandCopy> = {
     description: '读取小红书点赞过的笔记列表',
     args: { limit: '返回条数' },
   },
+  'xiaohongshu/search': {
+    description: '搜索小红书笔记，可用小红书自带的排序、发布时间和笔记类型筛选',
+    args: {
+      query: '搜索关键词',
+      limit: '返回条数',
+      sort: '排序依据，默认综合',
+      time: '发布时间，默认不限',
+      type: '笔记类型，默认不限',
+    },
+    choices: {
+      sort: { general: '综合', latest: '最新', likes: '最多点赞', comments: '最多评论', collects: '最多收藏' },
+      time: { all: '不限', day: '一天内', week: '一周内', 'half-year': '半年内' },
+      type: { all: '不限', video: '视频', image: '图文' },
+    },
+  },
+  'xiaohongshu/user-posts': {
+    description: '提取小红书博主的全部笔记链接，可按发布时间筛选、按点赞数排序',
+    args: {
+      id: '博主 ID 或主页链接',
+      range: '发布时间范围，默认全部',
+      sort: '排序，默认按发布时间',
+      timeout: '最长加载秒数（30–600）',
+    },
+    choices: {
+      range: { all: '全部', today: '今天', '3d': '近 3 天', '7d': '近 7 天', '15d': '近半个月', '1m': '近 1 个月', '3m': '近 3 个月', '6m': '近半年' },
+      sort: { time: '按发布时间', likes: '按点赞数' },
+    },
+  },
   'bilibili/whoami': {
     description: '查看当前登录的 B 站账号（UID、昵称、等级）',
   },
@@ -52,9 +85,12 @@ const ZH: Record<string, CommandCopy> = {
   'twitter/timeline': {
     description: '读取你的 X 首页时间线',
     args: {
-      type: '推荐流（for-you）或关注流（following，按时间倒序）',
+      type: '时间线类型',
       limit: '返回条数，默认 20',
-      'top-by-engagement': '填 N>0 时按互动量重排并取前 N 条；默认 0 保持 X 原始排序',
+      'top-by-engagement': '按互动量取前 N 条，0 为不重排',
+    },
+    choices: {
+      type: { 'for-you': '推荐', following: '关注（按时间倒序）' },
     },
   },
   'youtube/whoami': {
@@ -91,6 +127,11 @@ export function commandDescription(commandKey: string, fallback?: string): strin
 /** 参数说明:同上。**逐参数回落**——一条命令译了 description 不代表每个参数都译了。 */
 export function argHelp(commandKey: string, argName: string, fallback?: string): string {
   return ZH[commandKey]?.args?.[argName] ?? fallback ?? ''
+}
+
+/** 下拉选项的中文标签:表里没有就显示选项值原文。 */
+export function choiceLabel(commandKey: string, argName: string, value: string): string {
+  return ZH[commandKey]?.choices?.[argName]?.[value] ?? value
 }
 
 /** 该命令是否有中文说明。仅供测试与文案盘点使用,不参与渲染判断。 */

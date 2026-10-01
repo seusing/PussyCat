@@ -75,7 +75,7 @@ export const REVIEWED_RECORDS = new Map([
 
   // ── browser-cookie-read-pilot ──────────────────────────────────────────────
   // 审定全文见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md(逐条附源码行号)。
-  // **十一条共同前提**:effects/residues 的取值以「Host 不放行 --trace / --site-session /
+  // **十三条共同前提**:effects/residues 的取值以「Host 不放行 --trace / --site-session /
   // --keep-tab / --window」为条件(审定 §1.2 口径 F)。这些是 opencli 的运行时全局选项
   // (commanderAdapter.js:49,53-55),不是 manifest args,因此**不进 reviewShapeHash**——
   // 它们的封堵由 policy.mjs 的 assertDeclaredArgvOnly 在 Host 侧兑现,不能只靠前端 buildArgv。
@@ -136,6 +136,35 @@ export const REVIEWED_RECORDS = new Map([
       executionPath: 'browser-bridge',
       authorities: ['browser-profile', 'public-network'],
       exposure: 'personal',
+      effects: [],
+      credentialFlow: 'consume',
+      residues: [],
+    },
+  }],
+  ['xiaohongshu/search', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/search') },
+    metadata: {
+      executionPath: 'browser-bridge',
+      // goto /search_result 后点页面筛选面板、滚动读 DOM(opencli-overrides/xiaohongshu/search.js:351,360,369-376)。
+      authorities: ['browser-profile', 'public-network'],
+      // 他人公开笔记的元数据;url 内嵌 note 级 xsec_token,按审定口径 D 不升 secret。
+      exposure: 'public',
+      effects: [],
+      credentialFlow: 'consume',
+      residues: [],
+    },
+  }],
+  ['xiaohongshu/user-posts', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/user-posts') },
+    // 滚完整个博主主页要几分钟;命令内 --timeout 上限 600s(user-posts-helpers.js 的 parseTimeoutSeconds),
+    // Host 留 30s 收尾。客户端参数不能超过这个上限(审定 §4.5)。
+    commandTimeoutMs: 630_000,
+    metadata: {
+      executionPath: 'browser-bridge',
+      // goto /explore 再 goto 博主主页,读注水的 Pinia store 并滚动(opencli-overrides/xiaohongshu/user-posts.js:41-42,25,54)。
+      authorities: ['browser-profile', 'public-network'],
+      // 博主公开笔记列表;url 内嵌 note 级 xsec_token,按审定口径 D 不升 secret。
+      exposure: 'public',
       effects: [],
       credentialFlow: 'consume',
       residues: [],
@@ -233,10 +262,11 @@ export const REVIEWED_RECORDS = new Map([
  * 条一次性拉进 tier,其中 488 条随即因 metadata-missing 落 unknown。结果仍 fail-closed,但
  * 三处代价真实存在——tier 名字("pilot")与成员规模不符;`no-tier` 与 `metadata-missing` 两个
  * reasonCode 的语义被搅混;§4.1.2 L2「触碰即处置」的记账面凭空扩大 60 倍。
- * **显式集合是「试点」的诚实表达**:进 tier 的只有这十一条,其余命令继续 `unknown/no-tier`。
+ * **显式集合是「试点」的诚实表达**:进 tier 的只有这十三条,其余命令继续 `unknown/no-tier`。
  */
 export const BROWSER_COOKIE_READ_PILOT = new Set([
   'xiaohongshu/whoami', 'xiaohongshu/feed', 'xiaohongshu/saved', 'xiaohongshu/collections', 'xiaohongshu/liked',
+  'xiaohongshu/search', 'xiaohongshu/user-posts',
   'bilibili/whoami', 'bilibili/hot',
   'twitter/whoami', 'twitter/timeline',
   'youtube/whoami', 'youtube/subscriptions',

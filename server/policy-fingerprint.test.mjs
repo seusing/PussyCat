@@ -165,12 +165,14 @@ describe('decisionFingerprint', () => {
       ['trae-cn/setup', '2a2994c1470e84f106181d5999102a24c04c4a2deba0b43a4e0ae788c3627d27'],
       ['mercury/reimbursement-plan', '2f06f817986e5a2acca50dea3fca05d60893e6c227de69e6a9b730e89d8cf0e6'],
       ['antigravity/recent-paths', '80e57cf850a677eb934eb8c65b00b721f9f0cd73fd6ddcd8be2e7a6f02645207'],
-      // browser-cookie-read-pilot 十一条(审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md)
+      // browser-cookie-read-pilot 十三条(审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md)
       ['xiaohongshu/whoami', '213fc041ef1582b8f390040cee1f9327160e8e19c33cef3156e59f44a44ab372'],
       ['xiaohongshu/feed', '61eed464da4b2059f6b1ead8f4826118ecacb4385d7710c40d7c71b5d0608fb4'],
       ['xiaohongshu/saved', '4c47126f559db2c5d4e1bdad5577fd1b67afa7b831e8081290c0d7f1ddb795e4'],
       ['xiaohongshu/collections', 'e4e39940aea94da2a16b71426efe5d35686183d8e175c80f598abd4bde9a8339'],
       ['xiaohongshu/liked', '5cbce01ed962238e57096e6864c53c71203ab3e0f33953d8ba7ed15063600a4a'],
+      ['xiaohongshu/search', 'c73e34c0565a6fa4439f262a4174e2139f9ff1b34428094658faeca88d3fdd9d'],
+      ['xiaohongshu/user-posts', 'b7f710ac5d78127b93cbfccdbf82eb54ac3ec1a1262c8a22ed2373680b05718e'],
       ['bilibili/whoami', 'a0f3a88f084e94b0e574be103ab1780e0934700d9ebe8831c0fae91087dfc0ac'],
       ['bilibili/hot', '1ba4acade06562708a7909cecf03e7c511e672158aa57e62af3e5ca6cc9487d9'],
       ['twitter/whoami', '41c9df6793cd51215225398da9793f08d7c1a0c6330fc50131123c44e9468424'],
