@@ -89,7 +89,7 @@ export function InspirationPanel({
     [selected, sites],
   )
   const [stage, setStage] = useState<Stage>(() => selected ? 'execute' : 'sites')
-  const [workspace, setWorkspace] = useState<Workspace>(() => selected ? 'sources' : 'library')
+  const [workspace, setWorkspace] = useState<Workspace>('sources')
   const [site, setSite] = useState<SupportedSite | undefined>(() => selectedSite)
   const [query, setQuery] = useState('')
   const lastSelectedCommand = useRef(selected?.command)

@@ -1,37 +1,67 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 
 vi.mock('./SplashCursor.jsx', () => ({
-  default: ({ RAINBOW_MODE }: { RAINBOW_MODE?: boolean }) => (
-    <canvas data-testid="splash-cursor" data-rainbow={String(RAINBOW_MODE)} />
+  default: ({ RAINBOW_MODE, EMITTERS }: { RAINBOW_MODE?: boolean; EMITTERS?: unknown[] }) => (
+    <canvas data-testid="splash-cursor" data-rainbow={String(RAINBOW_MODE)} data-emitters={EMITTERS?.length ?? 0} />
   ),
 }))
 
 import { StartupSplash } from './StartupSplash'
 
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
+
 test('holds the splash until input and then fades it out', () => {
   vi.useFakeTimers()
+  const { unmount } = render(
+    <StartupSplash>
+      <main data-testid="app-content">app</main>
+    </StartupSplash>,
+  )
 
-  try {
-    const { unmount } = render(
-      <StartupSplash>
-        <main data-testid="app-content">app</main>
-      </StartupSplash>,
-    )
+  expect(screen.getByTestId('app-content')).toBeInTheDocument()
+  const splash = screen.getByTestId('startup-splash')
+  expect(splash).toHaveAttribute('aria-label', '按任意键进入爪爪')
+  expect(splash).toHaveTextContent('爪爪')
+  expect(splash).toHaveTextContent('按任意键进入')
+  expect(screen.getByTestId('splash-cursor')).toHaveAttribute('data-rainbow', 'false')
+  expect(Number(screen.getByTestId('splash-cursor').dataset.emitters)).toBeGreaterThan(0)
 
-    expect(screen.getByTestId('app-content')).toBeInTheDocument()
-    expect(screen.getByTestId('startup-splash')).toHaveAttribute('aria-label', 'Press any key to continue')
-    expect(screen.getByTestId('splash-cursor')).toHaveAttribute('data-rainbow', 'true')
+  act(() => vi.advanceTimersByTime(3_000))
+  expect(screen.getByTestId('startup-splash')).toBeInTheDocument()
 
-    act(() => vi.advanceTimersByTime(3_000))
-    expect(screen.getByTestId('startup-splash')).toBeInTheDocument()
+  fireEvent.keyDown(window, { key: 'Enter' })
+  expect(screen.getByTestId('startup-splash')).toHaveClass('is-leaving')
+  act(() => vi.advanceTimersByTime(560))
+  expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: 'Enter' })
-    expect(screen.getByTestId('startup-splash')).toHaveClass('is-leaving')
-    act(() => vi.advanceTimersByTime(560))
-    expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument()
+  unmount()
+})
 
-    unmount()
-  } finally {
-    vi.useRealTimers()
-  }
+test('a click on the splash also enters the app', () => {
+  vi.useFakeTimers()
+  render(
+    <StartupSplash>
+      <main>app</main>
+    </StartupSplash>,
+  )
+
+  fireEvent.pointerDown(screen.getByTestId('startup-splash'))
+  expect(screen.getByTestId('startup-splash')).toHaveClass('is-leaving')
+  act(() => vi.advanceTimersByTime(560))
+  expect(screen.queryByTestId('startup-splash')).not.toBeInTheDocument()
+})
+
+test('skips the smoke when reduced motion is requested', () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion'), media: query }))
+  render(
+    <StartupSplash>
+      <main>app</main>
+    </StartupSplash>,
+  )
+
+  expect(screen.getByTestId('startup-splash')).toHaveTextContent('按任意键进入')
+  expect(screen.queryByTestId('splash-cursor')).not.toBeInTheDocument()
 })

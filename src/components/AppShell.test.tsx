@@ -19,19 +19,21 @@ const indexCss = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
 
 beforeEach(() => useAppStore.setState({ catalogStatus: 'ready' }))
 
-test('侧栏模块导航 + 灵感库空状态显示演示模式', () => {
+test('侧栏模块导航 + 首页固定为灵感来源并显示演示模式', () => {
   render(<App />)
   expect(screen.getByTestId('module-tabs')).toBeInTheDocument()
-  expect(screen.getByTestId('inspiration-library')).toBeInTheDocument()
-  expect(screen.getByTestId('inspiration-library-empty')).toBeInTheDocument()
+  expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
+  expect(screen.queryByTestId('inspiration-library')).not.toBeInTheDocument()
   expect(screen.getByTestId('health-pill')).toHaveTextContent('演示模式')
   expect(screen.getByTestId('app-brand-icon')).toHaveAttribute('src', '/app-icon.png')
   expect(screen.getByTestId('app-header')).toHaveClass('flex-wrap')
   expect(screen.getByTestId('app-header-actions')).toHaveClass('app-header-actions')
 })
 
-test('灵感库可以切回灵感来源', () => {
+test('灵感来源可以打开灵感库并切回', () => {
   render(<App />)
+  fireEvent.click(screen.getByTestId('open-inspiration-library'))
+  expect(screen.getByTestId('inspiration-library-empty')).toBeInTheDocument()
   fireEvent.click(screen.getByTestId('inspiration-sources-tab'))
   expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
 })

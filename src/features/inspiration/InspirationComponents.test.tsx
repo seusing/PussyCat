@@ -221,7 +221,6 @@ describe('inspiration command search', () => {
       selected: undefined,
     })
     renderPanel()
-    fireEvent.click(screen.getByTestId('inspiration-sources-tab'))
 
     expect(screen.queryByTestId('site-row-wechat')).not.toBeInTheDocument()
     expect(screen.getByTestId('site-row-xiaohongshu')).toBeInTheDocument()

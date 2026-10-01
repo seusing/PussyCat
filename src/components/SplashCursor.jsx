@@ -17,7 +17,9 @@ function SplashCursor({
   BACK_COLOR = { r: 0.5, g: 0, b: 0 },
   TRANSPARENT = true,
   RAINBOW_MODE = true,
-  COLOR = '#ff0000'
+  COLOR = '#ff0000',
+  EMITTERS = [],
+  EMIT_WARMUP = 0
 }) {
   const canvasRef = useRef(null);
   const animationFrameId = useRef(null);
@@ -691,6 +693,7 @@ function SplashCursor({
       const dt = calcDeltaTime();
       if (resizeCanvas()) initFramebuffers();
       updateColors(dt);
+      applyEmitters(dt);
       applyInputs();
       step(dt);
       render(null);
@@ -724,6 +727,41 @@ function SplashCursor({
           p.color = generateColor();
         });
       }
+    }
+
+    // Continuous emitters inject a little dye and velocity every frame (scaled by dt).
+    // Sway and density pulse follow slow sines; small random jitter lets the plume curl.
+    // There is no global wind force. During EMIT_WARMUP seconds the emitted density starts
+    // 2.5x stronger and eases back, so smoke becomes visible right away without a burst.
+    let emitterTime = 0;
+    function applyEmitters(dt) {
+      if (!EMITTERS.length) return;
+      emitterTime += dt;
+      const warm = emitterTime < EMIT_WARMUP ? 1 + 1.5 * (1 - emitterTime / EMIT_WARMUP) : 1;
+      const frameScale = dt * 60 * warm;
+      EMITTERS.forEach((emitter, index) => {
+        const phase = emitter.phase ?? index * 1.7;
+        const sway = emitter.sway
+          ? emitter.sway * Math.sin((emitterTime / (emitter.swayPeriod ?? 8)) * Math.PI * 2 + phase)
+          : 0;
+        const pulse = emitter.pulse
+          ? 1 + emitter.pulse * Math.sin((emitterTime / (emitter.pulsePeriod ?? 6)) * Math.PI * 2 + phase * 2)
+          : 1;
+        const jitter = emitter.jitter ?? 0;
+        const strength = frameScale * pulse;
+        splat(
+          emitter.x + sway,
+          emitter.y,
+          emitter.force.x + (Math.random() - 0.5) * jitter,
+          emitter.force.y + (Math.random() - 0.5) * jitter,
+          {
+            r: emitter.color.r * strength,
+            g: emitter.color.g * strength,
+            b: emitter.color.b * strength
+          },
+          emitter.radius
+        );
+      });
     }
 
     function applyInputs() {
@@ -830,13 +868,13 @@ function SplashCursor({
       splat(pointer.texcoordX, pointer.texcoordY, dx, dy, color);
     }
 
-    function splat(x, y, dx, dy, color) {
+    function splat(x, y, dx, dy, color, radius = config.SPLAT_RADIUS) {
       splatProgram.bind();
       gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.attach(0));
       gl.uniform1f(splatProgram.uniforms.aspectRatio, canvas.width / canvas.height);
       gl.uniform2f(splatProgram.uniforms.point, x, y);
       gl.uniform3f(splatProgram.uniforms.color, dx, dy, 0.0);
-      gl.uniform1f(splatProgram.uniforms.radius, correctRadius(config.SPLAT_RADIUS / 100.0));
+      gl.uniform1f(splatProgram.uniforms.radius, correctRadius(radius / 100.0));
       blit(velocity.write);
       velocity.swap();
 
