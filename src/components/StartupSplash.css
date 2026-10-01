@@ -31,7 +31,7 @@
 .startup-splash__prism::after {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse 42% 30% at 50% 44%, rgb(7 8 11 / 62%), transparent);
+  background: radial-gradient(ellipse 44% 44% at 50% 49%, rgb(7 8 11 / 78%) 25%, transparent);
   content: "";
   pointer-events: none;
 }
@@ -43,16 +43,14 @@
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  margin-top: -6vh;
+  margin-top: -8vh;
   text-align: center;
   animation: startup-splash-rise 900ms cubic-bezier(.22, 1, .36, 1) 150ms both;
 }
 
 .startup-splash__icon {
-  width: 72px;
-  height: 72px;
-  border-radius: 18px;
-  box-shadow: 0 14px 40px rgb(0 0 0 / 45%), 0 0 0 1px rgb(255 255 255 / 8%);
+  width: 64px;
+  height: 64px;
 }
 
 .startup-splash__name {
@@ -70,22 +68,12 @@
 }
 
 .startup-splash__hint {
-  position: absolute;
-  z-index: 60;
-  bottom: clamp(36px, 9vh, 80px);
-  left: 50%;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 999px;
-  background: rgb(9 11 16 / 58%);
-  backdrop-filter: blur(10px);
-  color: #c3cad6;
-  font-size: 13px;
-  letter-spacing: .08em;
-  padding: 9px 18px;
-  transform: translateX(-50%);
+  margin-top: 22px;
+  padding-left: .3em;
+  color: rgb(226 232 242 / 68%);
+  font-size: 12px;
+  letter-spacing: .3em;
+  text-shadow: 0 1px 12px rgb(0 0 0 / 60%);
   white-space: nowrap;
   animation:
     startup-splash-fade-in 700ms ease 900ms both,

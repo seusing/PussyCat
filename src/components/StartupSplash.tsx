@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Keyboard } from 'lucide-react'
 import Prism from './Prism'
 import './StartupSplash.css'
 
@@ -64,11 +63,8 @@ export function StartupSplash({ children }: { children: ReactNode }) {
             <img className="startup-splash__icon" src="/app-icon.png" alt="" aria-hidden="true" />
             <strong className="startup-splash__name">爪爪</strong>
             <span className="startup-splash__tagline">把值得回看的视频、来源和想法放在一个地方。</span>
+            <span className="startup-splash__hint">按任意键进入</span>
           </div>
-          <span className="startup-splash__hint">
-            <Keyboard size={15} aria-hidden="true" />
-            按任意键进入
-          </span>
         </div>
       )}
     </>

@@ -223,7 +223,7 @@ export default function AppShell({
       <aside data-testid="app-sidebar" className="app-sidebar" data-sidebar-collapsed={sidebarCollapsed}>
         <div className="app-brand">
           <span className="app-brand-mark">
-            <img data-testid="app-brand-icon" src="/app-icon.png" alt="" aria-hidden="true" className="h-full w-full rounded-[7px] object-cover" />
+            <img data-testid="app-brand-icon" src="/app-icon.png" alt="" aria-hidden="true" className="h-full w-full object-cover" />
           </span>
           <span className="sidebar-label"><strong>爪爪</strong><small>1.0</small></span>
         </div>
