@@ -1,5 +1,8 @@
 import { HostRequestError } from './errors'
-import { clearVkJevConfig, classifyVkIntent, fetchVkJobs, fetchVkOutputText, postVkJob, saveVkJevConfig, vkOutputPath } from './vkClient'
+import {
+  clearVkJevConfig, classifyVkIntent, fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
+  postVkJob, postVkStoryline, saveVkJevConfig, vkOutputPath,
+} from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
   const impl = vi.fn(async (_url: string, _init?: RequestInit) => ({
@@ -65,5 +68,44 @@ describe('vkClient', () => {
       'http://127.0.0.1:9999/vk/v1/jev/config/clear',
     ])
     expect(impl.mock.calls.some(([url]) => String(url).includes('reveal'))).toBe(false)
+  })
+
+  it('posts the batch id to start a storyline and returns the id and status', async () => {
+    const impl = stubFetch(201, { storyline_id: 'sl_1', status: 'queued' })
+    await expect(postVkStoryline('batch-1', 'http://127.0.0.1:9999')).resolves.toEqual({ storyline_id: 'sl_1', status: 'queued' })
+    expect(impl.mock.calls[0][0]).toBe('http://127.0.0.1:9999/vk/v1/storylines')
+    expect(impl.mock.calls[0][1]?.method).toBe('POST')
+    expect(JSON.parse(String(impl.mock.calls[0][1]?.body))).toEqual({ batch_id: 'batch-1' })
+  })
+
+  it('lists storylines for one batch with an escaped query, or all of them without one', async () => {
+    const impl = stubFetch(200, [])
+    await fetchVkStorylines('a b/1', 'http://127.0.0.1:9999')
+    await fetchVkStorylines(undefined, 'http://127.0.0.1:9999')
+    expect(impl.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:9999/vk/v1/storylines?batch_id=a%20b%2F1',
+      'http://127.0.0.1:9999/vk/v1/storylines',
+    ])
+    expect(impl.mock.calls[0][1]?.method).toBeUndefined()
+  })
+
+  it('reads one storyline with its result', async () => {
+    const view = { storyline_id: 'sl 1', status: 'done', result: { storylines: [] } }
+    const impl = stubFetch(200, view)
+    await expect(fetchVkStoryline('sl 1', 'http://127.0.0.1:9999')).resolves.toEqual(view)
+    expect(impl.mock.calls[0][0]).toBe('http://127.0.0.1:9999/vk/v1/storylines/sl%201')
+  })
+
+  it('surfaces a 404 from an engine without storylines as a HostRequestError with that status', async () => {
+    stubFetch(404, { error: 'not found' })
+    for (const call of [
+      () => fetchVkStorylines('b', 'http://127.0.0.1:9999'),
+      () => fetchVkStoryline('sl_1', 'http://127.0.0.1:9999'),
+      () => postVkStoryline('b', 'http://127.0.0.1:9999'),
+    ]) {
+      const error = await call().catch((err) => err)
+      expect(error).toBeInstanceOf(HostRequestError)
+      expect(error.status).toBe(404)
+    }
   })
 })

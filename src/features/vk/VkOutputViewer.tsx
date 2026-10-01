@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useDragControls, useMotionValue } from 'motion/react'
 import { BookmarkPlus, Check, Copy, Download } from 'lucide-react'
 import Markdown from 'react-markdown'
@@ -11,13 +11,28 @@ import { addInspirationItem } from '../inspiration/inspirationLibrary'
 import { vkPrimaryOutput, vkResultVersionLabel, type VkResultVersion } from './taskResults'
 import './VkOutputViewer.css'
 
-export type VkOutputTab = { id: string; label: string; source?: string; jobId?: string; outputId?: string; versions?: VkResultVersion[] }
+export type VkOutputTab = {
+  id: string
+  label: string
+  source?: string
+  jobId?: string
+  outputId?: string
+  versions?: VkResultVersion[]
+  /** 已经在手的 Markdown 正文(如故事线笔记);有它就不再请求文件。 */
+  content?: string
+  /** 存入灵感库时用的标题;缺省用 label。 */
+  libraryTitle?: string
+}
 type LoadedOutput = { outputId: string; content: string }
 export type VkOutputCache = Map<string, LoadedOutput>
 
 function outputFileName(outputId: string): string {
   const name = outputId.split(/[\\/]/).filter(Boolean).at(-1)
   return name || '视频解析结果.md'
+}
+
+function inlineFileName(label: string): string {
+  return `${label.replace(/[\\/:*?"<>|]/g, '_')}.md`
 }
 
 function errorText(error: unknown, fallback: string): string {
@@ -56,7 +71,13 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
   const outputKey = JSON.stringify([baseUrl, activeTabId, activeTab?.jobId, activeTab?.outputId])
   const requestKey = JSON.stringify([baseUrl, activeTab?.outputId ? 'output' : 'job', activeTab?.outputId ?? activeTab?.jobId])
-  const loaded = resultCache.get(requestKey)
+  const inlineContent = activeTab?.content
+  const inlineLoaded = useMemo<LoadedOutput | undefined>(
+    () => (inlineContent === undefined ? undefined : { outputId: inlineFileName(activeTab?.label ?? ''), content: inlineContent }),
+    [inlineContent, activeTab?.label],
+  )
+  const loaded = inlineLoaded
+    ?? resultCache.get(requestKey)
     ?? (loadedState?.key === outputKey ? loadedState.value : undefined)
   const error = loadError?.key === outputKey ? loadError.message : null
   const dragControls = useDragControls()
@@ -106,7 +127,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   useEffect(() => { sectionRef.current?.focus() }, [])
 
   useEffect(() => {
-    if (!activeTab || resultCache.has(requestKey)) return
+    if (!activeTab || activeTab.content !== undefined || resultCache.has(requestKey)) return
     let current = true
     setLoadError(null)
     void (async () => {
@@ -208,7 +229,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const saveToInspirationLibrary = () => {
     if (!loaded) return
     const saved = addInspirationItem({
-      title: activeTab?.label || '视频解析结果',
+      title: activeTab?.libraryTitle || activeTab?.label || '视频解析结果',
       content: loaded.content,
       kind: 'video',
       format: 'md',
@@ -309,7 +330,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
               <button key={tab.id} id={`${domId}-tab-${index}`} role="tab" aria-selected={tab.id === activeTabId}
                 aria-controls={`${domId}-panel`} tabIndex={tab.id === activeTabId ? 0 : -1}
                 ref={(element) => { if (element) tabRefs.current.set(tab.id, element); else tabRefs.current.delete(tab.id) }}
-                title={tab.source || tab.label} onClick={() => onSelectTab(tab.id)}
+                title={tab.content !== undefined ? tab.label : tab.source || tab.label} onClick={() => onSelectTab(tab.id)}
                 onKeyDown={(event) => {
                   const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
                     : event.key === (verticalTabs ? 'ArrowDown' : 'ArrowRight') ? (index + 1) % tabs.length

@@ -1574,4 +1574,95 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.getByRole('button', { name: '再次提交任务' })).toBeInTheDocument()
     expect(screen.queryByText('解析结果')).not.toBeInTheDocument()
   })
+
+  describe('串联分析区块', () => {
+    const storyline = (over: Record<string, unknown> = {}) => ({
+      storyline_id: 'sl_1', batch_id: 'batch-one', status: 'done', trigger: 'auto',
+      requested_at: '2026-09-03T00:02:00Z', started_at: null, finished_at: null,
+      error: null, reason: null, storyline_count: 2, standalone_count: 1, cost_cny: null,
+      ...over,
+    })
+
+    /** 在批量夹具上叠一层 /vk/v1/storylines;rows 为 null 表示旧引擎(404)。 */
+    function withStorylines(rows: Record<string, unknown>[] | null) {
+      const { details, fetchMock } = memberProgressFixture()
+      const state = { rows, posts: [] as unknown[], lists: 0 }
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input))
+        if (!url.pathname.startsWith('/vk/v1/storylines')) return fetchMock(input)
+        if (init?.method === 'POST') {
+          state.posts.push(JSON.parse(String(init.body)))
+          state.rows = [storyline({ status: 'queued', trigger: 'manual' })]
+          return new Response(JSON.stringify({ storyline_id: 'sl_1', status: 'queued' }), { status: 201 })
+        }
+        state.lists += 1
+        if (!state.rows) return new Response('{}', { status: 404 })
+        return new Response(JSON.stringify(state.rows.filter(() => url.searchParams.get('batch_id') === 'batch-one')))
+      }))
+      return { details, state }
+    }
+
+    it('批量任务显示串联状态,点「串联分析」发起并刷新状态', async () => {
+      const { state } = withStorylines([])
+      render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+      const section = await screen.findByTestId('vk-storyline-section')
+      expect(within(section).queryByTestId('vk-storyline-status')).not.toBeInTheDocument()
+      await userEvent.click(within(section).getByRole('button', { name: '串联分析' }))
+      await waitFor(() => expect(within(section).getByTestId('vk-storyline-status')).toHaveTextContent('排队中'))
+      expect(state.posts).toEqual([{ batch_id: 'batch-one' }])
+      expect(within(section).getByRole('button', { name: '串联分析' })).toBeDisabled()
+    })
+
+    it('已完成的串联显示结论并能打开故事线结果窗口', async () => {
+      withStorylines([storyline()])
+      const opened: unknown[] = []
+      const listener = (event: Event) => { opened.push((event as CustomEvent).detail) }
+      window.addEventListener('vk:open-output', listener)
+      render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+      const section = await screen.findByTestId('vk-storyline-section')
+      await waitFor(() => expect(within(section).getByTestId('vk-storyline-status'))
+        .toHaveTextContent('已串成 2 条故事线，1 个视频未归入'))
+      expect(within(section).getByRole('button', { name: '串联分析' })).toBeEnabled()
+      await userEvent.click(within(section).getByRole('button', { name: '查看故事线' }))
+      expect(opened).toEqual([{ jobId: 'member-a', title: '解析结果', storyline: true }])
+      window.removeEventListener('vk:open-output', listener)
+    })
+
+    it('本批解析成功的视频不足 2 个时不能发起,并说明原因', async () => {
+      const { details } = withStorylines([])
+      details.set('member-b', { ...details.get('member-b')!, status: 'failed' })
+      render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+      const button = await within(await screen.findByTestId('vk-storyline-section')).findByRole('button', { name: '串联分析' })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', '至少需要 2 个解析成功的视频')
+    })
+
+    it('旧版引擎(404)时整个区块不显示', async () => {
+      const { state } = withStorylines(null)
+      render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+      await screen.findByTestId('vk-task-detail-task-row-member-b')
+      await waitFor(() => expect(state.lists).toBe(1))
+      await act(async () => {})
+      expect(screen.queryByTestId('vk-storyline-section')).not.toBeInTheDocument()
+      expect(screen.queryByText('串联分析')).not.toBeInTheDocument()
+    })
+
+    it('单个视频的任务不显示区块,也不请求串联记录', async () => {
+      const { details, fetchMock } = memberProgressFixture()
+      const solo = { ...details.get('member-a')!, job_id: 'solo', batch_id: null }
+      details.clear()
+      details.set('solo', solo)
+      const storylineRequests: string[] = []
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const path = new URL(String(input)).pathname
+        if (path.startsWith('/vk/v1/storylines')) storylineRequests.push(path)
+        return fetchMock(input)
+      }))
+      render(<VkTaskDetailSidebar jobId="solo" baseUrl={BASE} onClose={() => {}} />)
+      await screen.findByTestId('vk-task-detail-task-row-source-0')
+      await act(async () => {})
+      expect(screen.queryByTestId('vk-storyline-section')).not.toBeInTheDocument()
+      expect(storylineRequests).toEqual([])
+    })
+  })
 })

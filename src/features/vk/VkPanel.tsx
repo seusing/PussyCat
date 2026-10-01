@@ -48,6 +48,7 @@ import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { vkJobRowFromView, vkPrimaryOutput as primaryOutput, vkTaskResultGroups } from './taskResults'
+import { loadStorylineTabs } from './storyline'
 import { DEFAULT_BASE_URL } from '../../host/nodeBridgeHost'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import {
@@ -129,6 +130,8 @@ const VK_JOB_RETRY_SUBMITTED_EVENT = 'vk:job-retry-submitted'
 const VK_NOTIFICATIONS_KEY = 'opencli-app:vk-task-notifications:v1'
 const VK_HIDDEN_JOBS_KEY = 'opencli-app:vk-hidden-jobs:v1'
 const VK_TASK_NUMBERS_KEY = 'opencli-app:vk-task-numbers:v1'
+// 从「博主全部笔记」一键导入的链接天然是同一作者的系列内容,串联默认开。
+const STORYLINE_DEFAULT_ON_COMMAND = 'xiaohongshu/user-posts'
 
 function loadBooleanRecord(key: string): Record<string, boolean> {
   try {
@@ -600,6 +603,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [maxCost, setMaxCost] = useState('')
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
+  const [storyline, setStoryline] = useState(false)
+  const sourceCount = useMemo(() => sourceLines(source).length, [source])
   const sourceFileInputRef = useRef<HTMLInputElement>(null)
   const hasManualOverrides = preset !== 'quick-summary'
     || contentType !== ''
@@ -625,6 +630,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     if (!handoff) return
     setSource(handoff.url)
     setProvenance({ commandKey: handoff.commandKey, collectedAt: handoff.collectedAt })
+    setStoryline(handoff.commandKey === STORYLINE_DEFAULT_ON_COMMAND)
     useAppStore.getState().clearVkHandoff()
   }, [handoff])
 
@@ -713,6 +719,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     // 列表据此把它们归为一个任务编号，详情页据此说清"这次共几个视频、进度到哪"。
     // 单个视频也带上：批量与否是提交时的事实，不该让下游去猜。
     const batchId = crypto.randomUUID()
+    const chainStoryline = storyline && sources.length >= 2
     try {
       if (await refreshProviders() === false) {
         addTaskBanners([{
@@ -755,14 +762,20 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         setIntentSummary(null)
         setIntentFallback(false)
       }
-      for (const sourceValue of sources) {
+      for (const [index, sourceValue] of sources.entries()) {
         const previewedRequest = await postVkPreview(buildProjection(sourceValue, intentClassification, goalSnapshot), base)
         const request = { ...previewedRequest, source: sourceValue }
+        // 引擎在「该批没有排队/运行中的任务」时触发自动串联,且每批只触发一次。job 是逐条提交的,
+        // 前几条若很快跑完(如命中缓存),串联会带着已完成的成员提前跑掉、之后不再补跑。
+        // 所以 storyline 只挂在**最后一条**上(引擎按 batch_id 去重,带一次就够)。中途某条提交
+        // 失败、循环提前结束时最后一条不会发出,本批就不带——用户可在任务详情里手动「串联分析」。
+        const lastInBatch = index === sources.length - 1
         await postVkJob({
           request,
           idempotency_key: crypto.randomUUID(),
           client_job_id: crypto.randomUUID(),
           batch_id: batchId,
+          ...(chainStoryline && lastInBatch ? { storyline: true } : {}),
         }, base)
         if (!submittedAny) {
           submittedAny = true
@@ -987,7 +1000,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     }
   }
 
-  const openTaskOutputs = useCallback((jobId: string, versionJobId?: string, fallback?: { outputId: string; title: string }) => {
+  // 每次重开结果窗口就作废上一次还在路上的故事线读取,免得它回来把标签插进别的任务里。
+  const openGeneration = useRef(0)
+  const openTaskOutputs = useCallback((
+    jobId: string,
+    versionJobId?: string,
+    fallback?: { outputId: string; title: string },
+    { preferStoryline = false }: { preferStoryline?: boolean } = {},
+  ) => {
+    const generation = ++openGeneration.current
     const selectedRow = selectedJob?.job_id === jobId ? vkJobRowFromView(selectedJob) : null
     const rows = selectedRow
       ? jobs.some((row) => row.job_id === jobId)
@@ -1013,7 +1034,17 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     if (!tabs.length && fallback) tabs.push({ id: `output:${fallback.outputId}`, label: fallback.title, outputId: fallback.outputId })
     setOutputTabs(tabs)
     setActiveTabId(tabs.find((tab) => tab.id === selected?.id)?.id ?? tabs[0]?.id ?? null)
-  }, [jobs, selectedJob])
+
+    // 批量任务的最新串联若已完成,故事线标签排在各单视频标签之前;读不到就保持原样。
+    const batchId = rows.find((row) => row.job_id === jobId)?.batch_id
+    if (batchId && groups.length > 1) {
+      void loadStorylineTabs(batchId, base).then((storyTabs) => {
+        if (generation !== openGeneration.current || storyTabs.length === 0) return
+        setOutputTabs((current) => [...storyTabs, ...current])
+        if (preferStoryline) setActiveTabId(storyTabs[0].id)
+      })
+    }
+  }, [base, jobs, selectedJob])
 
   const openOutput = useCallback((outputId: string, title: string, jobId?: string) => {
     if (jobId) {
@@ -1021,15 +1052,17 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       return
     }
     const id = `output:${outputId}`
+    openGeneration.current += 1
     setOutputTabs([{ id, label: title, outputId }])
     setActiveTabId(id)
   }, [openTaskOutputs])
 
   useEffect(() => {
     const openRequestedOutput = (event: Event) => {
-      const detail = (event as CustomEvent<{ outputId?: string; title?: string; jobId?: string; versionJobId?: string }>).detail
+      const detail = (event as CustomEvent<{ outputId?: string; title?: string; jobId?: string; versionJobId?: string; storyline?: boolean }>).detail
       if (detail?.jobId) openTaskOutputs(detail.jobId, detail.versionJobId,
-        detail.outputId ? { outputId: detail.outputId, title: detail.title || '解析结果' } : undefined)
+        detail.outputId ? { outputId: detail.outputId, title: detail.title || '解析结果' } : undefined,
+        { preferStoryline: detail.storyline === true })
       else if (detail?.outputId) openOutput(detail.outputId, detail.title || '解析结果')
     }
     window.addEventListener(VK_OPEN_OUTPUT_EVENT, openRequestedOutput)
@@ -1279,6 +1312,20 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             </div>
           </BorderGlow>
         </div>
+        {sourceCount >= 2 && (
+          <div data-testid="vk-storyline-option" className="vk-storyline-option mb-2">
+            <label>
+              <input
+                type="checkbox"
+                data-testid="vk-storyline-toggle"
+                checked={storyline}
+                onChange={(event) => setStoryline(event.target.checked)}
+              />
+              <span>解析完成后串联相关内容</span>
+            </label>
+            <p>把续集、回顾等相关视频串成故事线，每条故事线一篇笔记</p>
+          </div>
+        )}
         <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           你想重点了解什么（选填）
           <textarea
@@ -1570,7 +1617,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             const version = tab.versions?.find((item) => item.jobId === jobId)
             return { ...tab, jobId, outputId: version?.outputId }
           }))}
-          baseUrl={base ?? DEFAULT_BASE_URL} onClose={() => setActiveTabId(null)} />
+          baseUrl={base ?? DEFAULT_BASE_URL} onClose={() => { openGeneration.current += 1; setActiveTabId(null) }} />
       )}
     </div>
   )

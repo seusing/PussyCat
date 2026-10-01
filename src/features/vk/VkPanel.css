@@ -88,6 +88,26 @@
   outline-offset: 2px;
 }
 
+/* 多个链接时出现的「解析完成后串联」开关。 */
+.vk-storyline-option label {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-fg);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.vk-storyline-option input { accent-color: var(--color-accent); }
+
+.vk-storyline-option p {
+  margin: 0 0 0 24px;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .vk-smart-mode {
   margin: 4px 0 8px;
   border-left: 2px solid var(--color-accent);

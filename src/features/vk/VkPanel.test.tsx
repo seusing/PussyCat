@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/appStore'
 import type { VkProcessingRequest } from '../../host/vkClient'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { VK_OPEN_OUTPUT_EVENT } from './taskUiState'
+import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
 
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
 
@@ -1628,4 +1629,252 @@ it('opens task details without a result dialog when no attempt succeeded', async
   await screen.findByTestId('vk-job-detail')
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(calls.some((call) => call.key.includes('/outputs/'))).toBe(false)
+})
+
+describe('故事线串联', () => {
+  const LINK_A = 'https://www.xiaohongshu.com/explore/aaa'
+  const LINK_B = 'https://www.xiaohongshu.com/explore/bbb'
+  const LINK_C = 'https://www.xiaohongshu.com/explore/ccc'
+
+  const submitRoutes = () => stubRoutes({
+    'GET /vk/v1/health': { body: HEALTH },
+    'GET /vk/v1/jobs': { body: [] },
+    'POST /vk/v1/preview': { body: resolvedRequest() },
+    'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
+  })
+  const submittedJobs = (calls: Array<{ key: string; init?: RequestInit }>) => calls
+    .filter((call) => call.key === 'POST /vk/v1/jobs')
+    .map((call) => JSON.parse(String(call.init?.body)) as Record<string, unknown>)
+
+  it('只有 2 个及以上不同链接时才出现串联开关,默认关并带说明', async () => {
+    submitRoutes()
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
+    await act(async () => {})
+    const source = screen.getByTestId('vk-source')
+    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
+
+    fireEvent.change(source, { target: { value: LINK_A } })
+    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
+    fireEvent.change(source, { target: { value: `${LINK_A}\n${LINK_A}` } })
+    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
+
+    fireEvent.change(source, { target: { value: `${LINK_A}\n${LINK_B}` } })
+    const toggle = screen.getByRole('checkbox', { name: '解析完成后串联相关内容' })
+    expect(toggle).toBe(screen.getByTestId('vk-storyline-toggle'))
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByTestId('vk-storyline-option'))
+      .toHaveTextContent('把续集、回顾等相关视频串成故事线，每条故事线一篇笔记')
+  })
+
+  it('开着时只有同批最后一条任务带 storyline: true,且同批共用一个 batch_id', async () => {
+    const { calls } = submitRoutes()
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: `${LINK_A}\n${LINK_B}\n${LINK_C}` } })
+    await userEvent.click(screen.getByTestId('vk-storyline-toggle'))
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(3))
+    const jobs = submittedJobs(calls)
+    expect(jobs.map((job) => 'storyline' in job)).toEqual([false, false, true])
+    expect(jobs[2].storyline).toBe(true)
+    expect(jobs[0].batch_id).toBeTruthy()
+    expect(new Set(jobs.map((job) => job.batch_id)).size).toBe(1)
+  })
+
+  it('开着但中途某条提交失败时,已发出的任务都不带 storyline', async () => {
+    let posted = 0
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': {
+        status: 201,
+        body: () => {
+          posted += 1
+          if (posted === 2) throw new Error('网络中断')
+          return { job_id: `job-${posted}`, kind: 'request' }
+        },
+      },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: `${LINK_A}\n${LINK_B}\n${LINK_C}` } })
+    await userEvent.click(screen.getByTestId('vk-storyline-toggle'))
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    expect(await screen.findByTestId('vk-submit-error')).toHaveTextContent('网络中断')
+    const jobs = submittedJobs(calls)
+    expect(jobs).toHaveLength(2)
+    for (const job of jobs) expect(job).not.toHaveProperty('storyline')
+  })
+
+  it('关着时不带 storyline 字段', async () => {
+    const { calls } = submitRoutes()
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: `${LINK_A}\n${LINK_B}` } })
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(2))
+    for (const job of submittedJobs(calls)) expect(job).not.toHaveProperty('storyline')
+  })
+
+  it('从「博主全部笔记」导入的多个链接默认开启串联', async () => {
+    const { calls } = submitRoutes()
+    useAppStore.getState().setVkHandoff({
+      url: `${LINK_A}\n${LINK_B}`, commandKey: 'xiaohongshu/user-posts', collectedAt: 1754000000000,
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const toggle = await screen.findByTestId('vk-storyline-toggle')
+    expect(toggle).toBeChecked()
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(2))
+    expect(submittedJobs(calls).map((job) => 'storyline' in job)).toEqual([false, true])
+  })
+
+  it('其他来源导入的多个链接默认不串联', async () => {
+    submitRoutes()
+    useAppStore.getState().setVkHandoff({
+      url: `${LINK_A}\n${LINK_B}`, commandKey: 'bilibili/hot', collectedAt: 1754000000000,
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    expect(await screen.findByTestId('vk-storyline-toggle')).not.toBeChecked()
+  })
+
+  it('博主笔记只导入 1 个链接时不显示开关,提交也不带 storyline', async () => {
+    const { calls } = submitRoutes()
+    useAppStore.getState().setVkHandoff({
+      url: LINK_A, commandKey: 'xiaohongshu/user-posts', collectedAt: 1754000000000,
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect((screen.getByTestId('vk-source') as HTMLTextAreaElement).value).toBe(LINK_A))
+    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(1))
+    expect(submittedJobs(calls)[0]).not.toHaveProperty('storyline')
+  })
+
+  describe('结果窗口', () => {
+    const common = {
+      kind: 'request', status: 'done', finished_at: '2026-08-01T00:10:00Z',
+      parent_job_id: null, cache_bypass: false, run_id: null, cost_cny: 0, batch_id: 'batch',
+    }
+    const jobs = [
+      { ...common, job_id: 'a', source: LINK_A, submitted_at: '2026-08-01T00:00:00Z' },
+      { ...common, job_id: 'c', source: LINK_B, submitted_at: '2026-08-01T00:00:02Z' },
+    ]
+    const record = {
+      storyline_id: 'sl_1', batch_id: 'batch', status: 'done', trigger: 'auto',
+      requested_at: '2026-08-01T00:11:00Z', started_at: null, finished_at: null,
+      error: null, reason: null, storyline_count: 2, standalone_count: 0, cost_cny: null,
+    }
+    const episode = (order: number, job_id: string, url: string) => ({
+      order, job_id, title: job_id, url, published_at: null, role: '', summary: '',
+    })
+    const story = (id: string, title: string, episodes: ReturnType<typeof episode>[]) => ({
+      id, title, logline: '', episodes, callbacks: [], key_points: [], open_threads: [],
+      markdown: `# ${title}笔记`, markdown_path: '',
+    })
+    const member = (job_id: string, url: string) => ({
+      job_id, run_id: `run-${job_id}`, title: job_id, url, platform: 'xiaohongshu',
+      author: '阿乙', published_at: null, duration_ms: 1,
+    })
+    const result = {
+      schema_version: 'storyline_result@1', storyline_id: 'sl_1', batch_id: 'batch',
+      generated_at: '2026-08-01T00:12:00Z', status: 'done', reason: null,
+      members: [member('a', LINK_A), member('c', LINK_B)],
+      storylines: [
+        story('s1', '装修日记', [episode(1, 'a', LINK_A), episode(2, 'c', LINK_B)]),
+        story('s2', '另一条线', [episode(1, 'c', LINK_B)]),
+      ],
+      standalone: [], links: [],
+    }
+    const baseRoutes = (): Record<string, Route> => ({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: () => [...jobs] },
+      ...Object.fromEntries(jobs.map((job) => [`GET /vk/v1/jobs/${job.job_id}`, { body: { ...job, outputs: { note_path: `${job.job_id}.md` } } }])),
+      'GET /vk/v1/outputs/a.md': { body: '# 视频A' },
+      'GET /vk/v1/outputs/c.md': { body: '# 视频C' },
+    })
+    const storyRoutes = (): Record<string, Route> => ({
+      'GET /vk/v1/storylines': { body: [record] },
+      'GET /vk/v1/storylines/sl_1': { body: { ...record, result } },
+    })
+    const openBatch = (detail: Record<string, unknown>) => act(() => {
+      window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, { detail: { jobId: 'a', ...detail } }))
+    })
+
+    it('普通打开:故事线标签排在单视频标签之前,选中的仍是单视频,故事线内容是内联 Markdown', async () => {
+      const { calls } = stubRoutes({ ...baseRoutes(), ...storyRoutes() })
+      render(<VkPanel baseUrl={BASE} />)
+      await screen.findByTestId('vk-job-open-a')
+      await openBatch({})
+
+      await screen.findByRole('heading', { name: '视频A' })
+      const tabs = await waitFor(() => {
+        const found = screen.getAllByRole('tab')
+        expect(found).toHaveLength(4)
+        return found
+      })
+      expect(tabs.map((tab) => tab.textContent)).toEqual([
+        '故事线 · 装修日记', '故事线 · 另一条线', expect.stringMatching(/小任务 1$/), expect.stringMatching(/小任务 2$/),
+      ])
+      expect(tabs[2]).toHaveAttribute('aria-selected', 'true')
+
+      await userEvent.click(tabs[1])
+      await screen.findByRole('heading', { name: '另一条线笔记' })
+      expect(calls.filter((call) => call.key.includes('/outputs/')).map((call) => call.key)).toEqual(['GET /vk/v1/outputs/a.md'])
+      expect(calls.filter((call) => call.key.startsWith('GET /vk/v1/storylines')).map((call) => call.key))
+        .toEqual(['GET /vk/v1/storylines', 'GET /vk/v1/storylines/sl_1'])
+    })
+
+    it('「查看故事线」打开时默认选中第一条故事线,存入灵感库用「作者 · 标题」', async () => {
+      stubRoutes({ ...baseRoutes(), ...storyRoutes() })
+      render(<VkPanel baseUrl={BASE} />)
+      await screen.findByTestId('vk-job-open-a')
+      await openBatch({ storyline: true })
+
+      await screen.findByRole('heading', { name: '装修日记笔记' })
+      expect(screen.getByRole('tab', { name: '故事线 · 装修日记' })).toHaveAttribute('aria-selected', 'true')
+      await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+      expect(loadInspirationLibrary().items.at(-1)).toMatchObject({
+        title: '阿乙 · 装修日记', content: '# 装修日记笔记', source: LINK_A,
+      })
+    })
+
+    it('旧版引擎没有串联接口时只显示单视频标签,不报错', async () => {
+      stubRoutes(baseRoutes())
+      render(<VkPanel baseUrl={BASE} />)
+      await screen.findByTestId('vk-job-open-a')
+      await openBatch({})
+      await screen.findByRole('heading', { name: '视频A' })
+      await act(async () => {})
+      expect(screen.getAllByRole('tab')).toHaveLength(2)
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('串联还没完成时不加故事线标签', async () => {
+      stubRoutes({
+        ...baseRoutes(),
+        'GET /vk/v1/storylines': { body: [{ ...record, status: 'running', storyline_count: null }] },
+      })
+      render(<VkPanel baseUrl={BASE} />)
+      await screen.findByTestId('vk-job-open-a')
+      await openBatch({ storyline: true })
+      await screen.findByRole('heading', { name: '视频A' })
+      await act(async () => {})
+      expect(screen.getAllByRole('tab')).toHaveLength(2)
+    })
+
+    it('关闭窗口后才返回的故事线不会再把窗口顶出来', async () => {
+      const list = deferred<unknown>()
+      stubRoutes({
+        ...baseRoutes(), ...storyRoutes(),
+        'GET /vk/v1/storylines': { body: () => list.promise },
+      })
+      render(<VkPanel baseUrl={BASE} />)
+      await screen.findByTestId('vk-job-open-a')
+      await openBatch({ storyline: true })
+      await userEvent.click(await screen.findByTestId('vk-output-viewer-close'))
+      await act(async () => list.resolve([record]))
+      await act(async () => {})
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+  })
 })

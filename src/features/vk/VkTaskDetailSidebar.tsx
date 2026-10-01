@@ -20,6 +20,7 @@ import {
 } from './taskUiState'
 import './VkTaskDetailSidebar.css'
 import { VkResultActions } from './VkResultActions'
+import { VkStorylineSection } from './VkStorylineSection'
 import { vkJobRowFromView, vkPrimaryOutput, vkTaskResultGroups, type VkTaskResultGroup } from './taskResults'
 
 const ACTIVE_STATUSES = new Set([
@@ -1005,6 +1006,20 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                   )}
             </ol>
           </div>
+
+          {batchMembers.length > 1 && job.batch_id && (
+            <VkStorylineSection
+              key={job.batch_id}
+              batchId={job.batch_id}
+              baseUrl={baseUrl}
+              parsedCount={batchMembers.filter((member) => member.state === 'done').length}
+              onView={() => {
+                window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
+                  detail: { jobId, title: '解析结果', storyline: true },
+                }))
+              }}
+            />
+          )}
 
           <dl className="vk-task-detail-list" data-testid="vk-task-detail-metadata">
             <div>

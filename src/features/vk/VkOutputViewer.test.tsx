@@ -80,6 +80,47 @@ it('收进灵感库时只保存当前结果', async () => {
   expect(screen.getByTestId('vk-output-viewer-save-library')).toHaveAccessibleName('已收进灵感库')
 })
 
+const storyTabs: VkOutputTab[] = [
+  { id: 'storyline:sl:s1', label: '故事线 · 装修日记', content: '# 装修日记\n\n第一集到第三集', libraryTitle: '阿乙 · 装修日记', source: 'https://example.com/a' },
+  { id: 'job:a', jobId: 'a', label: '任务 1', source: 'https://example.com/a' },
+]
+
+it('renders a storyline tab from its inline markdown without requesting any file', async () => {
+  render(<Harness items={storyTabs} />)
+  expect(await screen.findByRole('heading', { name: '装修日记' })).toBeInTheDocument()
+  expect(screen.getByText('第一集到第三集')).toBeInTheDocument()
+  expect(fetchVkJob).not.toHaveBeenCalled()
+  expect(fetchVkOutputText).not.toHaveBeenCalled()
+  expect(screen.getByRole('tab', { name: '故事线 · 装修日记' })).toHaveAttribute('title', '故事线 · 装修日记')
+  expect(screen.getByRole('tab', { name: '任务 1' })).toHaveAttribute('title', 'https://example.com/a')
+
+  await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
+  expect(copyText).toHaveBeenLastCalledWith('# 装修日记\n\n第一集到第三集')
+  await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
+  expect(saveTextFileAs).toHaveBeenLastCalledWith('故事线 · 装修日记.md', '# 装修日记\n\n第一集到第三集', expect.any(Object))
+
+  await userEvent.click(screen.getByRole('tab', { name: '任务 1' }))
+  await screen.findByRole('heading', { name: 'a.md' })
+  expect(fetchVkOutputText).toHaveBeenCalledTimes(1)
+})
+
+it('收进灵感库时故事线用自己的标题和第一集链接,单视频标签仍用标签名', async () => {
+  render(<Harness items={storyTabs} />)
+  await screen.findByRole('heading', { name: '装修日记' })
+  await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+  expect(loadInspirationLibrary().items.at(-1)).toMatchObject({
+    title: '阿乙 · 装修日记',
+    source: 'https://example.com/a',
+    content: '# 装修日记\n\n第一集到第三集',
+    kind: 'video',
+  })
+
+  await userEvent.click(screen.getByRole('tab', { name: '任务 1' }))
+  await screen.findByRole('heading', { name: 'a.md' })
+  await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+  expect(loadInspirationLibrary().items.at(-1)).toMatchObject({ title: '任务 1', content: '# a.md\n\n正文 a.md' })
+})
+
 it.each([
   { item: { id: 'job:a', jobId: 'a', label: '任务 1' }, jobRequests: 1 },
   { item: { id: 'output:a', outputId: 'a.md', label: '任务 1' }, jobRequests: 0 },

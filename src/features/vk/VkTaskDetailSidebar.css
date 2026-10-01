@@ -204,6 +204,28 @@
 .vk-task-detail-actions button:disabled { opacity: .45; }
 .vk-task-output-list { margin-top: 0; }
 
+/* 批量任务的「串联分析」区块:状态一行 + 按钮,按钮样式与下方操作区一致。 */
+.vk-storyline-section .vk-storyline-status[data-status='done'],
+.vk-storyline-section .vk-storyline-status[data-status='partial'] { color: var(--color-fg); }
+.vk-storyline-section .vk-storyline-status[data-status='failed'],
+.vk-storyline-section .vk-storyline-error { color: var(--color-danger); }
+.vk-storyline-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.vk-storyline-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: #20232a;
+  color: var(--color-fg);
+  padding: 0 10px;
+  font-size: 12px;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.vk-storyline-actions button:hover:not(:disabled) { background: #292d35; }
+.vk-storyline-actions button:disabled { opacity: .45; }
+
 /* 整批重跑:范围比旁边几个按钮大,给个醒目边框,别跟"只作用于当前这一条"的混淆。 */
 .vk-task-batch-rerun-button { border-color: var(--color-accent, #4c8dff) !important; }
 

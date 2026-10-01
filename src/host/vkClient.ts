@@ -226,6 +226,8 @@ export type VkSubmitPayload = Record<string, unknown> & {
   client_job_id: string
   /** 一次提交多个视频时由前端生成、同批共用。 */
   batch_id?: string
+  /** 与 batch_id 同时出现才有意义:这一批全部解析完成后自动串联成故事线。 */
+  storyline?: boolean
 }
 
 // 历史任务 id 形如 `run:<run_id>`;冒号是 URL path 的合法字符(RFC 3986 pchar),
@@ -386,6 +388,120 @@ export async function fetchVkJobs(baseUrl = DEFAULT_BASE_URL): Promise<VkJobRow[
 export async function fetchVkJob(jobId: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJobView> {
   const response = await fetch(`${baseUrl}/vk/v1/jobs/${encodePathSegment(jobId)}`)
   return parseVkResponse<VkJobView>(response, '任务详情获取失败')
+}
+
+export type VkStorylineStatus = 'waiting' | 'queued' | 'running' | 'done' | 'partial' | 'skipped' | 'failed'
+
+export interface VkStorylineRow {
+  storyline_id: string
+  batch_id: string
+  status: VkStorylineStatus
+  trigger: 'auto' | 'manual'
+  requested_at: string
+  started_at: string | null
+  finished_at: string | null
+  error: string | null
+  reason: string | null
+  storyline_count: number | null
+  standalone_count: number | null
+  cost_cny: number | null
+}
+
+export interface VkStorylineMember {
+  job_id: string
+  run_id: string
+  title: string
+  url: string
+  platform: string
+  author: string | null
+  published_at: string | null
+  duration_ms: number
+}
+
+export interface VkStorylineEpisode {
+  order: number
+  job_id: string
+  title: string
+  url: string
+  published_at: string | null
+  role: string
+  summary: string
+}
+
+export interface VkStorylineCallback {
+  from_job_id: string
+  from_time_ms: number
+  to_job_id: string
+  to_time_ms: number
+  text: string
+}
+
+export interface VkStoryline {
+  id: string
+  title: string
+  logline: string
+  episodes: VkStorylineEpisode[]
+  callbacks: VkStorylineCallback[]
+  key_points: string[]
+  open_threads: string[]
+  /** 这条故事线的完整 Markdown 笔记,查看器直接渲染它。 */
+  markdown: string
+  markdown_path: string
+}
+
+export interface VkStorylineStandalone {
+  job_id: string
+  title: string
+  url: string
+  reason: string
+}
+
+export interface VkStorylineLink {
+  source_job_id: string
+  target_job_id: string
+  relation: 'sequel' | 'callback' | 'expansion' | 'same_series'
+  confidence: number
+  evidence: Array<{ job_id: string; time_ms: number; quote: string }>
+}
+
+/** 结果文件内容(schema_version: storyline_result@1)。 */
+export interface VkStorylineResult {
+  schema_version: string
+  storyline_id: string
+  batch_id: string
+  generated_at: string
+  status: 'done' | 'partial' | 'skipped'
+  reason: string | null
+  members: VkStorylineMember[]
+  storylines: VkStoryline[]
+  standalone: VkStorylineStandalone[]
+  links: VkStorylineLink[]
+}
+
+export type VkStorylineView = VkStorylineRow & {
+  /** status 为 done/partial/skipped 时才有。 */
+  result: VkStorylineResult | null
+}
+
+/** 手动发起一批的串联;新建返回 201、已有进行中的返回 200,形状相同。 */
+export async function postVkStoryline(
+  batchId: string,
+  baseUrl = DEFAULT_BASE_URL,
+): Promise<{ storyline_id: string; status: VkStorylineStatus }> {
+  const response = await fetch(`${baseUrl}/vk/v1/storylines`, jsonInit({ batch_id: batchId }))
+  return parseVkResponse(response, '串联提交失败')
+}
+
+/** 新的在前;不带 batchId 返回全部。旧版引擎没有这个接口,会以 404 抛出。 */
+export async function fetchVkStorylines(batchId?: string, baseUrl = DEFAULT_BASE_URL): Promise<VkStorylineRow[]> {
+  const query = batchId ? `?batch_id=${encodeURIComponent(batchId)}` : ''
+  const response = await fetch(`${baseUrl}/vk/v1/storylines${query}`, { cache: 'no-store' })
+  return parseVkResponse<VkStorylineRow[]>(response, '串联记录获取失败')
+}
+
+export async function fetchVkStoryline(storylineId: string, baseUrl = DEFAULT_BASE_URL): Promise<VkStorylineView> {
+  const response = await fetch(`${baseUrl}/vk/v1/storylines/${encodePathSegment(storylineId)}`)
+  return parseVkResponse<VkStorylineView>(response, '串联结果获取失败')
 }
 
 export async function postVkJobAction(

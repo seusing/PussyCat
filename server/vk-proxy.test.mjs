@@ -281,6 +281,36 @@ describe('/vk/v1 proxy', () => {
     }
   })
 
+  it('proxies storyline routes, passing the batch_id query and JSON body through without touching job shadow', async () => {
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    vkSidecar.respond('POST /api/storylines', { storyline_id: 'sl_1', status: 'queued' }, { status: 201 })
+
+    const created = await fetch(`${baseUrl}/vk/v1/storylines`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ batch_id: 'batch-1' }),
+    })
+    expect(created.status).toBe(201)
+    expect(await created.json()).toEqual({ storyline_id: 'sl_1', status: 'queued' })
+    const posted = vkSidecar.requests.at(-1)
+    expect(posted.path).toBe('/api/storylines')
+    expect(posted.init.method).toBe('POST')
+    expect(JSON.parse(posted.init.body)).toEqual({ batch_id: 'batch-1' })
+
+    const cases = [
+      ['/vk/v1/storylines', '/api/storylines'],
+      ['/vk/v1/storylines?batch_id=batch-1', '/api/storylines?batch_id=batch-1'],
+      ['/vk/v1/storylines/sl_1', '/api/storylines/sl_1'],
+    ]
+    for (const [from, to] of cases) {
+      const response = await fetch(`${baseUrl}${from}`, { headers: { Origin: ORIGIN } })
+      expect(response.status, from).toBe(200)
+      expect(vkSidecar.requests.at(-1).path).toBe(to)
+    }
+    expect(vkJobShadow.list()).toHaveLength(0)
+  })
+
   it('proxies Jev intent/config/test routes with unchanged JSON and keeps the key out of job shadow', async () => {
     const vkJobShadow = createVkJobShadow({})
     const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
