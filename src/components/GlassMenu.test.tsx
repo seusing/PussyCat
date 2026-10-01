@@ -220,7 +220,7 @@ describe('useGlassMenuSurface', () => {
     const element = screen.getByText('Surface')
     expect(window.Hyalite.attach).toHaveBeenCalledWith(element, expect.objectContaining({
       bevel: 4, thickness: 2, slope: 0.30, shade: 0, edgeW: 0.5, rim: 2,
-      blur: 4.5, dispersion: 0.8, light: -55, materialize: 120, settle: 90,
+      blur: 4.5, dispersion: 0.8, light: -55, materialize: 0, settle: 0,
     }))
     unmount()
     expect(window.Hyalite.detach).toHaveBeenCalledWith(element)

@@ -96,6 +96,12 @@ button { letter-spacing: 0; }
 
 button:not(:disabled):active { scale: .95; }
 
+/* glass-select-trigger 整行宽时缩 5% 会产生频闪感,覆盖全局 scale,改成背景轻暗 */
+#root button.glass-select-trigger:not(:disabled):active {
+  scale: none;
+  background: color-mix(in srgb, var(--color-canvas) 80%, black);
+}
+
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
@@ -1170,4 +1176,337 @@ select:focus-visible {
   .overflow-tooltip__bubble.is-leaving { animation: none; opacity: 1; transform: translateY(-100%) scale(1); }
   .book-demo-dot { animation: none; opacity: 1; transform: none; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* ===== 确认弹框进出场动画 ===== */
+@keyframes dialog-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialog-card-in { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
+.ack-dialog-backdrop { animation: dialog-backdrop-in 120ms ease-out both; }
+.ack-dialog { animation: dialog-card-in 140ms ease-out both; }
+
+/* ===== 参数表单 (CommandConfig) ===== */
+
+/* 表单网格：text 与布尔磁贴满行，select/number 各占单格 */
+.cmd-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  column-gap: 18px;
+  row-gap: 16px;
+  margin-bottom: 20px;
+}
+.cmd-field { display: flex; flex-direction: column; gap: 6px; }
+.cmd-field--full { grid-column: 1 / -1; }
+
+/* 两级标签行 */
+/* 说明长短不一时,标签行吃掉多余高度,同一行里的控件底边对齐 */
+.cmd-field-label-row {
+  display: flex;
+  flex: 1 0 auto;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+/* 说明与参数名放不下同一行时,参数名整体掉到下一行靠右,而不是把说明挤成窄条 */
+.cmd-field-title {
+  min-width: 0;
+  flex: 1 1 9em;
+  font-size: 13px;
+  font-weight: 500;
+  color: #cfd5de;
+  overflow-wrap: anywhere;
+}
+.cmd-field > .cmd-field-label-row > .cmd-field-name-badge { margin-left: auto; }
+/* 格子里的字段标题最多两行,超出省略号;整行字段(text、开关磁贴)不截断 */
+.cmd-field:not(.cmd-field--full) .cmd-field-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.cmd-field-required { color: var(--color-danger); }
+/* 参数名小徽章：等宽字体，高特异性防止全局 font-family !important 覆盖 */
+#root .cmd-field-name-badge {
+  flex: 0 0 auto;
+  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace !important;
+  font-size: 11.5px;
+  color: #6f7887;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid #252a33;
+  border-radius: 5px;
+  padding: 1px 6px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* 控件表面：text/number input */
+.cmd-field-control {
+  display: block;
+  width: 100%;
+  height: 40px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 14px;
+  border: 1px solid #2a303b;
+  background: linear-gradient(180deg, #161920, #121419);
+  color: var(--color-fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 1px 2px rgba(0, 0, 0, .28);
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+.cmd-field-control:hover { border-color: #3a4250; }
+.cmd-field-control:focus {
+  border-color: rgba(79, 140, 255, .75);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(79, 140, 255, .16);
+}
+/* 覆盖全局 focus-visible outline，改为光环 */
+input.cmd-field-control:focus-visible { outline: none; }
+.cmd-field-control[aria-invalid="true"] {
+  border-color: var(--color-danger);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(248, 81, 73, .18);
+}
+/* 隐藏 number input 原生箭头 */
+.cmd-field-control[type="number"]::-webkit-outer-spin-button,
+.cmd-field-control[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+.cmd-field-control[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+/* select 触发器用同一套表面（高特异性覆盖 GlassMenu.css 的 .glass-select-trigger）*/
+.cmd-field-control.glass-select-trigger,
+button.cmd-field-control {
+  display: inline-flex;
+  height: 40px;
+  align-items: center;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 14px;
+  border: 1px solid #2a303b;
+  background: linear-gradient(180deg, #161920, #121419);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 1px 2px rgba(0, 0, 0, .28);
+}
+.cmd-field-control.glass-select-trigger:hover,
+button.cmd-field-control:hover { border-color: #3a4250; }
+.cmd-field-control.glass-select-trigger:focus-visible,
+.cmd-field-control.glass-select-trigger[aria-expanded="true"] {
+  outline: none;
+  border-color: rgba(79, 140, 255, .75);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(79, 140, 255, .16);
+}
+/* 禁用 run-btn 的全局 scale，改为 translateY */
+#root button.cmd-run-btn:not(:disabled):active { scale: none; }
+
+/* 字段错误文本 */
+.cmd-field-error { font-size: 12px; color: var(--color-danger); }
+
+/* ===== 布尔参数磁贴:与输入框同一套控件表面,左标签右开关 ===== */
+.cmd-field-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  padding: 8px 12px;
+  border: 1px solid #2a303b;
+  background: linear-gradient(180deg, #161920, #121419);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 1px 2px rgba(0, 0, 0, .28);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.cmd-field-tile:hover { border-color: #3a4250; }
+.cmd-field-tile:has(.cmd-field-switch-input:focus-visible) {
+  border-color: rgba(79, 140, 255, .75);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(79, 140, 255, .16);
+}
+.cmd-field-tile .cmd-field-label-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  align-content: center;
+}
+.cmd-field-tile .cmd-field-title { flex: 0 1 auto; }
+
+/* ===== 拨动开关（布尔参数）===== */
+.cmd-field-switch-wrap {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+.cmd-field-switch-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cmd-field-switch-track {
+  position: relative;
+  display: inline-flex;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .2);
+  padding: 2px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .4), 0 1px 0 rgba(255, 255, 255, .04);
+  cursor: pointer;
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+.cmd-field-switch-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff, #dfe2e8);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .85);
+  transform: translateX(0);
+  transition: transform 220ms cubic-bezier(.22, 1.35, .42, 1);
+}
+.cmd-field-switch-input:checked + .cmd-field-switch-track {
+  border-color: rgba(79, 140, 255, .72);
+  background: rgba(79, 140, 255, .35);
+}
+.cmd-field-switch-input:checked + .cmd-field-switch-track .cmd-field-switch-thumb {
+  transform: translateX(16px);
+}
+
+/* ===== 终端预览块 ===== */
+.cmd-form-preview {
+  position: relative;
+  border: 1px solid #232833;
+  border-radius: 10px;
+  background: #0c0e12;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .025);
+  margin-bottom: 0;
+  overflow: hidden;
+}
+/* 等宽字体，高特异性防覆盖；内层 span 也要命中，否则被全局 #root * 的 font-family 盖掉 */
+#root .cmd-form-preview pre,
+#root .cmd-form-preview pre * {
+  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, 'Segoe UI Mono', monospace !important;
+}
+.cmd-form-preview pre {
+  margin: 0;
+  padding: 10px 44px 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;   /* 长命令折行,不横向滚动,文字始终让开右上角的复制按钮 */
+  overflow-wrap: anywhere;
+}
+/* 行首提示符用 ::before，不进复制内容 */
+.cmd-form-preview pre::before {
+  content: '$ ';
+  color: #6f7887;
+  user-select: none;
+}
+.cmd-preview-sub { color: #6f7887; }
+.cmd-preview-flag { color: #8fb2ff; }
+.cmd-preview-value { color: #aeb6c3; }
+
+/* 内嵌复制按钮 */
+.cmd-form-preview-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  background: rgba(255, 255, 255, .04);
+  color: #6f7887;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.cmd-form-preview-copy:hover {
+  background: rgba(255, 255, 255, .09);
+  color: var(--color-fg);
+  border-color: rgba(255, 255, 255, .14);
+}
+
+/* ===== 操作栏 ===== */
+.cmd-form-actions {
+  border-top: 1px solid #1f242d;
+  padding-top: 16px;
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.cmd-form-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-fg-dim);
+}
+/* kbd 等宽，高特异性防覆盖 */
+#root kbd.cmd-kbd {
+  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace !important;
+}
+kbd.cmd-kbd {
+  font-size: 11px;
+  border: 1px solid #2d333e;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #171a21;
+  color: var(--color-fg-dim);
+  padding: 1px 5px;
+  line-height: 1.4;
+  display: inline-block;
+}
+.cmd-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: linear-gradient(180deg, #5b95ff, #3f7cf0);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 1px 2px rgba(0, 0, 0, .4), 0 8px 20px -8px rgba(79, 140, 255, .55);
+  cursor: pointer;
+  transition: filter 120ms ease, box-shadow 80ms ease, transform 80ms ease;
+}
+.cmd-run-btn:hover:not(:disabled) { filter: brightness(1.06); }
+.cmd-run-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 1px 1px rgba(0, 0, 0, .3);
+}
+.cmd-run-btn:disabled {
+  background: #1c212b;
+  color: #5d6675;
+  border-color: transparent;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* 不可运行时的原因说明 */
+.cmd-decision-reason {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: color-mix(in srgb, var(--color-warning) 72%, var(--color-fg-dim));
+  margin-top: 6px;
+}
+
+/* 无参数提示 */
+.cmd-form-empty {
+  font-size: 13px;
+  color: var(--color-fg-dim);
+  padding: 4px 0 8px;
+  opacity: 0.72;
 }

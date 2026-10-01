@@ -35,6 +35,11 @@
 
 .glass-select-chevron {
   flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.glass-select-trigger[aria-expanded="true"] .glass-select-chevron {
+  transform: rotate(180deg);
 }
 
 .glass-combobox-input {
@@ -56,7 +61,7 @@
   -webkit-backdrop-filter: var(--hyalite, blur(4.5px));
   backdrop-filter: var(--hyalite, blur(4.5px));
   box-shadow: var(--hyalite-edge, 0 10px 32px rgba(0, 0, 0, 0.38));
-  animation: glass-menu-enter 120ms ease-out;
+  animation: glass-menu-enter 130ms ease-out;
 }
 
 .glass-menu-surface {
@@ -86,7 +91,7 @@
 }
 
 @keyframes glass-menu-enter {
-  from { opacity: 0.96; transform: translate3d(0, -2px, 0); }
+  from { opacity: 0; transform: translate3d(0, -4px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 

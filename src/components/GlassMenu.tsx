@@ -31,8 +31,8 @@ const HYALITE_OPTIONS = {
   blur: 4.5,
   dispersion: 0.8,
   light: -55,
-  materialize: 120,
-  settle: 90,
+  materialize: 0,
+  settle: 0,
 } as const
 
 function reducedMotion(): boolean {
@@ -128,6 +128,7 @@ export interface GlassSelectProps {
   onChange: (value: string) => void
   options: readonly GlassOption[]
   'aria-label': string
+  'aria-invalid'?: boolean
   disabled?: boolean
   className?: string
   style?: CSSProperties

@@ -273,7 +273,12 @@ export default function App({
     useAppStore.getState().finishRun({ runId, at: Date.now(), outcome: 'error', error: normalizeHostError(err, 'start') })
   }
 
-  const executeSelected = (): boolean => {
+  // opts.confirmed=false（默认）:所有手动发起的提交都先弹确认框。
+  // opts.confirmed=true:用户已在确认框点了「确认提交」,直接执行。
+  // acknowledgement-required 命令的偏好持久化在 confirmed=true 路径里统一处理——
+  // 登录体检队列靠 isAcknowledged 判断能否后台跑 whoami,这个语义不能丢(I-P5)。
+  const executeSelected = (opts: { confirmed?: boolean } = {}): boolean => {
+    const { confirmed = false } = opts
     const s = useAppStore.getState()
     if (s.catalogStatus !== 'ready') return false
     if (s.currentRun && !isTerminal(s.currentRun.state)) return false   // 键盘路径绕过按钮 disabled,权威兜底
@@ -283,13 +288,20 @@ export default function App({
     if (Object.keys(validate(s.selected, s.values)).length > 0) return false   // 权威再验(阻塞4)
 
     const cmd = s.selected
+
+    if (!confirmed) {
+      // 所有手动提交都经过确认框,包括已确认过的命令
+      s.requestAcknowledgement(cmd, decision!)
+      return false
+    }
+
     let acknowledgement: { fingerprint: string } | undefined
     if (decision!.state === 'acknowledgement-required') {
       const fp = decision!.fingerprint
-      if (!fp || !isAcknowledged(s.preferences, cmd.command, fp)) {
-        s.requestAcknowledgement(cmd, decision!)   // 未确认或指纹陈旧:不发请求,弹确认框(Task 8 Step 5)
-        return false
-      }
+      if (!fp) return false   // fingerprint 缺失的 ack-required 判决理论上到不了这里;防御性早退
+      // 持久化确认(登录体检队列靠 isAcknowledged 判断能否后台跑 whoami)。
+      // 持久化失败(返回 false)时不做二次提示,直接继续提交。
+      s.acknowledgeCommand(cmd.command, fp, Date.now())
       acknowledgement = { fingerprint: fp }
     }
 
@@ -390,7 +402,7 @@ export default function App({
       <AcknowledgeDialog
         pending={pendingAcknowledgement}
         onCancel={() => useAppStore.getState().dismissAcknowledgement()}
-        onConfirmed={() => { useAppStore.getState().dismissAcknowledgement(); executeSelected() }}
+        onConfirmed={() => { useAppStore.getState().dismissAcknowledgement(); executeSelected({ confirmed: true }) }}
       />
     </div>
   )

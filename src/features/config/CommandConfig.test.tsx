@@ -52,7 +52,38 @@ test('填写后点运行触发 onRun', async () => {
 test('命令预览随输入更新', async () => {
   render(<CommandConfig onRun={() => {}} />)
   await userEvent.type(screen.getByTestId('field-url'), 'abc')
-  expect(screen.getByText('opencli x go --url abc -f json')).toBeInTheDocument()
+  // 预览按 token 着色拆成多个 span,整体文本必须与 commandPreview(复制内容)逐字一致,且不含 `$ ` 提示符
+  const text = screen.getByTestId('command-preview').textContent
+  expect(text).toBe('opencli x go --url abc -f json')
+  expect(text).toBe(commandPreview(cmd, { url: 'abc' }))
+})
+
+test('预览对含空格的值加引号,与复制出的文本一致', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  render(<CommandConfig onRun={() => {}} />)
+  await userEvent.type(screen.getByTestId('field-url'), 'a b')
+  expect(screen.getByTestId('command-preview').textContent).toBe('opencli x go --url "a b" -f json')
+  await userEvent.click(screen.getByTestId('copy-command'))
+  expect(writeText).toHaveBeenCalledWith('opencli x go --url "a b" -f json')
+})
+
+test('复制状态的定时器在卸载时清掉', async () => {
+  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
+  const setSpy = vi.spyOn(globalThis, 'setTimeout')
+  const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+  try {
+    const { unmount } = render(<CommandConfig onRun={() => {}} />)
+    await userEvent.click(screen.getByTestId('copy-command'))
+    const at = setSpy.mock.calls.findIndex((c) => c[1] === 1500)
+    expect(at).toBeGreaterThanOrEqual(0)
+    const timerId = setSpy.mock.results[at].value
+    unmount()
+    expect(clearSpy).toHaveBeenCalledWith(timerId)
+  } finally {
+    setSpy.mockRestore()
+    clearSpy.mockRestore()
+  }
 })
 
 test('切换命令后旧字段错误不残留', async () => {
@@ -143,80 +174,102 @@ test('空闲时经 ref 提交:守卫放行,onRun 被调用(反向护栏,防守�
   expect(onRun).toHaveBeenCalledTimes(1)
 })
 
-// Task 8 Step 4:acknowledgement-required 且已确认的命令旁给一个撤销入口。
-describe('撤销确认入口(Task 8)', () => {
-  beforeEach(() => { useAppStore.setState({ preferences: emptyPreferences() }) })   // 与其它 describe 块的 acknowledgements 状态隔离
-
-  const ackCmd: CommandManifest = {
-    command: 'antigravity/recent-paths', site: 'antigravity', name: 'recent-paths', description: '', access: 'read', browser: false, args: [],
-  }
-  const ackDecision = {
-    commandKey: ackCmd.command, state: 'acknowledgement-required' as const, decisionSource: 'tier-evaluation' as const,
-    fingerprint: 'fp-1',
-    metadata: { executionPath: 'direct-node' as const, authorities: [] as string[], exposure: 'personal' as const, effects: [] as string[], credentialFlow: 'none' as const, residues: [] as string[] },
-  }
-
-  test('未确认时不显示撤销入口', () => {
-    useAppStore.setState({ selected: ackCmd, values: {}, currentRun: undefined, decisions: new Map([[ackCmd.command, ackDecision]]) })
-    render(<CommandConfig onRun={() => {}} />)
-    expect(screen.queryByTestId('revoke-acknowledge')).not.toBeInTheDocument()
+describe('select 空选项', () => {
+  const selCmd = (def?: string): CommandManifest => ({
+    command: 'x/sel', site: 'x', name: 'sel', description: '', access: 'read', browser: false,
+    args: [{ name: 'mode', type: 'str', required: false, choices: ['a', 'b'], ...(def !== undefined ? { default: def } : {}) }],
   })
 
-  test('已确认(fingerprint 匹配)时显示撤销入口;点击后清空该条确认', async () => {
-    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', 100)
-    useAppStore.setState({ selected: ackCmd, values: {}, currentRun: undefined, decisions: new Map([[ackCmd.command, ackDecision]]) })
-    render(<CommandConfig onRun={() => {}} />)
-    expect(screen.getByTestId('revoke-acknowledge')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('revoke-acknowledge'))
-    expect(useAppStore.getState().preferences.acknowledgements).toEqual([])
+  beforeEach(() => {
+    useAppStore.setState({ decisions: new Map([['x/sel', { commandKey: 'x/sel', state: 'ready' as const, decisionSource: 'legacy-baseline' as const }]]) })
   })
 
-  test('fingerprint 不匹配(策略已漂移)时不显示撤销入口', () => {
-    useAppStore.getState().acknowledgeCommand(ackCmd.command, 'stale-fp', 100)
-    useAppStore.setState({ selected: ackCmd, values: {}, currentRun: undefined, decisions: new Map([[ackCmd.command, ackDecision]]) })
+  test('有 default 时选项列表不含空选项', async () => {
+    useAppStore.getState().selectCommand(selCmd('a'))
     render(<CommandConfig onRun={() => {}} />)
-    expect(screen.queryByTestId('revoke-acknowledge')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('field-mode'))
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-value'))).toEqual(['a', 'b'])
+  })
+
+  test('无 default 时首项为"不指定"', async () => {
+    useAppStore.getState().selectCommand(selCmd(undefined))
+    render(<CommandConfig onRun={() => {}} />)
+    await userEvent.click(screen.getByTestId('field-mode'))
+    const opts = screen.getAllByRole('option')
+    expect(opts[0]).toHaveTextContent('不指定')
+    expect(opts[0]).toHaveAttribute('data-value', '')
+    expect(opts.map((o) => o.getAttribute('data-value'))).toEqual(['', 'a', 'b'])
   })
 })
 
-// 已确认状态条:原先只有一个孤零零的「撤销确认」链接,看不出撤销的是什么。
-// 现在把**授予内容**摊开写在撤销按钮旁边,语义自洽。
-describe('已确认状态条说清授予了什么', () => {
-  beforeEach(() => { useAppStore.setState({ preferences: emptyPreferences() }) })
-
-  const pilotCmd: CommandManifest = {
-    command: 'bilibili/hot', site: 'bilibili', name: 'hot', description: 'B站热门视频', access: 'read', browser: true, args: [],
+describe('表单网格与布尔开关', () => {
+  const mixed: CommandManifest = {
+    command: 'x/mixed', site: 'x', name: 'mixed', description: '', access: 'read', browser: false,
+    args: [
+      { name: 'query', type: 'str', required: true, positional: true, help: '搜索关键词' },
+      { name: 'limit', type: 'int', required: false, help: '返回条数' },
+      { name: 'sort', type: 'str', required: false, choices: ['a', 'b'], help: '排序依据' },
+      { name: 'verbose', type: 'bool', required: false, help: '输出详细日志' },
+    ],
   }
-  const decisionWith = (authorities: string[]) => new Map([[pilotCmd.command, {
-    commandKey: pilotCmd.command, state: 'acknowledgement-required' as const, decisionSource: 'tier-evaluation' as const,
-    fingerprint: 'fp-hot',
-    metadata: { executionPath: 'browser-bridge' as const, authorities, exposure: 'public' as const, effects: [] as string[], credentialFlow: 'consume' as const, residues: [] as string[] },
-  }]])
 
-  test('列出判决 metadata 里的授予项,而不是前端另编一套说法', () => {
-    useAppStore.getState().acknowledgeCommand(pilotCmd.command, 'fp-hot', 100)
-    useAppStore.setState({ selected: pilotCmd, values: {}, currentRun: undefined, decisions: decisionWith(['browser-profile', 'public-network']) })
-    render(<CommandConfig onRun={() => {}} />)
-    const banner = screen.getByTestId('acknowledged-banner')
-    expect(banner).toHaveTextContent('使用浏览器里的登录状态')
-    expect(banner).toHaveTextContent('访问对应网站')
-    // 撤销按钮在状态条**内部**,与它说明的那件事绑在一起
-    expect(within(banner).getByTestId('revoke-acknowledge')).toBeInTheDocument()
+  beforeEach(() => {
+    useAppStore.setState({
+      decisions: new Map([['x/mixed', { commandKey: 'x/mixed', state: 'ready' as const, decisionSource: 'legacy-baseline' as const }]]),
+    })
+    useAppStore.getState().selectCommand(mixed)
   })
 
-  test('authorities 为空时不写出空的冒号列表', () => {
-    useAppStore.getState().acknowledgeCommand(pilotCmd.command, 'fp-hot', 100)
-    useAppStore.setState({ selected: pilotCmd, values: {}, currentRun: undefined, decisions: decisionWith([]) })
+  test('text 与布尔磁贴占满整行,number/select 各占一格', () => {
     render(<CommandConfig onRun={() => {}} />)
-    const banner = screen.getByTestId('acknowledged-banner')
-    expect(banner).toHaveTextContent('已允许本命令按已确认的范围执行')
-    expect(banner.textContent).not.toContain('：')
+    const full = (name: string) => screen.getByTestId(`field-${name}`).closest('label')!.classList.contains('cmd-field--full')
+    expect(full('query')).toBe(true)
+    expect(full('verbose')).toBe(true)
+    expect(full('limit')).toBe(false)
+    expect(full('sort')).toBe(false)
   })
 
-  test('未确认时整条状态条都不出现', () => {
-    useAppStore.setState({ selected: pilotCmd, values: {}, currentRun: undefined, decisions: decisionWith(['browser-profile']) })
+  test('布尔参数是拨动开关:点轨道与键盘空格都能切换,并进入预览', async () => {
     render(<CommandConfig onRun={() => {}} />)
-    expect(screen.queryByTestId('acknowledged-banner')).not.toBeInTheDocument()
+    const input = screen.getByTestId('field-verbose') as HTMLInputElement
+    const wrap = input.parentElement!
+    expect(wrap).toHaveClass('cmd-field-switch-wrap')
+    expect(input.checked).toBe(false)
+    await userEvent.click(wrap.querySelector('.cmd-field-switch-track')!)
+    expect(useAppStore.getState().values.verbose).toBe(true)
+    expect(screen.getByTestId('command-preview').textContent).toContain('--verbose true')
+    input.focus()
+    await userEvent.keyboard(' ')
+    expect(useAppStore.getState().values.verbose).toBe(false)
+  })
+
+  test('布尔磁贴:说明与参数名同在标签里,点磁贴任意位置(含文字)都切换', async () => {
+    render(<CommandConfig onRun={() => {}} />)
+    const input = screen.getByTestId('field-verbose') as HTMLInputElement
+    const tile = input.closest('.cmd-field-tile') as HTMLElement
+    expect(tile).not.toBeNull()
+    const label = within(tile).getByTestId('field-label-verbose')
+    expect(within(label).getByTestId('field-help-verbose')).toHaveTextContent('输出详细日志')
+    expect(within(label).getByText('verbose')).toBeInTheDocument()
+    await userEvent.click(within(label).getByTestId('field-help-verbose'))
+    expect(useAppStore.getState().values.verbose).toBe(true)
+    await userEvent.click(tile)
+    expect(useAppStore.getState().values.verbose).toBe(false)
+  })
+
+  test('格子里的 select/number 标题带 title 悬停看全文;整行的 text 与开关磁贴不带', () => {
+    render(<CommandConfig onRun={() => {}} />)
+    const titleOf = (name: string) => screen.getByTestId(`field-help-${name}`).closest('.cmd-field-title')!
+    expect(titleOf('limit')).toHaveAttribute('title', '返回条数')
+    expect(titleOf('sort')).toHaveAttribute('title', '排序依据')
+    expect(titleOf('query')).not.toHaveAttribute('title')
+    expect(titleOf('verbose')).not.toHaveAttribute('title')
+  })
+
+  test('参数说明为主标签、参数名为小标签,必填带红星', () => {
+    render(<CommandConfig onRun={() => {}} />)
+    expect(within(screen.getByTestId('field-label-query')).getByText('*')).toBeInTheDocument()
+    expect(within(screen.getByTestId('field-label-limit')).queryByText('*')).not.toBeInTheDocument()
   })
 })
 

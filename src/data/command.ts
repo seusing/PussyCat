@@ -54,7 +54,7 @@ export function buildArgv(cmd: CommandManifest, values: Record<string, unknown>)
   return buildTokens(cmd, values).map((t) => t.text)
 }
 
-function quote(s: string): string {
+export function quote(s: string): string {
   return /[\s"']/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s
 }
 

@@ -26,6 +26,8 @@ const cmd: CommandManifest = {
 // P1 Task7:执行准入现在由 Host 判决闸控(I-P1)。既有用例给自己用到的命令补一条最简 ready
 // 判决,否则运行按钮会因 decisions 为空而 disabled——语义变更,改写而非删除既有断言(R7)。
 const readyDecision = (commandKey: string): PolicyDecision => ({ commandKey, state: 'ready', decisionSource: 'legacy-baseline' })
+// 所有手动提交都先弹「是否确认提交？」:点运行 / Ctrl+Enter 之后,要再点一次「确认提交」才真正发请求。
+const confirmSubmit = async () => { await userEvent.click(await screen.findByTestId('ack-confirm')) }
 
 test('runId 是 UUID（非 run-N 序列），且 host.startCommand 与 store.currentRun 收到同一个值', async () => {
   useAppStore.setState({
@@ -42,6 +44,7 @@ test('runId 是 UUID（非 run-N 序列），且 host.startCommand 与 store.cur
   render(<App host={host} mode="connected" />)
 
   await userEvent.click(screen.getByTestId('run-button'))
+  await confirmSubmit()
 
   expect(startCommand).toHaveBeenCalledOnce()
   const runId = startCommand.mock.calls[0][0].runId
@@ -53,11 +56,86 @@ test('runId 是 UUID（非 run-N 序列），且 host.startCommand 与 store.cur
   // 计数器归零后会撞上 server 的 seen 集合而 409）。
   act(() => { useAppStore.getState().finishRun({ runId, at: Date.now(), outcome: 'success', result: [] }) })
   await userEvent.click(screen.getByTestId('run-button'))
+  await confirmSubmit()
 
   expect(startCommand).toHaveBeenCalledTimes(2)
   const runId2 = startCommand.mock.calls[1][0].runId
   expect(runId2).toMatch(UUID_RE)
   expect(runId2).not.toBe(runId)
+})
+
+describe('提交确认框:所有手动提交都先确认', () => {
+  const hostWith = (startCommand: (req: RunRequest) => Promise<{ runId: string }>): HostBridge => ({
+    startCommand, cancelCommand: async () => {}, onOutput: () => () => {}, onDone: () => () => {},
+  })
+  const setupReady = () => {
+    const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: cmd, values: {}, currentRun: undefined,
+      decisions: new Map([[cmd.command, readyDecision(cmd.command)]]),
+    })
+    render(<App host={hostWith(startCommand)} mode="connected" />)
+    return startCommand
+  }
+
+  test('ready 命令点「运行任务」先弹框,确认后才调用 startCommand;不写入 acknowledgements', async () => {
+    const startCommand = setupReady()
+    await userEvent.click(screen.getByTestId('run-button'))
+    const dialog = await screen.findByTestId('acknowledge-dialog')
+    expect(dialog).toHaveTextContent('是否确认提交？')
+    expect(dialog).toHaveTextContent('go')
+    expect(screen.getByTestId('ack-confirm')).toHaveTextContent('确认提交')
+    expect(screen.getByTestId('ack-cancel')).toHaveTextContent('取消')
+    expect(startCommand).not.toHaveBeenCalled()
+    expect(useAppStore.getState().currentRun).toBeUndefined()
+
+    await userEvent.click(screen.getByTestId('ack-confirm'))
+    expect(startCommand).toHaveBeenCalledOnce()
+    expect(startCommand.mock.calls[0][0]).toMatchObject({ commandKey: cmd.command })
+    expect(startCommand.mock.calls[0][0].acknowledgement).toBeUndefined()   // ready 命令不带 acknowledgement
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
+    expect(useAppStore.getState().preferences.acknowledgements).toEqual([])
+  })
+
+  test('取消 → 不发请求、不起 run;再点运行仍会再次弹框', async () => {
+    const startCommand = setupReady()
+    await userEvent.click(screen.getByTestId('run-button'))
+    await userEvent.click(await screen.findByTestId('ack-cancel'))
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
+    expect(startCommand).not.toHaveBeenCalled()
+    expect(useAppStore.getState().currentRun).toBeUndefined()
+
+    await userEvent.click(screen.getByTestId('run-button'))
+    expect(await screen.findByTestId('acknowledge-dialog')).toBeInTheDocument()
+    expect(startCommand).not.toHaveBeenCalled()
+  })
+
+  test('焦点默认在「确认提交」,回车即确认', async () => {
+    const startCommand = setupReady()
+    await userEvent.click(screen.getByTestId('run-button'))
+    await waitFor(() => expect(screen.getByTestId('ack-confirm')).toHaveFocus())
+    await userEvent.keyboard('{Enter}')
+    expect(startCommand).toHaveBeenCalledOnce()
+  })
+
+  test('Esc 只关闭确认框,不触发全局 Esc(结果面板保持展开);框关后 Esc 才照旧收起面板', async () => {
+    const startCommand = setupReady()
+    act(() => {
+      useAppStore.getState().beginRun('r-prev')
+      useAppStore.getState().finishRun({ runId: 'r-prev', at: Date.now(), outcome: 'success', result: [] })
+    })
+    expect(useAppStore.getState().runPanelCollapsed).toBe(false)
+    await userEvent.click(screen.getByTestId('run-button'))
+    await waitFor(() => expect(screen.getByTestId('ack-confirm')).toHaveFocus())
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
+    expect(useAppStore.getState().runPanelCollapsed).toBe(false)
+    expect(startCommand).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(window, { key: 'Escape' })   // 无确认框时的全局 Esc 语义不变
+    expect(useAppStore.getState().runPanelCollapsed).toBe(true)
+  })
 })
 
 test('挂载时 hydratePreferences 从 localStorage 载入收藏', () => {
@@ -260,10 +338,12 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     render(<App />)
     await screen.findByTestId('nav-search')
     keydown({ key: 'Enter', ctrlKey: true })
+    await confirmSubmit()                                              // 键盘路径同样先弹「是否确认提交？」
     await waitFor(() => expect(useAppStore.getState().currentRun).toBeDefined())
     const firstId = useAppStore.getState().currentRun!.id
     keydown({ key: 'Enter', ctrlKey: true })                           // running 中
     expect(useAppStore.getState().currentRun!.id).toBe(firstId)        // 无第二个 run
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()   // 活跃 run 期间连确认框都不弹
   })
 
   test('无选中命令时 Ctrl+Enter 安全 no-op(M-2 重构回归护栏)', async () => {
@@ -319,7 +399,9 @@ describe('键盘层(RE/04 三键,块 C)', () => {
     })
     keydown({ key: 'Enter', ctrlKey: true, isComposing: true })
     expect(useAppStore.getState().currentRun).toBeUndefined()
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()   // composing 时连确认框都不弹
     keydown({ key: 'Enter', ctrlKey: true })                     // 非 composing 仍可起跑(反向护栏)
+    await confirmSubmit()
     await waitFor(() => expect(useAppStore.getState().currentRun).toBeDefined())
   })
 
@@ -385,6 +467,7 @@ test('真跨层集成:真实 NodeBridge 收 403 错误体 → RunPanel summary �
     useAppStore.getState().selectCommand(ok)
   })
   await userEvent.click(screen.getByTestId('run-button'))
+  await confirmSubmit()
 
   // ① store 层:summary/detail 分离(原断言保留)
   await waitFor(() => expect(useAppStore.getState().currentRun?.error).toBeDefined())
@@ -459,6 +542,7 @@ test('五端点同端口:注入的 baseUrl 经 props 贯穿到 host/catalogSourc
   render(<App host={host} catalogSource={catalogSource} mode="connected" baseUrl={baseUrl} />)
 
   await userEvent.click(screen.getByTestId('run-button'))
+  await confirmSubmit()
   await waitFor(() => expect(screen.getByTestId('cancel-button')).toBeInTheDocument())
   await userEvent.click(screen.getByTestId('cancel-button'))
 
@@ -487,8 +571,7 @@ describe('前端不自行裁决(对抗 fixture)', () => {
       }],
       onStart: start,
     })
-    // 导航站点默认收起,先展开再点命令 —— 只是到达路径变了,断言的对抗语义原样保留
-    await userEvent.click(await screen.findByTestId('inspiration-sources-tab'))
+    // 首页默认就是灵感来源,直接点站点再点命令 —— 只是到达路径变了,断言的对抗语义原样保留
     await userEvent.click(await screen.findByTestId('site-row-x'))
     await userEvent.click(await screen.findByText('looks-ok'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeDisabled()
@@ -518,7 +601,6 @@ describe('前端不自行裁决(对抗 fixture)', () => {
       }],
       onStart: start,
     })
-    await userEvent.click(await screen.findByTestId('inspiration-sources-tab'))
     await userEvent.click(await screen.findByTestId('site-row-y'))
     await userEvent.click(await screen.findByText('looks-bad'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeEnabled()
@@ -535,7 +617,6 @@ describe('前端不自行裁决(对抗 fixture)', () => {
       onStart: start,
     })
     expect(await screen.findByTestId('policy-disconnected')).toBeInTheDocument()
-    await userEvent.click(await screen.findByTestId('inspiration-sources-tab'))
     await userEvent.click(await screen.findByTestId('site-row-z'))
     await userEvent.click(await screen.findByText('empty'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeDisabled()
@@ -569,7 +650,7 @@ describe('acknowledgement 流程(Task 8)', () => {
     expect(screen.getByTestId('acknowledge-dialog')).toBeInTheDocument()
   })
 
-  test('已确认且 fingerprint 匹配 → 发 /start 且携带 acknowledgement.fingerprint', async () => {
+  test('已确认且 fingerprint 匹配 → 再次提交仍先弹框;确认后发 /start 且携带 acknowledgement.fingerprint', async () => {
     const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
     useAppStore.setState({
       catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
@@ -578,9 +659,25 @@ describe('acknowledgement 流程(Task 8)', () => {
     useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', Date.now())
     render(<App host={hostOf(startCommand)} mode="connected" />)
     await userEvent.click(screen.getByTestId('run-button'))
+    expect(screen.getByTestId('acknowledge-dialog')).toBeInTheDocument()   // 已确认过也要弹
+    expect(startCommand).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('ack-confirm'))
     expect(startCommand).toHaveBeenCalledOnce()
     expect(startCommand.mock.calls[0][0]).toMatchObject({ commandKey: ackCmd.command, acknowledgement: { fingerprint: 'fp-1' } })
     expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
+  })
+
+  test('取消确认框 → 不发请求,也不写入 acknowledgements', async () => {
+    const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: ackCmd, values: {}, currentRun: undefined, commands: [ackCmd],
+      decisions: new Map([[ackCmd.command, ackDecision]]),
+    })
+    render(<App host={hostOf(startCommand)} mode="connected" />)
+    await userEvent.click(screen.getByTestId('run-button'))
+    await userEvent.click(await screen.findByTestId('ack-cancel'))
+    expect(startCommand).not.toHaveBeenCalled()
+    expect(useAppStore.getState().preferences.acknowledgements).toEqual([])
   })
 
   test('指纹不匹配(策略已漂移)→ 视同未确认:不发 /start,弹确认框', async () => {
@@ -639,7 +736,9 @@ describe('acknowledgement 流程(Task 8)', () => {
     await waitFor(() => expect(catalogSource.load).toHaveBeenCalledTimes(1))   // 等挂载首拉落定,确认仍是 fp-1
     await waitFor(() => expect(useAppStore.getState().decisionFor(ackCmd.command)?.fingerprint).toBe('fp-1'))
 
-    await userEvent.click(screen.getByTestId('run-button'))   // 本地判定已确认(fp-1 匹配)→ 直发请求 → 409
+    await userEvent.click(screen.getByTestId('run-button'))   // 先弹框;确认后按本地已确认(fp-1)发请求 → 409
+    await confirmSubmit()
+    await waitFor(() => expect(startCommand).toHaveBeenCalledOnce())
 
     // 不得把 409 原样当普通错误展示给用户
     await waitFor(() => expect(useAppStore.getState().currentRun?.error).toBeDefined())
@@ -663,6 +762,8 @@ describe('acknowledgement 流程(Task 8)', () => {
     useAppStore.getState().acknowledgeCommand(ackCmd.command, 'fp-1', Date.now())
     render(<App host={hostOf(startCommand)} mode="connected" />)
     await userEvent.click(screen.getByTestId('run-button'))
+    await confirmSubmit()
+    await waitFor(() => expect(startCommand).toHaveBeenCalledOnce())
 
     await waitFor(() => expect(useAppStore.getState().currentRun?.error).toBeDefined())
     expect(useAppStore.getState().currentRun?.error?.summary).not.toBe('Command requires an acknowledgement')
