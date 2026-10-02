@@ -3,7 +3,7 @@ import {
   ArrowLeft, BookOpen, Check, Download, Eye, FilePlus2, FileText, Folder, FolderOpen,
   FolderPlus, Newspaper, Pencil, Search, Trash2, X,
 } from 'lucide-react'
-import Markdown from 'react-markdown'
+import Markdown, { type Components } from 'react-markdown'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
@@ -163,6 +163,11 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
       .map((folder) => ({ kind: 'folder' as const, id: folder.id, label: folder.name, detail: '文件夹' }))
     return [...itemSuggestions, ...folderSuggestions].slice(0, 8)
   }, [library.folders, library.items, normalizedQuery])
+
+  // 渲染器引用一变,图片就会重新挂载并再经宿主代理拉一遍,所以只随 baseUrl 重建。
+  const markdownComponents = useMemo<Components>(() => ({
+    img: ({ src, alt }) => <WechatMarkdownImage baseUrl={baseUrl} src={typeof src === 'string' ? src : undefined} alt={alt} />,
+  }), [baseUrl])
 
   const showToast = (tone: AppAlertTone, title: string, description?: string) => {
     setToast((current) => [{ id: ++toastSequenceRef.current, tone, title, description }, ...current])
@@ -624,7 +629,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
                 {viewMode === 'edit' ? (
                   <textarea data-testid="inspiration-content-input" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} aria-label="灵感内容" placeholder="写点什么..." />
                 ) : (
-                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown components={{ img: ({ src, alt }) => <WechatMarkdownImage baseUrl={baseUrl} src={typeof src === 'string' ? src : undefined} alt={alt} /> }}>{contentDraft || '*还没有内容*'}</Markdown></div>
+                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown components={markdownComponents}>{contentDraft || '*还没有内容*'}</Markdown></div>
                 )}
                 <div className="inspiration-library-editor-footer">
                   <span>更新于 {formatDate(selectedItem.updatedAt)}</span>

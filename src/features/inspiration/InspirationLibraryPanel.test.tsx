@@ -388,6 +388,33 @@ describe('灵感库', () => {
     }
   })
 
+  it('阅读视图重新渲染时不会重复加载公众号图片', async () => {
+    const item = addInspirationItem({
+      title: '图文文章',
+      content: '![图一](https://mmbiz.qpic.cn/a/640?wx_fmt=png)\n\n![图二](https://mmbiz.qpic.cn/b/640?wx_fmt=png)',
+      kind: 'article',
+      format: 'md',
+      folderId: null,
+    })!
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(new Blob(['png']), { headers: { 'content-type': 'image/png' } })))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      render(<InspirationLibraryPanel baseUrl="http://127.0.0.1:5000" onOpenSources={() => {}} />)
+      await userEvent.click(screen.getByTestId(`inspiration-item-${item.id}`))
+      await userEvent.click(screen.getByRole('button', { name: '阅读' }))
+      const image = await screen.findByRole('img', { name: '图一' })
+      await screen.findByRole('img', { name: '图二' })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+
+      await userEvent.type(screen.getByTestId('inspiration-title-input'), '（改）')
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(screen.getByRole('img', { name: '图一' })).toBe(image)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('微信要求验证时在对话框内提示原因', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ error: '微信要求验证，暂时抓不到文章', reasonCode: 'verification-required' }), { status: 429, headers: { 'content-type': 'application/json' } }))))
     try {
