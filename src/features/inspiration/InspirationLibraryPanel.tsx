@@ -10,8 +10,6 @@ import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { EmptyState } from '../../components/EmptyState'
 import { GlassSelect } from '../../components/GlassMenu'
 import { saveTextFileAs } from '../../lib/saveTextFile'
-import { WrssMarkdownImage } from '../wrss/WrssMarkdownImage'
-import { collectWechatArticle } from '../wrss/wrssInspiration'
 import {
   INSPIRATION_LIBRARY_EVENT,
   addInspirationFolder,
@@ -26,6 +24,8 @@ import {
 } from './inspirationLibrary'
 import './InspirationLibraryPanel.css'
 import { InspirationFileCard, InspirationFolderCard } from './InspirationLibraryCards'
+import { WechatMarkdownImage } from './WechatMarkdownImage'
+import { collectWechatArticle } from './wechatArticle'
 
 type FolderFilter = 'all' | string
 type ViewMode = 'edit' | 'read'
@@ -624,7 +624,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
                 {viewMode === 'edit' ? (
                   <textarea data-testid="inspiration-content-input" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} aria-label="灵感内容" placeholder="写点什么..." />
                 ) : (
-                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown components={{ img: ({ src, alt }) => <WrssMarkdownImage baseUrl={baseUrl} src={typeof src === 'string' ? src : undefined} alt={alt} /> }}>{contentDraft || '*还没有内容*'}</Markdown></div>
+                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown components={{ img: ({ src, alt }) => <WechatMarkdownImage baseUrl={baseUrl} src={typeof src === 'string' ? src : undefined} alt={alt} /> }}>{contentDraft || '*还没有内容*'}</Markdown></div>
                 )}
                 <div className="inspiration-library-editor-footer">
                   <span>更新于 {formatDate(selectedItem.updatedAt)}</span>

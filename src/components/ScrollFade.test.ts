@@ -15,7 +15,6 @@ test('shared scrollbar selectors cover app, task, output, log, and overflow util
     '.vk-task-table-viewport',
     '.vk-task-detail-body',
     '.vk-output-viewer-content',
-    '.wrss-log',
     '[class~="overflow-auto"]',
   ]) {
     expect(indexCss).toContain(selector)

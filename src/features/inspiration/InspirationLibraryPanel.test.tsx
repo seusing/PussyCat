@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveTextFileAs } from '../../lib/saveTextFile'
+import { WECHAT_ARTICLE_PAGE } from '../../testing/wechatArticleFixture'
 import { addInspirationFolder, addInspirationItem, loadInspirationLibrary } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
 
@@ -356,12 +357,8 @@ describe('灵感库', () => {
     const reply = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }))
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.endsWith('/wrss/api/mps/featured/article')) return reply({ code: 0, data: { task_id: 't1' } })
-      if (url.endsWith('/wrss/api/mps/featured/article/tasks/t1')) return reply({ code: 0, data: { status: 'success', id: 'FEATURED_ARTICLES-abc' } })
-      if (url.includes('/wrss/api/articles/FEATURED_ARTICLES-abc')) {
-        return reply({ code: 0, data: { id: 'FEATURED_ARTICLES-abc', title: '收藏的文章', mp_id: 'MP_WXS_FEATURED_ARTICLES', mp_name: '精选文章', publish_time: 1700000000, url: 'https://mp.weixin.qq.com/s/abc', content: '<p>正文内容</p><p><img alt="配图" src="https://mmbiz.qpic.cn/x/640"></p>' } })
-      }
-      if (url.includes('/wrss/article-image?')) return Promise.resolve(new Response(new Blob(['png']), { headers: { 'content-type': 'image/png' } }))
+      if (url.startsWith('http://127.0.0.1:5000/inspiration/wechat-article?')) return reply({ finalUrl: 'https://mp.weixin.qq.com/s/abc', html: WECHAT_ARTICLE_PAGE })
+      if (url.startsWith('http://127.0.0.1:5000/article-image?')) return Promise.resolve(new Response(new Blob(['png']), { headers: { 'content-type': 'image/png' } }))
       return reply({ error: url }, 404)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -374,18 +371,25 @@ describe('灵感库', () => {
 
       expect(await screen.findByTestId('inspiration-content-preview')).toHaveTextContent('正文内容')
       expect(screen.queryByRole('dialog', { name: '添加公众号文章' })).not.toBeInTheDocument()
-      expect(screen.getByTestId('inspiration-title-input')).toHaveValue('收藏的文章')
+      expect(screen.getByTestId('inspiration-title-input')).toHaveValue('苹果子公司因违反对俄制裁受到英国处罚')
       expect(screen.getByText('公众号文章')).toBeInTheDocument()
       expect((await screen.findByRole('img', { name: '配图' })).getAttribute('src')).toMatch(/^data:image\/png;base64,/)
       expect(screen.getByTestId('inspiration-library-toast')).toHaveTextContent('已存入灵感库')
       expect(loadInspirationLibrary().items[0]).toMatchObject({ kind: 'article', source: 'https://mp.weixin.qq.com/s/abc' })
+
+      await userEvent.click(screen.getByRole('button', { name: /返回目录/ }))
+      await userEvent.click(screen.getByRole('button', { name: '添加公众号文章' }))
+      await userEvent.type(screen.getByRole('textbox', { name: '公众号文章链接' }), 'https://mp.weixin.qq.com/s/abc')
+      await userEvent.click(screen.getByRole('button', { name: '添加' }))
+      expect(await screen.findByText('这篇文章已在灵感库中')).toBeInTheDocument()
+      expect(loadInspirationLibrary().items).toHaveLength(1)
     } finally {
       vi.unstubAllGlobals()
     }
   })
 
-  it('公众号引擎未就绪时在对话框内提示原因', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ error: '公众号运行环境尚未就绪' }), { status: 503, headers: { 'content-type': 'application/json' } }))))
+  it('微信要求验证时在对话框内提示原因', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ error: '微信要求验证，暂时抓不到文章', reasonCode: 'verification-required' }), { status: 429, headers: { 'content-type': 'application/json' } }))))
     try {
       render(<InspirationLibraryPanel onOpenSources={() => {}} />)
 
@@ -393,7 +397,7 @@ describe('灵感库', () => {
       await userEvent.type(screen.getByRole('textbox', { name: '公众号文章链接' }), 'https://mp.weixin.qq.com/s/abc')
       await userEvent.click(screen.getByRole('button', { name: '添加' }))
 
-      expect(await screen.findByRole('alert')).toHaveTextContent('公众号引擎未就绪')
+      expect(await screen.findByRole('alert')).toHaveTextContent('微信要求验证，暂时抓不到，请稍后再试')
       expect(screen.getByRole('dialog', { name: '添加公众号文章' })).toBeInTheDocument()
       expect(loadInspirationLibrary().items).toHaveLength(0)
     } finally {

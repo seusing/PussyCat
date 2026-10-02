@@ -9,8 +9,6 @@ import { VkSidecarManager } from './vk-sidecar.mjs'
 import { createVkJobShadow } from './vk-job-shadow.mjs'
 import { VkRuntimeManager } from './vk-runtime.mjs'
 import { resolveRunManagerOptions } from './run-manager-options.mjs'
-import { createWrssIntegration } from './wrss-integration.mjs'
-import { WrssRuntimeManager } from './wrss-runtime.mjs'
 import { createRadarService } from './radar.mjs'
 
 // Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
@@ -117,13 +115,6 @@ try {
   const vkJobShadow = createVkJobShadow({
     stateFile: vkStateDir ? resolve(vkStateDir, 'vk-job-shadow.json') : undefined,
   })
-  const wrssIntegration = createWrssIntegration({
-    stateFile: vkStateDir ? resolve(vkStateDir, 'wrss-integration.json') : undefined,
-  })
-  const wrssRuntime = new WrssRuntimeManager({
-    home: vkHome,
-    bundleDir: process.env.OPENCLI_HOST_VK_BUNDLE_DIR,
-  })
   const radarService = createRadarService({
     stateFile: process.env.OPENCLI_HOST_RADAR_STATE_FILE
       ?? (vkStateDir ? resolve(vkStateDir, 'radar-snapshot.json') : undefined),
@@ -136,8 +127,6 @@ try {
     vkSidecar,
     vkJobShadow,
     vkRuntime,
-    wrssIntegration,
-    wrssRuntime,
     radarService,
     runManagerOptions: resolveRunManagerOptions(process.env),
   })
@@ -159,14 +148,6 @@ try {
     // dist-host/ 是 gitignore 的构建产物,版本会漂移——supervisor 不能拿自己设的环境变量当证据。
     parentWatch,
   })}\n`)
-
-  if (wrssRuntime.status().state === 'installed') {
-    setImmediate(() => {
-      void wrssRuntime.enable().catch((error) => {
-        console.error('[opencli-host] WeRSS warmup failed:', error.message)
-      })
-    })
-  }
 
   const printableAddress = typeof address === 'object' && address ? `${address.address}:${address.port}` : `${host}:${port}`
   console.log(`[opencli-host] listening on http://${printableAddress}`)

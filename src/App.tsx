@@ -15,7 +15,6 @@ import { VkPanel } from './features/vk/VkPanel'
 import { VkProviderForm } from './features/vk/VkProviderForm'
 import { VkTaskDetailSidebar } from './features/vk/VkTaskDetailSidebar'
 import { RadarPanel } from './features/radar/RadarPanel'
-import WrssPanel from './features/wrss/WrssPanel'
 import { InspirationPanel } from './features/inspiration/InspirationPanel'
 import {
   isLoginCheckRunId, loginCheckRunId, parseWhoamiResult,
@@ -361,9 +360,6 @@ export default function App({
         {(visitedModules.has('providers') || activeModule === 'providers') && (
           <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} onSaved={() => setProviderRevision((value) => value + 1)} /></div>
         )}
-      </div>
-      <div className="app-page-stack-panel" hidden={activeModule !== 'wrss'}>
-        {(visitedModules.has('wrss') || activeModule === 'wrss') && <WrssPanel baseUrl={baseUrl} active={activeModule === 'wrss'} />}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'radar'}>
         {(visitedModules.has('radar') || activeModule === 'radar') && <RadarPanel baseUrl={baseUrl} />}

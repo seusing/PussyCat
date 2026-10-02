@@ -504,41 +504,6 @@ export interface VkCapabilityPacksResponse {
   checked_at: string
 }
 
-export interface VkWrssStatus {
-  configured: boolean
-  base_url: string
-  state: 'not-configured' | 'saved' | 'reachable' | 'timeout' | 'unreachable'
-  message: string
-  status_code: number | null
-  protocol_verified: false
-  checked_at: string | null
-}
-
-export type WrssRuntimeState = 'not-available' | 'not-installed' | 'installing' | 'installed' | 'starting' | 'running' | 'failed'
-
-export interface WrssManagedStatus {
-  state: WrssRuntimeState
-  summary: string
-  reason_code: string | null
-  progress_log: string[]
-  version: string | null
-  size_label: string
-  ui_url?: string
-  checked_at: string
-  legacy?: VkWrssStatus | null
-  external?: VkWrssStatus | null
-}
-
-export async function fetchVkWrssManagedStatus(baseUrl = DEFAULT_BASE_URL): Promise<WrssManagedStatus> {
-  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss`, { cache: 'no-store' })
-  return parseVkResponse<WrssManagedStatus>(response, 'WeRSS 状态获取失败')
-}
-
-export async function postVkWrssEnable(baseUrl = DEFAULT_BASE_URL): Promise<WrssManagedStatus> {
-  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss/enable`, jsonInit({}))
-  return parseVkResponse<WrssManagedStatus>(response, 'WeRSS 启用失败')
-}
-
 export async function fetchVkRuntimeStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkRuntimeStatus> {
   const response = await fetch(`${baseUrl}/vk/v1/runtime/status`)
   return parseVkResponse<VkRuntimeStatus>(response, '解析引擎状态获取失败')
@@ -590,23 +555,6 @@ export async function postVkCapabilityPackInstall(
 ): Promise<VkRuntimeStatus> {
   const response = await fetch(`${baseUrl}/vk/v1/capability-packs/install`, jsonInit({ pack_id: packId }))
   return parseVkResponse<VkRuntimeStatus>(response, '能力包安装启动失败')
-}
-
-export async function fetchVkWrssStatus(baseUrl = DEFAULT_BASE_URL): Promise<VkWrssStatus> {
-  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss`)
-  return parseVkResponse<VkWrssStatus>(response, 'WeRSS 状态获取失败')
-}
-
-export async function saveVkWrss(
-  wrssBaseUrl: string, baseUrl = DEFAULT_BASE_URL,
-): Promise<VkWrssStatus> {
-  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss/config`, jsonInit({ base_url: wrssBaseUrl }))
-  return parseVkResponse<VkWrssStatus>(response, 'WeRSS 地址保存失败')
-}
-
-export async function testVkWrss(baseUrl = DEFAULT_BASE_URL): Promise<VkWrssStatus> {
-  const response = await fetch(`${baseUrl}/vk/v1/integrations/wrss/test`, jsonInit({}))
-  return parseVkResponse<VkWrssStatus>(response, 'WeRSS 连接测试失败')
 }
 
 export function vkOutputPath(outputId: string): string {

@@ -11,7 +11,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   RadioTower,
-  Rss,
   SlidersHorizontal,
 } from 'lucide-react'
 import { SystemHealthPill } from './SystemHealthPill'
@@ -31,7 +30,6 @@ const MODULES = [
   { key: 'login' as const, label: '登录信息', icon: KeyRound },
   { key: 'vk' as const, label: '视频解析', icon: Clapperboard },
   { key: 'providers' as const, label: '模型配置', icon: SlidersHorizontal },
-  { key: 'wrss' as const, label: '公众号', icon: Rss },
   { key: 'radar' as const, label: 'Codex Radar', icon: RadioTower },
 ]
 

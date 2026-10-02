@@ -129,7 +129,6 @@ select:focus-visible {
 .vk-output-tabs,
 .vk-output-viewer-content,
 .vk-output-viewer-content pre,
-.wrss-log,
 [class~="overflow-auto"],
 [class~="overflow-x-auto"],
 [class~="overflow-y-auto"] {
@@ -154,7 +153,6 @@ select:focus-visible {
 .vk-output-tabs::-webkit-scrollbar,
 .vk-output-viewer-content::-webkit-scrollbar,
 .vk-output-viewer-content pre::-webkit-scrollbar,
-.wrss-log::-webkit-scrollbar,
 [class~="overflow-auto"]::-webkit-scrollbar,
 [class~="overflow-x-auto"]::-webkit-scrollbar,
 [class~="overflow-y-auto"]::-webkit-scrollbar {
@@ -178,7 +176,6 @@ select:focus-visible {
 .vk-output-tabs::-webkit-scrollbar-thumb,
 .vk-output-viewer-content::-webkit-scrollbar-thumb,
 .vk-output-viewer-content pre::-webkit-scrollbar-thumb,
-.wrss-log::-webkit-scrollbar-thumb,
 [class~="overflow-auto"]::-webkit-scrollbar-thumb,
 [class~="overflow-x-auto"]::-webkit-scrollbar-thumb,
 [class~="overflow-y-auto"]::-webkit-scrollbar-thumb {
@@ -205,7 +202,6 @@ select:focus-visible {
 .vk-output-tabs:is(:hover, :focus-visible, :focus-within, :active),
 .vk-output-viewer-content:is(:hover, :focus-visible, :focus-within, :active),
 .vk-output-viewer-content pre:is(:hover, :focus-visible, :focus-within, :active),
-.wrss-log:is(:hover, :focus-visible, :focus-within, :active),
 [class~="overflow-auto"]:is(:hover, :focus-visible, :focus-within, :active),
 [class~="overflow-x-auto"]:is(:hover, :focus-visible, :focus-within, :active),
 [class~="overflow-y-auto"]:is(:hover, :focus-visible, :focus-within, :active) {
@@ -229,7 +225,6 @@ select:focus-visible {
 .vk-output-tabs:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
 .vk-output-viewer-content:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
 .vk-output-viewer-content pre:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
-.wrss-log:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
 [class~="overflow-auto"]:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
 [class~="overflow-x-auto"]:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb,
 [class~="overflow-y-auto"]:is(:hover, :focus-visible, :focus-within, :active)::-webkit-scrollbar-thumb {
@@ -254,7 +249,6 @@ select:focus-visible {
     .vk-output-tabs,
     .vk-output-viewer-content,
     .vk-output-viewer-content pre,
-    .wrss-log,
     [class~="overflow-auto"],
     [class~="overflow-x-auto"],
     [class~="overflow-y-auto"]
@@ -278,7 +272,6 @@ select:focus-visible {
     .vk-output-tabs,
     .vk-output-viewer-content,
     .vk-output-viewer-content pre,
-    .wrss-log,
     [class~="overflow-auto"],
     [class~="overflow-x-auto"],
     [class~="overflow-y-auto"]

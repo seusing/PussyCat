@@ -10,7 +10,7 @@ import { createHostServer } from './host-server.mjs'
 import { createCatalogService } from './catalog-service.mjs'
 import { buildExecutionPolicy, loadExecutionPolicy } from './policy.mjs'
 import { canonicalJson } from './policy-fingerprint.mjs'
-import { createWrssIntegration } from './wrss-integration.mjs'
+import { WechatArticleError } from './wechat-article.mjs'
 
 const origin = 'http://127.0.0.1:5173'
 // Task 6 起 `/start` 读的是 **decisionByKey**,不再是 allowedCommands。
@@ -79,93 +79,66 @@ function post(baseUrl, path, body, requestOrigin = origin) {
   })
 }
 
-describe('WeRSS loopback integration routes', () => {
-  it('returns saved/tested state through exact Host routes', async () => {
-    const wrssIntegration = createWrssIntegration({
-      fetchImpl: async () => ({ status: 200, body: null }),
-    })
-    const { baseUrl } = await setup({ wrssIntegration })
+describe('wechat article routes', () => {
+  const article = { finalUrl: 'https://mp.weixin.qq.com/s/abc', html: '<div id="js_content">正文</div>' }
 
-    const saved = await post(baseUrl, '/vk/v1/integrations/wrss/config', {
-      base_url: 'http://127.0.0.1:8001',
-    })
-    expect(saved.status).toBe(200)
-    await expect(saved.json()).resolves.toMatchObject({ configured: true, state: 'saved' })
+  it('returns the fetched article as JSON', async () => {
+    const wechatArticle = { fetchWechatArticle: vi.fn(async () => article), requestArticleImage: vi.fn() }
+    const { baseUrl } = await setup({ wechatArticle })
 
-    const tested = await post(baseUrl, '/vk/v1/integrations/wrss/test', {})
-    expect(tested.status).toBe(200)
-    await expect(tested.json()).resolves.toMatchObject({
-      configured: true, state: 'reachable', status_code: 200, protocol_verified: false,
-    })
-
-    const status = await fetch(`${baseUrl}/vk/v1/integrations/wrss`, { headers: { Origin: origin } })
-    await expect(status.json()).resolves.toMatchObject({ state: 'reachable' })
+    const response = await fetch(`${baseUrl}/inspiration/wechat-article?url=${encodeURIComponent(article.finalUrl)}`, { headers: { Origin: origin } })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual(article)
+    expect(wechatArticle.fetchWechatArticle).toHaveBeenCalledWith(article.finalUrl)
   })
 
-  it('rejects remote and credential-bearing WeRSS URLs', async () => {
-    const { baseUrl } = await setup({ wrssIntegration: createWrssIntegration() })
-    for (const value of ['https://example.com', 'http://user:pass@127.0.0.1:8001']) {
-      const response = await post(baseUrl, '/vk/v1/integrations/wrss/config', { base_url: value })
-      expect(response.status).toBe(400)
-      await expect(response.json()).resolves.toMatchObject({ reasonCode: 'invalid-url' })
+  it.each([
+    [400, 'invalid-url'],
+    [429, 'verification-required'],
+    [404, 'unavailable'],
+    [502, 'network'],
+  ])('maps the %s failure to reasonCode %s', async (statusCode, reasonCode) => {
+    const wechatArticle = {
+      fetchWechatArticle: async () => { throw new WechatArticleError(statusCode, reasonCode, 'failed') },
+      requestArticleImage: vi.fn(),
     }
-  })
-})
+    const { baseUrl } = await setup({ wechatArticle })
 
-describe('managed WeRSS runtime route', () => {
-  it('forwards only fixed WeRSS API routes and preserves binary response metadata', async () => {
-    const calls = []
-    const runtime = {
-      status: () => ({ state: 'running' }),
-      requestApi: async (path, init) => {
-        calls.push({ path, init })
-        return new Response(path.includes('download') ? 'file' : JSON.stringify({ code: 0, data: [] }), {
-          status: 200,
-          headers: path.includes('download') ? { 'Content-Type': 'text/plain', 'Content-Disposition': 'attachment; filename="x.txt"' } : { 'Content-Type': 'application/json' },
-        })
-      },
-      close: async () => {},
+    const response = await fetch(`${baseUrl}/inspiration/wechat-article?url=x`, { headers: { Origin: origin } })
+    expect(response.status).toBe(statusCode)
+    await expect(response.json()).resolves.toMatchObject({ error: 'failed', reasonCode })
+  })
+
+  it('serves article images through the allowlisted proxy', async () => {
+    const wechatArticle = {
+      fetchWechatArticle: vi.fn(),
+      requestArticleImage: vi.fn(async () => new Response('article', { status: 200, headers: { 'content-type': 'image/jpeg' } })),
     }
-    const { baseUrl } = await setup({ wrssRuntime: runtime })
-    const listed = await fetch(`${baseUrl}/wrss/api/articles?offset=0&limit=10`, { headers: { Origin: origin } })
-    expect(listed.status).toBe(200)
-    expect(calls[0].path).toBe('/api/v1/wx/articles?offset=0&limit=10')
-    const refreshTask = await fetch(`${baseUrl}/wrss/api/articles/refresh/tasks/task-1`, { headers: { Origin: origin } })
-    expect(refreshTask.status).toBe(200)
-    expect(calls.at(-1).path).toBe('/api/v1/wx/articles/refresh/tasks/task-1')
-    const blocked = await fetch(`${baseUrl}/wrss/api/auth/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })
-    expect(blocked.status).toBe(404)
-    const preflight = await fetch(`${baseUrl}/wrss/api/articles/1/favorite`, { method: 'OPTIONS', headers: { Origin: origin } })
-    expect(preflight.headers.get('access-control-allow-methods')).toContain('PUT')
-    const download = await fetch(`${baseUrl}/wrss/api/tools/export/download?filename=x.txt`, { headers: { Origin: origin } })
-    expect(download.headers.get('content-disposition')).toContain('x.txt')
+    const { baseUrl } = await setup({ wechatArticle })
+
+    const image = await fetch(`${baseUrl}/article-image?url=${encodeURIComponent('https://mmbiz.qpic.cn/a.jpg')}`, { headers: { Origin: origin } })
+    expect(image.headers.get('content-type')).toBe('image/jpeg')
+    expect(await image.text()).toBe('article')
+    expect(wechatArticle.requestArticleImage).toHaveBeenCalledWith('https://mmbiz.qpic.cn/a.jpg')
   })
 
-  it('serves source avatars and allowlisted article images through dedicated runtime methods',async()=>{
-    const runtime={status:()=>({state:'running'}),requestSourceAvatar:vi.fn(async()=>new Response('avatar',{status:200,headers:{'content-type':'image/png'}})),requestArticleImage:vi.fn(async()=>new Response('article',{status:200,headers:{'content-type':'image/jpeg'}})),close:async()=>{}}
-    const {baseUrl}=await setup({wrssRuntime:runtime})
-    const avatar=await fetch(`${baseUrl}/wrss/source-avatar/source-1`,{headers:{Origin:origin}})
-    expect(await avatar.text()).toBe('avatar');expect(runtime.requestSourceAvatar).toHaveBeenCalledWith('source-1')
-    const image=await fetch(`${baseUrl}/wrss/article-image?url=${encodeURIComponent('https://mmbiz.qpic.cn/a.jpg')}`,{headers:{Origin:origin}})
-    expect(await image.text()).toBe('article');expect(runtime.requestArticleImage).toHaveBeenCalledWith('https://mmbiz.qpic.cn/a.jpg')
+  it('rejects requests from origins that are not allowed', async () => {
+    const wechatArticle = { fetchWechatArticle: vi.fn(), requestArticleImage: vi.fn() }
+    const { baseUrl } = await setup({ wechatArticle })
+
+    const article = await fetch(`${baseUrl}/inspiration/wechat-article?url=x`, { headers: { Origin: 'http://evil.example' } })
+    const image = await fetch(`${baseUrl}/article-image?url=x`)
+    expect([article.status, image.status]).toEqual([403, 403])
+    expect(wechatArticle.fetchWechatArticle).not.toHaveBeenCalled()
+    expect(wechatArticle.requestArticleImage).not.toHaveBeenCalled()
   })
 
-  it('returns 202 immediately and closes the runtime on Host shutdown', async () => {
-    let enabled = 0
-    let closed = 0
-    const runtime = {
-      enable: async () => { enabled += 1 },
-      status: () => ({ state: 'installing', summary: 'installing', reason_code: null, progress_log: [], version: null, size_label: '约 356 MB（按需下载）', checked_at: new Date().toISOString() }),
-      close: async () => { closed += 1 },
+  it('no longer exposes the retired WeRSS routes', async () => {
+    const { baseUrl } = await setup()
+    for (const path of ['/wrss/api/articles', '/wrss/article-image?url=x', '/vk/v1/integrations/wrss']) {
+      const response = await fetch(`${baseUrl}${path}`, { headers: { Origin: origin } })
+      expect(response.status).toBe(404)
     }
-    const { app, baseUrl } = await setup({ wrssRuntime: runtime })
-    const response = await post(baseUrl, '/vk/v1/integrations/wrss/enable', {})
-    expect(response.status).toBe(202)
-    expect(await response.json()).toMatchObject({ state: 'installing' })
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(enabled).toBe(1)
-    await app.close()
-    expect(closed).toBe(1)
   })
 })
 

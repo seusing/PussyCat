@@ -15,8 +15,7 @@ import {
 import { VkSidecarError } from './vk-sidecar.mjs'
 import { VkRuntimeError } from './vk-runtime.mjs'
 import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from './vk-capability-packs.mjs'
-import { WrssIntegrationError } from './wrss-integration.mjs'
-import { WrssRuntimeError } from './wrss-runtime.mjs'
+import { WechatArticleError, fetchWechatArticle, requestArticleImage } from './wechat-article.mjs'
 import { createRadarService, diagnosticOf, reasonOf } from './radar.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
@@ -146,41 +145,6 @@ function writeJson(response, statusCode, value, extraHeaders = {}) {
   response.end(JSON.stringify(value))
 }
 
-const WRSS_API_ROUTES = [
-  ['GET', /^\/articles$/],
-  ['GET', /^\/articles\/[^/]+(?:\/(?:prev|next))?$/],
-  ['PUT', /^\/articles\/[^/]+\/favorite$/],
-  ['PUT', /^\/articles\/[^/]+\/read$/],
-  ['POST', /^\/articles\/[^/]+\/refresh$/],
-  ['GET', /^\/articles\/refresh\/tasks\/[^/]+$/],
-  ['DELETE', /^\/articles\/[^/]+$/],
-  ['DELETE', /^\/articles\/(?:clean|clean_duplicate_articles|clean-old)$/],
-  ['GET', /^\/mps$/],
-  ['GET', /^\/mps\/search\/[^/]+$/],
-  ['POST', /^\/mps$/],
-  ['PUT', /^\/mps\/[^/]+$/],
-  ['GET', /^\/mps\/update\/[^/]+$/],
-  ['GET', /^\/mps\/update\/tasks\/[^/]+$/],
-  ['DELETE', /^\/mps\/[^/]+$/],
-  ['POST', /^\/mps\/by_article$/],
-  ['POST', /^\/mps\/featured\/article$/],
-  ['GET', /^\/mps\/featured\/article\/tasks\/[^/]+$/],
-  ['GET', /^\/auth\/qr\/(?:code|image|status)$/],
-  ['POST', /^\/auth\/qr\/(?:refresh|over)$/],
-  ['POST', /^\/auth\/wechat\/logout$/],
-  ['GET', /^\/sys\/info$/],
-  ['GET', /^\/export\/mps\/(?:opml|export)$/],
-  ['POST', /^\/export\/mps\/import$/],
-  ['GET', /^\/tools\/export\/list$/],
-  ['POST', /^\/tools\/export\/articles$/],
-  ['DELETE', /^\/tools\/export\/delete$/],
-  ['GET', /^\/tools\/export\/download$/],
-]
-
-function isAllowedWrssApi(method, path) {
-  return WRSS_API_ROUTES.some(([allowedMethod, pattern]) => allowedMethod === method && pattern.test(path))
-}
-
 function requestOrigin(request) {
   const origin = request.headers.origin
   return typeof origin === 'string' ? origin : undefined
@@ -232,9 +196,8 @@ export function createHostServer({
   vkSidecar = null,
   vkJobShadow = null,
   vkRuntime = null,
-  wrssIntegration = null,
-  wrssRuntime = null,
   radarService = createRadarService(),
+  wechatArticle = { fetchWechatArticle, requestArticleImage },
 } = {}) {
   if (!policy) throw new Error('policy is required')
   const activePolicy = () => catalogService?.current()?.policy ?? policy
@@ -457,115 +420,19 @@ export function createHostServer({
         return
       }
 
-      // Managed WeRSS runtime. Enable is asynchronous; the renderer polls.
-      if (url.pathname === '/vk/v1/integrations/wrss/enable' && request.method === 'POST') {
-        await readJson(request, maxBodyBytes)
-        if (!wrssRuntime) {
-          writeJson(response, 503, { error: 'WeRSS runtime not available', reasonCode: 'not-available' })
-          return
-        }
-        void wrssRuntime.enable().catch(() => {})
-        writeJson(response, 202, wrssRuntime.status())
+      // 灵感库「添加公众号文章」:宿主直接取公开文章页,把 HTML 交给渲染进程解析。
+      // 失败带 reasonCode(invalid-url / verification-required / unavailable / network)。
+      if (url.pathname === '/inspiration/wechat-article' && request.method === 'GET') {
+        writeJson(response, 200, await wechatArticle.fetchWechatArticle(url.searchParams.get('url') ?? ''))
         return
       }
 
-      // WeRSS phase 1: only a loopback service connection shell. The renderer
-      // never receives credentials and cannot turn this into an arbitrary URL proxy.
-      if (url.pathname === '/vk/v1/integrations/wrss' && request.method === 'GET') {
-        if (!wrssIntegration && !wrssRuntime) {
-          writeJson(response, 503, { error: 'WeRSS 集成未接线', reasonCode: 'not-configured' })
-          return
-        }
-        const legacy = wrssIntegration?.status() ?? null
-        const managed = wrssRuntime?.status() ?? null
-        writeJson(response, 200, {
-          ...(legacy ?? {}),
-          ...(managed ?? {}),
-          legacy,
-          external: legacy,
-        })
-        return
-      }
-      if (url.pathname === '/vk/v1/integrations/wrss/config' && request.method === 'POST') {
-        const body = await readJson(request, maxBodyBytes)
-        if (!wrssIntegration) throw new WrssIntegrationError(503, 'not-configured', 'WeRSS 集成未接线')
-        writeJson(response, 200, wrssIntegration.save(body?.base_url))
-        return
-      }
-      if (url.pathname === '/vk/v1/integrations/wrss/test' && request.method === 'POST') {
-        await readJson(request, maxBodyBytes)
-        if (!wrssIntegration) throw new WrssIntegrationError(503, 'not-configured', 'WeRSS 集成未接线')
-        writeJson(response, 200, await wrssIntegration.test())
-        return
-      }
-
-      if (url.pathname === '/wrss/qr-image' && request.method === 'GET') {
-        if (!wrssRuntime?.requestApi) {
-          writeJson(response, 503, { error: 'WeRSS runtime not available' })
-          return
-        }
-        const upstream = await wrssRuntime.requestApi('/static/wx_qrcode.png')
-        const buffer = Buffer.from(await upstream.arrayBuffer())
-        response.writeHead(upstream.status, {
-          'Content-Type': upstream.headers.get('content-type') ?? 'image/png',
-          'Cache-Control': 'no-store',
-        })
-        response.end(buffer)
-        return
-      }
-
-      const avatarMatch = url.pathname.match(/^\/wrss\/source-avatar\/([^/]+)$/)
-      if (avatarMatch && request.method === 'GET') {
-        if (!wrssRuntime?.requestSourceAvatar) {
-          writeJson(response, 503, { error: 'WeRSS runtime not available' })
-          return
-        }
-        const upstream = await wrssRuntime.requestSourceAvatar(decodeURIComponent(avatarMatch[1]))
+      if (url.pathname === '/article-image' && request.method === 'GET') {
+        const upstream = await wechatArticle.requestArticleImage(url.searchParams.get('url') ?? '')
         const buffer = Buffer.from(await upstream.arrayBuffer())
         response.writeHead(upstream.status, {
           'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
           'Cache-Control': 'private, max-age=300',
-        })
-        response.end(buffer)
-        return
-      }
-
-      if (url.pathname === '/wrss/article-image' && request.method === 'GET') {
-        if (!wrssRuntime?.requestArticleImage) {
-          writeJson(response, 503, { error: 'WeRSS runtime not available' })
-          return
-        }
-        const upstream = await wrssRuntime.requestArticleImage(url.searchParams.get('url') ?? '')
-        const buffer = Buffer.from(await upstream.arrayBuffer())
-        response.writeHead(upstream.status, {
-          'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
-          'Cache-Control': 'private, max-age=300',
-        })
-        response.end(buffer)
-        return
-      }
-
-      if (url.pathname.startsWith('/wrss/api/')) {
-        const apiPath = `/${url.pathname.slice('/wrss/api/'.length)}`
-        if (!isAllowedWrssApi(request.method, apiPath)) {
-          writeJson(response, 404, { error: 'WeRSS API route is not available' })
-          return
-        }
-        if (!wrssRuntime?.requestApi) {
-          writeJson(response, 503, { error: 'WeRSS runtime not available' })
-          return
-        }
-        const init = { method: request.method, headers: {} }
-        if (!['GET', 'HEAD'].includes(request.method)) {
-          init.headers['Content-Type'] = request.headers['content-type'] ?? 'application/json'
-          init.body = await readRawBody(request, maxBodyBytes)
-        }
-        const upstream = await wrssRuntime.requestApi(`/api/v1/wx${apiPath}${url.search}`, init)
-        const buffer = Buffer.from(await upstream.arrayBuffer())
-        response.writeHead(upstream.status, {
-          'Content-Type': upstream.headers.get('content-type') ?? JSON_CONTENT_TYPE,
-          'Cache-Control': 'no-store',
-          ...(upstream.headers.get('content-disposition') ? { 'Content-Disposition': upstream.headers.get('content-disposition') } : {}),
         })
         response.end(buffer)
         return
@@ -745,8 +612,7 @@ export function createHostServer({
           || error instanceof VkSidecarError
           || error instanceof VkRuntimeError
           || error instanceof VkCapabilityPackError
-          || error instanceof WrssIntegrationError
-          || error instanceof WrssRuntimeError
+          || error instanceof WechatArticleError
           ? error.statusCode
           : 500
       )
@@ -779,7 +645,6 @@ export function createHostServer({
       catalogService?.close()
       runManager.close()
       await vkSidecar?.stop()
-      await wrssRuntime?.close()
       broker.close()
       if (!server.listening) return
       const closed = new Promise((resolve, reject) => {
