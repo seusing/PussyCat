@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle, RefreshCw, Wrench } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import { DEFAULT_BASE_URL } from '../host/nodeBridgeHost'
+import { formatAppBuild } from '../lib/appVersion'
 
 // Host 投影后的桥接健康结构(server/browser-bridge-health.mjs)。**前端只渲染,不解释**:
 // 判定逻辑全在 Host 侧,这里没有第二套「怎样算就绪」的规则。
@@ -435,6 +436,8 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
               排障的信息,不该占用户的浮层。 */}
           <div className="mb-2 font-medium">连接状态</div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
+            <dt style={{ color: 'var(--color-fg-dim)' }}>爪爪版本</dt>
+            <dd data-testid="health-app-version" className="min-w-0" style={{ overflowWrap: 'anywhere' }}>{formatAppBuild()}</dd>
             <dt style={{ color: 'var(--color-fg-dim)' }}>OpenCLI 版本</dt>
             <dd data-testid="health-version" className="min-w-0" style={{ overflowWrap: 'anywhere' }}>{bridge?.opencliVersion ?? '未知'}</dd>
             <dt style={{ color: 'var(--color-fg-dim)' }}>最后检查</dt>

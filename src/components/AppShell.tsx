@@ -16,6 +16,7 @@ import {
 import { SystemHealthPill } from './SystemHealthPill'
 import ResizableSplit from './ResizableSplit'
 import { useAppStore } from '../store/appStore'
+import { APP_VERSION_LABEL } from '../lib/appVersion'
 import {
   loadLayout, saveLayout, clampColumnWidth,
   NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
@@ -223,7 +224,7 @@ export default function AppShell({
           <span className="app-brand-mark">
             <img data-testid="app-brand-icon" src="/app-icon.png" alt="" aria-hidden="true" className="h-full w-full object-cover" />
           </span>
-          <span className="sidebar-label"><strong>爪爪</strong><small>1.0</small></span>
+          <span className="sidebar-label"><strong>爪爪</strong><small data-testid="app-version">{APP_VERSION_LABEL}</small></span>
         </div>
         <ModuleNavigation />
         <div className="app-sidebar-health"><SystemHealthPill baseUrl={baseUrl} /></div>

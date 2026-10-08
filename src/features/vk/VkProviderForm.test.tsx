@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkProviderForm } from './VkProviderForm'
+import { useAppStore } from '../../store/appStore'
 
 const providerCss = readFileSync(resolve(process.cwd(), 'src/features/vk/VkProviderForm.css'), 'utf8')
 
@@ -1487,6 +1488,98 @@ test('读不到配置时如实说,而不是渲染一张空表单让人以为配�
 
   await waitFor(() => expect(screen.getByTestId('vk-provider-form')).toHaveTextContent('sidecar 未接线'))
   expect(screen.queryByTestId('vk-provider-save')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('vk-provider-go-engine')).not.toBeInTheDocument()
+})
+
+const ENGINE_NOT_INSTALLED = {
+  status: 503,
+  body: { error: 'video-knowledge runtime 未安装或未配置', reasonCode: 'not-installed' },
+}
+
+describe('解析引擎没准备好时的模型配置', () => {
+  beforeEach(() => { useAppStore.setState({ activeModule: 'providers' }) })
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState({ activeModule: 'commands' })
+  })
+
+  test('503 后错误不会自动消失,并给出说明、前往按钮和重试', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': ENGINE_NOT_INSTALLED })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    const block = await screen.findByTestId('vk-provider-load-error')
+    expect(block).toHaveTextContent('模型配置需要先准备好解析引擎')
+    expect(block).not.toHaveTextContent('not-installed')
+    expect(screen.getByTestId('vk-provider-retry')).toBeInTheDocument()
+
+    await new Promise((resolve) => setTimeout(resolve, 2300))
+    expect(screen.getByTestId('vk-provider-load-error')).toBeInTheDocument()
+    expect(screen.getByTestId('vk-provider-form')).not.toHaveTextContent('读取中')
+
+    await userEvent.click(screen.getByTestId('vk-provider-go-engine'))
+    expect(useAppStore.getState().activeModule).toBe('vk')
+  })
+
+  test('未配置(not-configured)同样按引擎未就绪处理', async () => {
+    stubRoutes({
+      'GET /vk/v1/providers': { status: 503, body: { error: 'video-knowledge sidecar 未接线', reasonCode: 'not-configured' } },
+    })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-provider-go-engine')).toBeInTheDocument()
+  })
+
+  test('其他错误显示错误摘要和重试,不显示前往按钮', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { status: 500, body: { error: '配置文件损坏' } } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    const block = await screen.findByTestId('vk-provider-load-error')
+    expect(block).toHaveTextContent('模型配置读取失败')
+    expect(block).toHaveTextContent('配置文件损坏')
+    expect(screen.queryByTestId('vk-provider-go-engine')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vk-provider-retry')).toBeInTheDocument()
+  })
+
+  test('点重试会重新请求,引擎好了就显示配置', async () => {
+    const routes: Record<string, Route> = { 'GET /vk/v1/providers': ENGINE_NOT_INSTALLED }
+    const { calls } = stubRoutes(routes)
+    render(<VkProviderForm baseUrl={BASE} />)
+    await screen.findByTestId('vk-provider-load-error')
+    expect(calls.filter((call) => call.key === 'GET /vk/v1/providers')).toHaveLength(1)
+
+    routes['GET /vk/v1/providers'] = { body: settings() }
+    await userEvent.click(screen.getByTestId('vk-provider-retry'))
+
+    await waitFor(() => expect(screen.getByTestId('vk-provider-channels-section')).toBeInTheDocument())
+    expect(calls.filter((call) => call.key === 'GET /vk/v1/providers')).toHaveLength(2)
+    expect(screen.queryByTestId('vk-provider-load-error')).not.toBeInTheDocument()
+  })
+
+  test('切回模型配置模块时,还没加载成功就自动重新加载', async () => {
+    const routes: Record<string, Route> = { 'GET /vk/v1/providers': ENGINE_NOT_INSTALLED }
+    const { calls } = stubRoutes(routes)
+    render(<VkProviderForm baseUrl={BASE} />)
+    await screen.findByTestId('vk-provider-load-error')
+    expect(calls).toHaveLength(1)
+
+    routes['GET /vk/v1/providers'] = { body: settings() }
+    act(() => { useAppStore.getState().setActiveModule('vk') })
+    expect(calls).toHaveLength(1)
+    act(() => { useAppStore.getState().setActiveModule('providers') })
+
+    await waitFor(() => expect(screen.getByTestId('vk-provider-channels-section')).toBeInTheDocument())
+    expect(calls).toHaveLength(2)
+  })
+
+  test('已加载成功后切换模块不会重复请求', async () => {
+    const { calls } = stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+    render(<VkProviderForm baseUrl={BASE} />)
+    await screen.findByTestId('vk-provider-channels-section')
+
+    act(() => { useAppStore.getState().setActiveModule('vk') })
+    act(() => { useAppStore.getState().setActiveModule('providers') })
+    expect(calls.filter((call) => call.key === 'GET /vk/v1/providers')).toHaveLength(1)
+  })
 })
 
 test('接口风格可选并随保存/测试一起提交 —— 漏掉它,responses 风格的中转会被打成 chat/completions', async () => {

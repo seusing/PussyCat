@@ -257,6 +257,13 @@ async function parseVkResponse<T>(response: Response, fallback: string): Promise
   return body as T
 }
 
+/** 解析引擎还没装好或没接线:sidecar 代理对所有 /vk/v1 业务路由统一回 503 + 这两个稳定标识。 */
+export function isVkEngineNotReady(error: unknown): boolean {
+  return error instanceof HostRequestError
+    && error.status === 503
+    && (error.reasonCode === 'not-installed' || error.reasonCode === 'not-configured')
+}
+
 function jsonInit(payload: unknown): RequestInit {
   return {
     method: 'POST',

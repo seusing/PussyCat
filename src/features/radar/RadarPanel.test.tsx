@@ -174,15 +174,34 @@ test('拿旧数据顶上时必须说清楚，而不是装作是最新的', async
   render(<RadarPanel baseUrl={BASE} />)
 
   const banner = await screen.findByTestId('radar-stale')
-  expect(banner).toHaveTextContent('没能连上 codexradar')
+  expect(banner).toHaveTextContent('Codex Radar 的数据源暂时不可用')
+  expect(banner.textContent).not.toContain('连不上')
+  expect(banner).toHaveAttribute('title', '连不上 codexradar，检查网络或代理')
   // 旧数据仍然渲染 —— 比甩一张白纸强。
   expect(screen.getByTestId('radar-model-sol|ultra')).toBeInTheDocument()
 })
 
-test('彻底取不到时给人话原因，不显示空表', async () => {
-  stubFetch([{ status: 502, body: { error: '连不上 codexradar，检查网络或代理', reasonCode: 'radar-unavailable' } }])
+test('彻底取不到时给人话原因，状态码只放 title，不显示空表', async () => {
+  stubFetch([{ status: 502, body: { error: 'codexradar 返回 502', reasonCode: 'radar-unavailable' } }])
   render(<RadarPanel baseUrl={BASE} />)
 
-  await waitFor(() => expect(screen.getByTestId('radar-error')).toHaveTextContent('连不上 codexradar'))
+  const error = await screen.findByTestId('radar-error')
+  expect(error).toHaveTextContent('Codex Radar 的数据源暂时不可用，稍后再试')
+  expect(error.textContent).not.toContain('502')
+  expect(error).toHaveAttribute('title', 'codexradar 返回 502')
   expect(screen.queryByTestId('radar-chart')).not.toBeInTheDocument()
+})
+
+test('点重试会强制重新读取，成功后显示数据', async () => {
+  const calls = stubFetch([
+    { status: 502, body: { error: 'codexradar 返回 502', reasonCode: 'radar-unavailable' } },
+    { body: ratings() },
+  ])
+  render(<RadarPanel baseUrl={BASE} />)
+
+  await userEvent.click(await screen.findByTestId('radar-retry'))
+
+  await waitFor(() => expect(screen.getByTestId('radar-runs')).toBeInTheDocument())
+  expect(screen.queryByTestId('radar-error')).not.toBeInTheDocument()
+  expect(calls[1]).toContain('force=1')
 })

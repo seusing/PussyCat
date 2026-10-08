@@ -13,9 +13,11 @@ import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { GlassCombobox, GlassMultiSelect, GlassSelect } from '../../components/GlassMenu'
 import { useGlassMenuSurface } from '../../components/GlassMenu'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
+import { useAppStore } from '../../store/appStore'
 import {
   fetchVkProviderSettings,
   importVkCcSwitchChannel,
+  isVkEngineNotReady,
   revealVkProviderKey,
   saveVkProviderSettings,
   testVkProvider,
@@ -47,7 +49,7 @@ type ChannelBusyState = {
   reveal?: boolean
 }
 
-type ScopedError = { message: string; location: AlertLocation }
+type LoadError = { message: string; engineNotReady: boolean }
 type PersistResult = { ok: boolean; noticeMessage?: string; error?: string }
 type RouteSnapshot = {
   drafts: Draft[]
@@ -532,7 +534,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const [saving, setSaving] = useState(false)
   const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
-  const [error, setError] = useState<ScopedError | null>(null)
+  const [error, setError] = useState<LoadError | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
@@ -541,6 +543,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const pendingRouteSnapshot = useRef<RouteSnapshot | null>(null)
   const noticeSeq = useRef(0)
   const settingsLoaded = useRef(false)
+  const loadingRef = useRef(false)
   const ccSwitchPickerRef = useRef<HTMLDivElement>(null)
   const ccSwitchPickerMenuRef = useRef<HTMLDivElement>(null)
   const [ccSwitchPickerPosition, setCcSwitchPickerPosition] = useState({ top: 0, left: 0, width: 224, maxHeight: 320 })
@@ -586,6 +589,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }, [])
 
   const load = useCallback(async () => {
+    loadingRef.current = true
     try {
       const loaded = await fetchVkProviderSettings(baseUrl)
       settingsLoaded.current = true
@@ -604,10 +608,23 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     } catch (err) {
       const message = err instanceof Error ? err.message : '模型配置读取失败'
       if (settingsLoaded.current) showNotice('error', message, 'form', true)
-      else setError({ message, location: 'form' })
+      else setError({ message, engineNotReady: isVkEngineNotReady(err) })
+    } finally {
+      loadingRef.current = false
     }
   }, [baseUrl, showNotice])
   useEffect(() => { void load() }, [load])
+  // 模块页常驻挂载:引擎在别的页面装好后,切回来要自己恢复,不能等重启。
+  const providersActive = useAppStore((state) => state.activeModule === 'providers')
+  useEffect(() => {
+    if (!providersActive || settingsLoaded.current || loadingRef.current) return
+    setError(null)
+    void load()
+  }, [providersActive, load])
+  const retryLoad = () => {
+    setError(null)
+    void load()
+  }
 
   const patch =(id: string, next: Partial<Draft>) =>
     setDrafts((list) => list.map((d) => (d.id === id ? { ...d, ...next } : d)))
@@ -651,14 +668,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setValidationErrors((current) => { const next = { ...current }; delete next[modalSession.id]; return next })
     setModalSession(null)
   }
-
-  useEffect(() => {
-    if (!error) return
-    const timer = window.setTimeout(() => {
-      setError((current) => current === error ? null : current)
-    }, NOTICE_DURATION_MS)
-    return () => window.clearTimeout(timer)
-  }, [error])
 
   const addChannel = () => {
     const id = newId()
@@ -981,9 +990,48 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }
 
   if (!settings) {
-    return <div data-testid="vk-provider-form" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-      {error?.message ?? '读取中…'}
-    </div>
+    if (!error) {
+      return <div data-testid="vk-provider-form" className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>读取中…</div>
+    }
+    return (
+      <div data-testid="vk-provider-form">
+        <div
+          data-testid="vk-provider-load-error"
+          role="alert"
+          className="space-y-3 rounded-xl p-4"
+          style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}
+        >
+          <div className="text-sm font-medium">
+            {error.engineNotReady ? '模型配置需要先准备好解析引擎' : '模型配置读取失败'}
+          </div>
+          <div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            {error.engineNotReady ? '解析引擎准备好之后，回到这里就能配置模型。' : error.message}
+          </div>
+          <div className="flex items-center gap-2">
+            {error.engineNotReady && (
+              <button
+                type="button"
+                data-testid="vk-provider-go-engine"
+                onClick={() => useAppStore.getState().setActiveModule('vk')}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium"
+                style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+              >
+                去视频解析准备
+              </button>
+            )}
+            <button
+              type="button"
+              data-testid="vk-provider-retry"
+              onClick={retryLoad}
+              className="rounded-lg px-3 py-1.5 text-sm"
+              style={outlineStyle}
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   const roleKeys = Object.keys(settings.role_labels)

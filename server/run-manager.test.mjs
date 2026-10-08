@@ -80,7 +80,11 @@ describe('RunManager', () => {
     first.child.emit('close', 2, null)
     expect(first.events.at(-1)).toMatchObject({
       type: 'done',
-      event: { outcome: 'error', exitCode: 2, error: { summary: 'OpenCLI exited with code 2' } },
+      event: {
+        outcome: 'error',
+        exitCode: 2,
+        error: { summary: '命令执行失败', detail: 'OpenCLI exited with code 2\nnetwork failed' },
+      },
     })
 
     const second = setup()
@@ -89,8 +93,28 @@ describe('RunManager', () => {
     second.child.emit('close', 0, null)
     expect(second.events.at(-1)).toMatchObject({
       type: 'done',
-      event: { outcome: 'error', exitCode: 0, error: { summary: 'OpenCLI returned invalid JSON' } },
+      event: { outcome: 'error', exitCode: 0, error: { summary: '命令执行失败' } },
     })
+    expect(second.events.at(-1).event.error.detail).toMatch(/^OpenCLI returned invalid JSON\n/)
+  })
+
+  it('translates a login failure from the OpenCLI error envelope and keeps the original text in detail', () => {
+    const { child, events, manager } = setup()
+    manager.start(request)
+    child.stderr.write([
+      'ok: false',
+      'error:',
+      '  code: AUTH_REQUIRED',
+      '  message: Not logged in to www.xiaohongshu.com',
+      '  help: Please open Chrome or Chromium and log in to https://www.xiaohongshu.com',
+      '  exitCode: 77',
+      '',
+    ].join('\n'))
+    child.emit('close', 77, null)
+    const { error } = events.at(-1).event
+    expect(error.summary).toBe('需要先登录 www.xiaohongshu.com：在 Chrome 里登录后重试')
+    expect(error.detail).toContain('OpenCLI exited with code 77')
+    expect(error.detail).toContain('Not logged in to www.xiaohongshu.com')
   })
 
   it('preserves UTF-8 characters split across stdout chunks', () => {
@@ -115,7 +139,7 @@ describe('RunManager', () => {
     expect(events.filter((item) => item.type === 'done')).toHaveLength(1)
     expect(events.at(-1)).toMatchObject({
       type: 'done',
-      event: { outcome: 'error', error: { summary: 'OpenCLI process error', detail: 'ENOENT' } },
+      event: { outcome: 'error', error: { summary: '命令执行失败', detail: 'OpenCLI process error\nENOENT' } },
     })
   })
 
@@ -152,8 +176,9 @@ describe('RunManager', () => {
     child.emit('close', null, 'SIGKILL')
     expect(events.at(-1)).toMatchObject({
       type: 'done',
-      event: { outcome: 'error', error: { summary: 'OpenCLI timed out after 10ms' } },
+      event: { outcome: 'error', error: { summary: '执行超时：网络较慢或页面卡住，稍后重试' } },
     })
+    expect(events.at(-1).event.error.detail).toContain('OpenCLI timed out after 10ms')
   })
 
   it('uses the per-request time budget when the policy supplies one', async () => {
@@ -165,7 +190,8 @@ describe('RunManager', () => {
     await vi.advanceTimersByTimeAsync(40)
     expect(child.kills).toEqual(['SIGTERM'])
     child.emit('close', null, 'SIGTERM')
-    expect(events.at(-1)).toMatchObject({ event: { error: { summary: 'OpenCLI timed out after 50ms' } } })
+    expect(events.at(-1).event.error.summary).toBe('执行超时：网络较慢或页面卡住，稍后重试')
+    expect(events.at(-1).event.error.detail).toContain('OpenCLI timed out after 50ms')
   })
 
   it('rejects duplicate ids and excess concurrency', () => {

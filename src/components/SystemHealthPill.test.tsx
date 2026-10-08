@@ -253,6 +253,8 @@ test('浮层只给版本号与最后检查 —— 逐路结论已经写在灯上
 
   const details = screen.getByTestId('health-details')
   expect(screen.getByTestId('health-version')).toHaveTextContent('1.8.6')
+  expect(details).toHaveTextContent('爪爪版本')
+  expect(screen.getByTestId('health-app-version')).toHaveTextContent('1.2.3（abc1234，2026-01-02 构建）')
   expect(details).toHaveTextContent('最后检查')
   // 三路明细撤掉:结论在灯的标签里,浮层再列一遍是同一件事说两遍;
   // 哪一路坏、坏在哪个 reasonCode 是开发者排障信息,不占用户的浮层。

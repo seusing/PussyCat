@@ -28,6 +28,7 @@ import {
   postVkQuery,
   postVkRuntimeInstall,
   fetchVkProviderSettings,
+  isVkEngineNotReady,
   testVkProvider,
 } from '../../host/vkClient'
 import type {
@@ -316,13 +317,28 @@ function sourceLines(value: string): string[] {
   return extractSources(value).sources
 }
 
-function errorText(error: unknown, fallback: string): string {
-  if (error instanceof HostRequestError) {
-    return error.reasonCode ? `${error.summary}(${error.reasonCode})` : error.summary
-  }
-  if (error instanceof Error) return error.message || fallback
-  return fallback
+function errorParts(error: unknown, fallback: string): { text: string; code?: string } {
+  if (error instanceof HostRequestError) return { text: error.summary, code: error.reasonCode }
+  if (error instanceof Error) return { text: error.message || fallback }
+  return { text: fallback }
 }
+
+function errorText(error: unknown, fallback: string): string {
+  const { text, code } = errorParts(error, fallback)
+  return code ? `${text}(${code})` : text
+}
+
+/** 横幅里给用户看的话；host 给的原文（可能带环境变量名、英文）只放进 title 供排障。 */
+function healthNote(health: VkHealth | null): string {
+  switch (health?.status) {
+    case 'starting': return '解析引擎正在启动，稍等几秒后重新检测。'
+    case 'failed': return '解析引擎启动失败，可以重新检测；反复失败请重启爪爪。'
+    case 'not-configured': return '本机还没有可用的解析环境，需要先完成一次准备。'
+    default: return '暂时联系不上解析引擎。'
+  }
+}
+
+const JOBS_WAITING_FOR_ENGINE = '解析引擎准备好后，这里会显示任务'
 
 const STATUS_LABELS: Record<string, string> = {
   queued: '排队中',
@@ -448,7 +464,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   // —— 首启 runtime 安装(v2 阶段3):sidecar 未安装时给安装卡;
   //    installing 期间 2s 轮询真实安装输出(不造百分比)——
   const [runtime, setRuntime] = useState<VkRuntimeStatus | null>(null)
-  const [installError, setInstallError] = useState<string | null>(null)
+  const [installError, setInstallError] = useState<{ text: string; code?: string } | null>(null)
   const installPending = useRef(false)
   const previousRuntimeState = useRef<string | null>(null)
   const refreshRuntime = useCallback(async () => {
@@ -572,7 +588,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       setRuntime(await postVkRuntimeInstall(base, { rebuild }))
     } catch (error) {
       setRuntime(previousRuntime)
-      setInstallError(errorText(error, '安装启动失败'))
+      setInstallError(errorParts(error, '安装启动失败'))
     } finally {
       installPending.current = false
     }
@@ -781,7 +797,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [jobs, setJobs] = useState<VkJobRow[]>([])
   const [jobsRefreshing, setJobsRefreshing] = useState(false)
   const [taskNumbers, setTaskNumbers] = useState<Record<string, number>>(() => loadNumberRecord(VK_TASK_NUMBERS_KEY))
-  const [jobsError, setJobsError] = useState<string | null>(null)
+  const [jobsError, setJobsError] = useState<{ text: string; waiting: boolean } | null>(null)
   const [selectedJob, setSelectedJob] = useState<VkJobView | null>(null)
   const [notifications, setNotifications] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_NOTIFICATIONS_KEY))
   const [hiddenJobs, setHiddenJobs] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_HIDDEN_JOBS_KEY))
@@ -895,7 +911,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         }
       }
     } catch (error) {
-      if (gen === jobsGen.current) setJobsError(errorText(error, '任务列表获取失败'))
+      if (gen === jobsGen.current) {
+        setJobsError(isVkEngineNotReady(error)
+          ? { text: JOBS_WAITING_FOR_ENGINE, waiting: true }
+          : { text: errorText(error, '任务列表获取失败'), waiting: false })
+      }
     } finally {
       if (manual) setJobsRefreshing(false)
     }
@@ -1115,27 +1135,34 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   )
   const selectedAutoRouteReason = autoRouteReasonText(selectedJob?.auto_route?.reason_codes)
 
-  const verdict: { text: string; color: string; note?: string; action?: { label: string; run: () => void } } | null =
+  const verdict: { text: string; color: string; note?: string; hint?: string; action?: { label: string; run: () => void } } | null =
     runtime?.state === 'not-available'
-      ? { text: '解析引擎不可用', color: 'var(--color-danger)', note: runtime.summary ?? '缺少随应用分发的安装件,请重新安装爪爪。' }
+      ? {
+        text: '解析引擎不可用', color: 'var(--color-danger)',
+        note: '缺少随应用分发的安装件,请重新安装爪爪。',
+        hint: runtime.summary ?? undefined,
+      }
       : runtime?.state === 'installing'
         ? { text: '正在准备解析环境…', color: 'var(--color-fg-dim)', note: '首次准备需要几分钟,可以先去做别的。' }
         : runtime?.state === 'failed'
           ? {
             text: '解析环境没装成功', color: 'var(--color-danger)',
-            note: installError ?? runtime.summary ?? undefined,
+            note: installError?.text ?? runtime.summary ?? undefined,
+            hint: installError?.code ?? runtime.reasonCode ?? undefined,
             action: { label: '重试', run: () => { void startInstall({ rebuild: false }) } },
           }
           : runtime?.state === 'not-installed'
             ? {
               text: '解析引擎还没准备好', color: 'var(--color-warning)',
-              note: installError ?? '缺少本机解析运行环境，需要先完成一次准备。',
+              note: installError?.text ?? '缺少本机解析运行环境，需要先完成一次准备。',
+              hint: installError?.code,
               action: { label: '一键准备', run: () => { void startInstall({ rebuild: false }) } },
             }
             : runtime?.state === 'installed' && runtime.current === false
               ? {
                 text: '解析引擎有更新', color: 'var(--color-warning)',
-                note: installError ?? '更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移。',
+                note: installError?.text ?? '更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移。',
+                hint: installError?.code,
                 action: { label: '立即更新', run: () => { void startInstall({ rebuild: false }) } },
               }
           : healthChecked && (!health || !['ok', 'ready'].includes(health.status))
@@ -1144,7 +1171,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
                 color: 'var(--color-warning)',
                 note: health?.status === 'stopped'
                   ? '运行环境已经准备好，重新检测会自动启动解析引擎。'
-                  : health?.summary ?? '暂时联系不上解析引擎。',
+                  : healthNote(health),
+                hint: health ? [health.summary, health.detail].filter(Boolean).join(' / ') : undefined,
                 action: { label: '重新检测', run: () => { void refreshEngineStatus() } },
               }
               : healthChecked && providerConfigured === false
@@ -1178,7 +1206,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
                 {verdict.text}
               </span>
               {verdict.note && (
-                <span data-testid="vk-verdict-note" className="ml-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                <span data-testid="vk-verdict-note" title={verdict.hint} className="ml-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
                   {verdict.note}
                 </span>
               )}
@@ -1477,7 +1505,15 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             <span>{jobsRefreshing ? '刷新中…' : '刷新'}</span>
           </motion.button>
         </div>
-        {jobsError && <div className="mb-2 text-xs" style={{ color: 'var(--color-danger)' }}>{jobsError}</div>}
+        {jobsError && (
+          <div
+            data-testid="vk-jobs-error"
+            className="mb-2 text-xs"
+            style={{ color: jobsError.waiting ? 'var(--color-fg-dim)' : 'var(--color-danger)' }}
+          >
+            {jobsError.text}
+          </div>
+        )}
         <VkTaskTable
           jobs={visibleJobs}
           loading={jobsRefreshing}

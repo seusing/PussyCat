@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
+import { describeRunError } from './run-error.mjs'
 
 export class RunManagerError extends Error {
   constructor(statusCode, message) {
@@ -54,6 +55,10 @@ function normalizeJsonResult(text) {
 function errorDetail(stderr) {
   const detail = stderr.trim()
   return detail ? detail.slice(-8000) : undefined
+}
+
+function runError(record, { summary, detail, exitCode, timedOut }) {
+  return describeRunError({ summary, detail, stderr: record.stderr, exitCode, timedOut })
 }
 
 export class RunManager {
@@ -133,10 +138,10 @@ export class RunManager {
         runId: request.runId,
         at: Date.now(),
         outcome: 'error',
-        error: {
+        error: runError(record, {
           summary: 'Failed to start OpenCLI',
           detail: error instanceof Error ? error.message : String(error),
-        },
+        }),
       })
       return { runId: request.runId }
     }
@@ -158,7 +163,7 @@ export class RunManager {
         runId: request.runId,
         at: Date.now(),
         outcome: 'error',
-        error: { summary: 'OpenCLI process error', detail: error.message },
+        error: runError(record, { summary: 'OpenCLI process error', detail: error.message }),
       })
     })
     child.once('close', (exitCode, signal) => {
@@ -235,10 +240,10 @@ export class RunManager {
         runId: record.request.runId,
         at: Date.now(),
         outcome: 'error',
-        error: {
+        error: runError(record, {
           summary: 'Failed to terminate OpenCLI',
           detail: error instanceof Error ? error.message : String(error),
-        },
+        }),
       })
       return
     }
@@ -252,10 +257,10 @@ export class RunManager {
           runId: record.request.runId,
           at: Date.now(),
           outcome: 'error',
-          error: {
+          error: runError(record, {
             summary: 'Failed to force terminate OpenCLI',
             detail: error instanceof Error ? error.message : String(error),
-          },
+          }),
         })
       }
     }, this.cancelGraceMs)
@@ -274,7 +279,7 @@ export class RunManager {
       this.#finish(record, {
         ...base,
         outcome: 'error',
-        error: { summary: 'OpenCLI output exceeded the capture limit' },
+        error: runError(record, { summary: 'OpenCLI output exceeded the capture limit' }),
       })
       return
     }
@@ -282,7 +287,11 @@ export class RunManager {
       this.#finish(record, {
         ...base,
         outcome: 'error',
-        error: { summary: `OpenCLI timed out after ${record.timeoutMs}ms`, detail: errorDetail(record.stderr) },
+        error: runError(record, {
+          summary: `OpenCLI timed out after ${record.timeoutMs}ms`,
+          detail: errorDetail(record.stderr),
+          timedOut: true,
+        }),
       })
       return
     }
@@ -294,7 +303,7 @@ export class RunManager {
       this.#finish(record, {
         ...base,
         outcome: 'error',
-        error: { summary: `OpenCLI terminated by ${signal}`, detail: errorDetail(record.stderr) },
+        error: runError(record, { summary: `OpenCLI terminated by ${signal}`, detail: errorDetail(record.stderr) }),
       })
       return
     }
@@ -302,7 +311,11 @@ export class RunManager {
       this.#finish(record, {
         ...base,
         outcome: 'error',
-        error: { summary: `OpenCLI exited with code ${exitCode}`, detail: errorDetail(record.stderr) },
+        error: runError(record, {
+          summary: `OpenCLI exited with code ${exitCode}`,
+          detail: errorDetail(record.stderr),
+          exitCode,
+        }),
       })
       return
     }
@@ -313,10 +326,10 @@ export class RunManager {
       this.#finish(record, {
         ...base,
         outcome: 'error',
-        error: {
+        error: runError(record, {
           summary: 'OpenCLI returned invalid JSON',
           detail: error instanceof Error ? error.message : String(error),
-        },
+        }),
       })
     }
   }

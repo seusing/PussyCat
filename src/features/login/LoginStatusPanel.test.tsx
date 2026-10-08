@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LoginStatusPanel } from './LoginStatusPanel'
 import { useAppStore } from '../../store/appStore'
@@ -51,7 +51,7 @@ beforeEach(() => { localStorage.clear(); setup() })
 test('只渲染一张五列表格，不再出现登录状态分组', () => {
   render(<LoginStatusPanel />)
   expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
-    'Site', 'User', 'Last Time', 'Status', 'Operation',
+    '站点', '账号', '上次检查', '状态', '操作',
   ])
   expect(screen.getAllByRole('row')).toHaveLength(4)
   expect(screen.queryByTestId('login-group-action')).not.toBeInTheDocument()
@@ -87,7 +87,7 @@ test('站点名前使用原版彩色 logo', () => {
   expect(screen.getByTestId('login-row-bilibili')).toHaveTextContent('B站')
 })
 
-test('Badge 映射为 Success、Logging、Failed，并保留具体状态说明', () => {
+test('徽章直接显示中文状态，并按状态分色', () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
   setup({
@@ -98,12 +98,39 @@ test('Badge 映射为 Success、Logging、Failed，并保留具体状态说明',
     },
   })
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('Success')
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveAttribute('title', '已登录')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('已登录')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveClass('login-status-badge-success')
   expect(screen.getByTestId('login-row-xiaohongshu')).toHaveTextContent('LauSeusing')
   expect(screen.getByTestId('login-row-xiaohongshu')).toHaveTextContent('2 小时前')
-  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('Logging')
-  expect(screen.getByTestId('login-state-chatgpt')).toHaveTextContent('Failed')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('检查中')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveClass('login-status-badge-loading')
+  expect(screen.getByTestId('login-state-chatgpt')).toHaveTextContent('未审定')
+  expect(screen.getByTestId('login-state-chatgpt')).toHaveClass('login-status-badge-neutral')
+})
+
+test('需重新登录与检查失败用失败色，未检查与需先确认用中性色', () => {
+  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
+  setup({
+    preferences: useAppStore.getState().preferences,
+    loginChecks: {
+      xiaohongshu: { site: 'xiaohongshu', state: 'logged-out', checkedAt: Date.now() },
+    },
+  })
+  render(<LoginStatusPanel />)
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('需重新登录')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveClass('login-status-badge-failed')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('未检查')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveClass('login-status-badge-neutral')
+
+  act(() => {
+    setup({
+      preferences: useAppStore.getState().preferences,
+      loginChecks: { bilibili: { site: 'bilibili', state: 'error', checkedAt: Date.now() } },
+    })
+  })
+  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('检查失败')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveClass('login-status-badge-failed')
 })
 
 test('刷新状态直接执行，只有独立箭头打开账号菜单', async () => {
@@ -126,13 +153,13 @@ test('刷新状态直接执行，只有独立箭头打开账号菜单', async ()
 
 test('未审定站点保留在表格中，刷新状态不可执行', async () => {
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-chatgpt')).toHaveAccessibleName('Failed：未审定')
+  expect(screen.getByTestId('login-state-chatgpt')).toHaveTextContent('未审定')
   expect(screen.getByTestId('login-refresh-chatgpt')).toBeDisabled()
 })
 
 test('待确认站点选择刷新状态会打开原有确认流程', async () => {
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveAccessibleName('Failed：需先确认')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('需先确认')
   await clickRefresh('xiaohongshu')
   expect(useAppStore.getState().pendingAcknowledgement?.command.command).toBe('xiaohongshu/whoami')
   expect(useAppStore.getState().loginQueue).toEqual([])
@@ -185,7 +212,7 @@ test('工具栏不再显示分类摘要和队列提示文字', () => {
 test('判决在检查后收紧时以判决为准', () => {
   setup({ loginChecks: { chatgpt: { site: 'chatgpt', state: 'logged-in', checkedAt: 1, detail: '某账号' } } })
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-chatgpt')).toHaveAccessibleName('Failed：未审定')
+  expect(screen.getByTestId('login-state-chatgpt')).toHaveTextContent('未审定')
   expect(screen.getByTestId('login-row-chatgpt')).not.toHaveTextContent('某账号')
 })
 
@@ -220,7 +247,7 @@ test('单站排队不禁用其他站点的刷新操作', async () => {
   expect(useAppStore.getState().loginQueue.sort()).toEqual(['bilibili', 'xiaohongshu'])
 })
 
-test('排队中与检查中都显示 Logging，但保留各自具体状态', () => {
+test('排队中与检查中分别显示各自状态，都用加载中样式', () => {
   useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
   useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
   setup({
@@ -233,10 +260,10 @@ test('排队中与检查中都显示 Logging，但保留各自具体状态', () 
     },
   })
   render(<LoginStatusPanel />)
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('Logging')
-  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveAttribute('title', '检查中')
-  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('Logging')
-  expect(screen.getByTestId('login-state-bilibili')).toHaveAttribute('title', '排队中')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('检查中')
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveClass('login-status-badge-loading')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveTextContent('排队中')
+  expect(screen.getByTestId('login-state-bilibili')).toHaveClass('login-status-badge-loading')
 })
 
 test('检查全部在已有任务排队时仍可继续补入队列', () => {

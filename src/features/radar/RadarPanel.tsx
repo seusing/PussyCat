@@ -267,16 +267,26 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
 
       {/* 拿旧数据顶上时必须说清楚,否则用户会以为看到的是最新的。 */}
       {data?.stale && (
-        <div data-testid="radar-stale" className="rounded-lg p-2 text-xs"
+        <div data-testid="radar-stale" title={data.error} className="rounded-lg p-2 text-xs"
           style={{ background: 'var(--color-panel)', border: '1px solid var(--color-warning)', color: 'var(--color-warning)' }}>
-          没能连上 codexradar（{data.error}），上面是 {clock(new Date(data.fetchedAt).toISOString())} 取到的那批。
+          Codex Radar 的数据源暂时不可用，上面是 {clock(new Date(data.fetchedAt).toISOString())} 取到的那批。
         </div>
       )}
 
       {error && !data && (
-        <div data-testid="radar-error" className="rounded-lg p-3 text-xs"
+        <div data-testid="radar-error" title={error} className="flex flex-wrap items-center gap-3 rounded-lg p-3 text-xs"
           style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)', color: 'var(--color-danger)' }}>
-          {error}
+          <span>Codex Radar 的数据源暂时不可用，稍后再试</span>
+          <button
+            type="button"
+            data-testid="radar-retry"
+            onClick={refresh}
+            disabled={loading}
+            className="rounded px-2 py-0.5 disabled:opacity-40"
+            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+          >
+            重试
+          </button>
         </div>
       )}
 

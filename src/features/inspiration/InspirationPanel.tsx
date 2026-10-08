@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
-import { ArrowLeft, BookmarkPlus, FolderOpen, GalleryHorizontalEnd, Search, SearchX } from 'lucide-react'
+import { ArrowLeft, BookmarkPlus, FolderOpen, Search, SearchX } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import type { CommandManifest } from '../../data/types'
 import {
@@ -9,7 +9,7 @@ import {
   visibleCommands,
   type SupportedSite,
 } from '../../data/supportedSites'
-import { SiteCarousel } from './SiteCarousel'
+import { SiteGrid } from './SiteGrid'
 import { FisheyeCommandList } from './FisheyeCommandList'
 import { CommandConfig } from '../config/CommandConfig'
 import { RunPanel } from '../runs/RunPanel'
@@ -263,14 +263,7 @@ export function InspirationPanel({
           <span>INSPIRATION SOURCES</span>
           <h1>灵感来源</h1>
         </div>
-        <div className="display-mode-switch" role="group" aria-label="站点展示方式">
-          <button type="button" data-testid="open-inspiration-library" aria-label="灵感库" onClick={() => setWorkspace('library')} title="打开灵感库">
-            <FolderOpen size={17} />
-          </button>
-          <button type="button" data-testid="display-mode-carousel" aria-label="卡片轮播" aria-pressed="true" title="卡片轮播">
-            <GalleryHorizontalEnd size={17} />
-          </button>
-        </div>
+        <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库" aria-label="打开灵感库"><FolderOpen size={18} aria-hidden="true" /></button>
         <label className="command-search inspiration-global-search">
           <Search size={16} aria-hidden="true" />
           <input ref={searchRef} data-testid="nav-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索站点或命令" aria-label="搜索站点或命令" />
@@ -289,7 +282,7 @@ export function InspirationPanel({
           : <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" description="请尝试其他关键词" />
         : (
           <div className="site-display">
-            <SiteCarousel sites={sites} onSelect={openSite} />
+            <SiteGrid sites={sites} onSelect={openSite} />
           </div>
         )}
     </div>

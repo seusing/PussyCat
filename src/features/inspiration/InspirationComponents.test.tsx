@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
-import { SiteCarousel } from './SiteCarousel'
+import { SiteGrid } from './SiteGrid'
 import { InspirationPanel } from './InspirationPanel'
 import { InspirationFileCard } from './InspirationLibraryCards'
 import type { InspirationItem } from './inspirationLibrary'
@@ -54,15 +55,35 @@ describe('inspiration selectors', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  it('requires a second click after a non-center carousel card is centered', () => {
+  it('shows every site as a card with its logo and name, and opens the clicked one immediately', () => {
     const onSelect = vi.fn()
-    render(<SiteCarousel sites={sites} onSelect={onSelect} />)
+    render(<SiteGrid sites={sites} onSelect={onSelect} />)
 
-    const first = screen.getByTestId('site-row-a')
-    fireEvent.click(first)
-    expect(onSelect).not.toHaveBeenCalled()
-    fireEvent.click(first)
-    expect(onSelect).toHaveBeenCalledWith(sites[0])
+    expect(screen.getAllByRole('listitem')).toHaveLength(sites.length)
+    const third = screen.getByTestId('site-row-c')
+    expect(third).toHaveTextContent('C')
+    expect(third.querySelector('img')).toHaveAttribute('src', '/site-logos/c.svg')
+    fireEvent.click(third)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).toHaveBeenCalledWith(sites[2])
+  })
+
+  it('opens a focused site card from the keyboard', async () => {
+    const onSelect = vi.fn()
+    render(<SiteGrid sites={sites} onSelect={onSelect} />)
+
+    await userEvent.tab()
+    expect(screen.getByTestId('site-row-a')).toHaveFocus()
+    await userEvent.tab()
+    await userEvent.keyboard('{Enter}')
+    expect(onSelect).toHaveBeenCalledWith(sites[1])
+    await userEvent.keyboard(' ')
+    expect(onSelect).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders nothing for an empty site list', () => {
+    const { container } = render(<SiteGrid sites={[]} onSelect={vi.fn()} />)
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('advances exactly one wheel item for a large wheel delta', () => {
@@ -201,7 +222,7 @@ describe('inspiration command search', () => {
     <InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />,
   )
 
-  it('removes WeChat sources from the carousel and global command search', () => {
+  it('removes WeChat sources from the site grid and global command search', () => {
     const weixinCommand: CommandManifest = {
       ...likedCommand,
       command: 'weixin/articles',

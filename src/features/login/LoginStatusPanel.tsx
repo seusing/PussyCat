@@ -46,10 +46,11 @@ function relativeTime(at: number | undefined, now: number): string {
   return `${Math.floor(hr / 24)} 天前`
 }
 
-function statusBadge(state: LoginCheckState) {
-  if (state === 'logged-in') return { tone: 'success', label: 'Success' }
-  if (state === 'queued' || state === 'checking') return { tone: 'loading', label: 'Logging' }
-  return { tone: 'failed', label: 'Failed' }
+function statusTone(state: LoginCheckState): 'success' | 'loading' | 'failed' | 'neutral' {
+  if (state === 'logged-in') return 'success'
+  if (state === 'queued' || state === 'checking') return 'loading'
+  if (state === 'logged-out' || state === 'error') return 'failed'
+  return 'neutral'
 }
 
 function AccountOperationMenu({
@@ -381,16 +382,16 @@ export function LoginStatusPanel() {
           </colgroup>
           <thead>
             <tr>
-              <th scope="col">Site</th>
-              <th scope="col">User</th>
-              <th scope="col">Last Time</th>
-              <th scope="col">Status</th>
-              <th scope="col">Operation</th>
+              <th scope="col">站点</th>
+              <th scope="col">账号</th>
+              <th scope="col">上次检查</th>
+              <th scope="col">状态</th>
+              <th scope="col">操作</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => {
-              const badge = statusBadge(row.state)
+              const tone = statusTone(row.state)
               const busy = isRowBusy(row.site)
               return (
                 <tr key={row.commandKey} data-testid={`login-row-${row.site}`}>
@@ -416,12 +417,10 @@ export function LoginStatusPanel() {
                   <td>
                     <span
                       data-testid={`login-state-${row.site}`}
-                      className={`login-status-badge login-status-badge-${badge.tone}`}
-                      title={STATE_TEXT[row.state]}
-                      aria-label={`${badge.label}：${STATE_TEXT[row.state]}`}
+                      className={`login-status-badge login-status-badge-${tone}`}
                     >
                       <span className="login-status-dot" aria-hidden="true" />
-                      {badge.label}
+                      {STATE_TEXT[row.state]}
                     </span>
                   </td>
                   <td>

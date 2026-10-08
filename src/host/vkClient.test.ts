@@ -1,7 +1,7 @@
 import { HostRequestError } from './errors'
 import {
   fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
-  postVkJob, postVkStoryline, vkOutputPath,
+  isVkEngineNotReady, postVkJob, postVkStoryline, vkOutputPath,
 } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
@@ -89,5 +89,13 @@ describe('vkClient', () => {
       expect(error).toBeInstanceOf(HostRequestError)
       expect(error.status).toBe(404)
     }
+  })
+
+  it('recognizes a 503 from a not-installed or not-configured engine, and nothing else', () => {
+    expect(isVkEngineNotReady(new HostRequestError('x', undefined, 503, 'not-installed'))).toBe(true)
+    expect(isVkEngineNotReady(new HostRequestError('x', undefined, 503, 'not-configured'))).toBe(true)
+    expect(isVkEngineNotReady(new HostRequestError('x', undefined, 503, 'spawn-timeout'))).toBe(false)
+    expect(isVkEngineNotReady(new HostRequestError('x', undefined, 500, 'not-installed'))).toBe(false)
+    expect(isVkEngineNotReady(new Error('not-installed'))).toBe(false)
   })
 })

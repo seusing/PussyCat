@@ -1537,8 +1537,92 @@ describe('VkPanel', () => {
       expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎没有响应')
     })
     await waitFor(() => {
-      expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('video-knowledge runtime 未配置')
+      expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('本机还没有可用的解析环境')
     })
+    const note = screen.getByTestId('vk-verdict-note')
+    expect(note).not.toHaveTextContent('video-knowledge')
+    expect(note).toHaveAttribute('title', 'video-knowledge runtime 未配置')
+  })
+
+  it('does not leak environment variable names from the health summary into the banner', async () => {
+    const summary = 'video-knowledge runtime 未配置(缺 OPENCLI_HOST_VK_PYTHON/OPENCLI_HOST_VK_ROOT)'
+    stubRoutes({
+      'GET /vk/v1/health': {
+        body: {
+          status: 'not-configured', reasonCode: 'not-configured', summary, apiVersion: null,
+          packageVersion: null, capabilities: [], checkedAt: 't', retryable: false,
+        },
+      },
+      'GET /vk/v1/jobs': { status: 503, body: { error: 'video-knowledge sidecar 未接线', reasonCode: 'not-configured' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const note = await screen.findByTestId('vk-verdict-note')
+    expect(note.textContent).not.toMatch(/OPENCLI_HOST|video-knowledge|sidecar/)
+    expect(note).toHaveAttribute('title', summary)
+  })
+
+  it.each([
+    ['starting', 'sidecar 启动中', '解析引擎正在启动'],
+    ['failed', 'sidecar 协议版本不兼容', '解析引擎启动失败'],
+  ])('explains a %s engine in plain Chinese and keeps the raw summary in the title', async (status, summary, expected) => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status, reasonCode: status, summary } },
+      'GET /vk/v1/jobs': { body: [] },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const note = await screen.findByTestId('vk-verdict-note')
+    expect(note).toHaveTextContent(expected)
+    expect(note.textContent).not.toMatch(/sidecar/)
+    expect(note).toHaveAttribute('title', summary)
+  })
+
+  it('keeps the install failure reason code out of the banner text but in its title', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured', reasonCode: 'not-installed', summary: '未安装' } },
+      'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
+      'GET /vk/v1/runtime/status': { body: { state: 'not-installed', version: null, reasonCode: null, summary: '解析引擎未安装', log: [], checkedAt: 't' } },
+      'POST /vk/v1/runtime/install': { status: 503, body: { error: '安装包里没有解析引擎', reasonCode: 'bundle-missing' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await userEvent.click(await screen.findByTestId('vk-verdict-action'))
+    await waitFor(() => expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('安装包里没有解析引擎'))
+    const note = screen.getByTestId('vk-verdict-note')
+    expect(note.textContent).not.toContain('bundle-missing')
+    expect(note).toHaveAttribute('title', 'bundle-missing')
+  })
+
+  it('shows a fixed message when the install bundle is missing and keeps the raw summary in the title', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured' } },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { state: 'not-available', version: null, reasonCode: 'bundle-missing', summary: '安装包内没有解析引擎捆绑件(开发形态或包损坏)', log: [], checkedAt: 't' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const note = await screen.findByTestId('vk-verdict-note')
+    expect(note).toHaveTextContent('请重新安装爪爪')
+    expect(note.textContent).not.toContain('开发形态')
+    expect(note).toHaveAttribute('title', '安装包内没有解析引擎捆绑件(开发形态或包损坏)')
+  })
+
+  it('replaces the raw engine-not-ready error in the task list with a neutral hint', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured', reasonCode: 'not-installed', summary: '未安装' } },
+      'GET /vk/v1/jobs': { status: 503, body: { error: 'video-knowledge runtime 未安装或未配置', reasonCode: 'not-installed' } },
+      'GET /vk/v1/runtime/status': { body: { state: 'not-installed', version: null, reasonCode: null, summary: '解析引擎未安装', log: [], checkedAt: 't' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const hint = await screen.findByTestId('vk-jobs-error')
+    expect(hint).toHaveTextContent('解析引擎准备好后，这里会显示任务')
+    expect(hint.textContent).not.toMatch(/not-installed|video-knowledge/)
+  })
+
+  it('still shows real task list errors as they are', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { status: 503, body: { error: '解析引擎启动超时', reasonCode: 'spawn-timeout' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    expect(await screen.findByTestId('vk-jobs-error')).toHaveTextContent('解析引擎启动超时(spawn-timeout)')
   })
 })
 
