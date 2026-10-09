@@ -343,6 +343,7 @@
 .vk-task-detail-step-content strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .vk-task-detail-step-content > span { flex: 0 0 auto; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
 .vk-task-detail-step-reason { grid-column: 2; margin-top: -4px; color: color-mix(in srgb, var(--color-danger) 72%, var(--color-fg-dim)); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.vk-task-detail-step-reason .vk-failure-note { margin-top: 4px; font-size: 11px; }
 .vk-task-detail-stage-empty { margin: 0; color: var(--color-fg-dim); font-size: 11px; }
 .vk-task-detail-task-empty { list-style: none; color: var(--color-fg-dim); font-size: 12px; }
 

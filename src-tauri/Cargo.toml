@@ -29,6 +29,8 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-log = "2"
+# 与 npm 侧 @tauri-apps/plugin-notification 2.4 对齐:2.5 起要求 tauri/api 2.12 与 Rust 1.90。
+tauri-plugin-notification = "~2.4"
 # 单实例:必须**最先**注册,早于任何 Host bootstrap(spec §5)——否则第二实例会先拉起第二个 Node 再被劝退。
 tauri-plugin-single-instance = "2"
 

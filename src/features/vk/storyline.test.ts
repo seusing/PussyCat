@@ -54,7 +54,7 @@ describe('storylineStatusText', () => {
     [{ status: 'partial' }, '已串成 2 条故事线，1 个视频未归入。部分内容生成失败'],
     [{ status: 'skipped' }, '可串联的视频不足 2 个'],
     [{ status: 'skipped', reason: '只有 1 个视频有字幕' }, '可串联的视频不足 2 个（只有 1 个视频有字幕）'],
-    [{ status: 'failed', error: '模型超时' }, '串联失败：模型超时'],
+    [{ status: 'failed', error: '模型超时' }, '串联失败'],
   ] as [Partial<VkStorylineRow>, string][])('%j → %s', (over, text) => {
     expect(storylineStatusText(row(over))).toBe(text)
   })

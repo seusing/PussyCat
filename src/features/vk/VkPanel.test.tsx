@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkPanel } from './VkPanel'
 import { useAppStore } from '../../store/appStore'
@@ -8,6 +8,13 @@ import { VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
 
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
+
+const desktopNotifications = vi.hoisted(() => ({ send: vi.fn() }))
+vi.mock('@tauri-apps/plugin-notification', () => ({
+  isPermissionGranted: async () => true,
+  requestPermission: async () => 'granted',
+  sendNotification: desktopNotifications.send,
+}))
 
 const initialState = useAppStore.getState()
 beforeEach(() => {
@@ -2052,5 +2059,445 @@ describe('故事线串联', () => {
       await act(async () => {})
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('失败原因的展示', () => {
+  const RATE_LIMITED = 'channel-a:default HTTP 429（阶段 chapter，角色 basic，路由 channel-a:default，已尝试 2 次；同角色未配置备用通道；不会跨角色自动切换）'
+  const row = (job_id: string, status: string, minute: number) => ({
+    job_id, kind: 'request', status,
+    submitted_at: `2026-08-11T00:0${minute}:00+00:00`,
+    finished_at: status === 'running' ? null : '2026-08-11T00:10:00+00:00',
+    parent_job_id: null, cache_bypass: false,
+  })
+
+  it('任务失败的横幅在标题下附一句原因', async () => {
+    const jobsRoute: Route = { body: [row('job-fail', 'running', 1), row('job-ok', 'running', 2)] }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': jobsRoute,
+      'GET /vk/v1/jobs/job-fail': { body: { ...row('job-fail', 'failed', 1), error: RATE_LIMITED } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-fail')
+
+    jobsRoute.body = [row('job-fail', 'failed', 1), row('job-ok', 'done', 2)]
+    await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+
+    const failed = (await screen.findByText(/任务\d+遇到了些问题/)).closest('[data-testid="vk-task-banner"]')!
+    expect(failed).toHaveTextContent('模型服务限流了')
+    const ok = screen.getByText(/任务\d+已完成/).closest('[data-testid="vk-task-banner"]')!
+    expect(ok).not.toHaveTextContent('模型服务')
+  })
+
+  it('取不到失败原因时横幅仍是原来的话,不因此丢掉提醒', async () => {
+    const jobsRoute: Route = { body: [row('job-fail', 'running', 1)] }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-fail')
+
+    jobsRoute.body = [row('job-fail', 'failed', 1)]
+    await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+
+    const banner = (await screen.findByText(/任务\d+遇到了些问题/)).closest('[data-testid="vk-task-banner"]')!
+    expect(banner).toHaveAttribute('data-tone', 'danger')
+    expect(banner).not.toHaveTextContent('模型服务')
+  })
+
+  it('表格里失败行的状态徽章悬停给出原因与建议,原文由详情里读取', async () => {
+    const { calls } = stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [row('job-fail', 'failed', 1), row('job-ok', 'done', 2)] },
+      'GET /vk/v1/jobs/job-fail': { body: { ...row('job-fail', 'failed', 1), error: RATE_LIMITED } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    const badge = (await screen.findByTestId('vk-job-open-job-fail')).closest('tr')!.querySelector('.vk-task-badge')!
+
+    await waitFor(() => expect(badge).toHaveAttribute('title', expect.stringContaining('模型服务限流了')))
+    expect(badge.getAttribute('title')).toContain('稍后重试')
+    expect(screen.getByTestId('vk-job-open-job-ok').closest('tr')!.querySelector('.vk-task-badge')).not.toHaveAttribute('title')
+    expect(calls.some((call) => call.key === 'GET /vk/v1/jobs/job-ok')).toBe(false)
+  })
+})
+
+describe('提交前预检:小红书与浏览器扩展', () => {
+  const XHS = 'https://www.xiaohongshu.com/explore/abc'
+  const bridge = (reasonCode: string) => ({
+    checkedAt: 1, daemon: 'running', extension: reasonCode === 'ok' ? 'connected' : 'disconnected',
+    profile: 'ready', profileCount: 1, retryable: reasonCode !== 'ok', reasonCode, summary: 'x',
+  })
+  const routes = (health: unknown, extra: Record<string, Route> = {}) => stubRoutes({
+    'GET /vk/v1/health': { body: HEALTH },
+    'GET /vk/v1/jobs': { body: [] },
+    'GET /browser-bridge/health': { body: health },
+    'POST /vk/v1/preview': { body: resolvedRequest() },
+    'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-xhs', kind: 'request' } },
+    ...extra,
+  })
+  const bridgeReads = (calls: Array<{ key: string }>) => calls.filter((call) => call.key === 'GET /browser-bridge/health')
+
+  it('扩展没连上时在开始解析上方提醒,提醒不挡提交', async () => {
+    const { calls } = routes(bridge('extension-disconnected'))
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: XHS } })
+
+    const warning = await screen.findByTestId('vk-xhs-bridge-warning', undefined, { timeout: 3000 })
+    expect(warning).toHaveTextContent('检测到小红书链接：浏览器扩展没连上时，需要登录才能看的笔记会下载失败。')
+    expect(warning.compareDocumentPosition(screen.getByTestId('vk-submit-button')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(warning).getByRole('button', { name: '检测并修复' })).toBeEnabled()
+
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/jobs')).toHaveLength(1))
+  })
+
+  it('扩展已连接、或没有小红书链接时不提醒,也不去查浏览器状态', async () => {
+    const { calls } = routes(bridge('ok'))
+    render(<VkPanel baseUrl={BASE} />)
+    await act(async () => {})
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: 'https://example.com/v' } })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 800)) })
+    expect(bridgeReads(calls)).toHaveLength(0)
+
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: XHS } })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 900)) })
+    expect(bridgeReads(calls)).toHaveLength(1)
+    expect(screen.queryByTestId('vk-xhs-bridge-warning')).not.toBeInTheDocument()
+  })
+
+  it('逐字输入只在链接出现后查一次,继续输入不重复请求', async () => {
+    const { calls } = routes(bridge('extension-disconnected'))
+    const user = userEvent.setup()
+    render(<VkPanel baseUrl={BASE} />)
+    await user.type(screen.getByTestId('vk-source'), XHS)
+    await screen.findByTestId('vk-xhs-bridge-warning', undefined, { timeout: 3000 })
+    await user.type(screen.getByTestId('vk-source'), '?source=share')
+    await new Promise((resolve) => setTimeout(resolve, 900))
+    expect(bridgeReads(calls)).toHaveLength(1)
+  })
+
+  it('点「检测并修复」走修复请求,修好后提醒消失;没修好就显示下一步', async () => {
+    const repaired = bridge('ok')
+    const result = { steps: [], health: repaired, repaired: true }
+    const failedResult = { steps: [], health: bridge('extension-disconnected'), repaired: false, nextStep: '先在 Chrome 里启用扩展' }
+    let attempt = 0
+    const { calls } = routes(bridge('extension-disconnected'), {
+      'POST /browser-bridge/repair': { body: () => (++attempt === 1 ? failedResult : result) },
+    })
+    const user = userEvent.setup()
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: XHS } })
+    await user.click(await screen.findByTestId('vk-xhs-bridge-repair', undefined, { timeout: 3000 }))
+
+    expect(await screen.findByTestId('vk-xhs-bridge-note')).toHaveTextContent('先在 Chrome 里启用扩展')
+    expect(screen.getByTestId('vk-xhs-bridge-warning')).toBeInTheDocument()
+    await user.click(screen.getByTestId('vk-xhs-bridge-repair'))
+    await waitFor(() => expect(screen.queryByTestId('vk-xhs-bridge-warning')).not.toBeInTheDocument())
+    expect(calls.filter((call) => call.key === 'POST /browser-bridge/repair')).toHaveLength(2)
+  })
+})
+
+describe('提交前预检:基础处理主通道', () => {
+  const settings = (over: Record<string, unknown> = {}) => ({
+    configured: true,
+    channels: [{
+      id: 'c1', name: '主通道', base_url: 'https://relay.example/v1', model_id: 'gpt-x', key_env: 'VK_C1_KEY',
+      api_style: 'openai_responses', key_stored: true,
+    }],
+    roles: { basic: 'c1', deep_analysis: 'c1' },
+    ...over,
+  })
+  const probe = (body: unknown) => ({ body })
+  const routes = (testBody: unknown, extra: Record<string, Route> = {}) => stubRoutes({
+    'GET /vk/v1/health': { body: HEALTH },
+    'GET /vk/v1/jobs': { body: [] },
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers/test': probe(testBody),
+    'POST /vk/v1/preview': { body: resolvedRequest() },
+    'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
+    ...extra,
+  })
+  const probes = (calls: Array<{ key: string; init?: RequestInit }>) => calls.filter((call) => call.key === 'POST /vk/v1/providers/test')
+  const submits = (calls: Array<{ key: string }>) => calls.filter((call) => call.key === 'POST /vk/v1/jobs')
+  const submit = async () => {
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: 'https://example.com/v' } })
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+  }
+
+  it('key 失效:阻止提交并给出去模型配置;探测只读,不带 key、不生成', async () => {
+    const { calls } = routes({ ok: false, reason_code: 'unauthorized', message: 'API key 无效或已过期' })
+    render(<VkPanel baseUrl={BASE} />)
+    await submit()
+
+    const blocked = await screen.findByTestId('vk-channel-blocked')
+    expect(blocked).toHaveTextContent('模型服务的 API key 无效或已过期')
+    expect(submits(calls)).toHaveLength(0)
+    expect(calls.some((call) => call.key === 'POST /vk/v1/preview')).toBe(false)
+    expect(screen.getByTestId('vk-submit-button')).toBeEnabled()
+    const body = JSON.parse(String(probes(calls)[0].init?.body)) as Record<string, unknown>
+    expect(body).toEqual({ base_url: 'https://relay.example/v1', key_env: 'VK_C1_KEY', api_style: 'openai_responses' })
+
+    expect(within(blocked).getByRole('button', { name: '去模型配置' })).toBeEnabled()
+    expect(within(blocked).getByRole('button', { name: '仍然提交' })).toBeEnabled()
+    await userEvent.click(within(blocked).getByRole('button', { name: '去模型配置' }))
+    expect(useAppStore.getState().activeModule).toBe('providers')
+  })
+
+  it('「仍然提交」跳过这一次的预检直接提交;不缓存,下一次照常检查', async () => {
+    const { calls } = routes({ ok: false, reason_code: 'unauthorized', message: 'API key 无效或已过期' })
+    render(<VkPanel baseUrl={BASE} />)
+    await submit()
+    const blocked = await screen.findByTestId('vk-channel-blocked')
+    expect(probes(calls)).toHaveLength(1)
+    expect(submits(calls)).toHaveLength(0)
+
+    await userEvent.click(within(blocked).getByRole('button', { name: '仍然提交' }))
+    await waitFor(() => expect(submits(calls)).toHaveLength(1))
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/preview')).toHaveLength(1)
+    expect(probes(calls)).toHaveLength(1)
+    await waitFor(() => expect(screen.queryByTestId('vk-channel-blocked')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('vk-submit-button')).toBeEnabled())
+
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await screen.findByTestId('vk-channel-blocked')
+    expect(probes(calls)).toHaveLength(2)
+    expect(submits(calls)).toHaveLength(1)
+  })
+
+  it('失败的探测不缓存:修好 key 之后再点开始解析会重新探测并提交', async () => {
+    let result: unknown = { ok: false, reason_code: 'unauthorized', message: 'x' }
+    const { calls } = routes(null, { 'POST /vk/v1/providers/test': { body: () => result } })
+    render(<VkPanel baseUrl={BASE} />)
+    await submit()
+    await screen.findByTestId('vk-channel-blocked')
+
+    result = { ok: true, reason_code: 'ok', message: '连接正常', models: ['gpt-x'] }
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submits(calls)).toHaveLength(1))
+    expect(screen.queryByTestId('vk-channel-blocked')).not.toBeInTheDocument()
+    expect(probes(calls)).toHaveLength(2)
+  })
+
+  it.each([
+    ['timeout', '10 秒内没有响应'],
+    ['unreachable', '连不上这个地址'],
+    ['provider-error', '对方服务异常（HTTP 502）'],
+  ])('%s:只警告,仍然提交', async (reason_code, message) => {
+    const { calls } = routes({ ok: false, reason_code, message })
+    render(<VkPanel baseUrl={BASE} />)
+    await submit()
+
+    await waitFor(() => expect(submits(calls)).toHaveLength(1))
+    const warning = (await screen.findByText('基础处理的模型服务暂时不稳定')).closest('[data-testid="vk-task-banner"]')!
+    expect(warning).toHaveAttribute('data-tone', 'warning')
+    expect(warning).toHaveTextContent(`${message}，已继续提交`)
+    expect(screen.queryByTestId('vk-channel-blocked')).not.toBeInTheDocument()
+  })
+
+  it('探测通过后 10 分钟内不再探测,保存模型配置后重新探测', async () => {
+    const { calls } = routes({ ok: true, reason_code: 'ok', message: '连接正常', models: ['gpt-x'] })
+    const { rerender } = render(<VkPanel baseUrl={BASE} />)
+    await submit()
+    await waitFor(() => expect(submits(calls)).toHaveLength(1))
+    await waitFor(() => expect(screen.getByTestId('vk-submit-button')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submits(calls)).toHaveLength(2))
+    expect(probes(calls)).toHaveLength(1)
+
+    rerender(<VkPanel baseUrl={BASE} providerRevision={1} />)
+    await waitFor(() => expect(screen.getByTestId('vk-submit-button')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submits(calls)).toHaveLength(3))
+    expect(probes(calls)).toHaveLength(2)
+  })
+
+  it('保存模型配置后撤下已经显示的阻止提示', async () => {
+    const { calls } = routes({ ok: false, reason_code: 'unauthorized', message: 'x' })
+    const { rerender } = render(<VkPanel baseUrl={BASE} />)
+    await submit()
+    await screen.findByTestId('vk-channel-blocked')
+    rerender(<VkPanel baseUrl={BASE} providerRevision={1} />)
+    await waitFor(() => expect(screen.queryByTestId('vk-channel-blocked')).not.toBeInTheDocument())
+    expect(submits(calls)).toHaveLength(0)
+  })
+
+  it.each([
+    ['没有基础处理通道', settings({ roles: {} }), { ok: false, reason_code: 'unauthorized', message: 'x' }],
+    ['探测结论不属于认证或网络问题', settings(), { ok: false, reason_code: 'models-endpoint-missing', message: '不是 OpenAI 兼容路径' }],
+  ])('%s:不拦也不警告', async (_name, providers, result) => {
+    const { calls } = routes(result, { 'GET /vk/v1/providers': { body: providers } })
+    render(<VkPanel baseUrl={BASE} />)
+    await submit()
+    await waitFor(() => expect(submits(calls)).toHaveLength(1))
+    expect(screen.queryByTestId('vk-channel-blocked')).not.toBeInTheDocument()
+    expect(screen.queryByText('基础处理的模型服务暂时不稳定')).not.toBeInTheDocument()
+  })
+})
+
+describe('解析完成的系统通知', () => {
+  const sendNotification = desktopNotifications.send
+  const RATE_LIMITED = 'channel-a:default HTTP 429（阶段 chapter，角色 basic，路由 channel-a:default，已尝试 2 次；同角色未配置备用通道）'
+  const row = (job_id: string, status: string, over: Record<string, unknown> = {}) => ({
+    job_id, kind: 'request', status,
+    submitted_at: '2026-08-11T00:01:00+00:00',
+    finished_at: ['running', 'queued'].includes(status) ? null : '2026-08-11T00:10:00+00:00',
+    parent_job_id: null, cache_bypass: false, ...over,
+  })
+
+  beforeEach(() => {
+    sendNotification.mockReset()
+    window.__OPENCLI_BOOT__ = { baseUrl: BASE }
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+  })
+  afterEach(() => {
+    delete window.__OPENCLI_BOOT__
+    vi.restoreAllMocks()
+  })
+
+  const refresh = () => userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+  const sent = () => sendNotification.mock.calls.map((call) => call[0] as { title: string; body: string })
+
+  it('窗口不在前台时,任务从进行中变为完成发系统通知', async () => {
+    const jobsRoute: Route = { body: [row('job-a', 'running')] }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-a')
+    expect(sendNotification).not.toHaveBeenCalled()
+
+    jobsRoute.body = [row('job-a', 'done')]
+    await refresh()
+    await waitFor(() => expect(sendNotification).toHaveBeenCalledTimes(1))
+    expect(sent()[0]).toEqual({ title: '解析完成', body: expect.stringMatching(/^任务 \d+$/) })
+
+    await refresh()
+    await act(async () => {})
+    expect(sendNotification).toHaveBeenCalledTimes(1)
+  })
+
+  it('窗口在前台、首次加载就已完成的历史任务、用户中断的任务都不通知', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    const jobsRoute: Route = { body: [row('job-a', 'running'), row('job-old', 'done', { submitted_at: '2026-08-01T00:00:00+00:00' })] }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-a')
+
+    jobsRoute.body = [row('job-a', 'done'), row('job-old', 'done', { submitted_at: '2026-08-01T00:00:00+00:00' })]
+    await refresh()
+    await screen.findByText(/任务\d+已完成/)
+    await act(async () => {})
+    expect(sendNotification).not.toHaveBeenCalled()
+  })
+
+  it('中断不通知', async () => {
+    const jobsRoute: Route = { body: [row('job-a', 'running')] }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-a')
+    jobsRoute.body = [row('job-a', 'cancelled')]
+    await refresh()
+    await screen.findByText(/任务\d+已中断/)
+    await act(async () => {})
+    expect(sendNotification).not.toHaveBeenCalled()
+  })
+
+  it('任务的通知开关关掉后不发系统通知', async () => {
+    const jobsRoute: Route = { body: [row('job-a', 'running')] }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-a')
+    await userEvent.click(screen.getByRole('switch', { name: /关闭任务 \d+ 完成通知/ }))
+
+    jobsRoute.body = [row('job-a', 'done')]
+    await refresh()
+    await act(async () => {})
+    expect(sendNotification).not.toHaveBeenCalled()
+  })
+
+  it('失败时正文附失败原因的一句人话', async () => {
+    const jobsRoute: Route = { body: [row('job-a', 'running')] }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': jobsRoute,
+      'GET /vk/v1/jobs/job-a': { body: { ...row('job-a', 'failed'), error: RATE_LIMITED } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-a')
+
+    jobsRoute.body = [row('job-a', 'failed')]
+    await refresh()
+    await waitFor(() => expect(sendNotification).toHaveBeenCalledTimes(1))
+    expect(sent()[0].title).toBe('解析失败')
+    expect(sent()[0].body).toMatch(/^任务 \d+：模型服务限流了$/)
+  })
+
+  it('批次整批落定后通知一次,写数量与第 1 个失败项的原因', async () => {
+    const batch = (statuses: string[]) => statuses.map((status, index) => row(`job-${index}`, status, {
+      batch_id: 'batch-1', source: `https://example.com/${index}`, submitted_at: `2026-08-11T00:0${index}:00+00:00`,
+    }))
+    const jobsRoute: Route = { body: batch(['running', 'running', 'running']) }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': jobsRoute,
+      'GET /vk/v1/jobs/job-2': { body: { ...row('job-2', 'failed'), error: RATE_LIMITED } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-0')
+
+    jobsRoute.body = batch(['done', 'running', 'running'])
+    await refresh()
+    await act(async () => {})
+    expect(sendNotification).not.toHaveBeenCalled()
+
+    jobsRoute.body = batch(['done', 'done', 'failed'])
+    await refresh()
+    await waitFor(() => expect(sendNotification).toHaveBeenCalledTimes(1))
+    expect(sent()[0]).toEqual({ title: '部分完成', body: '3 个视频：2 成功、1 失败（模型服务限流了）' })
+  })
+
+  it('串联完成也通知一次', async () => {
+    const batch = (status: string) => [0, 1].map((index) => row(`job-${index}`, status, {
+      batch_id: 'batch-1', source: `https://example.com/${index}`, submitted_at: `2026-08-11T00:0${index}:00+00:00`,
+    }))
+    const storyline = (status: string) => ({
+      storyline_id: 'sl_1', batch_id: 'batch-1', status, trigger: 'auto', requested_at: 't', started_at: null,
+      finished_at: null, error: null, reason: null, storyline_count: 1, standalone_count: 0, cost_cny: null,
+    })
+    const jobsRoute: Route = { body: batch('running') }
+    const storylinesRoute: Route = { body: [storyline('waiting')] }
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': jobsRoute,
+      'GET /vk/v1/storylines': storylinesRoute,
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-0')
+    await waitFor(() => expect(screen.getByTestId('vk-jobs-refresh')).toBeEnabled())
+
+    jobsRoute.body = batch('done')
+    storylinesRoute.body = [storyline('running')]
+    await refresh()
+    await waitFor(() => expect(sendNotification).toHaveBeenCalledTimes(1))
+    expect(sent()[0]).toEqual({ title: '解析完成', body: '2 个视频：2 成功' })
+
+    storylinesRoute.body = [storyline('done')]
+    await refresh()
+    await waitFor(() => expect(sendNotification).toHaveBeenCalledTimes(2))
+    expect(sent()[1]).toEqual({ title: '串联完成', body: '已串成 1 条故事线，0 个视频未归入' })
+
+    await refresh()
+    await act(async () => {})
+    expect(sendNotification).toHaveBeenCalledTimes(2)
+  })
+
+  it('浏览器开发模式(没有 Tauri 壳)不发通知', async () => {
+    delete window.__OPENCLI_BOOT__
+    const jobsRoute: Route = { body: [row('job-a', 'running')] }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-job-open-job-a')
+    jobsRoute.body = [row('job-a', 'done')]
+    await refresh()
+    await screen.findByText(/任务\d+已完成/)
+    await act(async () => {})
+    expect(sendNotification).not.toHaveBeenCalled()
   })
 })

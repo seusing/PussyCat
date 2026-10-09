@@ -136,7 +136,7 @@ export function InspirationPanel({
       result.push({
         key: 'write',
         title: '写入',
-        note: '会修改你的账号内容',
+        note: '会改动你的账号内容或登录状态',
         commands: groups.write,
         collapsible: true,
         collapsed: !writeGroupOpen && !searching,

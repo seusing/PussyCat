@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkStorylineSection } from './VkStorylineSection'
@@ -103,13 +103,22 @@ describe('VkStorylineSection', () => {
     [row({ status: 'partial' }), '已串成 2 条故事线，1 个视频未归入。部分内容生成失败', true],
     [row({ status: 'done', storyline_count: 0, standalone_count: 3 }), '已串成 0 条故事线，3 个视频未归入', false],
     [row({ status: 'skipped', reason: '只有 1 个视频有字幕', storyline_count: null, standalone_count: null }), '可串联的视频不足 2 个（只有 1 个视频有字幕）', false],
-    [row({ status: 'failed', error: '模型超时' }), '串联失败：模型超时', false],
+    [row({ status: 'failed', error: '模型超时' }), '串联失败', false],
   ] as const)('终态 %#:状态文案、重新串联与查看按钮', async (record, text, viewable) => {
     stubStorylineApi([record])
     renderSection()
     expect(await screen.findByTestId('vk-storyline-status')).toHaveTextContent(text)
     expect(screen.getByTestId('vk-storyline-start')).toBeEnabled()
     expect(screen.queryByTestId('vk-storyline-view') !== null).toBe(viewable)
+  })
+
+  it('failed 记录用人话说明原因,引擎原文收进「原始信息」', async () => {
+    stubStorylineApi([row({ status: 'failed', error: 'channel-a:default HTTP 429' })])
+    renderSection()
+    const note = await screen.findByTestId('vk-failure-note')
+    expect(note).toHaveTextContent('模型服务限流了')
+    expect(within(note).getByText('原始信息')).toBeInTheDocument()
+    expect(within(note).getByText('channel-a:default HTTP 429')).toBeInTheDocument()
   })
 
   it('opens the storylines from the view button', async () => {

@@ -96,6 +96,37 @@
   line-height: 1.5;
 }
 
+/* 提交按钮上方的预检提示:只提醒(warning)或说明为什么暂停了提交(danger)。 */
+.vk-submit-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--vk-notice-color) 45%, var(--color-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vk-notice-color) 9%, transparent);
+  padding: 7px 10px;
+  color: var(--color-fg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vk-submit-notice.is-warning { --vk-notice-color: var(--color-warning); }
+.vk-submit-notice.is-danger { --vk-notice-color: var(--color-danger); }
+.vk-submit-notice p { flex-basis: 100%; margin: 0; color: var(--color-fg-dim); }
+
+.vk-submit-notice button {
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  padding: 2px 10px;
+  color: var(--color-fg);
+}
+
+.vk-submit-notice button:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 28%, transparent); }
+.vk-submit-notice button:disabled { opacity: .55; }
+
 /* 多个链接时出现的「解析完成后串联」开关。 */
 .vk-storyline-option label {
   display: inline-flex;

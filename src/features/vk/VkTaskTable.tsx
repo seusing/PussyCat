@@ -5,6 +5,7 @@ import { InlineLoader } from 'generative-loaders'
 import { Bell, BellOff, ChevronDown, Download, Trash2 } from 'lucide-react'
 import type { VkJobRow } from '../../host/vkClient'
 import { GlassSelect, useGlassMenuSurface } from '../../components/GlassMenu'
+import { describeVkFailure } from './vkFailure'
 import 'generative-loaders/styles.css'
 import './VkTaskTable.css'
 
@@ -15,6 +16,8 @@ export interface VkTaskTableProps {
   loading?: boolean
   selectedJobId?: string
   notifications: VkTaskNotifications
+  /** job_id → 引擎原文的失败原因;有的失败行才会在状态徽章上给出一句人话提示。 */
+  failureReasons?: Readonly<Record<string, string>>
   onSelect: (row: VkJobRow) => void
   onOpen: (row: VkJobRow) => void
   onToggleNotification: (id: string, enabled: boolean) => void
@@ -111,6 +114,14 @@ function startedAtLabel(value: string): string {
   }).format(parsed)
 }
 
+/** 失败行的悬停提示:批量行取第一个已知原因的失败成员。 */
+function failureHint(row: VkJobRow, reasons: Readonly<Record<string, string>> | undefined): string | undefined {
+  const raw = (row.batchMembers ?? [row]).map((member) => reasons?.[member.job_id]).find(Boolean)
+  if (!raw) return undefined
+  const failure = describeVkFailure(raw)
+  return `${failure.headline}。${failure.advice}`
+}
+
 function stopRowSelection(event: MouseEvent<HTMLElement>): void {
   event.stopPropagation()
 }
@@ -120,6 +131,7 @@ export function VkTaskTable({
   loading = false,
   selectedJobId,
   notifications,
+  failureReasons,
   onSelect,
   onOpen,
   onToggleNotification,
@@ -356,7 +368,13 @@ export function VkTaskTable({
                   <time dateTime={row.submitted_at} title={row.submitted_at}>{startedAtLabel(row.submitted_at)}</time>
                 </td>
                 <td>
-                  <span className={`vk-task-badge is-${status}`} data-status={status}>{STATUS_LABELS[status]}</span>
+                  <span
+                    className={`vk-task-badge is-${status}`}
+                    data-status={status}
+                    title={status === 'failed' ? failureHint(row, failureReasons) : undefined}
+                  >
+                    {STATUS_LABELS[status]}
+                  </span>
                 </td>
                 <td>
                   <div className="vk-task-operation" onClick={stopRowSelection}>

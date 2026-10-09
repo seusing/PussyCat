@@ -29,6 +29,7 @@ import {
   postVkRuntimeInstall,
   fetchVkProviderSettings,
   fetchVkProviderStatus,
+  fetchVkStorylines,
   isVkEngineNotReady,
   isVkRuntimeSettled,
   testVkProvider,
@@ -39,14 +40,31 @@ import type {
   VkJobView,
   VkPreviewProjection,
   VkQueryAnswer,
+  VkProviderSettings,
   VkRuntimeStatus,
   VkRuntimeCandidate,
+  VkStorylineRow,
 } from '../../host/vkClient'
+import { fetchBridgeHealth, repairBridge, type BridgeHealth } from '../../host/bridgeClient'
 import { BorderGlow } from '../../components/BorderGlow'
 import { runtimeToAdopt } from './runtimePick'
 import { vkErrorNote, vkErrorText, type VkErrorNote } from './vkErrors'
+import { describeVkFailure } from './vkFailure'
+import { VkFailureNote } from './VkFailureNote'
+import {
+  appInBackground,
+  detectJobSettlements,
+  detectStorylineSettlements,
+  jobSettlementNotice,
+  notifyDesktop,
+  snapshotJobStatuses,
+  snapshotStorylineStatuses,
+  storylineNotice,
+  type JobSettlement,
+} from './jobNotifications'
+import { STORYLINE_IN_PROGRESS, VK_STORYLINE_STARTED_EVENT } from './storyline'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
-import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
+import { VideoSourceCoverFlow, detectVideoSources } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { vkJobRowFromView, vkPrimaryOutput as primaryOutput, vkTaskResultGroups } from './taskResults'
@@ -124,6 +142,16 @@ const VK_JOB_RETRY_SUBMITTED_EVENT = 'vk:job-retry-submitted'
 const VK_NOTIFICATIONS_KEY = 'opencli-app:vk-task-notifications:v1'
 const VK_HIDDEN_JOBS_KEY = 'opencli-app:vk-hidden-jobs:v1'
 const VK_TASK_NUMBERS_KEY = 'opencli-app:vk-task-numbers:v1'
+// 小红书链接触发的浏览器桥检查:输入稳定后再查一次,半分钟内不重复查。
+const BRIDGE_CHECK_DEBOUNCE_MS = 600
+const BRIDGE_CHECK_FRESH_MS = 30_000
+const BRIDGE_REPAIR_TIMEOUT_MS = 30_000   // 与连接状态胶囊的修复等待一致:重启 daemon 最长 20s
+// 提交前探测「基础处理」主通道(GET /models,不消耗 token):通过的结果缓存这么久。
+const CHANNEL_PROBE_TTL_MS = 10 * 60_000
+// 探测里属于网络或上游故障的结论:只提醒,仍允许提交。
+const CHANNEL_PROBE_WARN_REASONS = new Set(['timeout', 'unreachable', 'provider-error', 'rate-limited'])
+// 认证失败的措辞与动作和任务失败原因共用同一份。
+const CHANNEL_AUTH_BLOCK = describeVkFailure('HTTP 401')
 // 从「博主全部笔记」一键导入的链接天然是同一作者的系列内容,串联默认开。
 const STORYLINE_DEFAULT_ON_COMMAND = 'xiaohongshu/user-posts'
 
@@ -375,6 +403,8 @@ type TaskBannerTone = 'info' | 'success' | 'danger' | 'warning' | 'rerun'
 type TaskBanner = {
   id: string
   message: string
+  /** 失败原因的一句人话,放在标题下面。 */
+  description?: string
   tone: TaskBannerTone
   createdAt: number
 }
@@ -409,6 +439,7 @@ function TaskBannerNotice({ banner, onDismiss }: {
       dataTone={banner.tone}
       tone={alertTone}
       title={banner.message}
+      description={banner.description}
       className={`vk-task-banner is-${banner.tone}`}
       role="status"
       onClose={() => onDismiss(banner.id)}
@@ -510,9 +541,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [taskReasoningEfforts, setTaskReasoningEfforts] = useState<string[]>([])
   const [reasoningDiscovery, setReasoningDiscovery] = useState<string | null>(null)
   const [reasoningDiscovering, setReasoningDiscovering] = useState(false)
+  const providerSettingsRef = useRef<VkProviderSettings | null>(null)
   const refreshProviders = useCallback(async () => {
     // 问不到就别下结论(configured 为 null),不冒充已配置
-    const { configured, costTracking } = await fetchVkProviderStatus(base)
+    const { configured, costTracking, settings } = await fetchVkProviderStatus(base)
+    providerSettingsRef.current = settings
     setProviderConfigured(configured)
     setCostTracking(costTracking)
     return configured
@@ -698,6 +731,75 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     ])
   }, [])
 
+  // —— 提交前预检 ——
+  // 小红书笔记常要登录才能读:输入里出现小红书链接时看一眼浏览器扩展连没连上。只提醒,不拦提交。
+  const hasXiaohongshu = useMemo(
+    () => detectVideoSources(sourceList.join('\n')).some((item) => item.id === 'xiaohongshu'),
+    [sourceList],
+  )
+  const [bridgeHealth, setBridgeHealth] = useState<BridgeHealth | null>(null)
+  const [bridgeRepairing, setBridgeRepairing] = useState(false)
+  const [bridgeRepairNote, setBridgeRepairNote] = useState<string | null>(null)
+  const bridgeCheckedAt = useRef(0)
+  useEffect(() => {
+    if (!hasXiaohongshu) return undefined
+    const timer = window.setTimeout(() => {
+      if (Date.now() - bridgeCheckedAt.current < BRIDGE_CHECK_FRESH_MS) return
+      bridgeCheckedAt.current = Date.now()
+      void fetchBridgeHealth(base).then(setBridgeHealth).catch(() => { /* 问不到就不下结论 */ })
+    }, BRIDGE_CHECK_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [hasXiaohongshu, base])
+  const repairBridgeNow = async () => {
+    setBridgeRepairing(true)
+    setBridgeRepairNote(null)
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => controller.abort(), BRIDGE_REPAIR_TIMEOUT_MS)
+    try {
+      const result = await repairBridge(base, controller.signal)
+      bridgeCheckedAt.current = Date.now()
+      setBridgeHealth(result.health)
+      if (result.health?.reasonCode !== 'ok' && result.nextStep) setBridgeRepairNote(result.nextStep)
+    } catch {
+      setBridgeRepairNote('修复请求没送到，确认爪爪服务在运行后重试')
+    } finally {
+      window.clearTimeout(timer)
+      setBridgeRepairing(false)
+    }
+  }
+
+  // 「基础处理」主通道的 key 失效,任务一定会在第一步模型调用就失败:提交前用只读探测拦下。
+  // 探测走 /providers/test 且不带 api_key(引擎按 key_env 取已保存的那把),只读 /models、不消耗 token。
+  const [channelBlocked, setChannelBlocked] = useState(false)
+  const channelOkUntil = useRef(0)
+  useEffect(() => {
+    channelOkUntil.current = 0
+    setChannelBlocked(false)
+  }, [providerRevision])
+  const probeBasicChannel = async (): Promise<{ verdict: 'ok' | 'auth' | 'warn'; message?: string }> => {
+    if (Date.now() < channelOkUntil.current) return { verdict: 'ok' }
+    try {
+      // 提交流程刚用 refreshProviders 读过一次配置,直接用它,不再多问一遍。
+      const settings = providerSettingsRef.current
+      const channel = settings?.channels.find((item) => item.id === settings.roles.basic)
+      if (!channel) return { verdict: 'ok' }
+      const result = await testVkProvider({
+        base_url: channel.base_url,
+        key_env: channel.key_env,
+        api_style: channel.api_style,
+      }, base)
+      if (result.ok) {
+        channelOkUntil.current = Date.now() + CHANNEL_PROBE_TTL_MS
+        return { verdict: 'ok' }
+      }
+      if (result.reason_code === 'unauthorized') return { verdict: 'auth' }
+      if (CHANNEL_PROBE_WARN_REASONS.has(result.reason_code)) return { verdict: 'warn', message: result.message }
+    } catch {
+      // 探测本身出错不拦提交:真正的失败会在任务里如实报出。
+    }
+    return { verdict: 'ok' }
+  }
+
   // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
   const buildProjection = (sourceValue = source.trim(), goalValue = userGoal): VkPreviewProjection => {
     const userMetadata = {
@@ -727,7 +829,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     }
   }
 
-  const requestSubmit = async () => {
+  // skipChannelCheck:用户在「key 失效」提示里选了「仍然提交」,这一次不做通道预检(不缓存,下次照常检查)。
+  const requestSubmit = async ({ skipChannelCheck = false }: { skipChannelCheck?: boolean } = {}) => {
     if (submitInFlight.current) return
     const sources = sourceLines(source)
     if (sources.length === 0) return
@@ -751,6 +854,18 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           createdAt: Date.now(),
         }])
         return
+      }
+      const channel = skipChannelCheck ? { verdict: 'ok' as const } : await probeBasicChannel()
+      setChannelBlocked(channel.verdict === 'auth')
+      if (channel.verdict === 'auth') return
+      if (channel.verdict === 'warn') {
+        addTaskBanners([{
+          id: `channel-warning:${crypto.randomUUID()}`,
+          message: '基础处理的模型服务暂时不稳定',
+          description: `${channel.message}，已继续提交`,
+          tone: 'warning',
+          createdAt: Date.now(),
+        }])
       }
       for (const [index, sourceValue] of sources.entries()) {
         const previewedRequest = await postVkPreview(buildProjection(sourceValue, goalSnapshot), base)
@@ -804,6 +919,66 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const jobsGen = useRef(0)
   const notificationPrefsRef = useRef(notifications)
   const previousStatusesRef = useRef<Map<string, string> | null>(null)
+  const previousLogicalStatusesRef = useRef<Map<string, string> | null>(null)
+  const previousStorylinesRef = useRef<Map<string, string> | null>(null)
+  const [storylinesInProgress, setStorylinesInProgress] = useState(false)
+  const storylinesInProgressRef = useRef(false)
+
+  // 失败任务的引擎原文只在任务详情里,列表接口不带:按需取一次并记住,供横幅、表格提示和系统通知共用。
+  const [failureReasons, setFailureReasons] = useState<Record<string, string>>({})
+  const failureLookups = useRef(new Map<string, Promise<string | null>>())
+  const loadFailureReason = useCallback((jobId: string): Promise<string | null> => {
+    const known = failureLookups.current.get(jobId)
+    if (known) return known
+    const lookup = fetchVkJob(jobId, base).then((job) => {
+      const reason = job.error?.trim() || null
+      if (reason) setFailureReasons((current) => (current[jobId] === reason ? current : { ...current, [jobId]: reason }))
+      return reason
+    }).catch(() => {
+      failureLookups.current.delete(jobId)    // 没取到就允许下次再试
+      return null
+    })
+    failureLookups.current.set(jobId, lookup)
+    return lookup
+  }, [base])
+
+  // 系统通知:只在窗口不在前台时发;失败项取第 1 个有原因的失败成员的人话结论。
+  const announceSettlements = useCallback(async (settlements: JobSettlement[]) => {
+    if (!appInBackground()) return
+    for (const settlement of settlements) {
+      if (notificationPrefsRef.current[settlement.jobId] === false) continue
+      let headline: string | undefined
+      for (const jobId of settlement.failedJobIds) {
+        const reason = await loadFailureReason(jobId)
+        if (reason) {
+          headline = describeVkFailure(reason).headline
+          break
+        }
+      }
+      await notifyDesktop(jobSettlementNotice(settlement, headline))
+    }
+  }, [loadFailureReason])
+  const announceStorylines = useCallback(async (settled: VkStorylineRow[]) => {
+    if (!appInBackground()) return
+    for (const row of settled) {
+      await notifyDesktop(storylineNotice(row, row.error ? describeVkFailure(row.error).headline : undefined))
+    }
+  }, [])
+  // 串联只存在于多视频批次,所以只在批次进行中、刚落定,或已知有串联在跑时才去问。
+  // 取不到(旧版引擎没有这个接口)不影响任务列表。
+  const watchStorylines = useCallback(async () => {
+    try {
+      const storylines = await fetchVkStorylines(undefined, base)
+      const settled = detectStorylineSettlements(previousStorylinesRef.current, storylines)
+      previousStorylinesRef.current = snapshotStorylineStatuses(storylines)
+      const inProgress = storylines.some((row) => STORYLINE_IN_PROGRESS.has(row.status))
+      storylinesInProgressRef.current = inProgress
+      setStorylinesInProgress(inProgress)
+      if (settled.length) void announceStorylines(settled)
+    } catch {
+      // 保持上一次的判断
+    }
+  }, [base, announceStorylines])
   const taskNumbersRef = useRef(taskNumbers)
   const selectedIdRef = useRef<string | null>(null)
   selectedIdRef.current = selectedJobId ?? selectedJob?.job_id ?? null
@@ -867,6 +1042,14 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             // The list remains authoritative even if this one detail read races sidecar shutdown.
           }
         }
+        // 失败的任务把原因取回来,横幅里说清是什么问题;取不到就只说「遇到了些问题」。
+        const failureHeadlines = new Map<string, string>()
+        await Promise.all(terminalTransitions
+          .filter((row) => !SUCCESS_STATUSES.has(row.status) && !INTERRUPTED_STATUSES.has(row.status))
+          .map(async (row) => {
+            const reason = await loadFailureReason(row.job_id)
+            if (reason) failureHeadlines.set(row.job_id, describeVkFailure(reason).headline)
+          }))
         if (gen !== jobsGen.current) return
         if (previous) {
           const notices = rows.flatMap((row) => {
@@ -878,6 +1061,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             return [{
               id: `${row.job_id}:${row.finished_at ?? row.status}`,
               message: success ? `任务${row.taskNumber}已完成` : `任务${row.taskNumber}遇到了些问题`,
+              description: failureHeadlines.get(row.job_id),
               tone: success ? 'success' as const : 'danger' as const,
               createdAt: Date.now(),
               ...(interrupted ? {
@@ -894,6 +1078,14 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           }
         }
         previousStatusesRef.current = new Map(rows.map((row) => [row.job_id, row.status]))
+        const logicalRows = latestLogicalTasks(rows)
+        const settlements = detectJobSettlements(previousLogicalStatusesRef.current, logicalRows)
+        previousLogicalStatusesRef.current = snapshotJobStatuses(logicalRows)
+        if (settlements.length) void announceSettlements(settlements)
+        const batchInFlight = logicalRows.some((row) => (row.batchMembers?.length ?? 0) > 1 && ACTIVE_STATUSES.has(row.status))
+        if (batchInFlight || settlements.some((item) => item.total > 1) || storylinesInProgressRef.current) {
+          void watchStorylines()
+        }
         setJobs(rows)
         if (selectedTerminalDetail) setSelectedJob(selectedTerminalDetail)
         setJobsError(null)
@@ -912,7 +1104,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     } finally {
       if (manual) setJobsRefreshing(false)
     }
-  }, [attachTaskNumbers, base])
+  }, [announceSettlements, attachTaskNumbers, base, loadFailureReason, watchStorylines])
   useEffect(() => { void refreshJobs() }, [refreshJobs, refreshToken])
   const refreshEngineStatus = useCallback(async () => {
     setHealthChecking(true)
@@ -940,10 +1132,18 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     })()
   }, [checkHealth, refreshJobs, runtime?.state])
   useEffect(() => {
-    if (!jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
+    if (!storylinesInProgress && !jobs.some((row) => ACTIVE_STATUSES.has(row.status))) return
     const timer = setInterval(() => { void refreshJobs() }, 15_000)
     return () => clearInterval(timer)
-  }, [jobs, refreshJobs])
+  }, [jobs, refreshJobs, storylinesInProgress])
+  // 表格里的失败行悬停能看到原因:列表接口不带原文,把最近的失败行补取一次(只取最新 20 条)。
+  useEffect(() => {
+    const failed = latestLogicalTasks(jobs)
+      .flatMap((row) => row.batchMembers ?? [row])
+      .filter((row) => /fail|error|quarantin/.test(row.status.trim().toLowerCase()))
+      .slice(0, 20)
+    for (const row of failed) void loadFailureReason(row.job_id)
+  }, [jobs, loadFailureReason])
   useEffect(() => {
     const refreshFromDetail = () => { void refreshJobs() }
     const notifyRetrySubmitted = (event: Event) => {
@@ -963,6 +1163,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       window.removeEventListener(VK_JOB_RETRY_SUBMITTED_EVENT, notifyRetrySubmitted)
     }
   }, [addTaskBanners, refreshJobs])
+
+  // 在任务详情里手动发起串联:面板并不知道,收到通知就开始盯这条串联的结果。
+  useEffect(() => {
+    const onStarted = () => { void watchStorylines() }
+    window.addEventListener(VK_STORYLINE_STARTED_EVENT, onStarted)
+    return () => window.removeEventListener(VK_STORYLINE_STARTED_EVENT, onStarted)
+  }, [watchStorylines])
 
   const openJob = async (jobId: string) => {
     setActionError(null)
@@ -1464,6 +1671,29 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         <div data-testid="vk-third-party-data-notice" className="mb-3 rounded-lg px-3 py-2 text-[11px] leading-relaxed" style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}>
           为完成解析，视频中提取的字幕或语音转写会发送到你在“模型配置”中选择的第三方模型服务；爪爪不会替该服务改变其数据处理规则。
         </div>
+        {hasXiaohongshu && bridgeHealth && bridgeHealth.reasonCode !== 'ok' && (
+          <div data-testid="vk-xhs-bridge-warning" role="status" className="vk-submit-notice is-warning">
+            <span>检测到小红书链接：浏览器扩展没连上时，需要登录才能看的笔记会下载失败。</span>
+            <button type="button" data-testid="vk-xhs-bridge-repair" disabled={bridgeRepairing} onClick={() => { void repairBridgeNow() }}>
+              {bridgeRepairing ? '检测中…' : '检测并修复'}
+            </button>
+            {bridgeRepairNote && <p data-testid="vk-xhs-bridge-note">{bridgeRepairNote}</p>}
+          </div>
+        )}
+        {channelBlocked && (
+          <div data-testid="vk-channel-blocked" role="alert" className="vk-submit-notice is-danger">
+            <span>{CHANNEL_AUTH_BLOCK.headline}</span>
+            {CHANNEL_AUTH_BLOCK.action && (
+              <button type="button" data-testid="vk-channel-blocked-action" onClick={CHANNEL_AUTH_BLOCK.action.run}>
+                {CHANNEL_AUTH_BLOCK.action.label}
+              </button>
+            )}
+            <button type="button" data-testid="vk-channel-blocked-override" disabled={previewing} onClick={() => { void requestSubmit({ skipChannelCheck: true }) }}>
+              仍然提交
+            </button>
+            <p>{CHANNEL_AUTH_BLOCK.advice}。有的中转站不开放模型列表，确认 key 没问题时可以仍然提交，本次不再检查。</p>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -1513,6 +1743,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           loading={jobsRefreshing}
           selectedJobId={selectedJobId ?? selectedJob?.job_id}
           notifications={tableNotifications}
+          failureReasons={failureReasons}
           onSelect={(row) => { void openJob(row.job_id) }}
           onOpen={(row) => { void openTaskResult(row) }}
           onToggleNotification={toggleTaskNotification}
@@ -1533,7 +1764,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             <button type="button" data-testid="vk-job-retry" onClick={() => { void jobAction(selectedJob.job_id, 'retry') }} className={outlineButton} style={outlineStyle}>重试</button>
             <button type="button" onClick={() => setSelectedJob(null)} className="rounded-lg px-2 py-1 text-sm leading-none" style={{ color: 'var(--color-fg-dim)' }}>×</button>
           </div>
-          {selectedJob.error && <div className="mb-2" style={{ color: 'var(--color-danger)' }}>{selectedJob.error}</div>}
+          {selectedJob.error && <div className="mb-2"><VkFailureNote raw={selectedJob.error} /></div>}
           {selectedJob.budget_stop && (
             <div data-testid="vk-budget-stop" className="mb-2 rounded-lg p-2" style={{ background: 'var(--color-canvas)', color: 'var(--color-warning)' }}>
               已按费用上限终止:{selectedJob.budget_stop.reason}

@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkTaskDetailSidebar } from './VkTaskDetailSidebar'
 import type { VkJobView } from '../../host/vkClient'
+import { useAppStore } from '../../store/appStore'
 
 const BASE = 'http://127.0.0.1:17373'
 
@@ -1499,6 +1500,68 @@ describe('VkTaskDetailSidebar', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('失败')
     expect(screen.getByText('上游处理失败')).toBeInTheDocument()
     expect(screen.queryByLabelText('任务正在执行')).not.toBeInTheDocument()
+  })
+
+  describe('失败原因', () => {
+    const RATE_LIMITED = 'channel-a:default HTTP 429（阶段 chapter，角色 basic，路由 channel-a:default，模型 gpt-5.6-luna，接口 /v1/responses，已尝试 2 次；同角色未配置备用通道；不会跨角色自动切换）'
+    const EXPIRED_KEY = "channel-a:default HTTP 401: {'error': {'code': '401', 'message': '令牌已过期或验证不正确'}}"
+    const failedJob = (over: Partial<VkJobView> = {}): VkJobView => ({
+      job_id: 'job-fail', kind: 'run', status: 'failed',
+      submitted_at: '2026-08-07T10:00:00Z', finished_at: '2026-08-07T10:01:00Z',
+      parent_job_id: null, cache_bypass: false,
+      request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      ...over,
+    })
+    const stubJob = (job: VkJobView) => vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith(`/vk/v1/jobs/${job.job_id}`)) return new Response(JSON.stringify(job), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      if (url.endsWith('/vk/v1/jobs')) return new Response('[]', { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
+
+    it('任务错误显示一句结论与建议,引擎原文收进「原始信息」,动作带用户去模型配置', async () => {
+      const user = userEvent.setup()
+      useAppStore.getState().setActiveModule('vk')
+      stubJob(failedJob({ error: RATE_LIMITED }))
+      render(<VkTaskDetailSidebar jobId="job-fail" baseUrl={BASE} onClose={() => {}} />)
+
+      const note = await screen.findByTestId('vk-failure-note')
+      expect(note).toHaveTextContent('模型服务限流了')
+      expect(note).toHaveTextContent('稍后重试，或给这个角色配一个备用通道')
+      const raw = within(note).getByText('原始信息').closest('details')!
+      expect(raw).not.toHaveAttribute('open')
+      expect(within(raw).getByText(RATE_LIMITED)).toBeInTheDocument()
+
+      await user.click(within(note).getByRole('button', { name: '去模型配置' }))
+      expect(useAppStore.getState().activeModule).toBe('providers')
+    })
+
+    it('失败阶段带引擎错误时同样翻成人话,没有原因的阶段仍用兜底说明', async () => {
+      const user = userEvent.setup()
+      const metric = (stage: string, status: string, error?: string) => ({
+        stage, status, elapsed_s: 3, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0,
+        ...(error === undefined ? {} : { error }),
+      })
+      stubJob(failedJob({
+        error: null,
+        progress: {
+          completed_stages: ['acquire'],
+          stage_metrics: [metric('acquire', 'done'), metric('chapter', 'failed', EXPIRED_KEY), metric('note', 'failed')],
+        },
+      }))
+      render(<VkTaskDetailSidebar jobId="job-fail" baseUrl={BASE} onClose={() => {}} />)
+      await user.click(await screen.findByTestId('vk-task-detail-task-row-source-0'))
+
+      const steps = within(screen.getByRole('list', { name: '解析阶段' })).getAllByRole('listitem')
+      const chapter = steps.find((item) => item.dataset.stage === 'chapter')!
+      expect(chapter).toHaveTextContent('模型服务的 API key 无效或已过期')
+      expect(within(chapter).getByRole('button', { name: '去模型配置' })).toBeInTheDocument()
+      expect(within(chapter).getByText(EXPIRED_KEY)).toBeInTheDocument()
+      const note = steps.find((item) => item.dataset.stage === 'note')!
+      expect(note).toHaveTextContent('这一步没有产出可用结果')
+      expect(within(note).queryByTestId('vk-failure-note')).not.toBeInTheDocument()
+    })
   })
 
   it('stops an active task and exposes no retry or resubmit action', async () => {

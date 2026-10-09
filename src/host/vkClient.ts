@@ -760,12 +760,12 @@ export async function fetchVkProviderSettings(baseUrl = DEFAULT_BASE_URL): Promi
  */
 export async function fetchVkProviderStatus(
   baseUrl = DEFAULT_BASE_URL,
-): Promise<{ configured: boolean | null; costTracking: boolean | null }> {
+): Promise<{ configured: boolean | null; costTracking: boolean | null; settings: VkProviderSettings | null }> {
   try {
     const settings = await fetchVkProviderSettings(baseUrl)
-    return { configured: settings.configured, costTracking: settings.cost_tracking ?? false }
+    return { configured: settings.configured, costTracking: settings.cost_tracking ?? false, settings }
   } catch {
-    return { configured: null, costTracking: null }
+    return { configured: null, costTracking: null, settings: null }
   }
 }
 

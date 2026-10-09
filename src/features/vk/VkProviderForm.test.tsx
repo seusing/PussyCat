@@ -533,8 +533,8 @@ test('配置清单移除旧说明,创建弹窗与关键操作都有可访问名�
   expect(rowTest).toHaveTextContent('')
   expect(rowTest.querySelector('svg')).not.toBeNull()
 
-  expect(screen.getByTestId('vk-role-composite-basic')).toHaveAccessibleName('基础处理启用复合key')
-  expect(screen.getByTestId('vk-role-composite-deep_analysis')).toHaveAccessibleName('深度分析启用复合key')
+  expect(screen.getByTestId('vk-role-composite-basic')).toHaveAccessibleName('基础处理启用备用通道')
+  expect(screen.getByTestId('vk-role-composite-deep_analysis')).toHaveAccessibleName('深度分析启用备用通道')
 
   await user.click(create)
   const dialog = screen.getByRole('dialog', { name: '创建配置' })
@@ -1009,18 +1009,109 @@ test('复合选择不会重复添加主通道或已选通道，并立即提交',
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
 })
 
-test('开启复合但只有主通道时提示至少选择两个配置', async () => {
-  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
-    channels: [channel()],
-    role_assignments: { basic: 'cheap' },
-    role_fallbacks: { basic: [] },
-    role_composite_enabled: { basic: true, deep_analysis: false },
-  }) } })
+test('「备用通道」开关旁说明切换时机', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(
-    '至少选择 2 个配置才能形成故障切换',
-  )
+  const toggle = await screen.findByTestId('vk-role-composite-basic')
+  expect(toggle.closest('label')).toHaveTextContent('备用通道')
+  expect(toggle.closest('label')).not.toHaveTextContent('复合key')
+  expect(screen.getByTestId('vk-role-routing-basic')).toHaveTextContent('主通道超时、限流或上游 5xx 时自动切换到下一条')
+  expect(screen.queryByText(/复合key/)).not.toBeInTheDocument()
+})
+
+describe('只有一个通道的提示', () => {
+  const OTHER_CONFIG_HINT = '只有一个通道：它出问题时任务会直接失败。建议启用备用通道并选一条。'
+  const ADD_CONFIG_HINT = '建议再添加一个模型配置作为备用。'
+  const two = () => [channel(), channel({ id: 'backup', name: '备用', base_url: 'https://backup.example/v1' })]
+
+  test('还有其他可选配置时,提醒启用备用通道并选一条', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+      channels: two(),
+      role_assignments: { basic: 'cheap', deep_analysis: 'cheap' },
+    }) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-hint-basic')).toHaveTextContent(OTHER_CONFIG_HINT)
+    expect(screen.getByTestId('vk-role-hint-deep_analysis')).toHaveTextContent(OTHER_CONFIG_HINT)
+  })
+
+  test('总共只有一个配置时,建议再添加一个作为备用', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ role_assignments: { basic: 'cheap' } }) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-hint-basic')).toHaveTextContent(ADD_CONFIG_HINT)
+    expect(screen.getByTestId('vk-role-hint-basic')).not.toHaveTextContent('启用备用通道')
+  })
+
+  test('已启用备用通道但没选备用时同样提醒', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+      channels: two(),
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: [] },
+      role_composite_enabled: { basic: true, deep_analysis: false },
+    }) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-hint-basic')).toHaveTextContent(OTHER_CONFIG_HINT)
+    expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
+  })
+
+  test('备用通道没启用时,选过的备用不生效,仍按单通道提醒', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+      channels: two(),
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: ['backup'] },
+      role_composite_enabled: { basic: false, deep_analysis: false },
+    }) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-hint-basic')).toHaveTextContent(OTHER_CONFIG_HINT)
+  })
+
+  test('启用并选好备用通道后不提醒,取消启用后重新出现', async () => {
+    stubRoutes({
+      'GET /vk/v1/providers': { body: settings({
+        channels: two(),
+        role_assignments: { basic: 'cheap' },
+        role_fallbacks: { basic: ['backup'] },
+        role_composite_enabled: { basic: true, deep_analysis: false },
+      }) },
+      'POST /vk/v1/providers': { body: SAVE_OK },
+    })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+    expect(screen.queryByTestId('vk-role-hint-basic')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('vk-role-composite-basic'))
+    expect(await screen.findByTestId('vk-role-hint-basic')).toHaveTextContent(OTHER_CONFIG_HINT)
+  })
+
+  test('没有指定主通道的角色不提醒;禁用的配置不算可选配置', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+      channels: [channel(), channel({ id: 'backup', name: '备用', enabled: false })],
+      roles: { basic: null, deep_analysis: 'cheap' },
+      role_assignments: { deep_analysis: 'cheap' },
+    }) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-hint-deep_analysis')).toHaveTextContent(ADD_CONFIG_HINT)
+    expect(screen.queryByTestId('vk-role-hint-basic')).not.toBeInTheDocument()
+  })
+
+  test('提示不阻止保存:照常选择、保存模型配置', async () => {
+    const { calls } = stubRoutes({
+      'GET /vk/v1/providers': { body: settings({ channels: two(), role_assignments: { basic: 'cheap' } }) },
+      'POST /vk/v1/providers': { body: SAVE_OK },
+    })
+    render(<VkProviderForm baseUrl={BASE} />)
+    await screen.findByTestId('vk-role-hint-basic')
+
+    await chooseGlass(screen.getByTestId('vk-role-basic'), '备用')
+    await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+    const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as { roles: Record<string, string> }
+    expect(body.roles.basic).toBe('backup')
+  })
 })
 
 test('已有备用通道时不显示缺失备用警告', async () => {

@@ -10,6 +10,7 @@ import {
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
 import { vkErrorText } from './vkErrors'
+import { VkFailureNote } from './VkFailureNote'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { useGlassMenuSurface } from '../../components/GlassMenu'
@@ -235,6 +236,8 @@ type StageDisplay = {
   state: 'completed' | 'active' | 'interrupted' | 'failed' | 'recorded'
   /** 只在引擎明确判了这一阶段隔离/失败时有值。 */
   failureReason: string | null
+  /** 引擎随这一阶段下发的原始错误;没给时为 null,界面只显示 failureReason 的兜底说明。 */
+  failureRaw: string | null
 }
 
 // 原因优先取引擎随 stage_metrics 下发的 error;旧引擎或引擎没给时,如实说「没有产出」。
@@ -288,17 +291,19 @@ function stageDisplayEntries(job: VkJobView): StageDisplay[] {
     const metric = metricByStage.get(stage) ?? null
     let state: StageDisplay['state'] = isCompleted(stage) ? 'completed' : 'recorded'
     let failureReason: string | null = null
+    let failureRaw: string | null = null
     // 被隔离/失败的阶段不论是不是最后一个、任务整体算不算失败(partial 任务就带着
     // 一个被隔离的阶段),都要显示成失败,否则只会落成一个看不出含义的序号。
     if (state !== 'completed' && FAILED_STAGE_METRIC_STATUSES.has((metric?.status ?? '').toLowerCase())) {
       state = 'failed'
-      failureReason = metric?.error?.trim() || STAGE_NO_RESULT_REASON
+      failureRaw = metric?.error?.trim() || null
+      failureReason = failureRaw ?? STAGE_NO_RESULT_REASON
     } else if (stage === latestStage && state !== 'completed') {
       if (ACTIVE_STATUSES.has(status)) state = 'active'
       else if (INTERRUPTED_STATUSES.has(status)) state = 'interrupted'
       else if (batchState(status) === 'failed') state = 'failed'
     }
-    return { stage, metric, state, failureReason }
+    return { stage, metric, state, failureReason, failureRaw }
   })
 }
 
@@ -470,9 +475,9 @@ function TaskProgressDetails({
                 <strong>{stageLabel(entry.stage)}</strong>
                 <span>{elapsed}</span>
               </div>
-              {entry.failureReason && (
-                <span className="vk-task-detail-step-reason">{entry.failureReason}</span>
-              )}
+              {entry.failureRaw
+                ? <div className="vk-task-detail-step-reason"><VkFailureNote raw={entry.failureRaw} /></div>
+                : entry.failureReason && <span className="vk-task-detail-step-reason">{entry.failureReason}</span>}
             </li>
             )
           })}
@@ -1058,7 +1063,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
             </div>
           </dl>
 
-          {job.error && <div className="vk-task-detail-error">{job.error}</div>}
+          {job.error && <div className="vk-task-detail-error"><VkFailureNote raw={job.error} /></div>}
 
           <div className="vk-task-detail-actions">
             {/* 整批重跑。放在最前:从批量行点进来的人,想要的多半是"这一批再来一次",

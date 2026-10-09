@@ -1423,13 +1423,14 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             const compositeEnabled = roleCompositeEnabled[role] ?? false
             const available = drafts.filter((draft) => draft.enabled)
             const routeWarnings = [...new Set([
-              ...(compositeEnabled && route.length === 1
-                ? ['至少选择 2 个配置才能形成故障切换']
-                : []),
               ...(compositeEnabled && routeHasDuplicateHost(route, drafts)
                 ? ['主通道与备用通道实际指向同一服务，故障时可能同时不可用']
                 : []),
             ])]
+            // 没启用备用通道时引擎只用主通道,选过的备用不生效。只有一个通道时出问题任务就直接失败,
+            // 温和提醒一句,不阻止保存。
+            const singleChannel = primary !== '' && (compositeEnabled ? route : [primary]).length === 1
+            const hasOtherConfig = available.some((draft) => draft.id !== primary)
             return (
             <div key={role} data-testid={`vk-role-routing-${role}`} className="rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
               <div className="vk-role-header">
@@ -1454,15 +1455,25 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   options={[{ value: '', label: '— 还没指定 —' }, ...available.map((draft) => ({ value: draft.id, label: draft.name }))]}
                 />}
                 <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{settings.role_hints[role]}</span>
-                <label className="vk-role-composite-toggle text-xs">
-                  <input data-testid={`vk-role-composite-${role}`} type="checkbox" aria-label={`${settings.role_labels[role]}启用复合key`} checked={compositeEnabled} disabled={saving} onChange={(event) => setCompositeEnabled(role, event.target.checked)} />
-                  启用复合key
-                </label>
+                <div className="vk-role-composite">
+                  <label className="vk-role-composite-toggle text-xs">
+                    <input data-testid={`vk-role-composite-${role}`} type="checkbox" aria-label={`${settings.role_labels[role]}启用备用通道`} checked={compositeEnabled} disabled={saving} onChange={(event) => setCompositeEnabled(role, event.target.checked)} />
+                    备用通道
+                  </label>
+                  <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>主通道超时、限流或上游 5xx 时自动切换到下一条</span>
+                </div>
               </div>
               <div className="mt-2 space-y-1.5">
                 {routeWarnings.map((warning) => (
                   <div key={warning} data-testid={`vk-role-warning-${role}`} className="text-xs" style={{ color: 'var(--color-warning)' }}>{warning}</div>
                 ))}
+                {singleChannel && (
+                  <div data-testid={`vk-role-hint-${role}`} className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                    {hasOtherConfig
+                      ? '只有一个通道：它出问题时任务会直接失败。建议启用备用通道并选一条。'
+                      : '建议再添加一个模型配置作为备用。'}
+                  </div>
+                )}
               </div>
             </div>
           )})}

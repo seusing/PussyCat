@@ -186,6 +186,13 @@
   gap: 0.5rem;
 }
 
+.vk-role-composite {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem 0.6rem;
+}
+
 .vk-role-composite-toggle {
   display: inline-flex;
   align-items: center;

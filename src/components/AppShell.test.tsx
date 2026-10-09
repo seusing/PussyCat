@@ -176,6 +176,18 @@ test('隐藏→再显示:恢复隐藏前的宽度(不是重置为默认值),折�
   expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual({ ...defaultLayout(), navWidth: 350, runsWidth: 400 })
 })
 
+test('外壳回写栏宽、折叠时不冲掉登录页刚打开的「定时检查」', () => {
+  renderShell()   // 外壳此刻读到的是定时检查还没开的那份
+  localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...defaultLayout(), autoLoginRefresh: true, autoLoginRefreshMinutes: 15 }))   // 登录页随后打开了开关
+
+  fireEvent.keyDown(screen.getByTestId('separator-nav'), { key: 'ArrowRight' })
+  fireEvent.click(screen.getByTestId('toggle-runs'))
+
+  const stored = JSON.parse(localStorage.getItem(LAYOUT_KEY)!)
+  expect(stored).toMatchObject({ autoLoginRefresh: true, autoLoginRefreshMinutes: 15, runsHidden: true })
+  expect(stored.navWidth).toBeGreaterThan(NAV_DEFAULT)
+})
+
 test('full-page modules keep a collapsed rail and persist its hidden state', () => {
   render(
     <AppShell

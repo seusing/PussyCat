@@ -18,7 +18,7 @@ import ResizableSplit from './ResizableSplit'
 import { useAppStore } from '../store/appStore'
 import { APP_VERSION_LABEL } from '../lib/appVersion'
 import {
-  loadLayout, saveLayout, clampColumnWidth,
+  loadLayout, saveShellLayout, clampColumnWidth,
   NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
   MODULE_SIDEBAR_MIN, MODULE_SIDEBAR_MAX, MODULE_SIDEBAR_DEFAULT,
   MODULE_SIDEBAR_COLLAPSED,
@@ -108,18 +108,18 @@ export default function AppShell({
     layoutRef.current = next
     setLayout(next)
   }, [])
-  const commitLayout = useCallback(() => saveLayout(layoutRef.current), [])
+  const commitLayout = useCallback(() => saveShellLayout(layoutRef.current), [])
   const toggleNav = useCallback(() => {
     const next = { ...layoutRef.current, navHidden: !layoutRef.current.navHidden }
     layoutRef.current = next
     setLayout(next)
-    saveLayout(next)
+    saveShellLayout(next)
   }, [])
   const toggleRuns = useCallback(() => {
     const next = { ...layoutRef.current, runsHidden: !layoutRef.current.runsHidden }
     layoutRef.current = next
     setLayout(next)
-    saveLayout(next)
+    saveShellLayout(next)
   }, [])
   const proposeModuleSidebar = useCallback((proposed: number) => {
     const otherWidth = rightPanel && rightPanelOpen ? layoutRef.current.detailsWidth : 0
@@ -158,7 +158,7 @@ export default function AppShell({
     const next = { ...layoutRef.current, moduleSidebarHidden: !layoutRef.current.moduleSidebarHidden }
     layoutRef.current = next
     setLayout(next)
-    saveLayout(next)
+    saveShellLayout(next)
   }, [])
 
   const gridTemplateColumns = [

@@ -12,6 +12,9 @@ import type { VkOutputTab } from './VkOutputViewer'
 
 export const STORYLINE_IN_PROGRESS = new Set<string>(['waiting', 'queued', 'running'])
 
+/** 详情里手动发起串联后广播,视频解析页据此开始盯这条串联的结果。 */
+export const VK_STORYLINE_STARTED_EVENT = 'vk:storyline-started'
+
 export function storylineStatusText(row: VkStorylineRow): string {
   switch (row.status) {
     case 'waiting': return '等本批全部解析完再串联'
@@ -23,7 +26,7 @@ export function storylineStatusText(row: VkStorylineRow): string {
       return row.status === 'partial' ? `${text}。部分内容生成失败` : text
     }
     case 'skipped': return row.reason ? `可串联的视频不足 2 个（${row.reason}）` : '可串联的视频不足 2 个'
-    case 'failed': return row.error ? `串联失败：${row.error}` : '串联失败'
+    case 'failed': return '串联失败'
     default: return ''
   }
 }

@@ -24,14 +24,14 @@ const rowKeys = () => screen.queryAllByTestId(/^command-row-/).map((row) => row.
 beforeEach(() => { useAppStore.setState(initialState, true) })
 
 describe('站点命令列表:中文名与分组', () => {
-  it('小红书:先是「常用」再是「读取」,「写入」默认折叠并注明会改账号内容', () => {
+  it('小红书:先是「常用」再是「读取」,「写入」默认折叠并注明会改动账号内容或登录状态', () => {
     openSite('xiaohongshu')
 
     expect(screen.getByTestId('command-group-common')).toHaveTextContent('常用')
     expect(screen.getByTestId('command-group-read')).toHaveTextContent('读取')
     const write = screen.getByTestId('command-group-write')
     expect(write).toHaveTextContent('写入')
-    expect(write).toHaveTextContent('会修改你的账号内容')
+    expect(write).toHaveTextContent('会改动你的账号内容或登录状态')
     expect(within(write).getByRole('button')).toHaveAttribute('aria-expanded', 'false')
 
     const keys = rowKeys()

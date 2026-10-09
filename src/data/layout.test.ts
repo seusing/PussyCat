@@ -1,5 +1,5 @@
 import {
-  defaultLayout, normalizeLayout, loadLayout, saveLayout, clamp, clampColumnWidth,
+  defaultLayout, normalizeLayout, loadLayout, saveLayout, saveShellLayout, clamp, clampColumnWidth,
   LAYOUT_KEY, NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
   MODULE_SIDEBAR_DEFAULT, DETAILS_DEFAULT,
   MODULE_SIDEBAR_COLLAPSED,
@@ -42,6 +42,25 @@ test('save→load 往返等值', () => {
   const layout = { ...defaultLayout(), navWidth: 300, runsWidth: 400 }
   saveLayout(layout, s)
   expect(loadLayout(s)).toEqual(layout)
+})
+
+test('saveShellLayout:外壳的内存态是挂载时读的,回写不冲掉别处之后写入的定时检查', () => {
+  const s = fakeStorage()
+  saveLayout(defaultLayout(), s)
+  const shellInMemory = loadLayout(s)   // AppShell 挂载时读到的:定时检查还没开
+  saveLayout({ ...loadLayout(s), autoLoginRefresh: true, autoLoginRefreshMinutes: 15 }, s)   // 登录页打开开关(useAutoRefresh 的写法)
+
+  saveShellLayout({ ...shellInMemory, navWidth: 300, runsHidden: true }, s)   // 拖动栏宽、折叠右栏
+
+  expect(loadLayout(s)).toEqual({
+    ...defaultLayout(), navWidth: 300, runsHidden: true, autoLoginRefresh: true, autoLoginRefreshMinutes: 15,
+  })
+})
+
+test('saveShellLayout:存储里还没有布局时,外壳字段照常落盘', () => {
+  const s = fakeStorage()
+  expect(saveShellLayout({ ...defaultLayout(), moduleSidebarWidth: 250, detailsWidth: 400 }, s)).toBe(true)
+  expect(loadLayout(s)).toEqual({ ...defaultLayout(), moduleSidebarWidth: 250, detailsWidth: 400 })
 })
 
 test('loadLayout:空存储→default', () => {

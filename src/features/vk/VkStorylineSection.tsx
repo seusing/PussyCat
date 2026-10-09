@@ -6,7 +6,8 @@ import { fetchVkStorylines, postVkStoryline } from '../../host/vkClient'
 import type { VkStorylineRow } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
 import { vkErrorText } from './vkErrors'
-import { STORYLINE_IN_PROGRESS, storylineStatusText, storylineViewable } from './storyline'
+import { VkFailureNote } from './VkFailureNote'
+import { STORYLINE_IN_PROGRESS, VK_STORYLINE_STARTED_EVENT, storylineStatusText, storylineViewable } from './storyline'
 
 const STORYLINE_POLL_MS = 15_000
 
@@ -54,6 +55,7 @@ export function VkStorylineSection({ batchId, baseUrl, parsedCount, onView }: {
     setError(null)
     try {
       await postVkStoryline(batchId, baseUrl)
+      window.dispatchEvent(new CustomEvent(VK_STORYLINE_STARTED_EVENT))
       await refresh()
     } catch (startError) {
       setError(actionError(startError))
@@ -76,6 +78,7 @@ export function VkStorylineSection({ batchId, baseUrl, parsedCount, onView }: {
           {storylineStatusText(latest)}
         </p>
       )}
+      {latest?.status === 'failed' && latest.error && <VkFailureNote raw={latest.error} />}
       {error && <p className="vk-storyline-error" role="alert">{error}</p>}
       <div className="vk-storyline-actions">
         <button

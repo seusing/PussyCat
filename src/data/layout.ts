@@ -29,8 +29,8 @@ export const CONFIG_MIN = 400
 // 的口径,外壳中栏放的是模块内容,不必一样宽。
 export const SHELL_CENTER_MIN = 360
 
-// 首页「开始使用」清单的"不再显示"。**独立 key,不进 LayoutSnapshot**:AppShell 会拿它内存里
-// 那份 layout 整体回写 LAYOUT_KEY(拖栏宽、折叠侧栏时),放进去会被一次拖拽冲回默认值。
+// 首页「开始使用」清单的"不再显示"。**独立 key,不进 LayoutSnapshot**:它是清单自己的状态,
+// 与栏宽、折叠无关,不该跟着外壳的回写一起读写。
 export const GETTING_STARTED_DISMISSED_KEY = 'opencli-app:getting-started-dismissed:v1'
 
 export function loadGettingStartedDismissed(storage?: Storage): boolean {
@@ -157,6 +157,16 @@ export function saveLayout(layout: LayoutSnapshot, storage?: Storage): boolean {
   } catch {
     return false   // 配额满 / 隐私模式:静默降级,内存态(当前会话)仍有效
   }
+}
+
+// 外壳(AppShell)的写入:只落外壳自己拥有的栏宽/折叠字段,其余字段取存储里的最新值。
+// AppShell 内存里那份 layout 是挂载时读的,整份回写会把别处之后写入的字段(登录页的「定时检查」)冲回旧值。
+export function saveShellLayout(layout: LayoutSnapshot, storage?: Storage): boolean {
+  const { navWidth, runsWidth, moduleSidebarWidth, moduleSidebarHidden, detailsWidth, navHidden, runsHidden } = layout
+  return saveLayout(
+    { ...loadLayout(storage), navWidth, runsWidth, moduleSidebarWidth, moduleSidebarHidden, detailsWidth, navHidden, runsHidden },
+    storage,
+  )
 }
 
 // 拖拽时把"提议宽度"夹到合法区间,并在已知容器宽度时额外防止把中栏挤到 CONFIG_MIN 以下。

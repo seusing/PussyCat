@@ -1,0 +1,42 @@
+.vk-failure-note {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.vk-failure-headline {
+  color: color-mix(in srgb, var(--color-danger) 78%, var(--color-fg));
+  font-weight: 600;
+}
+
+.vk-failure-advice {
+  margin: 0;
+  color: var(--color-fg-dim);
+}
+
+.vk-failure-action {
+  margin-top: 2px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  padding: 2px 10px;
+  color: var(--color-fg);
+  font-size: 12px;
+}
+
+.vk-failure-action:hover { background: color-mix(in srgb, var(--color-accent) 28%, transparent); }
+
+.vk-failure-raw { max-width: 100%; color: var(--color-fg-dim); font-size: 11px; }
+.vk-failure-raw summary { cursor: pointer; user-select: none; }
+.vk-failure-raw pre {
+  margin: 4px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: inherit;
+  color: var(--color-fg-dim);
+}
