@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { checkBrowserBridgeHealth } from './browser-bridge-health.mjs'
 
 const V = '1.8.6'
@@ -154,5 +154,84 @@ describe('BrowserBridge 健康诊断', () => {
     expect(seen.url).toBe('http://127.0.0.1:19825/status')
     expect(seen.init.headers['X-OpenCLI']).toBe('1')
     expect(seen.init.signal).toBeDefined()
+  })
+})
+
+// 多 profile:daemon 的 /status 不带 contextId 时不认 opencli 的默认 profile 配置。
+describe('多 profile 且已选过默认', () => {
+  const twoProfiles = [
+    { contextId: 'ctx-a', extensionConnected: true, lastSeenAt: 1 },
+    { contextId: 'ctx-b', extensionConnected: true, lastSeenAt: 2 },
+  ]
+  const required = daemonStatus({ extensionConnected: false, profileRequired: true, profiles: twoProfiles })
+  const resolved = daemonStatus({ contextId: 'ctx-b', profiles: twoProfiles })
+
+  /** 按 URL 里有没有 contextId 分派,并记录所有请求。 */
+  function dispatchFetch() {
+    const urls = []
+    const fetchImpl = async (url) => {
+      urls.push(url)
+      return { ok: true, status: 200, json: async () => (url.includes('contextId=') ? resolved : required) }
+    }
+    return { fetchImpl, urls }
+  }
+
+  it('默认 profile 已连着:带上它再问一次,结论变为就绪', async () => {
+    const { fetchImpl, urls } = dispatchFetch()
+    const health = await checkBrowserBridgeHealth({
+      fetchImpl, opencliVersion: V, now: at, resolveDefaultContextId: async () => 'ctx-b',
+    })
+
+    expect(urls).toEqual(['http://127.0.0.1:19825/status', 'http://127.0.0.1:19825/status?contextId=ctx-b'])
+    expect(health.reasonCode).toBe('ok')
+    expect(health.profile).toBe('ready')
+    expect(health.profileCount).toBe(2)
+  })
+
+  it('没设过默认 profile:仍是需指定,不多发请求', async () => {
+    const { fetchImpl, urls } = dispatchFetch()
+    const health = await checkBrowserBridgeHealth({
+      fetchImpl, opencliVersion: V, now: at, resolveDefaultContextId: async () => undefined,
+    })
+
+    expect(urls).toHaveLength(1)
+    expect(health.reasonCode).toBe('profile-required')
+  })
+
+  it('默认 profile 当前没连着:仍是需指定', async () => {
+    const { fetchImpl, urls } = dispatchFetch()
+    const health = await checkBrowserBridgeHealth({
+      fetchImpl, opencliVersion: V, now: at, resolveDefaultContextId: async () => 'ctx-gone',
+    })
+
+    expect(urls).toHaveLength(1)
+    expect(health.reasonCode).toBe('profile-required')
+  })
+
+  it('查默认值本身失败:保留第一次的结论,不抛', async () => {
+    const { fetchImpl } = dispatchFetch()
+    const health = await checkBrowserBridgeHealth({
+      fetchImpl, opencliVersion: V, now: at, resolveDefaultContextId: async () => { throw new Error('spawn failed') },
+    })
+    expect(health.reasonCode).toBe('profile-required')
+  })
+
+  it('再问一次失败(HTTP 非 200):保留第一次的结论', async () => {
+    const fetchImpl = async (url) => (url.includes('contextId=')
+      ? { ok: false, status: 500, json: async () => ({}) }
+      : { ok: true, status: 200, json: async () => required })
+    const health = await checkBrowserBridgeHealth({
+      fetchImpl, opencliVersion: V, now: at, resolveDefaultContextId: async () => 'ctx-b',
+    })
+    expect(health.reasonCode).toBe('profile-required')
+  })
+
+  it('只有一路 profile 或本来就就绪时不触发默认值查询', async () => {
+    const resolveDefaultContextId = vi.fn(async () => 'ctx-a')
+    const health = await checkBrowserBridgeHealth({
+      fetchImpl: okFetch(daemonStatus()), opencliVersion: V, now: at, resolveDefaultContextId,
+    })
+    expect(health.reasonCode).toBe('ok')
+    expect(resolveDefaultContextId).not.toHaveBeenCalled()
   })
 })

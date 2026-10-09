@@ -5,14 +5,13 @@ import { BookOpen, Waypoints } from 'lucide-react'
 import { fetchVkStorylines, postVkStoryline } from '../../host/vkClient'
 import type { VkStorylineRow } from '../../host/vkClient'
 import { HostRequestError } from '../../host/errors'
+import { vkErrorText } from './vkErrors'
 import { STORYLINE_IN_PROGRESS, storylineStatusText, storylineViewable } from './storyline'
 
 const STORYLINE_POLL_MS = 15_000
 
 function actionError(error: unknown): string {
-  if (error instanceof HostRequestError) return error.summary
-  if (error instanceof Error) return error.message
-  return '串联请求失败'
+  return vkErrorText(error, '串联请求失败')
 }
 
 export function VkStorylineSection({ batchId, baseUrl, parsedCount, onView }: {

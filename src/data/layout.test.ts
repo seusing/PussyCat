@@ -3,6 +3,7 @@ import {
   LAYOUT_KEY, NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
   MODULE_SIDEBAR_DEFAULT, DETAILS_DEFAULT,
   MODULE_SIDEBAR_COLLAPSED,
+  GETTING_STARTED_DISMISSED_KEY, loadGettingStartedDismissed, saveGettingStartedDismissed,
 } from './layout'
 
 // 内存假 Storage:纯函数可注入,不依赖 jsdom 全局(与 preferences.test.ts 同款写法)
@@ -187,5 +188,30 @@ describe('自动刷新配置(登录状态)', () => {
     expect(normalizeLayout({ autoLoginRefreshMinutes: 1 }).autoLoginRefreshMinutes).toBe(5)
     expect(normalizeLayout({ autoLoginRefreshMinutes: 99999 }).autoLoginRefreshMinutes).toBe(240)
     expect(normalizeLayout({ autoLoginRefreshMinutes: 'x' }).autoLoginRefreshMinutes).toBe(30)
+  })
+})
+
+describe('首页「开始使用」的不再显示', () => {
+  test('默认显示;保存后读回为已关闭,可以重新打开', () => {
+    const s = fakeStorage()
+    expect(loadGettingStartedDismissed(s)).toBe(false)
+    expect(saveGettingStartedDismissed(true, s)).toBe(true)
+    expect(loadGettingStartedDismissed(s)).toBe(true)
+    expect(saveGettingStartedDismissed(false, s)).toBe(true)
+    expect(loadGettingStartedDismissed(s)).toBe(false)
+  })
+
+  test('独立 key,不写进布局快照 —— AppShell 整体回写布局时不会把它冲掉', () => {
+    const s = fakeStorage()
+    saveGettingStartedDismissed(true, s)
+    saveLayout(defaultLayout(), s)
+    expect(s.getItem(GETTING_STARTED_DISMISSED_KEY)).toBe('1')
+    expect(Object.keys(defaultLayout())).not.toContain('gettingStartedDismissed')
+  })
+
+  test('存储不可用时静默降级', () => {
+    const broken = { ...fakeStorage(), getItem: () => { throw new Error('denied') }, setItem: () => { throw new Error('quota') } } as Storage
+    expect(loadGettingStartedDismissed(broken)).toBe(false)
+    expect(saveGettingStartedDismissed(true, broken)).toBe(false)
   })
 })

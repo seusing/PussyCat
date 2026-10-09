@@ -1042,6 +1042,147 @@ describe('/browser-bridge/repair', () => {
   })
 })
 
+describe('/browser-bridge/open-extension-page', () => {
+  const STORE_URL = 'https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk'
+  const open = (baseUrl, init = {}) => fetch(`${baseUrl}/browser-bridge/open-extension-page`, {
+    method: 'POST', headers: { Origin: origin }, ...init,
+  })
+
+  it('用固定地址拉起 Chrome 并返回 ok', async () => {
+    const launchBrowser = vi.fn(async () => ({ launched: true }))
+    const { baseUrl } = await setup({ launchBrowser })
+    const res = await open(baseUrl)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(launchBrowser).toHaveBeenCalledTimes(1)
+    expect(launchBrowser).toHaveBeenCalledWith({ url: STORE_URL })
+  })
+
+  it('请求体里的任何地址都被忽略 —— 只能打开这一个页面', async () => {
+    const launchBrowser = vi.fn(async () => ({ launched: true }))
+    const { baseUrl } = await setup({ launchBrowser })
+    await open(baseUrl, {
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://evil.example/' }),
+    })
+
+    expect(launchBrowser).toHaveBeenCalledWith({ url: STORE_URL })
+  })
+
+  it('找不到 Chrome:200 + chrome-not-found,不是 5xx', async () => {
+    const { baseUrl } = await setup({ launchBrowser: async () => ({ launched: false, reason: 'chrome-not-found' }) })
+    const res = await open(baseUrl)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, reasonCode: 'chrome-not-found' })
+  })
+
+  it('GET 不是入口;跨源 POST 被拒,且都不会拉起浏览器', async () => {
+    const launchBrowser = vi.fn(async () => ({ launched: true }))
+    const { baseUrl } = await setup({ launchBrowser })
+
+    expect((await fetch(`${baseUrl}/browser-bridge/open-extension-page`, { headers: { Origin: origin } })).status).toBe(404)
+    expect((await open(baseUrl, { headers: { Origin: 'http://evil.example' } })).status).toBe(403)
+    expect(launchBrowser).not.toHaveBeenCalled()
+  })
+})
+
+describe('/browser-bridge/profiles', () => {
+  const LIST = [
+    'Connected Browser Bridge profiles',
+    '',
+    '  ctx-aaa work default — connected v0.9.1',
+    '  ctx-bbb home — connected v0.9.0',
+  ].join('\n')
+
+  /** 记录每次子命令;profile list 回固定清单,其余回成功。 */
+  function fakeOpenCli({ useFails = false } = {}) {
+    const calls = []
+    const runOpenCli = async (argv) => {
+      calls.push(argv)
+      if (argv[0] === 'profile' && argv[1] === 'list') return { code: 0, failed: false, stdout: LIST }
+      return useFails ? { code: 2, failed: true } : { code: 0, failed: false }
+    }
+    return { calls, runOpenCli }
+  }
+
+  it('GET 列出已连接的 profile', async () => {
+    const { runOpenCli } = fakeOpenCli()
+    const { baseUrl } = await setup({ runOpenCli })
+    const res = await fetch(`${baseUrl}/browser-bridge/profiles`, { headers: { Origin: origin } })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      ok: true,
+      profiles: [
+        { name: 'work', isDefault: true, extensionVersion: '0.9.1' },
+        { name: 'home', isDefault: false, extensionVersion: '0.9.0' },
+      ],
+    })
+  })
+
+  it('POST use:清单里的别名交给 profile use', async () => {
+    const { calls, runOpenCli } = fakeOpenCli()
+    const { baseUrl } = await setup({ runOpenCli })
+    const res = await post(baseUrl, '/browser-bridge/profiles/use', { alias: 'home' })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(calls.at(-1)).toEqual(['profile', 'use', 'home'])
+  })
+
+  it('不在清单里的别名:不执行 profile use', async () => {
+    const { calls, runOpenCli } = fakeOpenCli()
+    const { baseUrl } = await setup({ runOpenCli })
+    const res = await post(baseUrl, '/browser-bridge/profiles/use', { alias: 'other' })
+
+    expect(await res.json()).toEqual({ ok: false, reasonCode: 'profile-not-listed' })
+    expect(calls.some((argv) => argv[1] === 'use')).toBe(false)
+  })
+
+  it('profile use 失败:ok:false + profile-use-failed', async () => {
+    const { runOpenCli } = fakeOpenCli({ useFails: true })
+    const { baseUrl } = await setup({ runOpenCli })
+    const res = await post(baseUrl, '/browser-bridge/profiles/use', { alias: 'work' })
+
+    expect(await res.json()).toEqual({ ok: false, reasonCode: 'profile-use-failed' })
+  })
+
+  it('缺少 alias 或类型不对 → 400', async () => {
+    const { runOpenCli } = fakeOpenCli()
+    const { baseUrl } = await setup({ runOpenCli })
+
+    expect((await post(baseUrl, '/browser-bridge/profiles/use', {})).status).toBe(400)
+    expect((await post(baseUrl, '/browser-bridge/profiles/use', { alias: 7 })).status).toBe(400)
+    expect((await post(baseUrl, '/browser-bridge/profiles/use', { alias: '  ' })).status).toBe(400)
+  })
+
+  it('跨源请求被拒', async () => {
+    const { runOpenCli } = fakeOpenCli()
+    const { baseUrl } = await setup({ runOpenCli })
+
+    expect((await fetch(`${baseUrl}/browser-bridge/profiles`, { headers: { Origin: 'http://evil.example' } })).status).toBe(403)
+    expect((await post(baseUrl, '/browser-bridge/profiles/use', { alias: 'work' }, 'http://evil.example')).status).toBe(403)
+  })
+
+  it('健康探测在多 profile 需指定时带上已选的默认 profile 再确认一次', async () => {
+    const { runOpenCli } = fakeOpenCli()
+    const probes = []
+    const { baseUrl } = await setup({
+      runOpenCli,
+      browserBridgeHealth: async (options) => {
+        probes.push(await options.resolveDefaultContextId())
+        return { checkedAt: 1, daemon: 'running', extension: 'connected', profile: 'ready', profileCount: 2, retryable: false, reasonCode: 'ok', summary: '就绪' }
+      },
+    })
+    const res = await fetch(`${baseUrl}/browser-bridge/health`, { headers: { Origin: origin } })
+
+    expect(res.status).toBe(200)
+    expect(probes).toEqual(['ctx-aaa'])     // 来自 profile list 里带 default 标记的那一项
+  })
+})
+
 describe('/browser-bridge/health', () => {
   it('转发结构化诊断,且带上 Host 自己知道的 opencliVersion', async () => {
     const { baseUrl } = await setup({

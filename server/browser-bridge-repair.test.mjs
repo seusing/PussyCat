@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  OPENCLI_EXTENSION_STORE_URL,
   discoverChromeExecutable,
   launchBrowser,
   repairBrowserBridge,
@@ -65,6 +66,9 @@ describe('修复阶梯', () => {
     expect(result.steps).toEqual([{ action: 'launch-browser', outcome: 'done', detail: undefined }])
     expect(result.repaired).toBe(false)
     expect(result.nextStep).toContain('OpenCLI 扩展')
+    // 同一句话要同时照顾"还没装"和"装了没开"两种用户。
+    expect(result.nextStep).toContain('安装扩展')
+    expect(result.nextStep).toContain('已经装过')
   })
 
   test('找不到 Chrome 时如实记 failed,不静默当作做过了', async () => {
@@ -84,7 +88,9 @@ describe('修复阶梯', () => {
 
     expect(result.needsProfileChoice).toBe(true)
     expect(result.steps).toEqual([])                    // 没有任何机器动作可做
-    expect(result.nextStep).toContain('opencli profile use')
+    expect(result.nextStep).toContain('点「使用」')
+    expect(result.nextStep).not.toContain('终端')       // 选择器就在界面里,不再要求用户开终端
+    expect(result.nextStep).not.toContain('opencli profile')
   })
 
   test('禁用浏览器拉起时不碰浏览器 —— 副作用要能关掉', async () => {
@@ -128,6 +134,33 @@ describe('浏览器拉起', () => {
     expect(unref).toHaveBeenCalled()
   })
 
+  test('带 url 时把地址作为唯一参数交给 Chrome,同样 detach 且不继承 stdio', async () => {
+    const unref = vi.fn()
+    const spawnImpl = vi.fn(() => ({ unref }))
+    const result = await launchBrowser({ discover: () => 'C:\\chrome.exe', spawnImpl, url: OPENCLI_EXTENSION_STORE_URL })
+
+    expect(result).toEqual({ launched: true })
+    expect(spawnImpl).toHaveBeenCalledWith(
+      'C:\\chrome.exe',
+      ['https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk'],
+      expect.objectContaining({ detached: true, stdio: 'ignore' }),
+    )
+    expect(unref).toHaveBeenCalled()
+  })
+
+  test('不带 url 时仍然只开窗口', async () => {
+    const spawnImpl = vi.fn(() => ({ unref: vi.fn() }))
+    await launchBrowser({ discover: () => 'C:\\chrome.exe', spawnImpl })
+    expect(spawnImpl).toHaveBeenCalledWith('C:\\chrome.exe', [], expect.any(Object))
+  })
+
+  test('找不到 Chrome 时不 spawn,返回 chrome-not-found', async () => {
+    const spawnImpl = vi.fn()
+    await expect(launchBrowser({ discover: () => null, spawnImpl, url: OPENCLI_EXTENSION_STORE_URL }))
+      .resolves.toEqual({ launched: false, reason: 'chrome-not-found' })
+    expect(spawnImpl).not.toHaveBeenCalled()
+  })
+
   test('spawn 抛错时不外泄异常,转成结构化失败', async () => {
     const result = await launchBrowser({
       discover: () => 'C:\\chrome.exe',
@@ -147,6 +180,29 @@ describe('opencli 子进程', () => {
     })
     await expect(runOpenCli(['daemon', 'restart'], { opencliEntry: '/entry.js', spawnImpl }))
       .resolves.toEqual({ code: 0, failed: false })
+  })
+
+  test('有 stdout 管道时把输出一并带回(profile list 没有 JSON 出口)', async () => {
+    const spawnImpl = vi.fn(() => {
+      const handlers = {}
+      const stdoutHandlers = {}
+      queueMicrotask(() => {
+        stdoutHandlers.data?.('Connected Browser Bridge profiles\n')
+        stdoutHandlers.data?.('  ctx-1 work — connected v0.9.1\n')
+        handlers.close?.(0)
+      })
+      return {
+        once: (e, fn) => { handlers[e] = fn },
+        kill: vi.fn(),
+        stdout: { setEncoding: vi.fn(), on: (e, fn) => { stdoutHandlers[e] = fn } },
+      }
+    })
+    const result = await runOpenCli(['profile', 'list'], { opencliEntry: '/entry.js', spawnImpl })
+    expect(result).toEqual({
+      code: 0,
+      failed: false,
+      stdout: 'Connected Browser Bridge profiles\n  ctx-1 work — connected v0.9.1\n',
+    })
   })
 
   test('非零退出码 = 失败(不把失败当成功吞掉)', async () => {

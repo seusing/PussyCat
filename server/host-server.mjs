@@ -8,10 +8,12 @@ import {
 import { POLICY_SCHEMA_VERSION } from './policy-fingerprint.mjs'
 import { checkBrowserBridgeHealth } from './browser-bridge-health.mjs'
 import {
+  OPENCLI_EXTENSION_STORE_URL,
   repairBrowserBridge,
   runOpenCli as runOpenCliDefault,
   launchBrowser as launchBrowserDefault,
 } from './browser-bridge-repair.mjs'
+import { findDefaultContextId, listBrowserProfiles, useBrowserProfile } from './browser-bridge-profiles.mjs'
 import { VkSidecarError } from './vk-sidecar.mjs'
 import { VkRuntimeError } from './vk-runtime.mjs'
 import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from './vk-capability-packs.mjs'
@@ -208,8 +210,12 @@ export function createHostServer({
     emitEvent: (type, event) => broker.publish(type, event),
     ...runManagerOptions,
   })
+  const probeBrowserBridge = () => browserBridgeHealth({
+    opencliVersion: activePolicy().opencliVersion,
+    resolveDefaultContextId: () => findDefaultContextId({ runOpenCli, opencliEntry }),
+  })
   const runBrowserBridgeRepair = () => browserBridgeRepair({
-    probe: () => browserBridgeHealth({ opencliVersion: activePolicy().opencliVersion }),
+    probe: probeBrowserBridge,
     restartDaemon: () => runOpenCli(['daemon', 'restart'], { opencliEntry }),
     openBrowser: () => launchBrowser(),
   })
@@ -335,9 +341,7 @@ export function createHostServer({
       // 由 Host 代理并做字段投影 —— 白名单与剔除理由见 browser-bridge-health.mjs。
       // 本端点永不 5xx:诊断失败本身也是结构化的诊断结果(daemon: stopped/unreachable/error)。
       if (url.pathname === '/browser-bridge/health' && request.method === 'GET') {
-        writeJson(response, 200, await browserBridgeHealth({
-          opencliVersion: activePolicy().opencliVersion,
-        }))
+        writeJson(response, 200, await probeBrowserBridge())
         return
       }
 
@@ -346,6 +350,29 @@ export function createHostServer({
       // 永远带着复检后的真实 health:动作做没做成,和桥接好没好,是两件事。
       if (url.pathname === '/browser-bridge/repair' && request.method === 'POST') {
         writeJson(response, 200, await runBrowserBridgeRepair())
+        return
+      }
+
+      // 在 Chrome 里打开扩展的应用店页面。地址是模块常量,请求体一概不读 —— 这个端点
+      // 只能打开这一个页面。找不到 Chrome 是结构化结果(chrome-not-found),不是 5xx。
+      if (url.pathname === '/browser-bridge/open-extension-page' && request.method === 'POST') {
+        const launched = await launchBrowser({ url: OPENCLI_EXTENSION_STORE_URL })
+        writeJson(response, 200, launched.launched ? { ok: true } : { ok: false, reasonCode: launched.reason })
+        return
+      }
+
+      // 多 profile 时界面内选择:列出已连接的 profile,再把其中一个设为默认。
+      // 只能选清单里已有的名字(见 browser-bridge-profiles.mjs)。
+      if (url.pathname === '/browser-bridge/profiles' && request.method === 'GET') {
+        writeJson(response, 200, await listBrowserProfiles({ runOpenCli, opencliEntry }))
+        return
+      }
+      if (url.pathname === '/browser-bridge/profiles/use' && request.method === 'POST') {
+        const body = await readJson(request, maxBodyBytes)
+        if (typeof body?.alias !== 'string' || !body.alias.trim()) {
+          throw new RequestPolicyError(400, 'alias must be a non-empty string')
+        }
+        writeJson(response, 200, await useBrowserProfile({ name: body.alias, runOpenCli, opencliEntry }))
         return
       }
 

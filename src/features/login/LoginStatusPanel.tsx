@@ -22,6 +22,7 @@ import {
 } from '../../data/supportedSites'
 import type { CommandManifest } from '../../data/types'
 import { useGlassMenuSurface } from '../../components/GlassMenu'
+import { ConfirmAllDialog } from './ConfirmAllDialog'
 
 const STATE_TEXT: Record<LoginCheckState, string> = {
   unchecked: '未检查',
@@ -247,10 +248,12 @@ export function LoginStatusPanel() {
   const loginInFlights = useAppStore((s) => s.loginInFlights)
   const enqueueLoginChecks = useAppStore((s) => s.enqueueLoginChecks)
   const requestAcknowledgement = useAppStore((s) => s.requestAcknowledgement)
+  const acknowledgeCommand = useAppStore((s) => s.acknowledgeCommand)
   const selectCommand = useAppStore((s) => s.selectCommand)
   const setActiveModule = useAppStore((s) => s.setActiveModule)
 
   const [auto, setAuto] = useAutoRefresh()
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false)
   const now = Date.now()
 
   const rows = useMemo(() => {
@@ -290,6 +293,8 @@ export function LoginStatusPanel() {
   }, [commands, decisionFor, preferences, loginChecks])
 
   const checkable = rows.filter((row) => CHECKABLE.includes(row.state) || row.state === 'checking' || row.state === 'queued')
+  // 还没确认过的站点。没有 fingerprint 的判决无处可绑,不在批量确认之列(单站原有流程照旧)。
+  const unconfirmed = rows.filter((row) => row.state === 'needs-ack' && !!row.decision?.fingerprint)
   const pending = loginQueue.length + loginInFlights.length
   const isRowBusy = (site: string) => loginInFlights.some((item) => item.site === site) || loginQueue.includes(site)
 
@@ -321,6 +326,13 @@ export function LoginStatusPanel() {
     if (CHECKABLE.includes(row.state)) enqueueLoginChecks([row.site])
   }
 
+  const confirmAllAndCheck = () => {
+    const now = Date.now()
+    for (const row of unconfirmed) acknowledgeCommand(row.commandKey, row.decision!.fingerprint!, now)
+    enqueueLoginChecks([...unconfirmed, ...checkable].map((row) => row.site))
+    setConfirmAllOpen(false)
+  }
+
   const openAccountCommand = (command: CommandManifest) => {
     selectCommand(command)
     setActiveModule('commands')
@@ -341,6 +353,16 @@ export function LoginStatusPanel() {
         >
           {pending > 0 ? `全部刷新（排队 ${pending}）` : '全部刷新'}
         </button>
+        {unconfirmed.length > 0 && (
+          <button
+            data-testid="confirm-all-logins"
+            onClick={() => setConfirmAllOpen(true)}
+            title="一次确认全部站点的登录检查，并开始检查"
+            className="login-refresh-all"
+          >
+            确认并检查全部
+          </button>
+        )}
 
         <label className="login-auto-toggle">
           <span>定时检查</span>
@@ -370,6 +392,14 @@ export function LoginStatusPanel() {
           分钟
         </label>
       </div>
+
+      {confirmAllOpen && unconfirmed.length > 0 && (
+        <ConfirmAllDialog
+          sites={unconfirmed.map((row) => row.supportedSite?.label ?? siteLabel(row.site))}
+          onConfirm={confirmAllAndCheck}
+          onCancel={() => setConfirmAllOpen(false)}
+        />
+      )}
 
       <div className="login-table-scroll" tabIndex={0} role="group" aria-label="登录状态表格">
         <table className="login-table" data-testid="login-status-table">

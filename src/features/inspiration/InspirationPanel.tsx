@@ -10,14 +10,16 @@ import {
   type SupportedSite,
 } from '../../data/supportedSites'
 import { SiteGrid } from './SiteGrid'
-import { FisheyeCommandList } from './FisheyeCommandList'
+import { FisheyeCommandList, type CommandSection } from './FisheyeCommandList'
 import { CommandConfig } from '../config/CommandConfig'
 import { RunPanel } from '../runs/RunPanel'
 import { MicroButton } from '../../components/MicroButton'
 import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
-import { commandDescription } from '../../data/zhCopy'
+import { commandDescription, commandTitle } from '../../data/zhCopy'
+import { groupCommands } from './commandGroups'
 import { addInspirationItem } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
+import { GettingStarted } from '../onboarding/GettingStarted'
 import { EmptyState } from '../../components/EmptyState'
 import './InspirationPanel.css'
 
@@ -40,6 +42,7 @@ function matchesCommand(command: CommandManifest, query: string): boolean {
   const normalizedQuery = query.trim().toLocaleLowerCase()
   if (!normalizedQuery) return true
   const searchable = [
+    commandTitle(command.command) ?? '',
     command.name,
     command.command,
     command.description,
@@ -92,6 +95,7 @@ export function InspirationPanel({
   const [workspace, setWorkspace] = useState<Workspace>('sources')
   const [site, setSite] = useState<SupportedSite | undefined>(() => selectedSite)
   const [query, setQuery] = useState('')
+  const [writeGroupOpen, setWriteGroupOpen] = useState(false)
   const lastSelectedCommand = useRef(selected?.command)
 
   useEffect(() => {
@@ -111,6 +115,7 @@ export function InspirationPanel({
     setWorkspace('sources')
     setSite(next)
     setQuery('')
+    setWriteGroupOpen(false)
     setStage('commands')
   }
 
@@ -119,6 +124,27 @@ export function InspirationPanel({
     const list = commandsForSite(commands, site)
     return list.filter((command) => matchesCommand(command, query))
   }, [commands, query, site])
+
+  // 搜索时「写入」组自动展开,否则只命中写入命令的搜索会显示成"没有匹配"。
+  const searching = query.trim() !== ''
+  const sections = useMemo<CommandSection[]>(() => {
+    const groups = groupCommands(siteCommands)
+    const result: CommandSection[] = []
+    if (groups.common.length > 0) result.push({ key: 'common', title: '常用', commands: groups.common })
+    if (groups.read.length > 0) result.push({ key: 'read', title: '读取', commands: groups.read })
+    if (groups.write.length > 0) {
+      result.push({
+        key: 'write',
+        title: '写入',
+        note: '会修改你的账号内容',
+        commands: groups.write,
+        collapsible: true,
+        collapsed: !writeGroupOpen && !searching,
+        onToggle: () => setWriteGroupOpen((open) => !open),
+      })
+    }
+    return result
+  }, [siteCommands, writeGroupOpen, searching])
 
   const globalMatches = useMemo(() => {
     if (!query.trim()) return []
@@ -165,7 +191,10 @@ export function InspirationPanel({
           <div className="inspiration-command-heading">
             <span>{executionSite?.label ?? selected.site}</span>
             <div data-testid="command-header" className="flex flex-wrap items-center gap-2">
-              <strong>{selected.name}</strong>
+              <div className="inspiration-command-title">
+                <strong data-testid="command-title">{commandTitle(selected.command) ?? selected.name}</strong>
+                {commandTitle(selected.command) && <small data-testid="command-subtitle">{selected.name}</small>}
+              </div>
               <MicroButton
                 variant="save"
                 data-testid="fav-site"
@@ -244,7 +273,7 @@ export function InspirationPanel({
           <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库" aria-label="打开灵感库"><FolderOpen size={18} aria-hidden="true" /></button>
         </div>
         <FisheyeCommandList
-          commands={siteCommands}
+          sections={sections}
           onSubmit={openCommand}
           canSubmit={(command) => {
             const decision = decisionFor(command.command)
@@ -281,9 +310,12 @@ export function InspirationPanel({
             />
           : <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" description="请尝试其他关键词" />
         : (
-          <div className="site-display">
-            <SiteGrid sites={sites} onSelect={openSite} />
-          </div>
+          <>
+            <GettingStarted baseUrl={baseUrl} />
+            <div className="site-display">
+              <SiteGrid sites={sites} onSelect={openSite} />
+            </div>
+          </>
         )}
     </div>
   )

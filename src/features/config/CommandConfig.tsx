@@ -6,7 +6,7 @@ import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { validate } from './validation'
 import { DynamicField } from './DynamicField'
 import { explainDecision, isRunnable } from '../../data/policy'
-import { commandDescription } from '../../data/zhCopy'
+import { commandDescription, commandTitle } from '../../data/zhCopy'
 import { MicroButton } from '../../components/MicroButton'
 import { copyText } from '../../lib/clipboard'
 
@@ -78,7 +78,10 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
   return (
     <div>
       {!compactHeader && <div data-testid="command-header" className="mb-4 flex flex-wrap items-center gap-2">
-        <h2 className="shrink-0 text-lg font-semibold">{selected.name}</h2>
+        <div className="inspiration-command-title shrink-0">
+          <h2 className="text-lg font-semibold">{commandTitle(selected.command) ?? selected.name}</h2>
+          {commandTitle(selected.command) && <small>{selected.name}</small>}
+        </div>
         <MicroButton
           variant="save"
           data-testid="fav-site"

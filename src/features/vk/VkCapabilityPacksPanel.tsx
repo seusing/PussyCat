@@ -9,6 +9,7 @@ import {
   type VkCapabilityPack,
   type VkRuntimeVersionsResponse,
 } from '../../host/vkClient'
+import { vkErrorText } from './vkErrors'
 
 const fieldStyle = {
   background: 'var(--color-canvas)',
@@ -16,9 +17,7 @@ const fieldStyle = {
   color: 'var(--color-fg)',
 } as const
 
-function errorText(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
+const errorText = vkErrorText
 function packTone(state: VkCapabilityPack['state']) {
   if (state === 'installed') return 'var(--color-success)'
   if (state === 'installing') return 'var(--color-accent)'

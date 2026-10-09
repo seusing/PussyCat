@@ -25,6 +25,7 @@ import {
   type VkProviderSettings,
   type VkProviderTestResult,
 } from '../../host/vkClient'
+import { vkErrorText } from './vkErrors'
 
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
 const fieldStyle = {
@@ -59,6 +60,19 @@ type RouteSnapshot = {
 }
 
 const NOTICE_DURATION_MS = 2000
+
+/** 创建配置时的「快速选择」。只带名称与接口地址,**不带模型 ID**:模型由「获取模型列表」或手动输入决定。 */
+const PROVIDER_PRESETS = [
+  { id: 'deepseek', label: 'DeepSeek', base_url: 'https://api.deepseek.com/v1' },
+  { id: 'dashscope', label: '阿里云百炼', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { id: 'kimi', label: 'Kimi', base_url: 'https://api.moonshot.cn/v1' },
+  { id: 'zhipu', label: '智谱', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
+  { id: 'volcengine', label: '火山方舟', base_url: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'openai', label: 'OpenAI', base_url: 'https://api.openai.com/v1' },
+  { id: 'custom', label: '中转站或自定义', base_url: '' },
+] as const
+type ProviderPreset = (typeof PROVIDER_PRESETS)[number]
+const NEW_CHANNEL_NAME = '新配置'
 const ROUTING_ROLES = ['deep_analysis', 'basic'] as const
 
 function useDismissOnOutside(ref: { current: HTMLElement | null }, open: boolean, dismiss: () => void, portalRef?: { current: HTMLElement | null }) {
@@ -493,6 +507,13 @@ function ChannelEditor({
             <MorphActionGlyph icon={MorphActivity} size={15} className={testBusy ? 'vk-provider-icon--busy' : ''} />
           </ActionIconButton>
         </div>
+        <div
+          className="vk-provider-protocol-note text-xs"
+          data-testid={`vk-channel-reasoning-hint-${draft.id}`}
+          style={{ color: 'var(--color-fg-dim)' }}
+        >
+          越高越慢、越贵，一般用 medium；high 或 max 在中转站上可能要等十几分钟
+        </div>
         {saved?.key_from_environment && (
           <span className="vk-provider-protocol-note text-xs" style={{ color: 'var(--color-fg-dim)' }} title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">key 来自系统环境变量，优先生效</span>
         )}
@@ -534,6 +555,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const [saving, setSaving] = useState(false)
   const [ccSwitchPickerOpen, setCcSwitchPickerOpen] = useState(false)
+  // 选完预设后要把焦点交给下一个该填的框;等这次渲染提交完再聚焦,输入框才是最新状态。
+  const [focusTestId, setFocusTestId] = useState<string | null>(null)
   const [error, setError] = useState<LoadError | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
@@ -578,6 +601,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   }, [ccSwitchPickerOpen])
 
   useEffect(() => {
+    if (!focusTestId) return
+    document.querySelector<HTMLInputElement>(`[data-testid="${focusTestId}"]`)?.focus()
+    setFocusTestId(null)
+  }, [focusTestId])
+
+  useEffect(() => {
     if (!pendingDelete) return
     deleteDialogRef.current?.showModal()
     deleteCancelRef.current?.focus()
@@ -606,7 +635,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         ]),
       ))
     } catch (err) {
-      const message = err instanceof Error ? err.message : '模型配置读取失败'
+      const message = vkErrorText(err, '模型配置读取失败')
       if (settingsLoaded.current) showNotice('error', message, 'form', true)
       else setError({ message, engineNotReady: isVkEngineNotReady(err) })
     } finally {
@@ -672,7 +701,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const addChannel = () => {
     const id = newId()
     const draft: Draft = {
-      id, name: '新配置', base_url: '', model_id: '',
+      id, name: NEW_CHANNEL_NAME, base_url: '', model_id: '',
       key_env: `VK_CHANNEL_${id.toUpperCase()}_KEY`, api_style: 'openai_completions',
       api_style_touched: false, reasoning_effort: 'medium', key_masked: '', extra_headers: {},
       api_key: '', key_touched: false, key_loaded: true, key_visible: false, enabled: true,
@@ -708,7 +737,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       }
       openNewDraft(imported)
     } catch (err) {
-      showNotice('error', err instanceof Error ? err.message : '从 cc-switch 导入失败', 'form', true)
+      showNotice('error', vkErrorText(err, '从 cc-switch 导入失败'), 'form', true)
     } finally {
       setBusy(null)
     }
@@ -756,7 +785,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       onSaved?.()
       return { ok: true, noticeMessage }
     } catch (err) {
-      const message = err instanceof Error ? err.message : '模型配置保存失败'
+      const message = vkErrorText(err, '模型配置保存失败')
       if (errorLocation !== null) showNotice('error', message, errorLocation, true)
       void load()
       return { ok: false, error: message }
@@ -786,7 +815,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         onSaved?.()
       } catch (err) {
         pendingRouteSnapshot.current = null
-        showNotice('error', err instanceof Error ? err.message : '模型配置保存失败', 'form', true)
+        showNotice('error', vkErrorText(err, '模型配置保存失败'), 'form', true)
         await load()
       } finally {
         routeSaveRunning.current = false
@@ -887,7 +916,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         key_touched: false,
       })
     } catch (err) {
-      showNotice('error', err instanceof Error ? err.message : '读取 key 失败', location, true)
+      showNotice('error', vkErrorText(err, '读取 key 失败'), location, true)
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
@@ -899,8 +928,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     }
   }
 
-  const runTest = async (draft: Draft, probeGeneration = true) => {
-    const location: AlertLocation = modalId === draft.id ? 'modal' : 'form'
+  const runTest = async (
+    draft: Draft,
+    probeGeneration = true,
+    location: AlertLocation = modalId === draft.id ? 'modal' : 'form',
+  ) => {
     const operation: 'models' | 'test' = probeGeneration ? 'test' : 'models'
     setChannelBusy((current) => ({
       ...current,
@@ -946,7 +978,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         }))
       }
     } catch (err) {
-      showNotice('error', err instanceof Error ? err.message : '连接测试失败', location)
+      showNotice('error', vkErrorText(err, '连接测试失败'), location)
     } finally {
       setChannelBusy((current) => {
         const next = { ...current }
@@ -956,6 +988,26 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         return next
       })
     }
+  }
+
+  /** 选一个预设:填名称与接口地址,协议固定为 OpenAI 兼容,清掉上一个预设遗留的模型,焦点交给下一步要填的框。 */
+  const applyPreset = (draft: Draft, preset: ProviderPreset) => {
+    const custom = preset.id === 'custom'
+    patch(draft.id, {
+      name: custom ? NEW_CHANNEL_NAME : preset.label,
+      base_url: preset.base_url,
+      model_id: '',
+      api_style: 'openai_completions',
+      api_style_touched: !custom,
+    })
+    setModels((prev) => ({ ...prev, [draft.id]: [] }))
+    setModelLabels((prev) => ({ ...prev, [draft.id]: {} }))
+    setReasoningEfforts((prev) => ({ ...prev, [draft.id]: {} }))
+    setValidationErrors((current) => ({
+      ...current,
+      [draft.id]: { ...current[draft.id], name: undefined, base_url: undefined, model_id: undefined, api_style: undefined },
+    }))
+    setFocusTestId(custom ? `vk-channel-url-${draft.id}` : `vk-channel-key-${draft.id}`)
   }
 
   const hasModalSelection = () => {
@@ -982,10 +1034,14 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       setValidationErrors((current) => ({ ...current, [draft.id]: errors }))
       return
     }
+    const isNew = modalSession?.original === null
     const result = await save('modal')
     if (result.ok) {
       closeModal(true)
       if (result.noticeMessage) showNotice('success', result.noticeMessage, 'form')
+      // 配置变了,旧的测试结果不再可信;新建的配置立刻测一次,结果落在这一行上。
+      setResults((current) => { const next = { ...current }; delete next[draft.id]; return next })
+      if (isNew) void runTest(draft, true, 'form')
     }
   }
 
@@ -1188,9 +1244,21 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                     )}
                     <div className="mt-1 truncate text-xs" style={{ color: 'var(--color-fg-dim)' }}>{draft.api_style}</div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs" style={{ color: statusColor }}>
-                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: statusColor }} aria-hidden="true" />
-                    <span>{statusLabel}</span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-xs" style={{ color: statusColor }}>
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: statusColor }} aria-hidden="true" />
+                      <span>{statusLabel}</span>
+                    </div>
+                    {results[draft.id] && (
+                      <div
+                        data-testid={`vk-channel-result-${draft.id}`}
+                        title={formatTestNotice(results[draft.id])}
+                        className="mt-1 text-xs"
+                        style={{ color: results[draft.id].ok ? 'var(--color-success)' : 'var(--color-danger)', overflowWrap: 'anywhere' }}
+                      >
+                        {results[draft.id].ok ? '连接正常' : results[draft.id].message || '连接失败'}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-1">
                     <ActionIconButton testId={`vk-channel-reuse-${draft.id}`} label="复用" onClick={() => reuseChannel(draft)} disabled={saving}>
@@ -1279,6 +1347,31 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                 <h3 id="vk-provider-modal-title" className="text-lg font-semibold">{isNew ? '创建配置' : '编辑配置'}</h3>
                 <button type="button" aria-label="关闭模型配置弹窗" title="关闭" onClick={() => closeModal(false)} className="rounded-lg p-1.5" style={outlineStyle}><X size={18} /></button>
               </div>
+              {isNew && (
+                <div className="mb-3" data-testid="vk-provider-presets">
+                  <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>快速选择</div>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="快速选择">
+                    {PROVIDER_PRESETS.map((preset) => {
+                      const selected = preset.base_url !== '' && modalDraft.base_url === preset.base_url
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          data-testid={`vk-preset-${preset.id}`}
+                          aria-pressed={selected}
+                          onClick={() => applyPreset(modalDraft, preset)}
+                          className="rounded-lg px-2.5 py-1 text-xs"
+                          style={selected
+                            ? { border: '1px solid var(--color-accent)', background: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', color: 'var(--color-fg)' }
+                            : outlineStyle}
+                        >
+                          {preset.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <div className={`vk-validation-field ${validationErrors[modalDraft.id]?.name ? 'is-error' : ''}`}>
                   <label htmlFor="vk-modal-name-input" className="mb-1 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>名称</label>

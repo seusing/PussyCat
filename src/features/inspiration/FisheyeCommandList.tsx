@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   motion,
   useMotionValue,
@@ -7,10 +7,22 @@ import {
   useTransform,
   type MotionValue,
 } from 'motion/react'
-import { Plus } from 'lucide-react'
+import { ChevronRight, Plus } from 'lucide-react'
 import type { CommandManifest } from '../../data/types'
-import { commandDescription } from '../../data/zhCopy'
+import { commandDescription, commandTitle } from '../../data/zhCopy'
 import { BookDemoButton } from '../../components/BookDemoButton'
+
+/** 列表里的一组命令。title 为空表示不画分组标题(整张列表只有一组时)。 */
+export type CommandSection = {
+  key: string
+  title: string
+  note?: string
+  commands: CommandManifest[]
+  /** 可折叠的分组:collapsed 时不渲染其中的命令,标题行始终保留。 */
+  collapsible?: boolean
+  collapsed?: boolean
+  onToggle?: () => void
+}
 
 const RANGE = 110
 const MAX_SCALE = 1.12
@@ -39,6 +51,7 @@ function CommandRow({
   register: (element: HTMLDivElement | null) => void
 }) {
   const reduce = useReducedMotion()
+  const zhTitle = commandTitle(command.command)
   const scaleTarget = useTransform(pointerY, (y) => {
     const center = centers.current[index]
     if (center == null || !Number.isFinite(center)) return 1
@@ -63,7 +76,8 @@ function CommandRow({
         className="fisheye-command-header"
       >
         <span>
-          <strong>{command.name}</strong>
+          <strong>{zhTitle ?? command.name}</strong>
+          {zhTitle && <span className="fisheye-command-name">{command.name}</span>}
           <small>{command.access === 'write' ? '写入' : '读取'}</small>
         </span>
         <motion.span animate={{ rotate: active ? 45 : 0 }} transition={ICON_SPRING}>
@@ -95,16 +109,27 @@ function CommandRow({
   )
 }
 
-export function FisheyeCommandList({ commands, onSubmit, canSubmit = () => true }: { commands: CommandManifest[]; onSubmit: (command: CommandManifest) => void; canSubmit?: (command: CommandManifest) => boolean }) {
+export function FisheyeCommandList({ commands, sections, onSubmit, canSubmit = () => true }: {
+  commands?: CommandManifest[]
+  sections?: CommandSection[]
+  onSubmit: (command: CommandManifest) => void
+  canSubmit?: (command: CommandManifest) => boolean
+}) {
   const pointerY = useMotionValue(-9999)
-  const [active, setActive] = useState<number | null>(commands.length > 0 ? 0 : null)
+  const blocks = useMemo<CommandSection[]>(
+    () => sections ?? [{ key: 'all', title: '', commands: commands ?? [] }],
+    [sections, commands],
+  )
+  // 折叠的分组不渲染命令;active/centers 的下标都对这条拍平后的可见序列。
+  const visible = useMemo(() => blocks.flatMap((block) => (block.collapsed ? [] : block.commands)), [blocks])
+  const [active, setActive] = useState<number | null>(visible.length > 0 ? 0 : null)
   const rows = useRef<(HTMLDivElement | null)[]>([])
   const centers = useRef<number[]>([])
 
   useEffect(() => {
-    setActive(commands.length > 0 ? 0 : null)
-    rows.current = rows.current.slice(0, commands.length)
-  }, [commands])
+    setActive(visible.length > 0 ? 0 : null)
+    rows.current = rows.current.slice(0, visible.length)
+  }, [visible])
 
   useEffect(() => {
     const measure = () => {
@@ -124,8 +149,9 @@ export function FisheyeCommandList({ commands, onSubmit, canSubmit = () => true 
       window.removeEventListener('scroll', measure, true)
       window.removeEventListener('resize', measure)
     }
-  }, [commands])
+  }, [visible])
 
+  let nextIndex = 0
   return (
     <div
       data-testid="fisheye-command-list"
@@ -133,20 +159,43 @@ export function FisheyeCommandList({ commands, onSubmit, canSubmit = () => true 
       onMouseMove={(event) => pointerY.set(event.clientY)}
       onMouseLeave={() => { pointerY.set(-9999); setActive(null) }}
     >
-      {commands.map((command, index) => (
-        <CommandRow
-          key={command.command}
-          command={command}
-          index={index}
-          pointerY={pointerY}
-          centers={centers}
-          active={active === index}
-          onActivate={() => setActive(index)}
-          onSubmit={() => onSubmit(command)}
-          canSubmit={canSubmit(command)}
-          register={(element) => { rows.current[index] = element }}
-        />
-      ))}
+      {blocks.map((block) => {
+        const start = nextIndex
+        if (!block.collapsed) nextIndex += block.commands.length
+        return (
+          <Fragment key={block.key}>
+            {block.title && (
+              <div className="fisheye-group-heading" data-testid={`command-group-${block.key}`}>
+                {block.collapsible ? (
+                  <button type="button" className="fisheye-group-toggle" aria-expanded={!block.collapsed} onClick={block.onToggle}>
+                    <ChevronRight size={14} aria-hidden="true" className="fisheye-group-chevron" data-open={!block.collapsed} />
+                    <span>{block.title}</span>
+                  </button>
+                ) : <span className="fisheye-group-title">{block.title}</span>}
+                <small>{block.commands.length} 个</small>
+                {block.note && <em>{block.note}</em>}
+              </div>
+            )}
+            {!block.collapsed && block.commands.map((command, offset) => {
+              const index = start + offset
+              return (
+                <CommandRow
+                  key={command.command}
+                  command={command}
+                  index={index}
+                  pointerY={pointerY}
+                  centers={centers}
+                  active={active === index}
+                  onActivate={() => setActive(index)}
+                  onSubmit={() => onSubmit(command)}
+                  canSubmit={canSubmit(command)}
+                  register={(element) => { rows.current[index] = element }}
+                />
+              )
+            })}
+          </Fragment>
+        )
+      })}
     </div>
   )
 }

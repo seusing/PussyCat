@@ -3,12 +3,12 @@ import { AnimatePresence, motion, useDragControls, useMotionValue } from 'motion
 import { BookmarkPlus, Check, Copy, Download } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
-import { HostRequestError } from '../../host/errors'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { GlassSelect } from '../../components/GlassMenu'
 import { addInspirationItem } from '../inspiration/inspirationLibrary'
 import { vkPrimaryOutput, vkResultVersionLabel, type VkResultVersion } from './taskResults'
+import { vkErrorNote, type VkErrorNote } from './vkErrors'
 import './VkOutputViewer.css'
 
 export type VkOutputTab = {
@@ -35,11 +35,6 @@ function inlineFileName(label: string): string {
   return `${label.replace(/[\\/:*?"<>|]/g, '_')}.md`
 }
 
-function errorText(error: unknown, fallback: string): string {
-  if (error instanceof HostRequestError) return error.reasonCode ? `${error.summary}(${error.reasonCode})` : error.summary
-  return error instanceof Error ? error.message || fallback : fallback
-}
-
 export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion, baseUrl, onClose, cache }: {
   tabs: VkOutputTab[]
   activeTabId: string
@@ -52,9 +47,9 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const localCache = useRef<VkOutputCache>(new Map())
   const resultCache = cache ?? localCache.current
   const [loadedState, setLoadedState] = useState<{ key: string; value: LoadedOutput } | null>(null)
-  const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null)
+  const [loadError, setLoadError] = useState<({ key: string } & VkErrorNote) | null>(null)
   const [retry, setRetry] = useState(0)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<VkErrorNote | null>(null)
   const [outputCopied, setOutputCopied] = useState(false)
   const [outputDownloadProgress, setOutputDownloadProgress] = useState<number | null>(null)
   const [outputDownloadDone, setOutputDownloadDone] = useState(false)
@@ -79,7 +74,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const loaded = inlineLoaded
     ?? resultCache.get(requestKey)
     ?? (loadedState?.key === outputKey ? loadedState.value : undefined)
-  const error = loadError?.key === outputKey ? loadError.message : null
+  const error = loadError?.key === outputKey ? loadError : null
   const dragControls = useDragControls()
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
   const [size, setSize] = useState(() => ({ width: Math.min(960, window.innerWidth - 24), height: Math.min(700, window.innerHeight - 24) }))
@@ -145,7 +140,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
         resultCache.set(resolvedOutputKey, value)
         setLoadedState({ key: outputKey, value })
       } catch (error) {
-        if (current) setLoadError({ key: outputKey, message: errorText(error, '结果读取失败') })
+        if (current) setLoadError({ key: outputKey, ...vkErrorNote(error, '结果读取失败') })
       }
     })()
     return () => { current = false }
@@ -205,7 +200,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
       }
     } catch (error) {
       if (!controller.signal.aborted) {
-        setActionError(errorText(error, '保存失败'))
+        setActionError(vkErrorNote(error, '保存失败'))
         setOutputDownloadProgress(null)
       }
     } finally {
@@ -220,9 +215,9 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
       const copied = await copyText(loaded.content)
       if (generation !== interactionGeneration.current) return
       if (copied) setOutputCopied(true)
-      else setActionError('复制内容失败')
+      else setActionError({ text: '复制内容失败' })
     } catch (error) {
-      if (generation === interactionGeneration.current) setActionError(errorText(error, '复制内容失败'))
+      if (generation === interactionGeneration.current) setActionError(vkErrorNote(error, '复制内容失败'))
     }
   }
 
@@ -237,7 +232,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
       source: activeTab?.source,
     })
     if (saved) setLibrarySaved(true)
-    else setActionError('保存到灵感库失败')
+    else setActionError({ text: '保存到灵感库失败' })
   }
 
   return (
@@ -345,8 +340,8 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
           </div>
           <div ref={contentRef} id={`${domId}-panel`} role="tabpanel" aria-labelledby={`${domId}-tab-${tabs.findIndex((tab) => tab.id === activeTabId)}`}
             data-testid="vk-output-viewer-content" className="vk-output-viewer-content" aria-busy={!loaded && !error}>
-            {actionError && <p role="alert">{actionError}</p>}
-            {error ? <div role="alert">{error}<button type="button" onClick={() => setRetry((value) => value + 1)}>重试</button></div>
+            {actionError && <p role="alert" title={actionError.title}>{actionError.text}</p>}
+            {error ? <div role="alert" title={error.title}>{error.text}<button type="button" onClick={() => setRetry((value) => value + 1)}>重试</button></div>
               : loaded ? <Markdown>{loaded.content}</Markdown> : <p role="status">正在读取结果…</p>}
           </div>
         </div>

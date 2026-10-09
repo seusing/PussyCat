@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SystemHealthPill, aggregate, type BridgeHealth } from './SystemHealthPill'
 import { useAppStore } from '../store/appStore'
@@ -494,5 +494,161 @@ describe('浮层收起', () => {
 
     await waitFor(() => expect(screen.getByTestId('health-next-step')).toHaveTextContent('OpenCLI 扩展'))
     expect(screen.getByTestId('health-details')).toBeInTheDocument()
+  })
+})
+
+// ─────────────────────────── 安装扩展 ───────────────────────────
+
+describe('安装扩展', () => {
+  const noExtension = () => bridge({ extension: 'disconnected', profile: 'unknown', reasonCode: 'extension-disconnected', summary: '扩展未连上' })
+  const stopped = () => bridge({ daemon: 'stopped', extension: 'unknown', profile: 'unknown', reasonCode: 'daemon-stopped', summary: 'daemon 未运行' })
+
+  function openFetch(result: unknown, bridgeHealth: BridgeHealth) {
+    const spy = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.includes('/browser-bridge/open-extension-page')) return { ok: true, json: async () => result }
+      if (url.includes('/browser-bridge/health')) return { ok: true, json: async () => bridgeHealth }
+      if (url.includes('/vk/v1/health')) return { ok: true, json: async () => ({ status: 'ok' }) }
+      return { ok: true }
+    })
+    vi.stubGlobal('fetch', spy)
+    return spy
+  }
+
+  test('扩展未连接:浮层里有「安装扩展」,点了向 Host 要求打开应用店', async () => {
+    const spy = openFetch({ ok: true }, noExtension())
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+
+    await userEvent.click(screen.getByTestId('health-install-extension'))
+
+    await waitFor(() => expect(screen.getByTestId('health-install-note')).toHaveTextContent('已在 Chrome 打开应用店'))
+    const call = spy.mock.calls.find((c) => String(c[0]).includes('/browser-bridge/open-extension-page'))
+    expect(call?.[0]).toBe(`${BASE}/browser-bridge/open-extension-page`)
+    expect((call?.[1] as RequestInit)?.method).toBe('POST')
+    expect((call?.[1] as RequestInit)?.body).toBeUndefined()           // 地址在 Host 里写死,前端什么都不传
+  })
+
+  test('浏览器服务未运行时同样给「安装扩展」', async () => {
+    openFetch({ ok: true }, stopped())
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器服务未运行'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    expect(screen.getByTestId('health-install-extension')).toBeInTheDocument()
+  })
+
+  test('找不到 Chrome:提示先安装 Chrome', async () => {
+    openFetch({ ok: false, reasonCode: 'chrome-not-found' }, noExtension())
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    await userEvent.click(screen.getByTestId('health-install-extension'))
+
+    await waitFor(() => expect(screen.getByTestId('health-install-note')).toHaveTextContent('没找到 Chrome，请先安装 Chrome'))
+  })
+
+  test('一切就绪时不摆「安装扩展」', async () => {
+    openFetch({ ok: true }, bridge())
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    expect(screen.queryByTestId('health-install-extension')).not.toBeInTheDocument()
+  })
+})
+
+// ─────────────────────────── 多 profile 选择 ───────────────────────────
+
+describe('多 profile 选择', () => {
+  const required = () => bridge({ extension: 'disconnected', profile: 'required', profileCount: 2, reasonCode: 'profile-required', summary: '有多个浏览器 profile 连着' })
+
+  function profileFetch({ useResult = { ok: true } as unknown, afterUse = bridge() } = {}) {
+    let used = false
+    const spy = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.includes('/browser-bridge/profiles/use')) { used = true; return { ok: true, json: async () => useResult } }
+      if (url.includes('/browser-bridge/profiles')) {
+        return { ok: true, json: async () => ({
+          ok: true,
+          profiles: [
+            { name: 'work', isDefault: false },
+            { name: 'home', isDefault: true },
+          ],
+        }) }
+      }
+      if (url.includes('/browser-bridge/health')) return { ok: true, json: async () => (used ? afterUse : required()) }
+      if (url.includes('/vk/v1/health')) return { ok: true, json: async () => ({ status: 'ok' }) }
+      return { ok: true }
+    })
+    vi.stubGlobal('fetch', spy)
+    return spy
+  }
+
+  test('需指定时灯上写的是配置问题,不是"扩展未连接"', async () => {
+    profileFetch()
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器配置需指定'))
+  })
+
+  test('浮层里是下拉框和「使用」,不再让用户去终端', async () => {
+    profileFetch()
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器配置需指定'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+
+    const select = await screen.findByTestId('health-profile-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['work', 'home（当前默认）'])
+    expect(select).toHaveValue('home')                       // 预选已有的默认
+    expect(screen.getByTestId('health-details')).not.toHaveTextContent('opencli profile')
+    expect(screen.getByTestId('health-details')).not.toHaveTextContent('终端')
+  })
+
+  test('选一个点「使用」:提交所选别名,成功后自动重新检测,就绪后收起', async () => {
+    const spy = profileFetch()
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器配置需指定'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    const select = await screen.findByTestId('health-profile-select')
+    await waitFor(() => expect(select).toBeEnabled())
+
+    await userEvent.selectOptions(select, 'work')
+    await userEvent.click(screen.getByTestId('health-profile-use'))
+
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('基础连接正常'))
+    const call = spy.mock.calls.find((c) => String(c[0]).includes('/browser-bridge/profiles/use'))
+    expect((call?.[1] as RequestInit)?.method).toBe('POST')
+    expect(JSON.parse(String((call?.[1] as RequestInit)?.body))).toEqual({ alias: 'work' })
+    await waitFor(() => expect(screen.queryByTestId('health-details')).not.toBeInTheDocument())
+  })
+
+  test('Host 说没切成:显示提示并刷新列表,灯保持需指定', async () => {
+    profileFetch({ useResult: { ok: false, reasonCode: 'profile-not-listed' } })
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器配置需指定'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+    const select = await screen.findByTestId('health-profile-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    await userEvent.click(screen.getByTestId('health-profile-use'))
+
+    await waitFor(() => expect(screen.getByTestId('health-profile-note')).toHaveTextContent('没能切换'))
+    expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器配置需指定')
+  })
+
+  test('不是需指定的状态时没有 profile 下拉框,也不请求列表', async () => {
+    const spy = routeFetch({ bridgeHealth: bridge({ extension: 'disconnected', reasonCode: 'extension-disconnected' }) })
+    connected()
+    render(<SystemHealthPill baseUrl={BASE} />)
+    await waitFor(() => expect(screen.getByTestId('health-label')).toHaveTextContent('浏览器扩展未连接'))
+    await userEvent.click(screen.getByTestId('health-details-toggle'))
+
+    expect(screen.queryByTestId('health-profile-picker')).not.toBeInTheDocument()
+    expect(spy.mock.calls.some((c) => String(c[0]).includes('/browser-bridge/profiles'))).toBe(false)
   })
 })

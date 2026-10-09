@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
 import { useAppStore } from './store/appStore'
@@ -573,6 +573,8 @@ describe('前端不自行裁决(对抗 fixture)', () => {
       onStart: start,
     })
     await userEvent.click(await screen.findByTestId('site-row-y'))
+    // 写入类命令默认收在「写入」组里,展开后才看得到。
+    await userEvent.click(within(await screen.findByTestId('command-group-write')).getByRole('button'))
     await userEvent.click(await screen.findByText('looks-bad'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeEnabled()
   })

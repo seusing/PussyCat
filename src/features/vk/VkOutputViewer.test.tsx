@@ -6,8 +6,13 @@ import { fetchVkJob, fetchVkOutputText, type VkJobView } from '../../host/vkClie
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
+import { HostRequestError } from '../../host/errors'
 
-vi.mock('../../host/vkClient', () => ({ fetchVkJob: vi.fn(), fetchVkOutputText: vi.fn() }))
+vi.mock('../../host/vkClient', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../host/vkClient')>()),
+  fetchVkJob: vi.fn(),
+  fetchVkOutputText: vi.fn(),
+}))
 vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn() }))
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
 
@@ -403,4 +408,16 @@ it('ignores a slow old version and aborts a version download when selecting anot
   expect(screen.getByRole('heading', { name: 'Latest' })).toBeInTheDocument()
   expect(screen.getByTestId('vk-output-viewer-download')).toHaveAttribute('data-state', 'idle')
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+it('shows a plain-language hint instead of host wording when the engine is not ready', async () => {
+  vi.mocked(fetchVkOutputText).mockRejectedValue(
+    new HostRequestError('video-knowledge runtime 未安装或未配置', undefined, 503, 'not-installed'),
+  )
+  render(<Harness />)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('解析引擎还没准备好，请先在视频解析页完成一键准备')
+  expect(alert.textContent).not.toMatch(/not-installed|video-knowledge/)
+  expect(alert).toHaveAttribute('title', 'video-knowledge runtime 未安装或未配置(not-installed)')
 })

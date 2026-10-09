@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { argHelp, choiceLabel, commandDescription, hasZhCopy } from './zhCopy'
+import { argHelp, choiceLabel, commandDescription, commandTitle, hasZhCopy } from './zhCopy'
+import { visibleCommands } from './supportedSites'
+import type { CommandManifest } from './types'
 
 const PILOT = [
   'xiaohongshu/whoami', 'xiaohongshu/feed',
@@ -19,10 +21,11 @@ test.each(PILOT)('%s 有中文说明', (key) => {
   expect(zh).toMatch(/[一-龥]/)
 })
 
-test('非试点命令回落 manifest 原文 —— 不做机翻,不留半截译文', () => {
-  expect(commandDescription('bilibili/history', 'List recently watched videos'))
-    .toBe('List recently watched videos')
-  expect(hasZhCopy('bilibili/history')).toBe(false)
+test('非四站命令回落 manifest 原文 —— 不做机翻,不留半截译文', () => {
+  expect(commandDescription('github/trending', 'List trending repositories'))
+    .toBe('List trending repositories')
+  expect(hasZhCopy('github/trending')).toBe(false)
+  expect(commandTitle('github/trending')).toBeUndefined()
 })
 
 test('原文缺失时回落空串,不抛也不显示 undefined', () => {
@@ -88,4 +91,42 @@ test('user-posts / timeline 的参数说明是标题式短文案', () => {
   expect(argHelp('xiaohongshu/user-posts', 'timeout')).toBe('最长加载秒数（30–600）')
   expect(argHelp('twitter/timeline', 'type')).toBe('时间线类型')
   expect(argHelp('twitter/timeline', 'top-by-engagement')).toBe('按互动量取前 N 条，0 为不重排')
+})
+
+// ——— 四个站点全部可见命令的中文覆盖 ———————————————————————————————
+
+const snapshot = JSON.parse(readFileSync(resolve(process.cwd(), 'public/catalog.snapshot.json'), 'utf8')) as { commands: CommandManifest[] }
+const FOUR_SITES = ['twitter', 'xiaohongshu', 'youtube', 'bilibili']
+const visible = visibleCommands(snapshot.commands).filter((command) => FOUR_SITES.includes(command.site))
+const HAN = /[一-龥]/
+
+test('目录里四个站点都有可见命令(下面的逐条用例不是在空集上平凡成立)', () => {
+  for (const site of FOUR_SITES) expect(visible.filter((command) => command.site === site).length, site).toBeGreaterThan(10)
+})
+
+// 逐条一个用例:漏译的那一条会直接以命令名出现在失败列表里。
+test.each(visible.map((command) => command.command))('%s 有中文短名和中文说明', (key) => {
+  const title = commandTitle(key)
+  expect(title, '中文短名').toBeDefined()
+  expect(title!).toMatch(HAN)
+  expect([...title!].length).toBeGreaterThanOrEqual(4)
+  expect([...title!].length).toBeLessThanOrEqual(8)
+  const zh = commandDescription(key, 'ENGLISH-FALLBACK')
+  expect(zh).not.toBe('ENGLISH-FALLBACK')
+  expect(zh).toMatch(HAN)
+  // 说明里不该留着整句未译的英文(专名、命令名、参数名除外):连续 3 个以上英文单词视为漏译。
+  expect(zh.replace(/[A-Za-z][A-Za-z0-9_-]*/g, 'x')).not.toMatch(/(?:x\s+){3,}/)
+})
+
+test('同一站点内中文短名不重复 —— 列表里两条同名的命令分不出谁是谁', () => {
+  for (const site of FOUR_SITES) {
+    const titles = visible.filter((command) => command.site === site).map((command) => commandTitle(command.command))
+    expect(new Set(titles).size, site).toBe(titles.length)
+  }
+})
+
+test('没有中文短名的命令返回 undefined,由界面回落英文命令名', () => {
+  expect(commandTitle('twitter/timeline')).toBe('首页时间线')
+  expect(commandTitle('xiaohongshu/collections')).toBeUndefined()    // 已隐藏的旧命令只留说明
+  expect(commandTitle('nope/nope')).toBeUndefined()
 })

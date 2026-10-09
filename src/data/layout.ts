@@ -29,6 +29,30 @@ export const CONFIG_MIN = 400
 // 的口径,外壳中栏放的是模块内容,不必一样宽。
 export const SHELL_CENTER_MIN = 360
 
+// 首页「开始使用」清单的"不再显示"。**独立 key,不进 LayoutSnapshot**:AppShell 会拿它内存里
+// 那份 layout 整体回写 LAYOUT_KEY(拖栏宽、折叠侧栏时),放进去会被一次拖拽冲回默认值。
+export const GETTING_STARTED_DISMISSED_KEY = 'opencli-app:getting-started-dismissed:v1'
+
+export function loadGettingStartedDismissed(storage?: Storage): boolean {
+  try {
+    return resolveStorage(storage)?.getItem(GETTING_STARTED_DISMISSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveGettingStartedDismissed(dismissed: boolean, storage?: Storage): boolean {
+  const s = resolveStorage(storage)
+  if (!s) return false
+  try {
+    if (dismissed) s.setItem(GETTING_STARTED_DISMISSED_KEY, '1')
+    else s.removeItem(GETTING_STARTED_DISMISSED_KEY)
+    return true
+  } catch {
+    return false   // 配额满 / 隐私模式:本次会话内存态仍有效
+  }
+}
+
 export type LayoutSnapshot = {
   navWidth: number
   runsWidth: number

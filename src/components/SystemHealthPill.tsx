@@ -2,32 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle, RefreshCw, Wrench } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import { DEFAULT_BASE_URL } from '../host/nodeBridgeHost'
+import {
+  extensionPageFailureText,
+  fetchBridgeHealth,
+  fetchBridgeProfiles,
+  openExtensionPage,
+  useBridgeProfile,
+  type BridgeHealth,
+  type BridgeProfile,
+  type RepairResult,
+} from '../host/bridgeClient'
 import { formatAppBuild } from '../lib/appVersion'
 
-// Host 投影后的桥接健康结构(server/browser-bridge-health.mjs)。**前端只渲染,不解释**:
-// 判定逻辑全在 Host 侧,这里没有第二套「怎样算就绪」的规则。
-export type BridgeHealth = {
-  checkedAt: number
-  daemon: 'running' | 'stopped' | 'unreachable' | 'error'
-  daemonVersion?: string
-  extension: 'connected' | 'disconnected' | 'unknown'
-  extensionVersion?: string
-  profile: 'ready' | 'required' | 'disconnected' | 'unknown'
-  profileCount: number
-  opencliVersion?: string
-  retryable: boolean
-  reasonCode: string
-  summary: string
-}
-
-export type RepairResult = {
-  steps: { action: string; outcome: string; detail?: string }[]
-  health: BridgeHealth
-  repaired: boolean
-  alreadyOk?: boolean
-  needsProfileChoice?: boolean
-  nextStep?: string
-}
+// **前端只渲染,不解释**:判定逻辑全在 Host 侧(server/browser-bridge-health.mjs),
+// 这里没有第二套「怎样算就绪」的规则。
+export type { BridgeHealth, RepairResult }
 
 const PING_INTERVAL_MS = 5000
 const PING_TIMEOUT_MS = 2000
@@ -63,6 +52,9 @@ export function bridgeLabel(state: BridgeState, health: BridgeHealth | undefined
   if (state === 'checking') return '桥接检测中…'
   if (state === 'failed') return '桥接状态未知'
   if (health?.reasonCode === 'ok') return '浏览器已就绪'
+  // 多 profile 时 daemon 报的 extension 也是 disconnected(没有被选中的连接),
+  // 所以 profile 的结论必须排在扩展之前,否则会被说成「扩展未连接」。
+  if (health && (health.profile === 'required' || health.profile === 'disconnected')) return `浏览器配置${PROFILE_TEXT[health.profile]}`
   if (health?.extension === 'disconnected') return '浏览器扩展未连接'
   if (health && health.daemon !== 'running') return `浏览器服务${DAEMON_TEXT[health.daemon]}`
   if (health && health.profile !== 'ready') return `浏览器配置${PROFILE_TEXT[health.profile]}`
@@ -351,6 +343,79 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       .finally(() => { clearTimeout(timer); checkVk() })
   }, [mode, base, checkVk, pollUntilReady, stopPolling])
 
+  // —— 安装扩展:在 Chrome 里打开应用店页面(地址由 Host 写死) ——
+  const [openingExtension, setOpeningExtension] = useState(false)
+  const [extensionNote, setExtensionNote] = useState<string | undefined>()
+  const installExtension = useCallback(async () => {
+    setOpeningExtension(true)
+    setExtensionNote(undefined)
+    try {
+      const result = await openExtensionPage(base)
+      setExtensionNote(result.ok
+        ? '已在 Chrome 打开应用店，装好后回到这里，会自动重新检测'
+        : extensionPageFailureText(result.reasonCode))
+    } catch {
+      setExtensionNote('请求没送到。确认爪爪服务在运行后重试')
+    } finally {
+      setOpeningExtension(false)
+    }
+  }, [base])
+
+  // —— 多个浏览器 profile 同时连着:界面内选一个,选完自动重新检测 ——
+  const needsProfile = bridge?.reasonCode === 'profile-required'
+  const [profiles, setProfiles] = useState<BridgeProfile[] | undefined>()
+  const [pickedProfile, setPickedProfile] = useState('')
+  const [usingProfile, setUsingProfile] = useState(false)
+  const [profileNote, setProfileNote] = useState<string | undefined>()
+  const loadProfiles = useCallback(async () => {
+    try {
+      const result = await fetchBridgeProfiles(base)
+      if (!result.ok) { setProfiles(undefined); setProfileNote('读不到浏览器 profile 列表，请重试'); return }
+      setProfiles(result.profiles)
+      setPickedProfile((current) => (
+        result.profiles.some((item) => item.name === current)
+          ? current
+          : (result.profiles.find((item) => item.isDefault) ?? result.profiles[0])?.name ?? ''
+      ))
+    } catch {
+      setProfiles(undefined)
+      setProfileNote('读不到浏览器 profile 列表，请重试')
+    }
+  }, [base])
+  useEffect(() => {
+    if (mode !== 'connected' || !needsProfile || !detailsOpen) return
+    setProfileNote(undefined)
+    void loadProfiles()
+  }, [mode, needsProfile, detailsOpen, loadProfiles])
+  const useProfile = useCallback(async () => {
+    if (!pickedProfile) return
+    setUsingProfile(true)
+    setProfileNote(undefined)
+    try {
+      const result = await useBridgeProfile(pickedProfile, base)
+      if (!result.ok) {
+        setProfileNote('没能切换到这个 profile，列表已刷新，请重新选择')
+        await loadProfiles()
+        return
+      }
+      bridgeGenRef.current += 1          // 作废在途的旧探测,以下面这次为准
+      const health = await fetchBridgeHealth(base)
+      setBridge(health)
+      setBridgeState('idle')
+      lastCheckRef.current = Date.now()
+      setLastCheckedAt(health.checkedAt || Date.now())
+      if (health.reasonCode === 'ok') {
+        setNextStep(undefined)
+        setDetailsOpen(false)
+      }
+    } catch {
+      setProfileNote('请求没送到。确认爪爪服务在运行后重试')
+    } finally {
+      setUsingProfile(false)
+    }
+  }, [base, loadProfiles, pickedProfile])
+
+  const showInstall = !demo && host === 'online' && !!bridge && bridge.reasonCode !== 'ok' && !bridge.reasonCode?.startsWith('profile-')
   const verdict = aggregate({ demo, host, bridge, bridgeState, vk })
   const showAction = !demo && host === 'online' && (repairing || verdict.canRepair || verdict.tone === 'ok')
   return (
@@ -366,6 +431,10 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
       // 不会因为命中测试暂时离开根节点而卸载卡片。
       onMouseEnter={() => { cancelDetailsLeave(); setDetailsOpen(true) }}
       onMouseLeave={(event) => {
+        // 正在操作 profile 下拉框:原生弹出层在页面之外,鼠标移进去会被当成"移开",
+        // 收起浮层等于把下拉框从手里抽走。焦点离开(onBlur)、Esc 或点别处时再收。
+        const active = document.activeElement
+        if (active instanceof HTMLSelectElement && rootRef.current?.contains(active)) return
         // 无明确目标表示离开窗口或测试环境的 unhover,无需等待桥接间隙。
         if (!event.relatedTarget || event.relatedTarget === window || event.relatedTarget === document || event.relatedTarget === document.body || event.relatedTarget === document.documentElement) {
           cancelDetailsLeave()
@@ -447,6 +516,61 @@ export function SystemHealthPill({ baseUrl }: { baseUrl?: string } = {}) {
           {nextStep && (
             <div data-testid="health-next-step" className="mt-3 min-w-0" style={{ color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
               {nextStep}
+            </div>
+          )}
+          {showInstall && (
+            <div className="mt-3">
+              <button
+                type="button"
+                data-testid="health-install-extension"
+                onClick={() => { void installExtension() }}
+                disabled={openingExtension}
+                className="rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
+                style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+              >
+                {openingExtension ? '正在打开…' : '安装扩展'}
+              </button>
+              {extensionNote && (
+                <div data-testid="health-install-note" className="mt-2 min-w-0" style={{ color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
+                  {extensionNote}
+                </div>
+              )}
+            </div>
+          )}
+          {needsProfile && (
+            <div data-testid="health-profile-picker" className="mt-3">
+              <div className="mb-1" style={{ color: 'var(--color-fg-dim)' }}>选择要使用的浏览器 profile</div>
+              <div className="flex items-center gap-2">
+                <select
+                  data-testid="health-profile-select"
+                  aria-label="浏览器 profile"
+                  value={pickedProfile}
+                  onChange={(event) => setPickedProfile(event.target.value)}
+                  disabled={!profiles?.length || usingProfile}
+                  className="min-w-0 flex-1 rounded-lg px-2 py-1 text-xs"
+                  style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+                >
+                  {!profiles?.length && <option value="">{profiles ? '没有已连接的 profile' : '读取中…'}</option>}
+                  {profiles?.map((item) => (
+                    <option key={item.name} value={item.name}>{item.isDefault ? `${item.name}（当前默认）` : item.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  data-testid="health-profile-use"
+                  onClick={() => { void useProfile() }}
+                  disabled={!pickedProfile || usingProfile}
+                  className="shrink-0 rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
+                  style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+                >
+                  {usingProfile ? '切换中…' : '使用'}
+                </button>
+              </div>
+              {profileNote && (
+                <div data-testid="health-profile-note" className="mt-2 min-w-0" style={{ color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
+                  {profileNote}
+                </div>
+              )}
             </div>
           )}
         </div>

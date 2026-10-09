@@ -273,7 +273,7 @@ describe('表单网格与布尔开关', () => {
   })
 })
 
-describe('命令说明:试点八条用中文,其余回落 manifest 原文', () => {
+describe('命令说明:四个站点的命令用中文,其余回落 manifest 原文', () => {
   test('试点命令显示中文精简说明,不显示英文原文', () => {
     const timeline: CommandManifest = {
       command: 'twitter/timeline', site: 'twitter', name: 'timeline',
@@ -286,13 +286,27 @@ describe('命令说明:试点八条用中文,其余回落 manifest 原文', () =
     expect(screen.queryByText(/Fetch the logged-in user/)).not.toBeInTheDocument()
   })
 
-  test('非试点命令**如实回落英文原文** —— 不做机翻、不留半截译文', () => {
+  test('非四站命令**如实回落英文原文** —— 不做机翻、不留半截译文', () => {
     const other: CommandManifest = {
-      command: 'bilibili/history', site: 'bilibili', name: 'history',
-      description: 'List recently watched videos', access: 'read', browser: true, args: [],
+      command: 'github/trending', site: 'github', name: 'trending',
+      description: 'List trending repositories', access: 'read', browser: true, args: [],
     }
     useAppStore.setState({ selected: other, values: {}, currentRun: undefined, decisions: new Map() })
     render(<CommandConfig onRun={() => {}} />)
-    expect(screen.getByText('List recently watched videos')).toBeInTheDocument()
+    expect(screen.getByText('List trending repositories')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'trending' })).toBeInTheDocument()
+    expect(screen.getByTestId('command-header')).not.toHaveTextContent('trending trending')   // 没有中文名就不重复一遍英文
+  })
+
+  test('标题用中文短名,英文命令名作为副标题', () => {
+    const timeline: CommandManifest = {
+      command: 'twitter/timeline', site: 'twitter', name: 'timeline',
+      description: "Fetch the logged-in user's home timeline", access: 'read', browser: true, args: [],
+    }
+    useAppStore.setState({ selected: timeline, values: {}, currentRun: undefined, decisions: new Map() })
+    render(<CommandConfig onRun={() => {}} />)
+    const heading = screen.getByRole('heading', { name: '首页时间线' })
+    expect(heading).toBeInTheDocument()
+    expect(heading.parentElement).toHaveTextContent('timeline')
   })
 })

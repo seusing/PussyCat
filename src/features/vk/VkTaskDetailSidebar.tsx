@@ -9,7 +9,7 @@ import {
   postVkJobAction,
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
-import { HostRequestError } from '../../host/errors'
+import { vkErrorText } from './vkErrors'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { useGlassMenuSurface } from '../../components/GlassMenu'
@@ -35,9 +35,7 @@ const VK_JOB_TERMINAL_EVENT = 'vk:job-terminal'
 const VK_JOB_RETRY_SUBMITTED_EVENT = 'vk:job-retry-submitted'
 
 function detailError(error: unknown): string {
-  if (error instanceof HostRequestError) return error.summary
-  if (error instanceof Error) return error.message
-  return '任务详情获取失败'
+  return vkErrorText(error, '任务详情获取失败')
 }
 
 type BatchState = 'running' | 'done' | 'partial' | 'failed' | 'interrupted'

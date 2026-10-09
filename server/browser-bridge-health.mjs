@@ -90,6 +90,30 @@ function unreachable({ reasonCode, summary, opencliVersion, checkedAt, daemon = 
 }
 
 /**
+ * 多个 profile 同时连着时,daemon 的 /status 不带 contextId 就一律回 profileRequired:
+ * 它不读 opencli 的默认 profile 配置(只有 CLI 发命令时才带 preferredContextId)。
+ * 所以用户用 `profile use` 选过之后,要拿那个默认值再问一次,否则状态永远是「需指定」。
+ * 默认值没设、没连着、或再问一次失败,都原样保留第一次的结论。
+ */
+async function recheckWithDefaultProfile(status, { fetchImpl, daemonOrigin, timeoutMs, resolveDefaultContextId }) {
+  if (status.profileRequired !== true || !resolveDefaultContextId) return status
+  try {
+    const preferred = await resolveDefaultContextId()
+    const connected = Array.isArray(status.profiles) && status.profiles.some((profile) => profile?.contextId === preferred)
+    if (!preferred || !connected) return status
+    const response = await fetchImpl(`${daemonOrigin}/status?contextId=${encodeURIComponent(preferred)}`, {
+      headers: { 'X-OpenCLI': '1' },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (!response.ok) return status
+    const rechecked = await response.json()
+    return rechecked && typeof rechecked === 'object' && !Array.isArray(rechecked) ? rechecked : status
+  } catch {
+    return status
+  }
+}
+
+/**
  * 探测 BrowserBridge 健康状态。**永不抛**:诊断本身失败也是一种诊断结果,
  * 让它抛会把「桥接没就绪」变成「Host 内部错误」,两者给用户的下一步动作完全不同。
  */
@@ -99,6 +123,7 @@ export async function checkBrowserBridgeHealth({
   daemonOrigin = DAEMON_ORIGIN,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   now = () => Date.now(),
+  resolveDefaultContextId,
 } = {}) {
   const checkedAt = now()
   let response
@@ -155,5 +180,6 @@ export async function checkBrowserBridgeHealth({
     })
   }
 
+  status = await recheckWithDefaultProfile(status, { fetchImpl, daemonOrigin, timeoutMs, resolveDefaultContextId })
   return projectStatus(status, { opencliVersion, checkedAt })
 }

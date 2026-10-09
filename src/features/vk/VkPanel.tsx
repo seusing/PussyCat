@@ -28,7 +28,9 @@ import {
   postVkQuery,
   postVkRuntimeInstall,
   fetchVkProviderSettings,
+  fetchVkProviderStatus,
   isVkEngineNotReady,
+  isVkRuntimeSettled,
   testVkProvider,
 } from '../../host/vkClient'
 import type {
@@ -42,6 +44,7 @@ import type {
 } from '../../host/vkClient'
 import { BorderGlow } from '../../components/BorderGlow'
 import { runtimeToAdopt } from './runtimePick'
+import { vkErrorNote, vkErrorText, type VkErrorNote } from './vkErrors'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow } from './VideoSourceCoverFlow'
 import { VkTaskTable } from './VkTaskTable'
@@ -323,11 +326,6 @@ function errorParts(error: unknown, fallback: string): { text: string; code?: st
   return { text: fallback }
 }
 
-function errorText(error: unknown, fallback: string): string {
-  const { text, code } = errorParts(error, fallback)
-  return code ? `${text}(${code})` : text
-}
-
 /** 横幅里给用户看的话；host 给的原文（可能带环境变量名、英文）只放进 title 供排障。 */
 function healthNote(health: VkHealth | null): string {
   switch (health?.status) {
@@ -491,7 +489,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   // sidecar 崩溃重启带起来的那次)。真机上就是这样——后端 /runtime/status 明明回的是
   // 「已就绪 current:true」,横幅还挂在那里不走。以前会自行消失,只是因为那几次恰好都
   // 是用户点了「立即更新」→ 状态先变成 installing → 轮询开起来 → 装完自然刷掉。
-  const runtimeSettled = runtime?.state === 'installed' && runtime.current === true
+  const runtimeSettled = isVkRuntimeSettled(runtime)
   useEffect(() => {
     if (!runtime || runtimeSettled) return undefined
     const timer = setInterval(() => { void refreshRuntime() }, 2000)
@@ -513,16 +511,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [reasoningDiscovery, setReasoningDiscovery] = useState<string | null>(null)
   const [reasoningDiscovering, setReasoningDiscovering] = useState(false)
   const refreshProviders = useCallback(async () => {
-    try {
-      const settings = await fetchVkProviderSettings(base)
-      setProviderConfigured(settings.configured)
-      setCostTracking(settings.cost_tracking ?? false)
-      return settings.configured
-    } catch {
-      setProviderConfigured(null)   // 问不到就别下结论,不冒充已配置
-      setCostTracking(null)
-      return null
-    }
+    // 问不到就别下结论(configured 为 null),不冒充已配置
+    const { configured, costTracking } = await fetchVkProviderStatus(base)
+    setProviderConfigured(configured)
+    setCostTracking(costTracking)
+    return configured
   }, [base])
   useEffect(() => { void refreshProviders() }, [refreshProviders, providerRevision])
 
@@ -550,7 +543,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         ? `已从当前任务使用的模型通道读取 ${intersection.length} 个共同档位`
         : '接口未返回可枚举档位；仍可输入中转站支持的值，任务会原样注入 reasoning.effort')
     } catch (error) {
-      setReasoningDiscovery(errorText(error, '读取推理档位失败；可以保持自动或手动输入'))
+      setReasoningDiscovery(vkErrorText(error, '读取推理档位失败；可以保持自动或手动输入'))
     } finally {
       setReasoningDiscovering(false)
     }
@@ -686,13 +679,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         })
       setSource((current) => sourceLines(`${current}\n${text}`).join('\n'))
     } catch (error) {
-      setSubmitError(errorText(error, '链接文件读取失败'))
+      setSubmitError(vkErrorNote(error, '链接文件读取失败'))
     }
   }
 
   // —— 预检 → 费用确认 → 提交 ——
   const [previewing, setPreviewing] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<VkErrorNote | null>(null)
   const [taskBanners, setTaskBanners] = useState<TaskBanner[]>([])
   const submitInFlight = useRef(false)
   const dismissTaskBanner = useCallback((id: string) => {
@@ -786,7 +779,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       }
       await refreshJobs()
     } catch (error) {
-      setSubmitError(errorText(error, '任务提交失败'))
+      setSubmitError(vkErrorNote(error, '任务提交失败'))
     } finally {
       submitInFlight.current = false
       setPreviewing(false)
@@ -797,11 +790,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [jobs, setJobs] = useState<VkJobRow[]>([])
   const [jobsRefreshing, setJobsRefreshing] = useState(false)
   const [taskNumbers, setTaskNumbers] = useState<Record<string, number>>(() => loadNumberRecord(VK_TASK_NUMBERS_KEY))
-  const [jobsError, setJobsError] = useState<{ text: string; waiting: boolean } | null>(null)
+  const [jobsError, setJobsError] = useState<(VkErrorNote & { waiting: boolean }) | null>(null)
   const [selectedJob, setSelectedJob] = useState<VkJobView | null>(null)
   const [notifications, setNotifications] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_NOTIFICATIONS_KEY))
   const [hiddenJobs, setHiddenJobs] = useState<Record<string, boolean>>(() => loadBooleanRecord(VK_HIDDEN_JOBS_KEY))
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<VkErrorNote | null>(null)
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [outputTabs, setOutputTabs] = useState<VkOutputTab[]>([])
   const outputCache = useRef<VkOutputCache>(new Map())
@@ -913,8 +906,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     } catch (error) {
       if (gen === jobsGen.current) {
         setJobsError(isVkEngineNotReady(error)
-          ? { text: JOBS_WAITING_FOR_ENGINE, waiting: true }
-          : { text: errorText(error, '任务列表获取失败'), waiting: false })
+          ? { text: JOBS_WAITING_FOR_ENGINE, title: vkErrorNote(error, '').title, waiting: true }
+          : { ...vkErrorNote(error, '任务列表获取失败'), waiting: false })
       }
     } finally {
       if (manual) setJobsRefreshing(false)
@@ -977,7 +970,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       setSelectedJob(await fetchVkJob(jobId, base))
       onSelectJob?.(jobId)
     } catch (error) {
-      setActionError(errorText(error, '任务详情获取失败'))
+      setActionError(vkErrorNote(error, '任务详情获取失败'))
     }
   }
 
@@ -997,7 +990,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       await refreshJobs()
       await openJob(jobId)
     } catch (error) {
-      setActionError(errorText(error, '任务操作失败'))
+      setActionError(vkErrorNote(error, '任务操作失败'))
     }
   }
 
@@ -1090,7 +1083,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       const content = await fetchVkOutputText(output.id, base)
       await saveTextFileAs(outputFileName(output.id), content)
     } catch (error) {
-      setActionError(errorText(error, '保存失败'))
+      setActionError(vkErrorNote(error, '保存失败'))
     }
   }
 
@@ -1119,14 +1112,14 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   // —— 知识库查询 ——
   const [queryText, setQueryText] = useState('')
   const [queryAnswer, setQueryAnswer] = useState<VkQueryAnswer | null>(null)
-  const [queryError, setQueryError] = useState<string | null>(null)
+  const [queryError, setQueryError] = useState<VkErrorNote | null>(null)
   const runQuery = async () => {
     setQueryError(null)
     setQueryAnswer(null)
     try {
       setQueryAnswer(await postVkQuery(queryText, base))
     } catch (error) {
-      setQueryError(errorText(error, '知识库查询失败'))
+      setQueryError(vkErrorNote(error, '知识库查询失败'))
     }
   }
 
@@ -1483,7 +1476,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             {previewing ? '正在准备…' : '开始解析'}
           </button>
         </div>
-        {submitError && <div data-testid="vk-submit-error" className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{submitError}</div>}
+        {submitError && <div data-testid="vk-submit-error" title={submitError.title} className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{submitError.text}</div>}
       </div>
 
       {/* 任务列表 */}
@@ -1508,6 +1501,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         {jobsError && (
           <div
             data-testid="vk-jobs-error"
+            title={jobsError.title}
             className="mb-2 text-xs"
             style={{ color: jobsError.waiting ? 'var(--color-fg-dim)' : 'var(--color-danger)' }}
           >
@@ -1579,7 +1573,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           </div>}
         </div>
       )}
-      {actionError && <div data-testid="vk-action-error" className="mb-4 text-xs" style={{ color: 'var(--color-danger)' }}>{actionError}</div>}
+      {actionError && <div data-testid="vk-action-error" title={actionError.title} className="mb-4 text-xs" style={{ color: 'var(--color-danger)' }}>{actionError.text}</div>}
 
       {/* 知识库查询 */}
       <div className="rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
@@ -1606,7 +1600,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             检索
           </button>
         </div>
-        {queryError && <div className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{queryError}</div>}
+        {queryError && <div title={queryError.title} className="mt-2 text-xs" style={{ color: 'var(--color-danger)' }}>{queryError.text}</div>}
         {queryAnswer && (
           <div data-testid="vk-query-answer" className="mt-3 rounded-lg p-2 text-xs" style={{ background: 'var(--color-canvas)' }}>
             <div className="mb-1" style={{ color: 'var(--color-fg)' }}>{queryAnswer.answer}</div>

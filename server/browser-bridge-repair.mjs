@@ -26,17 +26,22 @@ import { join, win32 as win32Path } from 'node:path'
 
 const DAEMON_RESTART_TIMEOUT_MS = 20_000
 const PROFILE_USE_TIMEOUT_MS = 10_000
+const STDOUT_LIMIT = 64 * 1024
+
+/** OpenCLI 浏览器扩展的 Chrome 应用店页面。写死:路由不接受外部传入的地址。 */
+export const OPENCLI_EXTENSION_STORE_URL =
+  'https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk'
 
 /** 机器能自己动手的 reasonCode —— 其余一律交回给人,并给出可照做的下一步。 */
 const MACHINE_FIXABLE = new Set(['daemon-stopped', 'daemon-unreachable', 'daemon-error'])
 
 // 修不了的那几类,给的是"照着做就行"的具体指令,不是状态词的同义反复。
+// extension-disconnected 同时覆盖两种用户:还没装扩展的,和装了但这个 Chrome 窗口没开/没启用的。
 const NEXT_STEP = {
   'extension-disconnected':
-    '在 Chrome 里打开装有 OpenCLI 扩展的窗口,并确认该扩展处于启用状态;完成后再点一次「检测并修复」。',
-  // 不写「在下面选一个」——选择器还没做,承诺一个不存在的控件比不给指令更糟。
+    '还没装 OpenCLI 扩展的话,先点「安装扩展」从 Chrome 应用店安装;已经装过,就在 Chrome 里打开装有该扩展的窗口,并确认扩展处于启用状态。完成后再点一次「检测并修复」。',
   'profile-required':
-    '当前有多个浏览器 profile 连着,需要指定用哪一个:在终端执行 opencli profile list 看清单,再执行 opencli profile use <别名>。',
+    '当前有多个浏览器 profile 连着,需要指定用哪一个:在连接状态里选好后点「使用」,会自动重新检测。',
   'profile-disconnected':
     '之前指定的浏览器 profile 现在没连上:打开那个 Chrome profile,或改选另一个。',
 }
@@ -68,17 +73,19 @@ export function discoverChromeExecutable({
 }
 
 /** 拉起浏览器。**只开窗口,不带 profile 参数** —— Chrome 会恢复用户上次的 profile,
- *  那通常正是装了扩展的那个;强行指定反而可能开出一个没装扩展的干净 profile。 */
+ *  那通常正是装了扩展的那个;强行指定反而可能开出一个没装扩展的干净 profile。
+ *  传 url 时在该窗口里打开这个地址(调用方只会传本模块里的固定常量)。 */
 export async function launchBrowser({
   discover = discoverChromeExecutable,
   spawnImpl = spawn,
+  url,
 } = {}) {
   const executable = discover()
   if (!executable) {
     return { launched: false, reason: 'chrome-not-found' }
   }
   try {
-    const child = spawnImpl(executable, [], { detached: true, stdio: 'ignore', windowsHide: false })
+    const child = spawnImpl(executable, url ? [url] : [], { detached: true, stdio: 'ignore', windowsHide: false })
     child.unref?.()
     return { launched: true }
   } catch (error) {
@@ -86,7 +93,8 @@ export async function launchBrowser({
   }
 }
 
-/** 跑一条 opencli 子命令。只关心退出码,状态一律回 /status 拿结构化的。 */
+/** 跑一条 opencli 子命令。状态一律回 /status 拿结构化的;stdout 只给没有结构化出口的
+ *  只读子命令用(profile list),上限 64KB 防止异常输出撑爆内存。 */
 export function runOpenCli(argv, {
   opencliEntry,
   nodePath = process.execPath,
@@ -104,10 +112,16 @@ export function runOpenCli(argv, {
       return
     }
     let settled = false
+    let stdout = ''
+    child.stdout?.setEncoding?.('utf8')
+    child.stdout?.on('data', (chunk) => { if (stdout.length < STDOUT_LIMIT) stdout += chunk })
     const done = (result) => { if (!settled) { settled = true; resolve(result) } }
     const timer = setTimeout(() => { child.kill?.(); done({ code: null, failed: true, detail: 'timeout' }) }, timeoutMs)
     child.once('error', (error) => { clearTimeout(timer); done({ code: null, failed: true, detail: error?.message ?? String(error) }) })
-    child.once('close', (code) => { clearTimeout(timer); done({ code, failed: code !== 0 }) })
+    child.once('close', (code) => {
+      clearTimeout(timer)
+      done({ code, failed: code !== 0, ...(child.stdout ? { stdout } : {}) })
+    })
   })
 }
 

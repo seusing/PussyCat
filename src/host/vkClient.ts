@@ -454,6 +454,11 @@ export interface VkRuntimeStatus {
   legacyUnreproducible?: boolean
 }
 
+/** 解析引擎已装好且是当前版本(installed + current:true)。视频解析页与首页清单共用。 */
+export function isVkRuntimeSettled(runtime: VkRuntimeStatus | null | undefined): boolean {
+  return runtime?.state === 'installed' && runtime.current === true
+}
+
 export interface VkRuntimeCandidate {
   pythonPath: string
   source: string
@@ -747,6 +752,21 @@ export interface VkRevealResult {
 export async function fetchVkProviderSettings(baseUrl = DEFAULT_BASE_URL): Promise<VkProviderSettings> {
   const response = await fetch(`${baseUrl}/vk/v1/providers`)
   return parseVkResponse<VkProviderSettings>(response, '模型配置读取失败')
+}
+
+/**
+ * 「模型配置已完成」的判定,视频解析页与首页「开始使用」清单共用这一份。
+ * 问不到(引擎没准备好、网络问题)时两项都是 null —— 不冒充"已配置"。
+ */
+export async function fetchVkProviderStatus(
+  baseUrl = DEFAULT_BASE_URL,
+): Promise<{ configured: boolean | null; costTracking: boolean | null }> {
+  try {
+    const settings = await fetchVkProviderSettings(baseUrl)
+    return { configured: settings.configured, costTracking: settings.cost_tracking ?? false }
+  } catch {
+    return { configured: null, costTracking: null }
+  }
 }
 
 export async function saveVkProviderSettings(

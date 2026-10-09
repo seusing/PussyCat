@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LoginStatusPanel } from './LoginStatusPanel'
 import { useAppStore } from '../../store/appStore'
-import { emptyPreferences } from '../../data/preferences'
+import { emptyPreferences, isAcknowledged } from '../../data/preferences'
 import type { CommandManifest } from '../../data/types'
 import type { PolicyDecision } from '../../data/policy'
 
@@ -272,4 +272,85 @@ test('检查全部在已有任务排队时仍可继续补入队列', () => {
   render(<LoginStatusPanel />)
   expect(screen.getByTestId('refresh-all-logins')).toBeEnabled()
   expect(screen.getByTestId('refresh-all-logins')).toHaveTextContent('排队 1')
+})
+
+// ── 一次确认全部站点 ──────────────────────────────────────────────────
+
+test('存在待确认站点时工具栏出现「确认并检查全部」,没有待确认时不出现', () => {
+  const { unmount } = render(<LoginStatusPanel />)
+  expect(screen.getByTestId('confirm-all-logins')).toHaveTextContent('确认并检查全部')
+  unmount()
+
+  useAppStore.getState().acknowledgeCommand('xiaohongshu/whoami', 'fp-xiaohongshu', 1)
+  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
+  setup({ preferences: useAppStore.getState().preferences })
+  render(<LoginStatusPanel />)
+  expect(screen.queryByTestId('confirm-all-logins')).not.toBeInTheDocument()
+})
+
+test('确认框列出待确认的站点和只读说明,未审定的站点不在其中', async () => {
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('confirm-all-logins'))
+
+  const dialog = screen.getByTestId('confirm-all-dialog')
+  expect(dialog).toHaveTextContent('将用你的 Chrome 检查以下站点的登录状态（只读）')
+  const sites = within(screen.getByTestId('confirm-all-sites')).getAllByRole('listitem').map((item) => item.textContent)
+  expect(sites.sort()).toEqual(['B站', '小红书'])
+})
+
+test('取消:不写入任何确认,也不入队', async () => {
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('confirm-all-logins'))
+  await userEvent.click(screen.getByTestId('confirm-all-cancel'))
+
+  expect(screen.queryByTestId('confirm-all-dialog')).not.toBeInTheDocument()
+  const { preferences, loginQueue } = useAppStore.getState()
+  expect(isAcknowledged(preferences, 'xiaohongshu/whoami', 'fp-xiaohongshu')).toBe(false)
+  expect(isAcknowledged(preferences, 'bilibili/whoami', 'fp-bilibili')).toBe(false)
+  expect(loginQueue).toEqual([])
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('需先确认')
+})
+
+test('Esc 等同取消', async () => {
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('confirm-all-logins'))
+  await userEvent.keyboard('{Escape}')
+
+  expect(screen.queryByTestId('confirm-all-dialog')).not.toBeInTheDocument()
+  expect(useAppStore.getState().loginQueue).toEqual([])
+})
+
+test('确认:各站点按各自 decision 的 fingerprint 写入确认,并全部加入检查队列', async () => {
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('confirm-all-logins'))
+  await userEvent.click(screen.getByTestId('confirm-all-confirm'))
+
+  const { preferences, loginQueue } = useAppStore.getState()
+  expect(isAcknowledged(preferences, 'xiaohongshu/whoami', 'fp-xiaohongshu')).toBe(true)
+  expect(isAcknowledged(preferences, 'bilibili/whoami', 'fp-bilibili')).toBe(true)
+  expect(isAcknowledged(preferences, 'xiaohongshu/whoami', 'fp-bilibili')).toBe(false)   // 不串站
+  expect([...loginQueue].sort()).toEqual(['bilibili', 'xiaohongshu'])
+  expect(screen.queryByTestId('confirm-all-dialog')).not.toBeInTheDocument()
+  // 确认后这些站点不再是「需先确认」,工具栏上的按钮也随之消失
+  expect(screen.queryByTestId('confirm-all-logins')).not.toBeInTheDocument()
+  expect(screen.getByTestId('login-state-xiaohongshu')).toHaveTextContent('排队中')
+})
+
+test('确认会一并检查已确认过的站点,未审定的站点始终不入队', async () => {
+  useAppStore.getState().acknowledgeCommand('bilibili/whoami', 'fp-bilibili', 1)
+  setup({ preferences: useAppStore.getState().preferences })
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('confirm-all-logins'))
+  expect(within(screen.getByTestId('confirm-all-sites')).getAllByRole('listitem')).toHaveLength(1)   // 只列还没确认的
+  await userEvent.click(screen.getByTestId('confirm-all-confirm'))
+
+  expect([...useAppStore.getState().loginQueue].sort()).toEqual(['bilibili', 'xiaohongshu'])
+})
+
+test('单个站点的原有确认流程不变', async () => {
+  render(<LoginStatusPanel />)
+  await clickRefresh('xiaohongshu')
+
+  expect(useAppStore.getState().pendingAcknowledgement?.command.command).toBe('xiaohongshu/whoami')
+  expect(screen.queryByTestId('confirm-all-dialog')).not.toBeInTheDocument()
 })

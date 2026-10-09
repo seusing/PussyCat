@@ -747,6 +747,15 @@ select:focus-visible {
 .fisheye-command-header > span:first-child { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .fisheye-command-header strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .fisheye-command-header small { flex: 0 0 auto; border: 1px solid #353b45; border-radius: 4px; color: #7e8796; padding: 1px 5px; font-size: 10px; }
+.fisheye-command-name { flex: 0 1 auto; overflow: hidden; color: #7e8796; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fisheye-group-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 14px 2px 0; color: #9ca5b3; font-size: 13px; font-weight: 600; }
+.fisheye-group-heading:first-child { margin-top: 0; }
+.fisheye-group-heading small { color: #6f7887; font-size: 11px; font-weight: 400; }
+.fisheye-group-heading em { color: var(--color-warning); font-size: 11px; font-style: normal; font-weight: 400; }
+.fisheye-group-toggle { display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; color: inherit; font: inherit; }
+.fisheye-group-toggle:hover { color: #eef0f4; }
+.fisheye-group-chevron { transition: transform 160ms ease; }
+.fisheye-group-chevron[data-open='true'] { transform: rotate(90deg); }
 .fisheye-command-header > span:last-child { flex: 0 0 auto; color: #8d96a5; }
 .fisheye-command-detail-clip {
   display: grid;
@@ -803,7 +812,9 @@ select:focus-visible {
 .inspiration-breadcrumb strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspiration-command-heading > span { color: #7c8493; font-size: 11px; text-transform: uppercase; }
 .inspiration-command-heading > div { flex-direction: row; align-items: center; }
-.inspiration-command-heading > div > strong { font-size: 18px; }
+.inspiration-command-title { display: flex; min-width: 0; flex-direction: column; }
+.inspiration-command-title strong { font-size: 18px; }
+.inspiration-command-title small { color: #7c8493; font-size: 11px; }
 .command-workspace { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(420px, 1.35fr) minmax(320px, .85fr); overflow: hidden; border: 1px solid #292e37; border-radius: 8px; background: #14171c; }
 .command-config-pane { min-width: 0; overflow: auto; border-right: 1px solid #292e37; padding: 22px; }
 .command-run-pane { min-width: 0; overflow: auto; background: #111318; }

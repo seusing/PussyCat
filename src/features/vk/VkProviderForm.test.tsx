@@ -1431,7 +1431,10 @@ test('测试失败时给根因和下一步,不是一段原始日志', async () =
   expect(notice).toHaveTextContent('已过期')
   expect(notice).toHaveTextContent('下一步：到中转站控制台重新签发一把 key')
   expect(screen.getByTestId('vk-channel-cheap')).toHaveTextContent('已启用')
-  expect(screen.queryByTestId('vk-channel-result-cheap')).not.toBeInTheDocument()
+  // 结果同时落在这条配置的行上(提示 2 秒就消失,失败原因不该跟着没);完整原文与下一步放进 title。
+  const result = screen.getByTestId('vk-channel-result-cheap')
+  expect(result).toHaveTextContent('API key 无效或已过期')
+  expect(result).toHaveAttribute('title', expect.stringContaining('下一步：到中转站控制台重新签发一把 key'))
   expect(screen.queryByTestId('vk-channel-fix-cheap')).not.toBeInTheDocument()
 })
 
@@ -1456,7 +1459,7 @@ test('自动修正的地址回填输入框 —— 看不见的自动修等于没
   expect(screen.getByTestId('app-notification-layer')).toContainElement(screen.getByTestId('vk-provider-notice'))
   expect(screen.getByTestId('vk-provider-form')).not.toContainElement(screen.getByTestId('vk-provider-notice'))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('vk-channel-result-cheap')).not.toBeInTheDocument()
+  expect(screen.getByTestId('vk-channel-result-cheap')).toHaveTextContent('连接正常')
   await openChannelEditor()
   await waitFor(() => expect((screen.getByTestId('vk-channel-url-cheap') as HTMLInputElement).value)
     .toBe('https://api.example.com/v1'))
@@ -1824,4 +1827,168 @@ test('连续保存错误叠加且只关闭选中的错误', async () => {
   } finally {
     vi.useRealTimers()
   }
+})
+
+// ── 常用服务预设 / 推理强度说明 / 保存后自动测试 ─────────────────────────
+
+async function openCreateDialog() {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [], configured: false }) } })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await userEvent.click(await screen.findByTestId('vk-channel-add'))
+  return screen.getByRole('dialog', { name: '创建配置' })
+}
+
+const style = () => screen.getByRole('combobox', { name: '接口协议' })
+
+test('创建配置顶部有一排快速选择,编辑已有配置时没有', async () => {
+  const dialog = await openCreateDialog()
+  const presets = within(within(dialog).getByTestId('vk-provider-presets')).getAllByRole('button')
+  expect(presets.map((button) => button.textContent)).toEqual([
+    'DeepSeek', '阿里云百炼', 'Kimi', '智谱', '火山方舟', 'OpenAI', '中转站或自定义',
+  ])
+  await userEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+  cleanup()
+
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
+  render(<VkProviderForm baseUrl={BASE} />)
+  const editor = await openChannelEditor()
+  expect(within(editor).queryByTestId('vk-provider-presets')).not.toBeInTheDocument()
+})
+
+test.each([
+  ['deepseek', 'DeepSeek', 'https://api.deepseek.com/v1'],
+  ['dashscope', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode/v1'],
+  ['kimi', 'Kimi', 'https://api.moonshot.cn/v1'],
+  ['zhipu', '智谱', 'https://open.bigmodel.cn/api/paas/v4'],
+  ['volcengine', '火山方舟', 'https://ark.cn-beijing.volces.com/api/v3'],
+  ['openai', 'OpenAI', 'https://api.openai.com/v1'],
+])('选 %s:填名称和接口地址,协议为 OpenAI 兼容,不写死模型,焦点到 API key', async (id, label, url) => {
+  await openCreateDialog()
+  await userEvent.click(screen.getByTestId(`vk-preset-${id}`))
+
+  expect(screen.getByTestId('vk-modal-name')).toHaveValue(label)
+  const urlInput = screen.getByPlaceholderText(/接口地址/)
+  expect(urlInput).toHaveValue(url)
+  expect(style()).toHaveAttribute('data-value', 'openai_completions')
+  expect(screen.getByPlaceholderText(/模型名称/)).toHaveValue('')
+  await waitFor(() => expect(screen.getByPlaceholderText('粘贴 API key')).toHaveFocus())
+  expect(screen.getByTestId(`vk-preset-${id}`)).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('选了预设之后协议不再随模型名改:OpenAI 预设配 gpt-5 也保持 chat/completions', async () => {
+  await openCreateDialog()
+  await userEvent.click(screen.getByTestId('vk-preset-openai'))
+  await userEvent.type(screen.getByPlaceholderText(/模型名称/), 'gpt-5.6-luna')
+
+  expect(style()).toHaveAttribute('data-value', 'openai_completions')
+})
+
+test('换预设会清掉上一个预设遗留的模型', async () => {
+  await openCreateDialog()
+  await userEvent.click(screen.getByTestId('vk-preset-deepseek'))
+  await userEvent.type(screen.getByPlaceholderText(/模型名称/), 'deepseek-chat')
+
+  await userEvent.click(screen.getByTestId('vk-preset-kimi'))
+
+  expect(screen.getByPlaceholderText(/接口地址/)).toHaveValue('https://api.moonshot.cn/v1')
+  expect(screen.getByPlaceholderText(/模型名称/)).toHaveValue('')
+})
+
+test('中转站或自定义:清空地址和名称,回到手填,协议重新随模型名推断', async () => {
+  await openCreateDialog()
+  await userEvent.click(screen.getByTestId('vk-preset-deepseek'))
+
+  await userEvent.click(screen.getByTestId('vk-preset-custom'))
+
+  expect(screen.getByPlaceholderText(/接口地址/)).toHaveValue('')
+  expect(screen.getByTestId('vk-modal-name')).toHaveValue('新配置')
+  await waitFor(() => expect(screen.getByPlaceholderText(/接口地址/)).toHaveFocus())
+  expect(screen.getByTestId('vk-preset-deepseek')).toHaveAttribute('aria-pressed', 'false')
+  await userEvent.type(screen.getByPlaceholderText(/模型名称/), 'gpt-5.6-luna')
+  expect(style()).toHaveAttribute('data-value', 'openai_responses')
+})
+
+test('推理强度字段下有一行说明', async () => {
+  const dialog = await openCreateDialog()
+  const hint = within(dialog).getByText('越高越慢、越贵，一般用 medium；high 或 max 在中转站上可能要等十几分钟')
+  expect(hint).toBeInTheDocument()
+  expect(hint).toHaveAttribute('data-testid', expect.stringMatching(/^vk-channel-reasoning-hint-/))
+})
+
+/** 保存前后 GET /providers 要对得上,否则回读会把刚建的配置冲掉。 */
+function stubCreateFlow(testResult: Record<string, unknown>) {
+  const calls: Array<{ key: string; body: Record<string, unknown> | undefined }> = []
+  let savedChannel: Record<string, unknown> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined
+    calls.push({ key, body })
+    if (key === 'GET /vk/v1/providers') {
+      return { ok: true, status: 200, json: async () => settings({
+        channels: savedChannel ? [savedChannel] : [],
+        configured: !!savedChannel,
+      }) }
+    }
+    if (key === 'POST /vk/v1/providers') {
+      const sent = (body as { channels: Record<string, unknown>[] }).channels[0]
+      savedChannel = channel({ ...sent, key_masked: 'sk-te••••123', reasoning_effort_explicit: true })
+      return { ok: true, status: 200, json: async () => SAVE_OK }
+    }
+    if (key === 'POST /vk/v1/providers/test') return { ok: true, status: 200, json: async () => testResult }
+    return { ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) }
+  }))
+  return { calls }
+}
+
+async function fillAndSaveDeepSeek() {
+  await userEvent.click(await screen.findByTestId('vk-channel-add'))
+  await userEvent.click(screen.getByTestId('vk-preset-deepseek'))
+  await userEvent.type(screen.getByPlaceholderText(/模型名称/), 'deepseek-chat')
+  await userEvent.type(screen.getByPlaceholderText('粘贴 API key'), 'sk-test-123')
+  await userEvent.click(screen.getByTestId('vk-provider-modal-submit'))
+}
+
+test('新建配置保存成功后自动跑一次连通性测试,结果落在这条配置上', async () => {
+  const { calls } = stubCreateFlow({
+    ok: true, reason_code: 'ok', message: '连接正常', models: [], normalization_notes: [],
+    generation_probe: { ok: true, reason_code: 'ok', message: 'ok', model_reported: 'deepseek-chat', transport_mode: 'sse', response_headers_ms: 10, first_event_ms: 20, first_text_ms: 30, total_ms: 40, stream_event_count: 2, upstream_response_id: null, request_may_still_run: false },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await fillAndSaveDeepSeek()
+
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers/test')).toBe(true))
+  const order = calls.map((call) => call.key).filter((key) => key.startsWith('POST'))
+  expect(order).toEqual(['POST /vk/v1/providers', 'POST /vk/v1/providers/test'])      // 先保存,后测试
+  const test = calls.find((call) => call.key === 'POST /vk/v1/providers/test')!.body
+  expect(test).toMatchObject({
+    base_url: 'https://api.deepseek.com/v1', api_style: 'openai_completions',
+    probe_generation: true, model_id: 'deepseek-chat', api_key: 'sk-test-123',
+  })
+  await waitFor(() => expect(screen.getByTestId(/^vk-channel-result-/)).toHaveTextContent('连接正常'))
+})
+
+test('自动测试失败:原因落在这条配置上', async () => {
+  stubCreateFlow({
+    ok: false, reason_code: 'unauthorized', message: 'API key 无效或已过期', fix_hint: '重新签发一把 key',
+    models: [], normalization_notes: [],
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await fillAndSaveDeepSeek()
+
+  await waitFor(() => expect(screen.getByTestId(/^vk-channel-result-/)).toHaveTextContent('API key 无效或已过期'))
+})
+
+test('编辑已有配置后保存不自动测试', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+    'POST /vk/v1/providers/test': { body: { ok: true, reason_code: 'ok', message: '连接正常', models: [], normalization_notes: [] } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+  await openChannelEditor()
+  await commitChannelEditor()
+
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(calls.some((call) => call.key === 'POST /vk/v1/providers/test')).toBe(false)
 })

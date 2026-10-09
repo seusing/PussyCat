@@ -1616,13 +1616,32 @@ describe('VkPanel', () => {
     expect(hint.textContent).not.toMatch(/not-installed|video-knowledge/)
   })
 
-  it('still shows real task list errors as they are', async () => {
+  it('still shows real task list errors, with the reason code only in the tooltip', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
       'GET /vk/v1/jobs': { status: 503, body: { error: '解析引擎启动超时', reasonCode: 'spawn-timeout' } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    expect(await screen.findByTestId('vk-jobs-error')).toHaveTextContent('解析引擎启动超时(spawn-timeout)')
+    const error = await screen.findByTestId('vk-jobs-error')
+    expect(error).toHaveTextContent('解析引擎启动超时')
+    expect(error.textContent).not.toContain('spawn-timeout')
+    expect(error).toHaveAttribute('title', '解析引擎启动超时(spawn-timeout)')
+  })
+
+  it('does not leak host wording when the engine is not ready on submit', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'POST /vk/v1/preview': { status: 503, body: { error: 'video-knowledge runtime 未安装或未配置', reasonCode: 'not-installed' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: 'https://www.bilibili.com/video/BV1xx411c7mD' } })
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+
+    const error = await screen.findByTestId('vk-submit-error')
+    expect(error).toHaveTextContent('解析引擎还没准备好，请先在视频解析页完成一键准备')
+    expect(error.textContent).not.toMatch(/not-installed|video-knowledge|runtime/)
+    expect(error).toHaveAttribute('title', 'video-knowledge runtime 未安装或未配置(not-installed)')
   })
 })
 
