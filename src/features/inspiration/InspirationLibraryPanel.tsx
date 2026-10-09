@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type Ref } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent, type KeyboardEvent, type Ref } from 'react'
 import {
   ArrowLeft, BookOpen, Check, Download, Eye, FilePlus2, FileText, Folder, FolderOpen,
-  FolderPlus, Newspaper, Pencil, Search, Trash2, X,
+  FolderPlus, Newspaper, Pencil, RotateCw, Search, Trash2, TriangleAlert, Upload, X,
 } from 'lucide-react'
 import Markdown, { type Components } from 'react-markdown'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
@@ -14,16 +14,20 @@ import {
   INSPIRATION_LIBRARY_EVENT,
   addInspirationFolder,
   addInspirationItem,
+  getInspirationLibraryState,
   inspirationKindLabel,
   loadInspirationLibrary,
   makeUniqueInspirationName,
+  retryInspirationLibraryLoad,
   saveInspirationLibrary,
+  subscribeInspirationLibraryState,
   type InspirationFolder,
   type InspirationItem,
   type InspirationLibrary,
 } from './inspirationLibrary'
 import './InspirationLibraryPanel.css'
 import { InspirationFileCard, InspirationFolderCard } from './InspirationLibraryCards'
+import { buildInspirationBackup, mergeInspirationLibrary, parseInspirationBackup, readBackupFile } from './inspirationBackup'
 import { WechatMarkdownImage } from './WechatMarkdownImage'
 import { collectWechatArticle } from './wechatArticle'
 
@@ -63,6 +67,7 @@ function flattenFolders(folders: InspirationFolder[], parentId: string | null = 
 
 export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: { baseUrl?: string; onOpenSources: () => void; searchRef?: Ref<HTMLInputElement> }) {
   const [library, setLibrary] = useState<InspirationLibrary>(() => loadInspirationLibrary())
+  const libraryState = useSyncExternalStore(subscribeInspirationLibraryState, getInspirationLibraryState)
   const [folderFilter, setFolderFilter] = useState<FolderFilter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -86,6 +91,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
   const toastSequenceRef = useRef(0)
   const deleteConfirmRef = useRef<HTMLButtonElement>(null)
   const articleControllerRef = useRef<AbortController | null>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => () => articleControllerRef.current?.abort(), [])
 
@@ -175,7 +181,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
 
   const persist = (next: InspirationLibrary, success?: { title: string; description?: string }): boolean => {
     if (!saveInspirationLibrary(next)) {
-      showToast('error', '保存失败', '请检查本地存储空间后重试')
+      showToast('error', '保存失败', '灵感库还没有读取完成，请稍后重试')
       return false
     }
     setLibrary(loadInspirationLibrary())
@@ -192,7 +198,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
       folderId: folderFilter === 'all' ? null : folderFilter,
     })
     if (!item) {
-      showToast('error', '创建笔记失败', '请检查本地存储空间后重试')
+      showToast('error', '创建笔记失败', '灵感库还没有读取完成，请稍后重试')
       return
     }
     setLibrary(loadInspirationLibrary())
@@ -259,7 +265,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
     }
     const folder = addInspirationFolder(folderDraft, folderParentDraft)
     if (!folder) {
-      showToast('error', '创建文件夹失败', '请检查本地存储空间后重试')
+      showToast('error', '创建文件夹失败', '灵感库还没有读取完成，请稍后重试')
       return
     }
     setLibrary(loadInspirationLibrary())
@@ -390,6 +396,35 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
     }
   }
 
+  const exportAll = async () => {
+    const current = loadInspirationLibrary()
+    const { fileName, content } = buildInspirationBackup(current)
+    try {
+      const saved = await saveTextFileAs(fileName, content)
+      if (saved) showToast('success', `已导出“${fileName}”`, `${current.items.length} 条灵感 · ${current.folders.length} 个文件夹`)
+    } catch {
+      showToast('error', '导出失败', '请重试或检查文件保存权限')
+    }
+  }
+
+  const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    try {
+      const { library: incoming, invalid } = parseInspirationBackup(await readBackupFile(file))
+      const { library: merged, imported, skipped } = mergeInspirationLibrary(loadInspirationLibrary(), incoming)
+      if (imported > 0 && !saveInspirationLibrary(merged)) {
+        showToast('error', '导入失败', '灵感库还没有读取完成，请稍后重试')
+        return
+      }
+      setLibrary(loadInspirationLibrary())
+      showToast(imported > 0 ? 'success' : 'info', `导入 ${imported} 条，跳过 ${skipped} 条重复`, invalid > 0 ? `另有 ${invalid} 条格式无效，已忽略` : undefined)
+    } catch (error) {
+      showToast('error', '导入失败', error instanceof Error ? error.message : '无法读取这个文件')
+    }
+  }
+
   const selectSuggestion = (suggestion: SearchSuggestion) => {
     const item = suggestion.kind === 'item' ? library.items.find((candidate) => candidate.id === suggestion.id) : null
     const changedView = leaveEditor(() => {
@@ -449,6 +484,16 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
           </AppNotificationStack>
         </AppNotificationPortal>
       )}
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        data-testid="inspiration-import-input"
+        aria-label="选择灵感库备份文件"
+        onChange={(event) => { void importBackup(event) }}
+      />
 
       <header className="inspiration-library-header">
         <div className="inspiration-library-heading">
@@ -512,6 +557,16 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
         </div>
       </header>
 
+      {libraryState.saveFailed && (
+        <AppAlert
+          tone="warning"
+          role="alert"
+          testId="inspiration-library-save-error"
+          title="灵感库没能保存到本机文件，稍后会自动重试"
+          description="修改仍保留在当前窗口里，请先不要关闭爪爪。"
+        />
+      )}
+
       {hasContent && (
         <nav className="inspiration-library-breadcrumb-bar" aria-label="文件夹路径">
           {folderFilter === 'all' && !selectedItem
@@ -537,7 +592,21 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
         </nav>
       )}
 
-      {!hasContent ? (
+      {libraryState.phase === 'loading' ? (
+        <section data-testid="inspiration-library-loading" className="inspiration-library-empty" role="status">
+          <div className="inspiration-library-empty-icon"><FolderOpen size={30} aria-hidden="true" /></div>
+          <h2>读取中…</h2>
+        </section>
+      ) : libraryState.phase === 'error' ? (
+        <section data-testid="inspiration-library-load-error" className="inspiration-library-empty" role="alert">
+          <div className="inspiration-library-empty-icon"><TriangleAlert size={30} aria-hidden="true" /></div>
+          <h2>灵感库没能读取</h2>
+          <p>{libraryState.error}</p>
+          <div className="inspiration-library-empty-actions">
+            <button type="button" className="inspiration-library-primary-action" onClick={retryInspirationLibraryLoad}><RotateCw size={16} aria-hidden="true" />重试</button>
+          </div>
+        </section>
+      ) : !hasContent ? (
         <section data-testid="inspiration-library-empty" className="inspiration-library-empty">
           <div className="inspiration-library-empty-icon"><FolderOpen size={30} aria-hidden="true" /></div>
           <h2>还没有灵感</h2>
@@ -546,6 +615,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
             <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={16} aria-hidden="true" />新建笔记</button>
             <button type="button" className="inspiration-library-secondary-action" onClick={openArticleDialog}><Newspaper size={16} aria-hidden="true" />添加公众号文章</button>
             <button type="button" className="inspiration-library-secondary-action" onClick={() => openFolderForm(null)}><FolderPlus size={16} aria-hidden="true" />新建文件夹</button>
+            <button type="button" className="inspiration-library-secondary-action" onClick={() => importInputRef.current?.click()}><Upload size={16} aria-hidden="true" />导入备份</button>
             <button type="button" className="inspiration-library-secondary-action" onClick={onOpenSources}><BookOpen size={16} aria-hidden="true" />去找灵感</button>
           </div>
           {showFolderForm && (
@@ -564,6 +634,8 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
                 <span className="inspiration-library-pane-count">{listCount} 项</span>
               </div>
               <div className="inspiration-library-pane-actions">
+                <button type="button" className="inspiration-library-secondary-action" aria-label="导出全部" title="把整个灵感库导出为备份文件" onClick={() => { void exportAll() }}><Download size={15} aria-hidden="true" /></button>
+                <button type="button" className="inspiration-library-secondary-action" aria-label="导入" title="从备份文件导入灵感" onClick={() => importInputRef.current?.click()}><Upload size={15} aria-hidden="true" /></button>
                 <button type="button" className="inspiration-library-secondary-action" aria-label="添加公众号文章" title="粘贴公众号文章链接，存入灵感库" onClick={openArticleDialog}><Newspaper size={15} aria-hidden="true" /></button>
                 <button type="button" className="inspiration-library-secondary-action" aria-label="新建文件夹" title="在当前目录新建文件夹" onClick={() => openFolderForm()}><FolderPlus size={15} aria-hidden="true" /></button>
                 <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={15} aria-hidden="true" />新建笔记</button>

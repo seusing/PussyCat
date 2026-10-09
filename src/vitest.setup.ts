@@ -50,11 +50,14 @@ function stubMatchMedia() {
   })) as typeof window.matchMedia
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   if (!isJsdomEnv) return
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
   vi.stubGlobal('localStorage', makeMemoryStorage())
   stubMatchMedia()
+  // 灵感库的内存副本是模块级状态,会在同一文件的用例之间残留;每个用例从空库、未接宿主开始。
+  const { resetInspirationLibraryForTests } = await import('./features/inspiration/inspirationLibrary')
+  resetInspirationLibraryForTests()
 })
 
 afterEach(() => {

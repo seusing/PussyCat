@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createHostServer } from './host-server.mjs'
 import { resolveOpenCliEntry, resolveManifestPath } from './opencli-entry.mjs'
@@ -10,6 +11,7 @@ import { createVkJobShadow } from './vk-job-shadow.mjs'
 import { VkRuntimeManager } from './vk-runtime.mjs'
 import { resolveRunManagerOptions } from './run-manager-options.mjs'
 import { createRadarService } from './radar.mjs'
+import { createInspirationStore } from './inspiration-store.mjs'
 
 // Node >= 20:与 @jackwener/opencli 的 engines 持平(能跑 opencli 的机器就能跑 Host)。
 // 注:20 已 EOL,是"最低可运行"而非推荐;推荐当前 LTS(22/24)。
@@ -119,6 +121,11 @@ try {
     stateFile: process.env.OPENCLI_HOST_RADAR_STATE_FILE
       ?? (vkStateDir ? resolve(vkStateDir, 'radar-snapshot.json') : undefined),
   })
+  // 灵感库文件:装机版是 <爪爪数据目录>/inspiration/library.json(数据目录即 OPENCLI_HOST_VK_HOME);
+  // 开发直连没有这个变量时落在系统临时目录下的固定位置,开发版也能存。
+  const inspirationStore = createInspirationStore({
+    dir: resolve(vkHome ?? resolve(tmpdir(), 'pussycat-dev-inspiration'), 'inspiration'),
+  })
   app = createHostServer({
     opencliEntry,
     policy,
@@ -128,6 +135,7 @@ try {
     vkJobShadow,
     vkRuntime,
     radarService,
+    inspirationStore,
     runManagerOptions: resolveRunManagerOptions(process.env),
   })
 

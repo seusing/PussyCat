@@ -25,20 +25,16 @@ export type InspirationLibrary = {
   items: InspirationItem[]
 }
 
+// 旧版把整份库存在 localStorage 的这个 key 下;现在只在一次性迁移时读它,从不改写。
 export const INSPIRATION_LIBRARY_KEY = 'zhuazhua:inspiration-library:v1'
+export const INSPIRATION_MIGRATED_KEY = 'zhuazhua:inspiration-library:migrated-at'
 export const INSPIRATION_LIBRARY_EVENT = 'zhuazhua:inspiration-library-changed'
+
+const SAVE_DEBOUNCE_MS = 500
+const SAVE_RETRY_MS = 10_000
 
 export function emptyInspirationLibrary(): InspirationLibrary {
   return { version: 1, folders: [], items: [] }
-}
-
-function storageOf(storage?: Storage): Storage | undefined {
-  if (storage) return storage
-  try {
-    return typeof localStorage === 'undefined' ? undefined : localStorage
-  } catch {
-    return undefined
-  }
 }
 
 function id(prefix: string): string {
@@ -120,7 +116,8 @@ export function normalizeInspirationLibrary(library: InspirationLibrary): Inspir
   return normalizeNames(library).library
 }
 
-function normalize(raw: unknown): InspirationLibrary {
+// 把任意输入收敛成合法的库:丢弃结构不合格的条目,修复指向不存在文件夹的引用。
+export function sanitizeInspirationLibrary(raw: unknown): InspirationLibrary {
   if (!raw || typeof raw !== 'object') return emptyInspirationLibrary()
   const value = raw as Partial<InspirationLibrary>
   if (value.version !== undefined && value.version !== 1) return emptyInspirationLibrary()
@@ -138,40 +135,187 @@ function normalize(raw: unknown): InspirationLibrary {
   return { version: 1, folders, items }
 }
 
-export function loadInspirationLibrary(storage?: Storage): InspirationLibrary {
-  const target = storageOf(storage)
-  if (!target) return emptyInspirationLibrary()
+// ---- 内存副本与宿主持久化 ----
+//
+// 库的权威存储是宿主上的文件(server/inspiration-store.mjs)。这里持有一份模块级内存副本,
+// 下面的同步接口读写它;每次保存后去抖 SAVE_DEBOUNCE_MS,再把整份 PUT 给宿主。
+// 未调用 connectInspirationLibrary 时(演示模式、单元测试)只在内存里工作。
+
+export type InspirationPersistence = {
+  load: () => Promise<{ exists: boolean; library: unknown }>
+  save: (library: InspirationLibrary) => Promise<void>
+}
+
+export type InspirationLibraryState = {
+  phase: 'loading' | 'ready' | 'error'
+  error: string
+  // 最近一次写宿主失败,内存里的修改还没落盘;会自动重试。
+  saveFailed: boolean
+}
+
+const READY: InspirationLibraryState = { phase: 'ready', error: '', saveFailed: false }
+
+let memory = emptyInspirationLibrary()
+let state: InspirationLibraryState = READY
+let persistence: InspirationPersistence | null = null
+let epoch = 0
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+let saving = false
+let dirty = false
+let pagehideBound = false
+const stateListeners = new Set<() => void>()
+
+function setState(patch: Partial<InspirationLibraryState>) {
+  const next = { ...state, ...patch }
+  if (next.phase === state.phase && next.error === state.error && next.saveFailed === state.saveFailed) return
+  state = next
+  stateListeners.forEach((listener) => listener())
+}
+
+function notifyLibraryChanged() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(INSPIRATION_LIBRARY_EVENT))
+}
+
+function schedulePersist(delay: number) {
+  if (!persistence) return
+  dirty = true
+  clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => { void flushPersist() }, delay)
+}
+
+async function flushPersist() {
+  clearTimeout(saveTimer)
+  saveTimer = undefined
+  if (!persistence || saving || !dirty) return
+  const target = persistence
+  const current = epoch
+  saving = true
+  dirty = false
+  let failed = false
   try {
-    const raw = target.getItem(INSPIRATION_LIBRARY_KEY)
-    if (!raw) return emptyInspirationLibrary()
-    const parsed = JSON.parse(raw)
-    const value = parsed && typeof parsed === 'object' ? parsed as Partial<InspirationLibrary> : null
-    const base = value ? normalize({ ...value, folders: Array.isArray(value.folders) ? value.folders : [], items: Array.isArray(value.items) ? value.items : [] }) : emptyInspirationLibrary()
-    const normalized = normalizeNames(base)
-    if (normalized.changed) {
-      try { target.setItem(INSPIRATION_LIBRARY_KEY, JSON.stringify(normalized.library)) } catch { /* keep the in-memory repair */ }
+    await target.save(memory)
+  } catch {
+    failed = true
+    dirty = true
+  }
+  if (current !== epoch) return
+  saving = false
+  setState({ saveFailed: failed })
+  // 写的过程中又有新修改,或写失败了:排下一次。已经有新的定时器就不动它。
+  if (dirty && saveTimer === undefined) schedulePersist(failed ? SAVE_RETRY_MS : 0)
+}
+
+// 一次性迁移:旧库只读不改;迁移成功后记一个标记,此后以宿主为准。
+function readLegacyLibrary(): InspirationLibrary | null {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    if (localStorage.getItem(INSPIRATION_MIGRATED_KEY)) return null
+    const raw = localStorage.getItem(INSPIRATION_LIBRARY_KEY)
+    if (!raw) return null
+    const library = normalizeNames(sanitizeInspirationLibrary(JSON.parse(raw))).library
+    return library.items.length + library.folders.length > 0 ? library : null
+  } catch {
+    return null
+  }
+}
+
+function markLegacyMigrated() {
+  try {
+    localStorage.setItem(INSPIRATION_MIGRATED_KEY, String(Date.now()))
+  } catch {
+    // 标记丢了也无妨:宿主已有文件,下次启动以宿主为准。
+  }
+}
+
+async function loadFromHost() {
+  const source = persistence
+  if (!source) return
+  const current = epoch
+  setState({ phase: 'loading', error: '' })
+  let step = '读取灵感库失败'
+  try {
+    const remote = await source.load()
+    let next: InspirationLibrary
+    let repaired = false
+    if (remote.exists) {
+      const raw = remote.library as { version?: unknown } | null
+      if (!raw || typeof raw !== 'object' || (raw.version !== undefined && raw.version !== 1)) {
+        throw new Error('灵感库文件的格式不受支持，已保留原文件')
+      }
+      const normalized = normalizeNames(sanitizeInspirationLibrary(raw))
+      next = normalized.library
+      repaired = normalized.changed
+    } else {
+      const legacy = readLegacyLibrary()
+      if (legacy) {
+        step = '迁移旧版灵感库失败'
+        await source.save(legacy)
+        markLegacyMigrated()
+      }
+      next = legacy ?? emptyInspirationLibrary()
     }
-    return normalized.library
-  } catch {
-    return emptyInspirationLibrary()
+    if (current !== epoch) return
+    memory = next
+    setState({ phase: 'ready', error: '' })
+    notifyLibraryChanged()
+    if (repaired) schedulePersist(SAVE_DEBOUNCE_MS)
+  } catch (error) {
+    if (current !== epoch) return
+    setState({ phase: 'error', error: `${step}：${error instanceof Error ? error.message : String(error)}` })
   }
 }
 
-export function saveInspirationLibrary(library: InspirationLibrary, storage?: Storage): boolean {
-  const target = storageOf(storage)
-  if (!target) return false
-  try {
-    const normalized = normalizeNames(normalize(library)).library
-    target.setItem(INSPIRATION_LIBRARY_KEY, JSON.stringify(normalized))
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event(INSPIRATION_LIBRARY_EVENT))
-    return true
-  } catch {
-    return false
+// 应用启动时调用:接上宿主并加载。加载完成前库处于 loading,所有写入都会被拒绝,
+// 避免用空库覆盖宿主上的文件。
+export function connectInspirationLibrary(next: InspirationPersistence): void {
+  persistence = next
+  if (!pagehideBound && typeof window !== 'undefined') {
+    pagehideBound = true
+    window.addEventListener('pagehide', () => { void flushPersist() })
   }
+  void loadFromHost()
 }
 
-export function addInspirationItem(input: Omit<InspirationItem, 'id' | 'createdAt' | 'updatedAt'>, storage?: Storage): InspirationItem | null {
-  const library = loadInspirationLibrary(storage)
+export function retryInspirationLibraryLoad(): void {
+  if (state.phase === 'error') void loadFromHost()
+}
+
+export function getInspirationLibraryState(): InspirationLibraryState {
+  return state
+}
+
+export function subscribeInspirationLibraryState(listener: () => void): () => void {
+  stateListeners.add(listener)
+  return () => { stateListeners.delete(listener) }
+}
+
+export function resetInspirationLibraryForTests(): void {
+  epoch += 1
+  clearTimeout(saveTimer)
+  saveTimer = undefined
+  saving = false
+  dirty = false
+  persistence = null
+  memory = emptyInspirationLibrary()
+  state = READY
+}
+
+// 返回当前内存副本,调用方只读;任何修改都要经 saveInspirationLibrary 提交。
+export function loadInspirationLibrary(): InspirationLibrary {
+  return memory
+}
+
+// 提交整份库。尚未读取完成(或读取失败)时拒绝并返回 false。
+export function saveInspirationLibrary(library: InspirationLibrary): boolean {
+  if (state.phase !== 'ready') return false
+  memory = normalizeNames(sanitizeInspirationLibrary(library)).library
+  notifyLibraryChanged()
+  schedulePersist(SAVE_DEBOUNCE_MS)
+  return true
+}
+
+export function addInspirationItem(input: Omit<InspirationItem, 'id' | 'createdAt' | 'updatedAt'>): InspirationItem | null {
+  const library = loadInspirationLibrary()
   const now = Date.now()
   const parentId = input.folderId
   const occupiedNames = [
@@ -187,17 +331,13 @@ export function addInspirationItem(input: Omit<InspirationItem, 'id' | 'createdA
   }
   const next = normalizeNames({ ...library, items: [...library.items, item] }).library
   const actual = next.items.find((candidate) => candidate.id === item.id) ?? item
-  return saveInspirationLibrary(next, storage) ? actual : null
+  return saveInspirationLibrary(next) ? actual : null
 }
 
-export function addInspirationFolder(name: string, storage?: Storage): InspirationFolder | null
-export function addInspirationFolder(name: string, parentId: string | null, storage?: Storage): InspirationFolder | null
-export function addInspirationFolder(name: string, parentIdOrStorage?: string | null | Storage, storage?: Storage): InspirationFolder | null {
+export function addInspirationFolder(name: string, parentId: string | null = null): InspirationFolder | null {
   const trimmed = name.trim()
   if (!trimmed) return null
-  const targetStorage = parentIdOrStorage && typeof parentIdOrStorage === 'object' ? parentIdOrStorage : storage
-  const parentId = typeof parentIdOrStorage === 'string' ? parentIdOrStorage : null
-  const library = loadInspirationLibrary(targetStorage)
+  const library = loadInspirationLibrary()
   const occupiedNames = [
     ...library.folders.filter((item) => item.parentId === parentId).map((item) => item.name),
     ...library.items.filter((item) => item.folderId === parentId).map((item) => item.title),
@@ -210,11 +350,11 @@ export function addInspirationFolder(name: string, parentIdOrStorage?: string | 
   }
   const next = normalizeNames({ ...library, folders: [...library.folders, folder] }).library
   const actual = next.folders.find((candidate) => candidate.id === folder.id) ?? folder
-  return saveInspirationLibrary(next, targetStorage) ? actual : null
+  return saveInspirationLibrary(next) ? actual : null
 }
 
-export function findInspirationItemBySource(source: string, storage?: Storage): InspirationItem | null {
-  return loadInspirationLibrary(storage).items.find((item) => item.source === source) ?? null
+export function findInspirationItemBySource(source: string): InspirationItem | null {
+  return loadInspirationLibrary().items.find((item) => item.source === source) ?? null
 }
 
 export function inspirationKindLabel(kind: InspirationItemKind): string {

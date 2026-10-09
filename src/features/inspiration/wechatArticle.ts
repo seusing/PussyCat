@@ -112,6 +112,6 @@ export async function collectWechatArticle(
     folderId,
     source: url,
   })
-  if (!item) throw new Error('保存到灵感库失败，请检查本地存储空间')
+  if (!item) throw new Error('保存到灵感库失败，灵感库还没有读取完成，请稍后重试')
   return { item, created: true }
 }

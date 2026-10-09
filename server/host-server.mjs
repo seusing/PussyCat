@@ -19,6 +19,7 @@ import { VkRuntimeError } from './vk-runtime.mjs'
 import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from './vk-capability-packs.mjs'
 import { WechatArticleError, fetchWechatArticle, requestArticleImage } from './wechat-article.mjs'
 import { createRadarService, diagnosticOf, reasonOf } from './radar.mjs'
+import { InspirationStoreError } from './inspiration-store.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
 
@@ -165,6 +166,10 @@ async function readJson(request, maxBodyBytes) {
   if (!contentType.toLowerCase().startsWith('application/json')) {
     throw new RequestPolicyError(415, 'Content-Type must be application/json')
   }
+  // 声明的长度已超限就不读了:读到一半再抛会连带销毁 socket,客户端只会看到连接重置而拿不到 413。
+  if (Number(request.headers['content-length']) > maxBodyBytes) {
+    throw new RequestPolicyError(413, 'Request body is too large')
+  }
 
   const chunks = []
   let length = 0
@@ -199,6 +204,7 @@ export function createHostServer({
   vkJobShadow = null,
   vkRuntime = null,
   radarService = createRadarService(),
+  inspirationStore = null,
   wechatArticle = { fetchWechatArticle, requestArticleImage },
 } = {}) {
   if (!policy) throw new Error('policy is required')
@@ -454,6 +460,21 @@ export function createHostServer({
         return
       }
 
+      // 灵感库整份读写,落在爪爪数据目录下的文件里(见 inspiration-store.mjs)。
+      // body 上限由存储自己定(默认 50MB),不走全局的 maxBodyBytes。
+      if (url.pathname === '/inspiration/library' && (request.method === 'GET' || request.method === 'PUT')) {
+        if (!inspirationStore) {
+          writeJson(response, 503, { error: '灵感库存储未接线', reasonCode: 'not-configured' })
+          return
+        }
+        if (request.method === 'GET') {
+          writeJson(response, 200, await inspirationStore.read())
+        } else {
+          writeJson(response, 200, await inspirationStore.write(await readJson(request, inspirationStore.maxBytes)))
+        }
+        return
+      }
+
       if (url.pathname === '/article-image' && request.method === 'GET') {
         const upstream = await wechatArticle.requestArticleImage(url.searchParams.get('url') ?? '')
         const buffer = Buffer.from(await upstream.arrayBuffer())
@@ -640,6 +661,7 @@ export function createHostServer({
           || error instanceof VkRuntimeError
           || error instanceof VkCapabilityPackError
           || error instanceof WechatArticleError
+          || error instanceof InspirationStoreError
           ? error.statusCode
           : 500
       )

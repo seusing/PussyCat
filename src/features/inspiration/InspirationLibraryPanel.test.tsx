@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { WECHAT_ARTICLE_PAGE } from '../../testing/wechatArticleFixture'
-import { addInspirationFolder, addInspirationItem, loadInspirationLibrary } from './inspirationLibrary'
+import * as library from './inspirationLibrary'
+import { INSPIRATION_LIBRARY_EVENT, addInspirationFolder, addInspirationItem, loadInspirationLibrary } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
 
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
@@ -245,13 +246,15 @@ describe('灵感库', () => {
 
   it('未修改时返回目录不会重复保存或更新时间', async () => {
     const item = addInspirationItem({ title: '无需保存', content: '内容', kind: 'note', format: 'md', folderId: null })!
-    const setItem = vi.spyOn(localStorage, 'setItem')
+    const changed = vi.fn()
+    window.addEventListener(INSPIRATION_LIBRARY_EVENT, changed)
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
 
     await userEvent.click(screen.getByTestId(`inspiration-item-${item.id}`))
     await userEvent.click(screen.getByRole('button', { name: '返回目录' }))
+    window.removeEventListener(INSPIRATION_LIBRARY_EVENT, changed)
 
-    expect(setItem).not.toHaveBeenCalled()
+    expect(changed).not.toHaveBeenCalled()
     expect(loadInspirationLibrary().items[0].updatedAt).toBe(item.updatedAt)
   })
 
@@ -272,7 +275,7 @@ describe('灵感库', () => {
 
   it('返回时保存失败会保留编辑器和草稿', async () => {
     const item = addInspirationItem({ title: '保存失败', content: '原内容', kind: 'note', format: 'md', folderId: null })!
-    vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('storage full') })
+    vi.spyOn(library, 'saveInspirationLibrary').mockReturnValue(false)
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
     await userEvent.click(screen.getByTestId(`inspiration-item-${item.id}`))
     await userEvent.clear(screen.getByTestId('inspiration-content-input'))
