@@ -1,9 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
-import { SiteGrid } from './SiteGrid'
+import { SiteCarousel } from './SiteCarousel'
 import { InspirationPanel } from './InspirationPanel'
 import { InspirationFileCard } from './InspirationLibraryCards'
 import type { InspirationItem } from './inspirationLibrary'
@@ -31,6 +30,12 @@ const commands: CommandManifest[] = ['read', 'write'].map((name) => ({
   args: [],
 }))
 
+// 轮播滑动动画结束(data-sliding 由 motion 的 onAnimationComplete 复位)后才接受卡片点击。
+const carouselSettled = () => waitFor(
+  () => expect(screen.getByTestId('site-carousel')).toHaveAttribute('data-sliding', 'false'),
+  { timeout: 3000 },
+)
+
 describe('inspiration selectors', () => {
   it('keeps file-card delete confirmation separate from opening and cancels with Escape', async () => {
     const onOpen = vi.fn()
@@ -55,34 +60,74 @@ describe('inspiration selectors', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  it('shows every site as a card with its logo and name, and opens the clicked one immediately', () => {
+  it('centers a non-center carousel card without opening it, then opens it on the next click', async () => {
     const onSelect = vi.fn()
-    render(<SiteGrid sites={sites} onSelect={onSelect} />)
+    render(<SiteCarousel sites={sites} onSelect={onSelect} />)
 
-    expect(screen.getAllByRole('listitem')).toHaveLength(sites.length)
-    const third = screen.getByTestId('site-row-c')
-    expect(third).toHaveTextContent('C')
-    expect(third.querySelector('img')).toHaveAttribute('src', '/site-logos/c.svg')
-    fireEvent.click(third)
+    const first = screen.getByTestId('site-row-a')
+    fireEvent.click(first)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(first).toHaveAttribute('data-selected', 'true')
+    await carouselSettled()
+
+    fireEvent.click(first)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).toHaveBeenCalledWith(sites[0])
+  })
+
+  it('opens the site of the centered carousel card on the first click', () => {
+    const onSelect = vi.fn()
+    render(<SiteCarousel sites={sites} onSelect={onSelect} />)
+
+    const center = screen.getByTestId('site-row-c')
+    expect(center).toHaveAttribute('data-selected', 'true')
+    fireEvent.click(center)
     expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onSelect).toHaveBeenCalledWith(sites[2])
   })
 
-  it('opens a focused site card from the keyboard', async () => {
+  it('only centers a side carousel card and never opens a site while the strip is sliding', async () => {
     const onSelect = vi.fn()
-    render(<SiteGrid sites={sites} onSelect={onSelect} />)
+    render(<SiteCarousel sites={sites} onSelect={onSelect} />)
 
-    await userEvent.tab()
-    expect(screen.getByTestId('site-row-a')).toHaveFocus()
-    await userEvent.tab()
-    await userEvent.keyboard('{Enter}')
-    expect(onSelect).toHaveBeenCalledWith(sites[1])
-    await userEvent.keyboard(' ')
-    expect(onSelect).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByTestId('site-row-b'))
+    expect(screen.getByTestId('site-carousel')).toHaveAttribute('data-sliding', 'true')
+    expect(screen.getByTestId('site-row-b')).toHaveAttribute('data-selected', 'true')
+
+    // 滑动中:点已被标为居中的卡、点另一张卡、点原来居中的卡,都不打开也不改变定位。
+    fireEvent.click(screen.getByTestId('site-row-b'))
+    fireEvent.click(screen.getByTestId('site-row-a'))
+    fireEvent.click(screen.getByTestId('site-row-c'))
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.getByTestId('site-row-b')).toHaveAttribute('data-selected', 'true')
+    expect(screen.getByTestId('site-row-a')).toHaveAttribute('data-selected', 'false')
+    expect(screen.getByTestId('site-row-c')).toHaveAttribute('data-selected', 'false')
+
+    // 滑动结束后恢复:点侧边卡只定位,点居中卡才打开,打开的是它自己的站点。
+    await carouselSettled()
+    fireEvent.click(screen.getByTestId('site-row-d'))
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.getByTestId('site-row-d')).toHaveAttribute('data-selected', 'true')
+    await carouselSettled()
+    fireEvent.click(screen.getByTestId('site-row-d'))
+    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).toHaveBeenCalledWith(sites[3])
+  })
+
+  it('lets the arrow and dot controls reposition the carousel without opening anything', async () => {
+    const onSelect = vi.fn()
+    render(<SiteCarousel sites={sites} onSelect={onSelect} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '下一个站点' }))
+    expect(screen.getByTestId('site-row-d')).toHaveAttribute('data-selected', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '定位到 A' }))
+    expect(screen.getByTestId('site-row-a')).toHaveAttribute('data-selected', 'true')
+    expect(onSelect).not.toHaveBeenCalled()
+    await carouselSettled()
   })
 
   it('renders nothing for an empty site list', () => {
-    const { container } = render(<SiteGrid sites={[]} onSelect={vi.fn()} />)
+    const { container } = render(<SiteCarousel sites={[]} onSelect={vi.fn()} />)
     expect(container).toBeEmptyDOMElement()
   })
 
@@ -222,7 +267,20 @@ describe('inspiration command search', () => {
     <InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />,
   )
 
-  it('removes WeChat sources from the site grid and global command search', () => {
+  afterEach(() => { act(() => { useAppStore.setState({ mode: 'demo' }) }) })
+
+  it('shows the display-mode switch and the site carousel under the getting-started checklist', () => {
+    useAppStore.setState({ mode: 'connected', commands: [likedCommand, feedCommand], selected: undefined })
+    renderPanel()
+
+    expect(screen.getByRole('group', { name: '站点展示方式' })).toContainElement(screen.getByTestId('open-inspiration-library'))
+    expect(screen.getByTestId('display-mode-carousel')).toHaveAttribute('aria-pressed', 'true')
+    const checklist = screen.getByTestId('getting-started')
+    const carousel = screen.getByTestId('site-carousel')
+    expect(checklist.compareDocumentPosition(carousel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('removes WeChat sources from the carousel and global command search', () => {
     const weixinCommand: CommandManifest = {
       ...likedCommand,
       command: 'weixin/articles',
