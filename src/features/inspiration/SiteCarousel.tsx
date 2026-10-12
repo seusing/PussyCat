@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { motion } from 'motion/react'
+import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { motion, useMotionValue } from 'motion/react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
 import type { SupportedSite } from '../../data/supportedSites'
@@ -16,6 +16,7 @@ const swallowDoubleClick = (event: MouseEvent) => {
 export function SiteCarousel({ sites, onSelect }: { sites: SupportedSite[]; onSelect: (site: SupportedSite) => void }) {
   const [activeIndex, setActiveIndex] = useState(() => Math.min(2, Math.max(0, sites.length - 1)))
   const [isHovered, setIsHovered] = useState(false)
+  const x = useMotionValue(0)
   if (sites.length === 0) return null
 
   const toSlide = (index: number) => setActiveIndex(index)
@@ -25,6 +26,14 @@ export function SiteCarousel({ sites, onSelect }: { sites: SupportedSite[]; onSe
     // 单击就会换成命令列表,习惯双击时第二下会落在列表里某条命令上,所以只吞掉紧跟着的那次连击
     window.addEventListener('click', swallowDoubleClick, { capture: true, once: true })
     onSelect(site)
+  }
+  const onCardClick = (event: ReactMouseEvent, site: SupportedSite, index: number) => {
+    // 连击的后几下不算:侧边卡第一下就开始滑了,后几下会落到滑到鼠标下的别的卡上
+    if (event.detail > 1) return
+    // 条带离目标不到半张卡时,每张卡都离自己的终点比离邻位近,鼠标下是谁不再有歧义;还没到这一步先忽略点击
+    if (Math.abs(x.get() + activeIndex * SLIDE_WIDTH) >= SLIDE_WIDTH / 2) return
+    if (index === activeIndex) openSite(site)
+    else toSlide(index)
   }
 
   return (
@@ -37,6 +46,7 @@ export function SiteCarousel({ sites, onSelect }: { sites: SupportedSite[]; onSe
       <div className="site-carousel-track">
         <motion.div
           className="site-carousel-strip"
+          style={{ x }}
           animate={{ x: -activeIndex * SLIDE_WIDTH }}
           transition={{ type: 'spring', bounce: 0.1, duration: 0.8 }}
         >
@@ -71,7 +81,7 @@ export function SiteCarousel({ sites, onSelect }: { sites: SupportedSite[]; onSe
                     data-testid={`site-row-${site.id}`}
                     data-selected={selected}
                     aria-label={`打开 ${site.label}`}
-                    onClick={() => openSite(site)}
+                    onClick={(event) => onCardClick(event, site, index)}
                     className="site-carousel-card"
                   >
                     <img src={site.logo} alt={site.label} />

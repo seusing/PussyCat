@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { InspirationPanel } from './InspirationPanel'
 import { FisheyeCommandList } from './FisheyeCommandList'
@@ -13,13 +13,29 @@ const initialState = useAppStore.getState()
 
 const renderPanel = () => render(<InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />)
 
-// 轮播里单击任意站点卡(居中或侧边)都直接进入该站点的命令列表。
-const clickSite = (site: string) => fireEvent.click(screen.getByTestId(`site-row-${site}`))
+// 条带位移取自 motion 写在 strip 上的 transform;离目标不到半张卡(80px)时,卡片才接受点击。
+const stripArrived = (index: number) => waitFor(() => {
+  const transform = screen.getByTestId('site-carousel').querySelector<HTMLElement>('.site-carousel-strip')!.style.transform
+  const offset = transform.startsWith('translateX(') ? parseFloat(transform.slice('translateX('.length)) : 0
+  expect(Math.abs(offset + index * 160)).toBeLessThan(80)
+}, { timeout: 3000 })
 
-function openSite(site: string) {
+// 轮播里居中的卡单击进入站点,侧边卡单击只滑到居中;每一步都等条带到位再点。
+async function clickSite(site: string) {
+  const cards = screen.getAllByTestId(/^site-row-/)
+  const card = screen.getByTestId(`site-row-${site}`)
+  await stripArrived(cards.findIndex((c) => c.getAttribute('data-selected') === 'true'))
+  if (card.getAttribute('data-selected') !== 'true') {
+    fireEvent.click(card)
+    await stripArrived(cards.indexOf(card))
+  }
+  fireEvent.click(card)
+}
+
+async function openSite(site: string) {
   useAppStore.setState({ commands: catalog, selected: undefined })
   renderPanel()
-  clickSite(site)
+  await clickSite(site)
 }
 
 const rowKeys = () => screen.queryAllByTestId(/^command-row-/).map((row) => row.getAttribute('data-testid')!.replace('command-row-', ''))
