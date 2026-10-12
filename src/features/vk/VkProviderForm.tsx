@@ -26,6 +26,12 @@ import {
   type VkProviderTestResult,
 } from '../../host/vkClient'
 import { vkErrorText } from './vkErrors'
+import {
+  loadSharedKeyReminderDismissed,
+  saveSharedKeyReminderDismissed,
+  sharedKeyGroups,
+  sharedKeyGroupTitle,
+} from './sharedKeyReminder'
 
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
 const fieldStyle = {
@@ -51,7 +57,7 @@ type ChannelBusyState = {
 }
 
 type LoadError = { message: string; engineNotReady: boolean }
-type PersistResult = { ok: boolean; noticeMessage?: string; error?: string; settings?: VkProviderSettings }
+type PersistResult = { ok: boolean; noticeMessage?: string; error?: string }
 type RouteSnapshot = {
   drafts: Draft[]
   roles: Record<string, string>
@@ -60,9 +66,8 @@ type RouteSnapshot = {
 }
 
 const NOTICE_DURATION_MS = 2000
-// 共用 key 的提醒比一般通知长,2 秒读不完。
+// 测试时的共用 key 提醒比一般通知长,2 秒读不完。
 const WARNING_NOTICE_DURATION_MS = 8000
-const SHARED_KEY_ROUTE_WARNING = '主通道与备用通道用的是同一把 key：这把 key 被限流、余额不足或在中转站排队时，切过去也一样不可用。'
 
 /** 创建配置时的「快速选择」。只带名称与接口地址,**不带模型 ID**:模型由「获取模型列表」或手动输入决定。 */
 const PROVIDER_PRESETS = [
@@ -575,6 +580,8 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [focusTestId, setFocusTestId] = useState<string | null>(null)
   const [error, setError] = useState<LoadError | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
+  const [neverRemindGroups, setNeverRemindGroups] = useState<string[]>(loadSharedKeyReminderDismissed)
+  const [closedGroups, setClosedGroups] = useState<string[]>([])
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
   const savingRef = useRef(false)
@@ -633,7 +640,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setNotices((current) => [notice, ...current])
   }, [])
 
-  const load = useCallback(async (): Promise<VkProviderSettings | null> => {
+  const load = useCallback(async () => {
     loadingRef.current = true
     try {
       const loaded = await fetchVkProviderSettings(baseUrl)
@@ -650,12 +657,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           loaded.role_composite_enabled?.[role] ?? Boolean(loaded.role_fallbacks?.[role]?.length),
         ]),
       ))
-      return loaded
     } catch (err) {
       const message = vkErrorText(err, '模型配置读取失败')
       if (settingsLoaded.current) showNotice('error', message, 'form', true)
       else setError({ message, engineNotReady: isVkEngineNotReady(err) })
-      return null
     } finally {
       loadingRef.current = false
     }
@@ -799,9 +804,9 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       // 角色选择、启停和备用顺序采用乐观更新。服务端保存响应不含完整
       // settings，立即重新读取会把尚未刷新的旧快照覆盖回页面。弹窗保存仍回读，
       // 以接收服务端的规范化结果。
-      const loaded = withNotice ? await load() : null
+      if (withNotice) await load()
       onSaved?.()
-      return { ok: true, noticeMessage, settings: loaded ?? undefined }
+      return { ok: true, noticeMessage }
     } catch (err) {
       const message = vkErrorText(err, '模型配置保存失败')
       if (errorLocation !== null) showNotice('error', message, errorLocation, true)
@@ -1059,17 +1064,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
       return
     }
     const isNew = modalSession?.original === null
-    const keyChanged = draft.key_touched && draft.api_key.trim() !== ''
     const result = await save('modal')
     if (result.ok) {
       closeModal(true)
       if (result.noticeMessage) showNotice('success', result.noticeMessage, 'form')
-      if ((isNew || keyChanged) && result.settings) {
-        const sharing = sharedKeyIds(result.settings, draft.id)
-        if (sharing.length) {
-          showNotice('warning', `「${channelNames([draft.id], result.settings.channels)}」和「${channelNames(sharing, result.settings.channels)}」用的是同一把 key。同时测试或解析时，中转站可能一次只处理一条；这把 key 被限流或余额不足时，它们会一起受影响。`, 'form')
-        }
-      }
       // 配置变了,旧的测试结果不再可信;新建的配置立刻测一次,结果落在这一行上。
       setResults((current) => { const next = { ...current }; delete next[draft.id]; return next })
       if (isNew) void runTest(draft, true, 'form')
@@ -1215,6 +1213,34 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
           </ActionIconButton>
         </div>
       </div>
+
+      {sharedKeyGroups(settings.channels, new Set(drafts.map((draft) => draft.id)))
+        .filter((group) => !neverRemindGroups.includes(group.id) && !closedGroups.includes(group.id))
+        .map((group) => (
+          <AppAlert
+            key={group.id}
+            testId="vk-shared-key-banner"
+            tone="warning"
+            className="vk-shared-key-banner"
+            title={sharedKeyGroupTitle(group.names)}
+            action={(
+              <button
+                type="button"
+                data-testid="vk-shared-key-never"
+                className="vk-shared-key-never text-xs"
+                onClick={() => {
+                  const next = [...neverRemindGroups, group.id]
+                  setNeverRemindGroups(next)
+                  saveSharedKeyReminderDismissed(next)
+                }}
+              >
+                不再提醒
+              </button>
+            )}
+            onClose={() => setClosedGroups((current) => [...current, group.id])}
+            closeLabel="关闭提醒"
+          />
+        ))}
 
       {/* —— 通道清单 —— */}
       <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
@@ -1453,13 +1479,11 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             const route = [primary, ...fallbacks].filter(Boolean)
             const compositeEnabled = roleCompositeEnabled[role] ?? false
             const available = drafts.filter((draft) => draft.enabled)
-            // 同 key 已涵盖同服务,不再叠一条。
+            // 路由里的通道共用同一把 key 时,顶部横幅已经说了,不再叠同服务警告。
             const routeWarnings = [...new Set([
-              ...(compositeEnabled && routeSharesKey(route, settings)
-                ? [SHARED_KEY_ROUTE_WARNING]
-                : compositeEnabled && routeHasDuplicateHost(route, drafts)
-                  ? ['主通道与备用通道实际指向同一服务，故障时可能同时不可用']
-                  : []),
+              ...(compositeEnabled && routeHasDuplicateHost(route, drafts) && !routeSharesKey(route, settings)
+                ? ['主通道与备用通道实际指向同一服务，故障时可能同时不可用']
+                : []),
             ])]
             // 没启用备用通道时引擎只用主通道,选过的备用不生效。只有一个通道时出问题任务就直接失败,
             // 温和提醒一句,不阻止保存。

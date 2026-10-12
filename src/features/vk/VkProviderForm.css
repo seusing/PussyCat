@@ -139,6 +139,46 @@
   pointer-events: auto;
 }
 
+/* 模型配置列表顶部的共用 key 横幅:嵌在卡片里,不是浮层,所以去掉浮层的阴影与宽度上限。 */
+.vk-shared-key-banner.app-alert {
+  width: 100%;
+  max-width: 100%;
+  margin-bottom: 0.75rem;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.vk-shared-key-banner .app-alert__body {
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+}
+
+.vk-shared-key-banner .app-alert__title {
+  flex: 1 1 18rem;
+  text-wrap: pretty;
+}
+
+.vk-shared-key-banner .app-alert__actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.vk-shared-key-never {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.45rem;
+  color: var(--color-fg-dim);
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.vk-shared-key-never:hover,
+.vk-shared-key-never:focus-visible {
+  background: rgb(255 255 255 / 7%);
+  color: var(--color-fg);
+  outline: none;
+}
+
 .vk-provider-delete-dialog {
   width: min(440px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
