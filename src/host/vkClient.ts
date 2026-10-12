@@ -612,6 +612,8 @@ export interface VkChannel {
   key_masked: string
   /** 来自系统环境变量 —— 它优先级更高,用户要改得去环境变量而不是这张表单。 */
   key_from_environment: boolean
+  /** 与本条已存 key 值相同的其他通道 id(按通道顺序);本条没有 key 时为空。 */
+  key_shared_with: string[]
   reasoning_effort: string
   reasoning_effort_explicit: boolean
   extra_headers: Record<string, string>

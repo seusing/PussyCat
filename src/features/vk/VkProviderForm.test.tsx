@@ -46,7 +46,7 @@ function channel(over: Record<string, unknown> = {}) {
     id: 'cheap', name: 'GPT 5.6 Luna', base_url: 'https://api.example.com/v1',
     model_id: 'gpt-5.6-luna', key_env: 'VK_CHANNEL_CHEAP_KEY',
     api_style: 'openai_completions', key_stored: true, key_from_environment: false,
-    key_masked: 'sk-rela••••••••••6789',
+    key_masked: 'sk-rela••••••••••6789', key_shared_with: [],
     reasoning_effort: 'low', reasoning_effort_explicit: false, extra_headers: {},
     enabled: true,
     ...over,
@@ -2082,4 +2082,243 @@ test('编辑已有配置后保存不自动测试', async () => {
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(calls.some((call) => call.key === 'POST /vk/v1/providers/test')).toBe(false)
+})
+
+// ── 多条配置共用同一把 key 的提醒 ───────────────────────────────────────────
+
+const TEST_OK = { ok: true, reason_code: 'ok', message: '连接正常', models: [], normalization_notes: [] }
+const SHARED_SAVE_WARNING = (self: string, other: string) =>
+  `「${self}」和「${other}」用的是同一把 key。同时测试或解析时，中转站可能一次只处理一条；这把 key 被限流或余额不足时，它们会一起受影响。`
+const SHARED_TEST_WARNING = '「GPT 5.6 Sol」和正在测试的「GPT 5.6 Luna」用的是同一把 key，中转站可能要等那条测完才处理这条，所以会慢一些。'
+const SHARED_ROUTE_WARNING = '主通道与备用通道用的是同一把 key：这把 key 被限流、余额不足或在中转站排队时，切过去也一样不可用。'
+const SAME_HOST_WARNING = '主通道与备用通道实际指向同一服务，故障时可能同时不可用'
+
+const sharedPair = () => [
+  channel({ key_shared_with: ['smart'] }),
+  channel({ id: 'smart', name: 'GPT 5.6 Sol', model_id: 'gpt-5.6-sol', key_shared_with: ['cheap'] }),
+]
+const separatePair = () => [
+  channel(),
+  channel({ id: 'smart', name: 'GPT 5.6 Sol', model_id: 'gpt-5.6-sol' }),
+]
+
+/** 复用 cheap 存成新配置;回读时按 shared 决定新旧两条是否同 key。 */
+function stubReuseSave(shared: boolean) {
+  let sent: Array<{ id: string; name: string }> | undefined
+  const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => data })
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') {
+      if (!sent) return reply(settings())
+      const ids = sent.map((item) => item.id)
+      return reply(settings({
+        channels: sent.map((item) => channel({
+          id: item.id, name: item.name, key_shared_with: shared ? ids.filter((id) => id !== item.id) : [],
+        })),
+      }))
+    }
+    if (key === 'POST /vk/v1/providers') {
+      sent = JSON.parse(String(init?.body)).channels
+      return reply(SAVE_OK)
+    }
+    if (key === 'POST /vk/v1/providers/test') return reply(TEST_OK)
+    return { ok: false, status: 404, json: async () => ({ error: key }) }
+  }))
+}
+
+/** 第一次 test 请求一直挂起,之后的立刻成功。 */
+function stubPendingFirstTest(channels: unknown[]) {
+  const first = deferred<unknown>()
+  let tests = 0
+  const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => data })
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+    if (key === 'GET /vk/v1/providers') return Promise.resolve(reply(settings({ channels })))
+    if (key === 'POST /vk/v1/providers/reveal') {
+      return Promise.resolve(reply({ key_env: 'VK_CHANNEL_CHEAP_KEY', found: true, api_key: SECRET, source: 'stored' }))
+    }
+    if (key === 'POST /vk/v1/providers/test') {
+      tests += 1
+      return tests === 1 ? first.promise.then(reply) : Promise.resolve(reply(TEST_OK))
+    }
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: key }) })
+  }))
+  return { first, testCount: () => tests }
+}
+
+describe('保存时提醒共用同一把 key', () => {
+  test('新建配置与已有通道同一把 key:保存后提醒并点名两条,与「已保存」并存', async () => {
+    stubReuseSave(true)
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    await userEvent.click(await screen.findByTestId('vk-channel-reuse-cheap'))
+    await userEvent.click(screen.getByTestId('vk-provider-modal-submit'))
+
+    const warning = await screen.findByText(SHARED_SAVE_WARNING('GPT 5.6 Luna · 复用', 'GPT 5.6 Luna'))
+    expect(warning.closest('[data-tone]')).toHaveAttribute('data-tone', 'warning')
+    expect(screen.getByText('已保存并立即生效')).toBeInTheDocument()
+  })
+
+  test('新建配置的 key 与其他通道不同时不提醒', async () => {
+    stubReuseSave(false)
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    await userEvent.click(await screen.findByTestId('vk-channel-reuse-cheap'))
+    await userEvent.click(screen.getByTestId('vk-provider-modal-submit'))
+
+    expect(await screen.findByText('已保存并立即生效')).toBeInTheDocument()
+    expect(screen.queryByText(/用的是同一把 key/)).not.toBeInTheDocument()
+  })
+
+  test('编辑已有配置没改 key 时不提醒,即使它本来就和别的通道共用', async () => {
+    stubRoutes({
+      'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) },
+      'POST /vk/v1/providers': { body: SAVE_OK },
+    })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    await openChannelEditor()
+    await commitChannelEditor()
+
+    expect(await screen.findByText('已保存并立即生效')).toBeInTheDocument()
+    expect(screen.queryByText(/用的是同一把 key/)).not.toBeInTheDocument()
+  })
+
+  test('编辑已有配置改了 key 且保存后仍与别的通道共用时提醒', async () => {
+    stubRoutes({
+      'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) },
+      'POST /vk/v1/providers/reveal': { body: { key_env: 'VK_CHANNEL_CHEAP_KEY', found: true, api_key: SECRET, source: 'stored' } },
+      'POST /vk/v1/providers': { body: SAVE_OK },
+    })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    await openChannelEditor()
+    const input = screen.getByTestId('vk-channel-key-cheap') as HTMLInputElement
+    await userEvent.click(input)
+    await waitFor(() => expect(input.value).toBe(SECRET))
+    await userEvent.clear(input)
+    await userEvent.type(input, 'sk-brand-new')
+    await commitChannelEditor()
+
+    expect(await screen.findByText(SHARED_SAVE_WARNING('GPT 5.6 Luna', 'GPT 5.6 Sol'))).toBeInTheDocument()
+  })
+})
+
+describe('测试时提醒共用同一把 key', () => {
+  test('共用 key 的另一条正在测试时再测这一条,提醒但照常发起', async () => {
+    const stub = stubPendingFirstTest(sharedPair())
+    const user = userEvent.setup()
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
+    await user.click(cheapTest)
+    await waitFor(() => expect(cheapTest).toBeDisabled())
+    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('vk-channel-test-smart'))
+    const warning = await screen.findByText(SHARED_TEST_WARNING)
+    expect(warning.closest('[data-tone]')).toHaveAttribute('data-tone', 'warning')
+    expect(stub.testCount()).toBe(2)
+  })
+
+  test('不共用 key 的两条同时测试不提醒', async () => {
+    const stub = stubPendingFirstTest(separatePair())
+    const user = userEvent.setup()
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
+    await user.click(cheapTest)
+    await waitFor(() => expect(cheapTest).toBeDisabled())
+    await user.click(screen.getByTestId('vk-channel-test-smart'))
+
+    await waitFor(() => expect(stub.testCount()).toBe(2))
+    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
+  })
+
+  test('另一条已经测完后再测这一条不提醒', async () => {
+    const stub = stubPendingFirstTest(sharedPair())
+    const user = userEvent.setup()
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
+    await user.click(cheapTest)
+    await waitFor(() => expect(cheapTest).toBeDisabled())
+    await act(async () => {
+      stub.first.resolve(TEST_OK)
+      await stub.first.promise
+    })
+    await waitFor(() => expect(cheapTest).toBeEnabled())
+
+    await user.click(screen.getByTestId('vk-channel-test-smart'))
+    await waitFor(() => expect(stub.testCount()).toBe(2))
+    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
+  })
+
+  test('只获取模型列表时不提醒', async () => {
+    const stub = stubPendingFirstTest(sharedPair())
+    const user = userEvent.setup()
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
+    await user.click(cheapTest)
+    await waitFor(() => expect(cheapTest).toBeDisabled())
+    await openChannelEditor('smart')
+    await user.click(screen.getByTestId('vk-channel-models-fetch-smart'))
+
+    await waitFor(() => expect(stub.testCount()).toBe(2))
+    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
+  })
+
+  test('弹窗里改过 key 还没保存时不提醒', async () => {
+    const stub = stubPendingFirstTest(sharedPair())
+    const user = userEvent.setup()
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
+    await user.click(cheapTest)
+    await waitFor(() => expect(cheapTest).toBeDisabled())
+    await openChannelEditor('smart')
+    const input = screen.getByTestId('vk-channel-key-smart') as HTMLInputElement
+    await user.click(input)
+    await waitFor(() => expect(input.value).toBe(SECRET))
+    await user.type(input, 'x')
+    await user.click(screen.getByTestId('vk-channel-test-smart'))
+
+    await waitFor(() => expect(stub.testCount()).toBe(2))
+    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
+  })
+})
+
+describe('备用通道提醒共用同一把 key', () => {
+  const routeSettings = (channels: unknown[], composite: boolean) => settings({
+    channels,
+    role_assignments: { basic: 'cheap' },
+    role_fallbacks: { basic: ['smart'] },
+    role_composite_enabled: { basic: composite, deep_analysis: false },
+  })
+
+  test('勾选备用通道后路由里两条同 key:只显示同 key 警告,不叠同服务警告', async () => {
+    stubRoutes({
+      'GET /vk/v1/providers': { body: routeSettings(sharedPair(), false) },
+      'POST /vk/v1/providers': { body: SAVE_OK },
+    })
+    const user = userEvent.setup()
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    await screen.findByTestId('vk-role-composite-basic')
+    expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('vk-role-composite-basic'))
+
+    expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(SHARED_ROUTE_WARNING)
+    expect(screen.getAllByTestId('vk-role-warning-basic')).toHaveLength(1)
+    expect(screen.queryByText(SAME_HOST_WARNING)).not.toBeInTheDocument()
+  })
+
+  test('同服务但 key 不同:只显示同服务警告', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { body: routeSettings(separatePair(), true) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(SAME_HOST_WARNING)
+    expect(screen.queryByText(SHARED_ROUTE_WARNING)).not.toBeInTheDocument()
+  })
 })
