@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
@@ -30,12 +30,6 @@ const commands: CommandManifest[] = ['read', 'write'].map((name) => ({
   args: [],
 }))
 
-// 轮播滑动动画结束(data-sliding 由 motion 的 onAnimationComplete 复位)后才接受卡片点击。
-const carouselSettled = () => waitFor(
-  () => expect(screen.getByTestId('site-carousel')).toHaveAttribute('data-sliding', 'false'),
-  { timeout: 3000 },
-)
-
 describe('inspiration selectors', () => {
   it('keeps file-card delete confirmation separate from opening and cancels with Escape', async () => {
     const onOpen = vi.fn()
@@ -60,19 +54,13 @@ describe('inspiration selectors', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  it('centers a non-center carousel card without opening it, then opens it on the next click', async () => {
+  it.each([['a', 0], ['e', 4]])('opens the site of a side carousel card (%s) on the first click', (id, index) => {
     const onSelect = vi.fn()
     render(<SiteCarousel sites={sites} onSelect={onSelect} />)
 
-    const first = screen.getByTestId('site-row-a')
-    fireEvent.click(first)
-    expect(onSelect).not.toHaveBeenCalled()
-    expect(first).toHaveAttribute('data-selected', 'true')
-    await carouselSettled()
-
-    fireEvent.click(first)
+    fireEvent.click(screen.getByTestId(`site-row-${id}`))
     expect(onSelect).toHaveBeenCalledTimes(1)
-    expect(onSelect).toHaveBeenCalledWith(sites[0])
+    expect(onSelect).toHaveBeenCalledWith(sites[index])
   })
 
   it('opens the site of the centered carousel card on the first click', () => {
@@ -86,35 +74,59 @@ describe('inspiration selectors', () => {
     expect(onSelect).toHaveBeenCalledWith(sites[2])
   })
 
-  it('only centers a side carousel card and never opens a site while the strip is sliding', async () => {
+  it('opens the clicked card on the first click right after the arrow or dots reposition the strip', () => {
     const onSelect = vi.fn()
     render(<SiteCarousel sites={sites} onSelect={onSelect} />)
 
-    fireEvent.click(screen.getByTestId('site-row-b'))
-    expect(screen.getByTestId('site-carousel')).toHaveAttribute('data-sliding', 'true')
-    expect(screen.getByTestId('site-row-b')).toHaveAttribute('data-selected', 'true')
-
-    // 滑动中:点已被标为居中的卡、点另一张卡、点原来居中的卡,都不打开也不改变定位。
-    fireEvent.click(screen.getByTestId('site-row-b'))
-    fireEvent.click(screen.getByTestId('site-row-a'))
-    fireEvent.click(screen.getByTestId('site-row-c'))
-    expect(onSelect).not.toHaveBeenCalled()
-    expect(screen.getByTestId('site-row-b')).toHaveAttribute('data-selected', 'true')
-    expect(screen.getByTestId('site-row-a')).toHaveAttribute('data-selected', 'false')
-    expect(screen.getByTestId('site-row-c')).toHaveAttribute('data-selected', 'false')
-
-    // 滑动结束后恢复:点侧边卡只定位,点居中卡才打开,打开的是它自己的站点。
-    await carouselSettled()
-    fireEvent.click(screen.getByTestId('site-row-d'))
-    expect(onSelect).not.toHaveBeenCalled()
-    expect(screen.getByTestId('site-row-d')).toHaveAttribute('data-selected', 'true')
-    await carouselSettled()
+    // 条带还在滑动,不等待
+    fireEvent.click(screen.getByRole('button', { name: '下一个站点' }))
     fireEvent.click(screen.getByTestId('site-row-d'))
     expect(onSelect).toHaveBeenCalledTimes(1)
-    expect(onSelect).toHaveBeenCalledWith(sites[3])
+    expect(onSelect).toHaveBeenLastCalledWith(sites[3])
+
+    fireEvent.click(screen.getByRole('button', { name: '定位到 A' }))
+    fireEvent.click(screen.getByTestId('site-row-a'))
+    expect(onSelect).toHaveBeenCalledTimes(2)
+    expect(onSelect).toHaveBeenLastCalledWith(sites[0])
+
+    fireEvent.click(screen.getByTestId('site-row-c'))
+    expect(onSelect).toHaveBeenCalledTimes(3)
+    expect(onSelect).toHaveBeenLastCalledWith(sites[2])
   })
 
-  it('lets the arrow and dot controls reposition the carousel without opening anything', async () => {
+  it('swallows the second click of a double click that lands on the page after a card opens the site', () => {
+    const spy = vi.fn()
+    render(
+      <>
+        <SiteCarousel sites={sites} onSelect={vi.fn()} />
+        <button type="button" onClick={spy}>下方按钮</button>
+      </>,
+    )
+    const button = screen.getByRole('button', { name: '下方按钮' })
+
+    fireEvent.click(screen.getByTestId('site-row-a'))
+    fireEvent.click(button, { detail: 2 })
+    expect(spy).not.toHaveBeenCalled()
+
+    fireEvent.click(button, { detail: 1 })
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets an ordinary click right after a card opens the site through', () => {
+    const spy = vi.fn()
+    render(
+      <>
+        <SiteCarousel sites={sites} onSelect={vi.fn()} />
+        <button type="button" onClick={spy}>下方按钮</button>
+      </>,
+    )
+
+    fireEvent.click(screen.getByTestId('site-row-a'))
+    fireEvent.click(screen.getByRole('button', { name: '下方按钮' }), { detail: 1 })
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets the arrow and dot controls reposition the carousel without opening anything', () => {
     const onSelect = vi.fn()
     render(<SiteCarousel sites={sites} onSelect={onSelect} />)
 
@@ -123,7 +135,6 @@ describe('inspiration selectors', () => {
     fireEvent.click(screen.getByRole('button', { name: '定位到 A' }))
     expect(screen.getByTestId('site-row-a')).toHaveAttribute('data-selected', 'true')
     expect(onSelect).not.toHaveBeenCalled()
-    await carouselSettled()
   })
 
   it('renders nothing for an empty site list', () => {

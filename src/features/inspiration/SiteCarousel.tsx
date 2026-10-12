@@ -6,31 +6,30 @@ import type { SupportedSite } from '../../data/supportedSites'
 
 const SLIDE_WIDTH = 160
 
+const swallowDoubleClick = (event: MouseEvent) => {
+  if (event.detail > 1) {
+    event.stopPropagation()
+    event.preventDefault()
+  }
+}
+
 export function SiteCarousel({ sites, onSelect }: { sites: SupportedSite[]; onSelect: (site: SupportedSite) => void }) {
   const [activeIndex, setActiveIndex] = useState(() => Math.min(2, Math.max(0, sites.length - 1)))
   const [isHovered, setIsHovered] = useState(false)
-  // 条带滑动期间卡片在鼠标下方移动,此时的点击落在谁身上不可预期,所以一律忽略。
-  const [isSliding, setIsSliding] = useState(false)
   if (sites.length === 0) return null
 
-  const toSlide = (index: number) => {
-    if (index === activeIndex) return
-    setIsSliding(true)
-    setActiveIndex(index)
-  }
+  const toSlide = (index: number) => setActiveIndex(index)
   const toPrev = () => toSlide(Math.max(0, activeIndex - 1))
   const toNext = () => toSlide(Math.min(sites.length - 1, activeIndex + 1))
-  // 只看被点中的这张卡自己:居中的才打开,其余只滑到居中。
-  const onCardClick = (site: SupportedSite, index: number) => {
-    if (isSliding) return
-    if (index === activeIndex) onSelect(site)
-    else toSlide(index)
+  const openSite = (site: SupportedSite) => {
+    // 单击就会换成命令列表,习惯双击时第二下会落在列表里某条命令上,所以只吞掉紧跟着的那次连击
+    window.addEventListener('click', swallowDoubleClick, { capture: true, once: true })
+    onSelect(site)
   }
 
   return (
     <div
       data-testid="site-carousel"
-      data-sliding={isSliding}
       className="site-carousel"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -40,7 +39,6 @@ export function SiteCarousel({ sites, onSelect }: { sites: SupportedSite[]; onSe
           className="site-carousel-strip"
           animate={{ x: -activeIndex * SLIDE_WIDTH }}
           transition={{ type: 'spring', bounce: 0.1, duration: 0.8 }}
-          onAnimationComplete={() => setIsSliding(false)}
         >
           {sites.map((site, index) => {
             const selected = activeIndex === index
@@ -73,7 +71,7 @@ export function SiteCarousel({ sites, onSelect }: { sites: SupportedSite[]; onSe
                     data-testid={`site-row-${site.id}`}
                     data-selected={selected}
                     aria-label={`打开 ${site.label}`}
-                    onClick={() => onCardClick(site, index)}
+                    onClick={() => openSite(site)}
                     className="site-carousel-card"
                   >
                     <img src={site.logo} alt={site.label} />
