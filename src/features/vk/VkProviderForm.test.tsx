@@ -2087,17 +2087,41 @@ test('编辑已有配置后保存不自动测试', async () => {
 // ── 多条配置共用同一把 key 的提醒 ───────────────────────────────────────────
 
 const TEST_OK = { ok: true, reason_code: 'ok', message: '连接正常', models: [], normalization_notes: [] }
-const SHARED_TEST_WARNING = '「GPT 5.6 Sol」和正在测试的「GPT 5.6 Luna」用的是同一把 key，中转站可能要等那条测完才处理这条，所以会慢一些。'
 const SAME_HOST_WARNING = '主通道与备用通道实际指向同一服务，故障时可能同时不可用'
+const OTHER_MASK = 'sk-othe••••••••••4321'
 
+// 新版引擎:每条通道都带 key_shared_with。
 const sharedPair = () => [
   channel({ key_shared_with: ['smart'] }),
   channel({ id: 'smart', name: 'GPT 5.6 Sol', model_id: 'gpt-5.6-sol', key_shared_with: ['cheap'] }),
 ]
 const separatePair = () => [
   channel(),
-  channel({ id: 'smart', name: 'GPT 5.6 Sol', model_id: 'gpt-5.6-sol' }),
+  channel({ id: 'smart', name: 'GPT 5.6 Sol', model_id: 'gpt-5.6-sol', key_env: 'VK_CHANNEL_SMART_KEY', key_masked: OTHER_MASK }),
 ]
+const otherChannel = () => channel({
+  id: 'other', name: 'Other 站', base_url: 'https://other.example/v1', key_env: 'VK_CHANNEL_OTHER_KEY', key_masked: OTHER_MASK,
+})
+const threeShared = () => [
+  channel({ key_shared_with: ['smart', 'third'] }),
+  channel({ id: 'smart', name: 'GPT 5.6 Sol', key_shared_with: ['cheap', 'third'] }),
+  channel({ id: 'third', name: 'GPT 5.6 Terra', key_shared_with: ['cheap', 'smart'] }),
+]
+// 旧版引擎不返回 key_shared_with。
+const legacy = (items: Array<Record<string, unknown>>) => items.map((item) => ({ ...item, key_shared_with: undefined }))
+
+const bannerTitle = (names: string) =>
+  `${names}用的是同一把 key：中转站可能一次只处理一条；key 被限流或余额不足时，它们会一起不可用。`
+const banner = () => screen.queryByTestId('vk-shared-key-banner')
+const closeBanner = async () => {
+  await userEvent.click(within(await screen.findByTestId('vk-shared-key-banner')).getByRole('button', { name: '关闭提醒' }))
+  expect(banner()).not.toBeInTheDocument()
+}
+const providerRoutes = (channels: unknown[], over: Record<string, unknown> = {}) => stubRoutes({
+  'GET /vk/v1/providers': { body: settings({ channels, ...over }) },
+  'POST /vk/v1/providers': { body: SAVE_OK },
+  'POST /vk/v1/providers/test': { body: TEST_OK },
+})
 
 /** 复用 cheap 存成新配置;回读时按 shared 决定新旧两条是否同 key。 */
 function stubReuseSave(shared: boolean) {
@@ -2123,97 +2147,54 @@ function stubReuseSave(shared: boolean) {
   }))
 }
 
-/** 第一次 test 请求一直挂起,之后的立刻成功。 */
-function stubPendingFirstTest(channels: unknown[]) {
-  const first = deferred<unknown>()
-  let tests = 0
-  const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => data })
-  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
-    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
-    if (key === 'GET /vk/v1/providers') return Promise.resolve(reply(settings({ channels })))
-    if (key === 'POST /vk/v1/providers/reveal') {
-      return Promise.resolve(reply({ key_env: 'VK_CHANNEL_CHEAP_KEY', found: true, api_key: SECRET, source: 'stored' }))
-    }
-    if (key === 'POST /vk/v1/providers/test') {
-      tests += 1
-      return tests === 1 ? first.promise.then(reply) : Promise.resolve(reply(TEST_OK))
-    }
-    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: key }) })
-  }))
-  return { first, testCount: () => tests }
-}
-
-const BANNER_NEVER_KEY = 'opencli-app:shared-key-reminder-dismissed:v1'
-const bannerTitle = (names: string) =>
-  `${names}用的是同一把 key：中转站可能一次只处理一条；key 被限流或余额不足时，它们会一起不可用。`
-const threeShared = () => [
-  channel({ key_shared_with: ['smart', 'third'] }),
-  channel({ id: 'smart', name: 'GPT 5.6 Sol', key_shared_with: ['cheap', 'third'] }),
-  channel({ id: 'third', name: 'GPT 5.6 Terra', key_shared_with: ['cheap', 'smart'] }),
-]
-
 describe('模型配置列表顶部的共用 key 横幅', () => {
-  test('有一组共用时在列表上方显示一条常驻的 warning 横幅,点名两条通道', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) } })
+  test('有一组共用时在列表上方显示一条横幅,点名两条通道,没有「不再提醒」', async () => {
+    providerRoutes(sharedPair())
     render(<VkProviderForm baseUrl={BASE} />)
 
-    const banner = await screen.findByTestId('vk-shared-key-banner')
-    expect(banner).toHaveTextContent(bannerTitle('「GPT 5.6 Luna」和「GPT 5.6 Sol」'))
-    expect(banner).toHaveAttribute('data-tone', 'warning')
+    const shown = await screen.findByTestId('vk-shared-key-banner')
+    expect(shown).toHaveTextContent(bannerTitle('「GPT 5.6 Luna」和「GPT 5.6 Sol」'))
+    expect(shown).toHaveAttribute('data-tone', 'warning')
     expect(screen.getAllByTestId('vk-shared-key-banner')).toHaveLength(1)
-    expect(within(banner).queryByRole('progressbar')).not.toBeInTheDocument()
-    expect(screen.getByTestId('vk-provider-channels-section')).toContainElement(banner)
-    expect(banner.compareDocumentPosition(screen.getByTestId('vk-channel-cheap')))
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(within(shown).queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vk-provider-channels-section')).toContainElement(shown)
+    expect(shown.compareDocumentPosition(screen.getByTestId('vk-channel-cheap'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.queryByText('不再提醒')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-shared-key-never')).not.toBeInTheDocument()
   })
 
-  test('没有通道共用 key 时不显示', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: separatePair() }) } })
+  test('新版引擎说不共用时不显示,即使两条的 key_env 相同', async () => {
+    providerRoutes([channel(), channel({ id: 'smart', name: 'GPT 5.6 Sol' })])
     render(<VkProviderForm baseUrl={BASE} />)
 
     await screen.findByTestId('vk-channel-smart')
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
+    expect(banner()).not.toBeInTheDocument()
   })
 
-  test('旧版引擎不返回 key_shared_with 时照常渲染表格,不抛错、不显示横幅', async () => {
-    const legacy = [channel({ key_shared_with: undefined }), channel({ id: 'smart', name: 'GPT 5.6 Sol', key_shared_with: undefined })]
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: legacy }) } })
+  test('没有通道共用 key 时不显示', async () => {
+    providerRoutes(separatePair())
     render(<VkProviderForm baseUrl={BASE} />)
 
-    expect(await screen.findByTestId('vk-channel-cheap')).toBeInTheDocument()
-    expect(screen.getByTestId('vk-channel-smart')).toBeInTheDocument()
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
-  })
-
-  test('旧版引擎开着备用通道时路由区照常渲染,同服务警告照旧', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({
-      channels: [channel({ key_shared_with: undefined }), channel({ id: 'smart', name: 'GPT 5.6 Sol', key_shared_with: undefined })],
-      role_assignments: { basic: 'cheap' },
-      role_fallbacks: { basic: ['smart'] },
-      role_composite_enabled: { basic: true, deep_analysis: false },
-    }) } })
-    render(<VkProviderForm baseUrl={BASE} />)
-
-    expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(SAME_HOST_WARNING)
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
+    await screen.findByTestId('vk-channel-smart')
+    expect(banner()).not.toBeInTheDocument()
   })
 
   test('三条一组时名字写成「A」、「B」和「C」', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: threeShared() }) } })
+    providerRoutes(threeShared())
     render(<VkProviderForm baseUrl={BASE} />)
 
-    const banner = await screen.findByTestId('vk-shared-key-banner')
-    expect(banner).toHaveTextContent(bannerTitle('「GPT 5.6 Luna」、「GPT 5.6 Sol」和「GPT 5.6 Terra」'))
+    expect(await screen.findByTestId('vk-shared-key-banner'))
+      .toHaveTextContent(bannerTitle('「GPT 5.6 Luna」、「GPT 5.6 Sol」和「GPT 5.6 Terra」'))
     expect(screen.getAllByTestId('vk-shared-key-banner')).toHaveLength(1)
   })
 
   test('两组各用一把 key 时各有一条横幅', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: [
+    providerRoutes([
       channel({ key_shared_with: ['smart'] }),
       channel({ id: 'smart', name: 'GPT 5.6 Sol', key_shared_with: ['cheap'] }),
       channel({ id: 'a', name: 'A 站', key_shared_with: ['b'] }),
       channel({ id: 'b', name: 'B 站', key_shared_with: ['a'] }),
-    ] }) } })
+    ])
     render(<VkProviderForm baseUrl={BASE} />)
 
     await screen.findAllByTestId('vk-shared-key-banner')
@@ -2223,60 +2204,215 @@ describe('模型配置列表顶部的共用 key 横幅', () => {
     expect(banners[1]).toHaveTextContent(bannerTitle('「A 站」和「B 站」'))
   })
 
-  test('点 × 本次会话内隐藏,不写存储;重新挂载后再次出现', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) } })
-    const user = userEvent.setup()
-    const first = render(<VkProviderForm baseUrl={BASE} />)
+  describe('旧版引擎(不返回 key_shared_with)', () => {
+    test('「复用」出来的配置沿用同一个 key_env,也能识别', async () => {
+      providerRoutes(legacy(sharedPair()))
+      render(<VkProviderForm baseUrl={BASE} />)
 
-    const banner = await screen.findByTestId('vk-shared-key-banner')
-    await user.click(within(banner).getByRole('button', { name: '关闭提醒' }))
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
-    expect(localStorage.getItem(BANNER_NEVER_KEY)).toBeNull()
-
-    first.unmount()
-    render(<VkProviderForm baseUrl={BASE} />)
-    expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
-  })
-
-  test('点「不再提醒」后隐藏并记住这一组;重新挂载后不再出现', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) } })
-    const user = userEvent.setup()
-    const first = render(<VkProviderForm baseUrl={BASE} />)
-
-    await user.click(await screen.findByTestId('vk-shared-key-never'))
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem(BANNER_NEVER_KEY) ?? 'null')).toEqual(['cheap|smart'])
-
-    first.unmount()
-    render(<VkProviderForm baseUrl={BASE} />)
-    await screen.findByTestId('vk-channel-cheap')
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
-  })
-
-  test('关掉过的一组加入第三条后成员变了,重新提醒', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) } })
-    const user = userEvent.setup()
-    const first = render(<VkProviderForm baseUrl={BASE} />)
-    await user.click(await screen.findByTestId('vk-shared-key-never'))
-    first.unmount()
-
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: threeShared() }) } })
-    render(<VkProviderForm baseUrl={BASE} />)
-
-    expect(await screen.findByTestId('vk-shared-key-banner'))
-      .toHaveTextContent(bannerTitle('「GPT 5.6 Luna」、「GPT 5.6 Sol」和「GPT 5.6 Terra」'))
-  })
-
-  test('存储不可用时「不再提醒」仍在本次会话内隐藏', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) } })
-    vi.stubGlobal('localStorage', {
-      getItem: () => { throw new Error('denied') },
-      setItem: () => { throw new Error('quota') },
+      expect(await screen.findByTestId('vk-shared-key-banner'))
+        .toHaveTextContent(bannerTitle('「GPT 5.6 Luna」和「GPT 5.6 Sol」'))
     })
-    render(<VkProviderForm baseUrl={BASE} />)
 
-    await userEvent.click(await screen.findByTestId('vk-shared-key-never'))
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
+    test('key_env 不同但长 key 的打码相同,也能识别', async () => {
+      providerRoutes(legacy([
+        channel({ key_env: 'VK_CHANNEL_A_KEY' }),
+        channel({ id: 'smart', name: 'GPT 5.6 Sol', key_env: 'VK_CHANNEL_B_KEY' }),
+      ]))
+      render(<VkProviderForm baseUrl={BASE} />)
+
+      expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+    })
+
+    test('短 key 的打码相同不识别', async () => {
+      providerRoutes(legacy([
+        channel({ key_env: 'VK_CHANNEL_A_KEY', key_masked: 'sk-••••••••' }),
+        channel({ id: 'smart', name: 'GPT 5.6 Sol', key_env: 'VK_CHANNEL_B_KEY', key_masked: 'sk-••••••••' }),
+      ]))
+      render(<VkProviderForm baseUrl={BASE} />)
+
+      await screen.findByTestId('vk-channel-smart')
+      expect(banner()).not.toBeInTheDocument()
+    })
+
+    test('key 不同时照常渲染表格,不抛错、不显示横幅', async () => {
+      providerRoutes(legacy(separatePair()))
+      render(<VkProviderForm baseUrl={BASE} />)
+
+      expect(await screen.findByTestId('vk-channel-cheap')).toBeInTheDocument()
+      expect(screen.getByTestId('vk-channel-smart')).toBeInTheDocument()
+      expect(banner()).not.toBeInTheDocument()
+    })
+
+    test('备用通道路由里同 key:压掉「实际指向同一服务」警告', async () => {
+      providerRoutes(legacy(sharedPair()), {
+        role_assignments: { basic: 'cheap' },
+        role_fallbacks: { basic: ['smart'] },
+        role_composite_enabled: { basic: true, deep_analysis: false },
+      })
+      render(<VkProviderForm baseUrl={BASE} />)
+
+      await screen.findByTestId('vk-shared-key-banner')
+      expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+      expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
+    })
+
+    test('备用通道路由里只同服务、key 不同:同服务警告照旧', async () => {
+      providerRoutes(legacy(separatePair()), {
+        role_assignments: { basic: 'cheap' },
+        role_fallbacks: { basic: ['smart'] },
+        role_composite_enabled: { basic: true, deep_analysis: false },
+      })
+      render(<VkProviderForm baseUrl={BASE} />)
+
+      expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(SAME_HOST_WARNING)
+    })
+  })
+
+  describe('关闭与再次弹出', () => {
+    test('点 × 后隐藏;重新挂载后再次出现', async () => {
+      providerRoutes(sharedPair())
+      const first = render(<VkProviderForm baseUrl={BASE} />)
+
+      await closeBanner()
+
+      first.unmount()
+      render(<VkProviderForm baseUrl={BASE} />)
+      expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+    })
+
+    test('切到别的模块再切回模型配置,关掉过的横幅重新显示', async () => {
+      useAppStore.setState({ activeModule: 'providers' })
+      try {
+        providerRoutes(sharedPair())
+        render(<VkProviderForm baseUrl={BASE} />)
+        await closeBanner()
+
+        act(() => useAppStore.setState({ activeModule: 'vk' }))
+        expect(banner()).not.toBeInTheDocument()
+        act(() => useAppStore.setState({ activeModule: 'providers' }))
+
+        expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+      } finally {
+        act(() => useAppStore.setState({ activeModule: 'commands' }))
+      }
+    })
+
+    test('关掉后测试组内一条:重新弹出;测试组外一条:不弹', async () => {
+      const { calls } = providerRoutes([...sharedPair(), otherChannel()])
+      render(<VkProviderForm baseUrl={BASE} />)
+      await closeBanner()
+
+      await userEvent.click(screen.getByTestId('vk-channel-test-other'))
+      await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/providers/test')).toHaveLength(1))
+      await waitFor(() => expect(screen.getByTestId('vk-channel-test-other')).toBeEnabled())
+      expect(banner()).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('vk-channel-test-cheap'))
+      expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+    })
+
+    test('在编辑弹窗里测试组内配置也算', async () => {
+      providerRoutes(sharedPair())
+      render(<VkProviderForm baseUrl={BASE} />)
+      await closeBanner()
+
+      await openChannelEditor('smart')
+      await userEvent.click(screen.getByTestId('vk-channel-test-smart'))
+
+      expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+    })
+
+    test('只获取模型列表不算测试连接,横幅不弹', async () => {
+      const { calls } = providerRoutes(sharedPair())
+      render(<VkProviderForm baseUrl={BASE} />)
+      await closeBanner()
+
+      await openChannelEditor('smart')
+      await userEvent.click(screen.getByTestId('vk-channel-models-fetch-smart'))
+      await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers/test')).toBe(true))
+
+      expect(banner()).not.toBeInTheDocument()
+    })
+
+    test('关掉后在「选择模型配置」里选到组内一条:重新弹出;选组外一条:不弹', async () => {
+      providerRoutes([...sharedPair(), otherChannel()])
+      render(<VkProviderForm baseUrl={BASE} />)
+      await closeBanner()
+
+      await chooseGlass(screen.getByTestId('vk-role-basic'), 'Other 站')
+      await waitFor(() => expect(screen.getByTestId('vk-role-basic')).toHaveAttribute('data-value', 'other'))
+      expect(banner()).not.toBeInTheDocument()
+
+      await chooseGlass(screen.getByTestId('vk-role-basic'), 'GPT 5.6 Sol')
+      expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+    })
+
+    test('关掉后勾选备用通道,路由里有组内通道:重新弹出', async () => {
+      providerRoutes(sharedPair(), {
+        role_assignments: { basic: 'cheap' },
+        role_fallbacks: { basic: ['smart'] },
+        role_composite_enabled: { basic: false, deep_analysis: false },
+      })
+      render(<VkProviderForm baseUrl={BASE} />)
+      await closeBanner()
+
+      await userEvent.click(screen.getByTestId('vk-role-composite-basic'))
+
+      expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+    })
+
+    test('关掉后勾选备用通道,路由里没有组内通道:不弹', async () => {
+      providerRoutes([...sharedPair(), otherChannel()], {
+        role_assignments: { basic: 'other' },
+        role_composite_enabled: { basic: false, deep_analysis: false },
+      })
+      render(<VkProviderForm baseUrl={BASE} />)
+      await closeBanner()
+
+      await userEvent.click(screen.getByTestId('vk-role-composite-basic'))
+      await waitFor(() => expect(screen.getByTestId('vk-role-composite-basic')).toBeChecked())
+
+      expect(banner()).not.toBeInTheDocument()
+    })
+
+    test('关掉后在备用通道多选里选进组内一条:重新弹出', async () => {
+      providerRoutes([...sharedPair(), otherChannel()], {
+        role_assignments: { basic: 'other' },
+        role_composite_enabled: { basic: true, deep_analysis: false },
+      })
+      render(<VkProviderForm baseUrl={BASE} />)
+      await closeBanner()
+
+      await userEvent.click(screen.getByTestId('vk-role-basic'))
+      await userEvent.click(screen.getByRole('option', { name: /GPT 5.6 Sol/ }))
+
+      expect(await screen.findByTestId('vk-shared-key-banner')).toBeInTheDocument()
+    })
+
+    test('测试组内配置时不再弹「正在测试的…同一把 key」通知', async () => {
+      const first = deferred<unknown>()
+      let tests = 0
+      const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => data })
+      vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+        const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`
+        if (key === 'GET /vk/v1/providers') return Promise.resolve(reply(settings({ channels: sharedPair() })))
+        if (key === 'POST /vk/v1/providers/test') {
+          tests += 1
+          return tests === 1 ? first.promise.then(reply) : Promise.resolve(reply(TEST_OK))
+        }
+        return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: key }) })
+      }))
+      const user = userEvent.setup()
+      render(<VkProviderForm baseUrl={BASE} />)
+
+      const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
+      await user.click(cheapTest)
+      await waitFor(() => expect(cheapTest).toBeDisabled())
+      await user.click(screen.getByTestId('vk-channel-test-smart'))
+
+      await waitFor(() => expect(tests).toBe(2))
+      expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
+    })
   })
 
   test('新建一条与已有通道同 key 的配置并保存后出现横幅,不再弹保存提醒', async () => {
@@ -2284,7 +2420,7 @@ describe('模型配置列表顶部的共用 key 横幅', () => {
     render(<VkProviderForm baseUrl={BASE} />)
 
     await userEvent.click(await screen.findByTestId('vk-channel-reuse-cheap'))
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
+    expect(banner()).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('vk-provider-modal-submit'))
 
     expect(await screen.findByTestId('vk-shared-key-banner'))
@@ -2294,10 +2430,7 @@ describe('模型配置列表顶部的共用 key 横幅', () => {
   })
 
   test('删掉组里的一条后横幅随之消失', async () => {
-    stubRoutes({
-      'GET /vk/v1/providers': { body: settings({ channels: sharedPair() }) },
-      'POST /vk/v1/providers': { body: SAVE_OK },
-    })
+    providerRoutes(sharedPair())
     render(<VkProviderForm baseUrl={BASE} />)
 
     await screen.findByTestId('vk-shared-key-banner')
@@ -2305,113 +2438,18 @@ describe('模型配置列表顶部的共用 key 横幅', () => {
     await userEvent.click(within(screen.getByRole('dialog', { name: '删除模型配置？' })).getByRole('button', { name: '删除配置' }))
 
     await waitFor(() => expect(screen.queryByTestId('vk-channel-smart')).not.toBeInTheDocument())
-    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
-  })
-})
-
-describe('测试时提醒共用同一把 key', () => {
-  test('共用 key 的另一条正在测试时再测这一条,提醒但照常发起', async () => {
-    const stub = stubPendingFirstTest(sharedPair())
-    const user = userEvent.setup()
-    render(<VkProviderForm baseUrl={BASE} />)
-
-    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
-    await user.click(cheapTest)
-    await waitFor(() => expect(cheapTest).toBeDisabled())
-    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
-
-    await user.click(screen.getByTestId('vk-channel-test-smart'))
-    const warning = await screen.findByText(SHARED_TEST_WARNING)
-    expect(warning.closest('[data-tone]')).toHaveAttribute('data-tone', 'warning')
-    expect(stub.testCount()).toBe(2)
-  })
-
-  test('不共用 key 的两条同时测试不提醒', async () => {
-    const stub = stubPendingFirstTest(separatePair())
-    const user = userEvent.setup()
-    render(<VkProviderForm baseUrl={BASE} />)
-
-    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
-    await user.click(cheapTest)
-    await waitFor(() => expect(cheapTest).toBeDisabled())
-    await user.click(screen.getByTestId('vk-channel-test-smart'))
-
-    await waitFor(() => expect(stub.testCount()).toBe(2))
-    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
-  })
-
-  test('另一条已经测完后再测这一条不提醒', async () => {
-    const stub = stubPendingFirstTest(sharedPair())
-    const user = userEvent.setup()
-    render(<VkProviderForm baseUrl={BASE} />)
-
-    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
-    await user.click(cheapTest)
-    await waitFor(() => expect(cheapTest).toBeDisabled())
-    await act(async () => {
-      stub.first.resolve(TEST_OK)
-      await stub.first.promise
-    })
-    await waitFor(() => expect(cheapTest).toBeEnabled())
-
-    await user.click(screen.getByTestId('vk-channel-test-smart'))
-    await waitFor(() => expect(stub.testCount()).toBe(2))
-    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
-  })
-
-  test('只获取模型列表时不提醒', async () => {
-    const stub = stubPendingFirstTest(sharedPair())
-    const user = userEvent.setup()
-    render(<VkProviderForm baseUrl={BASE} />)
-
-    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
-    await user.click(cheapTest)
-    await waitFor(() => expect(cheapTest).toBeDisabled())
-    await openChannelEditor('smart')
-    await user.click(screen.getByTestId('vk-channel-models-fetch-smart'))
-
-    await waitFor(() => expect(stub.testCount()).toBe(2))
-    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
-  })
-
-  test('弹窗里改过 key 还没保存时不提醒', async () => {
-    const stub = stubPendingFirstTest(sharedPair())
-    const user = userEvent.setup()
-    render(<VkProviderForm baseUrl={BASE} />)
-
-    const cheapTest = await screen.findByTestId('vk-channel-test-cheap')
-    await user.click(cheapTest)
-    await waitFor(() => expect(cheapTest).toBeDisabled())
-    await openChannelEditor('smart')
-    const input = screen.getByTestId('vk-channel-key-smart') as HTMLInputElement
-    await user.click(input)
-    await waitFor(() => expect(input.value).toBe(SECRET))
-    await user.type(input, 'x')
-    await user.click(screen.getByTestId('vk-channel-test-smart'))
-
-    await waitFor(() => expect(stub.testCount()).toBe(2))
-    expect(screen.queryByText(/正在测试的/)).not.toBeInTheDocument()
+    expect(banner()).not.toBeInTheDocument()
   })
 })
 
 describe('备用通道的同服务警告', () => {
-  const routeSettings = (channels: unknown[], composite: boolean) => settings({
-    channels,
-    role_assignments: { basic: 'cheap' },
-    role_fallbacks: { basic: ['smart'] },
-    role_composite_enabled: { basic: composite, deep_analysis: false },
-  })
+  const routeSettings = { role_assignments: { basic: 'cheap' }, role_fallbacks: { basic: ['smart'] } }
 
-  test('勾选备用通道后路由里两条同 key:同 key 与同服务警告都不显示', async () => {
-    stubRoutes({
-      'GET /vk/v1/providers': { body: routeSettings(sharedPair(), false) },
-      'POST /vk/v1/providers': { body: SAVE_OK },
-    })
-    const user = userEvent.setup()
+  test('勾选备用通道后路由里两条同 key:同服务警告不显示', async () => {
+    providerRoutes(sharedPair(), { ...routeSettings, role_composite_enabled: { basic: false, deep_analysis: false } })
     render(<VkProviderForm baseUrl={BASE} />)
 
-    await screen.findByTestId('vk-role-composite-basic')
-    await user.click(screen.getByTestId('vk-role-composite-basic'))
+    await userEvent.click(await screen.findByTestId('vk-role-composite-basic'))
     await waitFor(() => expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个'))
 
     expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
@@ -2420,7 +2458,9 @@ describe('备用通道的同服务警告', () => {
   })
 
   test('同服务但 key 不同:仍显示同服务警告', async () => {
-    stubRoutes({ 'GET /vk/v1/providers': { body: routeSettings(separatePair(), true) } })
+    providerRoutes([channel(), channel({ id: 'smart', name: 'GPT 5.6 Sol', key_env: 'VK_CHANNEL_SMART_KEY', key_masked: OTHER_MASK })], {
+      ...routeSettings, role_composite_enabled: { basic: true, deep_analysis: false },
+    })
     render(<VkProviderForm baseUrl={BASE} />)
 
     expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(SAME_HOST_WARNING)

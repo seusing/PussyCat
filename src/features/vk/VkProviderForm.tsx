@@ -26,12 +26,7 @@ import {
   type VkProviderTestResult,
 } from '../../host/vkClient'
 import { vkErrorText } from './vkErrors'
-import {
-  loadSharedKeyReminderDismissed,
-  saveSharedKeyReminderDismissed,
-  sharedKeyGroups,
-  sharedKeyGroupTitle,
-} from './sharedKeyReminder'
+import { sharedKeyGroups, sharedKeyGroupTitle, sharedKeyPeers } from './sharedKeyReminder'
 
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm outline-none'
 const fieldStyle = {
@@ -45,7 +40,7 @@ type AlertLocation = 'form' | 'modal'
 type Notice = {
   id: number
   message: string
-  tone: 'success' | 'error' | 'warning'
+  tone: 'success' | 'error'
   location: AlertLocation
   dismissible?: boolean
 }
@@ -66,8 +61,6 @@ type RouteSnapshot = {
 }
 
 const NOTICE_DURATION_MS = 2000
-// 测试时的共用 key 提醒比一般通知长,2 秒读不完。
-const WARNING_NOTICE_DURATION_MS = 8000
 
 /** 创建配置时的「快速选择」。只带名称与接口地址,**不带模型 ID**:模型由「获取模型列表」或手动输入决定。 */
 const PROVIDER_PRESETS = [
@@ -225,17 +218,9 @@ function routeHasDuplicateHost(route: string[], drafts: Draft[]): boolean {
   return hosts.length !== new Set(hosts).size
 }
 
-/** 与 id 这条通道共用同一把 key 的其他通道 id,取自已加载的 settings。 */
-function sharedKeyIds(loaded: VkProviderSettings | null, id: string): string[] {
-  return loaded?.channels.find((channel) => channel.id === id)?.key_shared_with ?? []
-}
-
 function routeSharesKey(route: string[], loaded: VkProviderSettings): boolean {
-  return route.some((id) => sharedKeyIds(loaded, id).some((other) => route.includes(other)))
-}
-
-function channelNames(ids: string[], channels: Array<{ id: string; name: string }>): string {
-  return ids.map((id) => channels.find((channel) => channel.id === id)?.name.trim() || '未命名配置').join('、')
+  return loaded.channels.some((channel) => route.includes(channel.id)
+    && sharedKeyPeers(channel, loaded.channels).some((other) => route.includes(other)))
 }
 
 function ActionIconButton({
@@ -580,7 +565,6 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
   const [focusTestId, setFocusTestId] = useState<string | null>(null)
   const [error, setError] = useState<LoadError | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
-  const [neverRemindGroups, setNeverRemindGroups] = useState<string[]>(loadSharedKeyReminderDismissed)
   const [closedGroups, setClosedGroups] = useState<string[]>([])
   const [validationErrors, setValidationErrors] = useState<Record<string, Partial<Record<'name' | 'base_url' | 'model_id' | 'api_key' | 'api_style' | 'reasoning_effort', string>>>>({})
   const selectionGuard = useRef(false)
@@ -673,9 +657,21 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setError(null)
     void load()
   }, [providersActive, load])
+  // 页面常驻挂载:每次切回模型配置,关掉过的横幅都重新显示。
+  useEffect(() => {
+    if (providersActive) setClosedGroups([])
+  }, [providersActive])
   const retryLoad = () => {
     setError(null)
     void load()
+  }
+
+  const sharedGroups = settings ? sharedKeyGroups(settings.channels, new Set(drafts.map((draft) => draft.id))) : []
+
+  /** 关掉过的共用 key 横幅:用户测试组内通道、或把它选进路由时重新弹出。 */
+  const reopenSharedKeyBanner = (channelIds: string[]) => {
+    const hit = sharedGroups.filter((group) => group.ids.some((id) => channelIds.includes(id))).map((group) => group.id)
+    if (hit.length) setClosedGroups((current) => current.filter((id) => !hit.includes(id)))
   }
 
   const patch =(id: string, next: Partial<Draft>) =>
@@ -856,6 +852,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     setRoles(nextRoles)
     setRoleFallbacks(nextFallbacks)
     queueRouteSave({ drafts, roles: nextRoles, roleFallbacks: nextFallbacks, roleCompositeEnabled: composite })
+    reopenSharedKeyBanner(composite[role] ? route : route.slice(0, 1))
   }
 
   const removeChannel = async (id: string) => {
@@ -925,6 +922,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     const next = { ...roleCompositeEnabled, [role]: enabled }
     setRoleCompositeEnabled(next)
     queueRouteSave({ drafts, roles, roleFallbacks, roleCompositeEnabled: next })
+    if (enabled) reopenSharedKeyBanner([roles[role], ...(roleFallbacks[role] ?? [])].filter(Boolean))
   }
 
   const reveal = async (draft: Draft) => {
@@ -957,12 +955,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     location: AlertLocation = modalId === draft.id ? 'modal' : 'form',
   ) => {
     const operation: 'models' | 'test' = probeGeneration ? 'test' : 'models'
-    if (probeGeneration && !draft.key_touched) {
-      const testing = sharedKeyIds(settings, draft.id).filter((id) => channelBusy[id]?.test)
-      if (testing.length) {
-        showNotice('warning', `「${draft.name.trim() || '未命名配置'}」和正在测试的「${channelNames(testing, drafts)}」用的是同一把 key，中转站可能要等那条测完才处理这条，所以会慢一些。`, location)
-      }
-    }
+    if (probeGeneration) reopenSharedKeyBanner([draft.id])
     setChannelBusy((current) => ({
       ...current,
       [draft.id]: { ...current[draft.id], [operation]: true },
@@ -1138,7 +1131,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
               title={scopedNotice.message}
               role={scopedNotice.dismissible ? 'alert' : 'status'}
               className={`vk-provider-alert vk-provider-alert--${scopedNotice.tone}`}
-              durationMs={scopedNotice.tone === 'warning' ? WARNING_NOTICE_DURATION_MS : NOTICE_DURATION_MS}
+              durationMs={NOTICE_DURATION_MS}
               onExpire={() => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))}
               onClose={scopedNotice.dismissible
                 ? () => setNotices((current) => current.filter((notice) => notice.id !== scopedNotice.id))
@@ -1214,33 +1207,17 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         </div>
       </div>
 
-      {sharedKeyGroups(settings.channels, new Set(drafts.map((draft) => draft.id)))
-        .filter((group) => !neverRemindGroups.includes(group.id) && !closedGroups.includes(group.id))
-        .map((group) => (
-          <AppAlert
-            key={group.id}
-            testId="vk-shared-key-banner"
-            tone="warning"
-            className="vk-shared-key-banner"
-            title={sharedKeyGroupTitle(group.names)}
-            action={(
-              <button
-                type="button"
-                data-testid="vk-shared-key-never"
-                className="vk-shared-key-never text-xs"
-                onClick={() => {
-                  const next = [...neverRemindGroups, group.id]
-                  setNeverRemindGroups(next)
-                  saveSharedKeyReminderDismissed(next)
-                }}
-              >
-                不再提醒
-              </button>
-            )}
-            onClose={() => setClosedGroups((current) => [...current, group.id])}
-            closeLabel="关闭提醒"
-          />
-        ))}
+      {sharedGroups.filter((group) => !closedGroups.includes(group.id)).map((group) => (
+        <AppAlert
+          key={group.id}
+          testId="vk-shared-key-banner"
+          tone="warning"
+          className="vk-shared-key-banner"
+          title={sharedKeyGroupTitle(group.names)}
+          onClose={() => setClosedGroups((current) => [...current, group.id])}
+          closeLabel="关闭提醒"
+        />
+      ))}
 
       {/* —— 通道清单 —— */}
       <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--color-line)' }}>

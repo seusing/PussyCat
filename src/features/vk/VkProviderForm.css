@@ -139,44 +139,43 @@
   pointer-events: auto;
 }
 
-/* 模型配置列表顶部的共用 key 横幅:嵌在卡片里,不是浮层,所以去掉浮层的阴影与宽度上限。 */
+/* 模型配置列表顶部的共用 key 横幅:嵌在卡片里的一行提示条,不是浮层。
+   无描边,底色比所在卡片略亮,警告色只用在图标和文字上。 */
 .vk-shared-key-banner.app-alert {
   width: 100%;
   max-width: 100%;
+  align-items: center;
   margin-bottom: 0.75rem;
+  border: 0;
+  background: color-mix(in srgb, var(--color-fg) 6%, var(--color-panel));
   box-shadow: none;
   backdrop-filter: none;
+  padding: 0.5rem 0.75rem;
+  animation: vk-shared-key-banner-in 160ms ease-out;
 }
 
-.vk-shared-key-banner .app-alert__body {
-  flex-flow: row wrap;
-  align-items: center;
-  gap: 0.25rem 0.75rem;
-}
-
-.vk-shared-key-banner .app-alert__title {
-  flex: 1 1 18rem;
-  text-wrap: pretty;
-}
-
-.vk-shared-key-banner .app-alert__actions {
-  flex: 0 0 auto;
+.vk-shared-key-banner .app-alert__icon {
   margin-top: 0;
 }
 
-.vk-shared-key-never {
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.45rem;
-  color: var(--color-fg-dim);
-  white-space: nowrap;
-  transition: background-color 120ms ease, color 120ms ease;
+.vk-shared-key-banner .app-alert__title {
+  color: var(--color-warning);
+  font-size: 0.8125rem;
+  font-weight: 400;
 }
 
-.vk-shared-key-never:hover,
-.vk-shared-key-never:focus-visible {
-  background: rgb(255 255 255 / 7%);
-  color: var(--color-fg);
-  outline: none;
+.vk-shared-key-banner .app-alert__close {
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-basis: 1.5rem;
+}
+
+@keyframes vk-shared-key-banner-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vk-shared-key-banner.app-alert { animation: none; }
 }
 
 .vk-provider-delete-dialog {
