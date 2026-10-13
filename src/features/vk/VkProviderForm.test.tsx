@@ -2175,6 +2175,29 @@ describe('模型配置列表顶部的共用 key 横幅', () => {
     expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
   })
 
+  test('旧版引擎不返回 key_shared_with 时照常渲染表格,不抛错、不显示横幅', async () => {
+    const legacy = [channel({ key_shared_with: undefined }), channel({ id: 'smart', name: 'GPT 5.6 Sol', key_shared_with: undefined })]
+    stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: legacy }) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-channel-cheap')).toBeInTheDocument()
+    expect(screen.getByTestId('vk-channel-smart')).toBeInTheDocument()
+    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
+  })
+
+  test('旧版引擎开着备用通道时路由区照常渲染,同服务警告照旧', async () => {
+    stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+      channels: [channel({ key_shared_with: undefined }), channel({ id: 'smart', name: 'GPT 5.6 Sol', key_shared_with: undefined })],
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: ['smart'] },
+      role_composite_enabled: { basic: true, deep_analysis: false },
+    }) } })
+    render(<VkProviderForm baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent(SAME_HOST_WARNING)
+    expect(screen.queryByTestId('vk-shared-key-banner')).not.toBeInTheDocument()
+  })
+
   test('三条一组时名字写成「A」、「B」和「C」', async () => {
     stubRoutes({ 'GET /vk/v1/providers': { body: settings({ channels: threeShared() }) } })
     render(<VkProviderForm baseUrl={BASE} />)

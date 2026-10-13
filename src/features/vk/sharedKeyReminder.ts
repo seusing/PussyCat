@@ -8,7 +8,7 @@ export type SharedKeyGroup = {
   names: string[]
 }
 
-type ChannelRef = { id: string; name: string; key_shared_with: string[] }
+type ChannelRef = { id: string; name: string; key_shared_with?: string[] }
 
 /** 并出共用同一把 key 的通道组(每组至少两条),按通道首次出现的顺序。只算 liveIds 里还在的通道。 */
 export function sharedKeyGroups(channels: ChannelRef[], liveIds: ReadonlySet<string>): SharedKeyGroup[] {
@@ -16,8 +16,9 @@ export function sharedKeyGroups(channels: ChannelRef[], liveIds: ReadonlySet<str
   const groups: SharedKeyGroup[] = []
   for (const channel of channels) {
     if (seen.has(channel.id) || !liveIds.has(channel.id)) continue
+    const sharing = channel.key_shared_with ?? []
     const members = channels.filter((item) => liveIds.has(item.id)
-      && (item.id === channel.id || channel.key_shared_with.includes(item.id)))
+      && (item.id === channel.id || sharing.includes(item.id)))
     for (const member of members) seen.add(member.id)
     if (members.length < 2) continue
     groups.push({

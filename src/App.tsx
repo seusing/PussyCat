@@ -4,6 +4,7 @@ import { SiteCommandNav } from './features/nav/SiteCommandNav'
 import { CommandConfig } from './features/config/CommandConfig'
 import { RunPanel } from './features/runs/RunPanel'
 import { UndoToast } from './components/UndoToast'
+import { ModuleErrorBoundary } from './components/ModuleErrorBoundary'
 import { AcknowledgeDialog } from './features/config/AcknowledgeDialog'
 import { useAppStore, isTerminal } from './store/appStore'
 import { buildArgv } from './data/command'
@@ -329,40 +330,46 @@ export default function App({
     <div className="app-page-stack">
       <div className="app-page-stack-panel" hidden={activeModule !== 'commands'}>
         {(visitedModules.has('commands') || activeModule === 'commands') && (
-          <InspirationPanel
-            baseUrl={baseUrl}
-            onRun={executeSelected}
-            onCancel={onCancel}
-            onRerun={executeSelected}
-            registerSubmit={registerSubmit}
-            searchRef={searchInputRef}
-          />
+          <ModuleErrorBoundary>
+            <InspirationPanel
+              baseUrl={baseUrl}
+              onRun={executeSelected}
+              onCancel={onCancel}
+              onRerun={executeSelected}
+              registerSubmit={registerSubmit}
+              searchRef={searchInputRef}
+            />
+          </ModuleErrorBoundary>
         )}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'login'}>
-        {(visitedModules.has('login') || activeModule === 'login') && <LoginStatusPanel />}
+        {(visitedModules.has('login') || activeModule === 'login') && <ModuleErrorBoundary><LoginStatusPanel /></ModuleErrorBoundary>}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'vk'}>
         {(visitedModules.has('vk') || activeModule === 'vk') && (
-          <VkPanel
-            baseUrl={baseUrl}
-            selectedJobId={selectedVkJobId}
-            refreshToken={vkJobsRevision}
-            providerRevision={providerRevision}
-            onSelectJob={(jobId) => {
-              setSelectedVkJobId(jobId)
-              setVkRightPanelOpen(!!jobId)
-            }}
-          />
+          <ModuleErrorBoundary>
+            <VkPanel
+              baseUrl={baseUrl}
+              selectedJobId={selectedVkJobId}
+              refreshToken={vkJobsRevision}
+              providerRevision={providerRevision}
+              onSelectJob={(jobId) => {
+                setSelectedVkJobId(jobId)
+                setVkRightPanelOpen(!!jobId)
+              }}
+            />
+          </ModuleErrorBoundary>
         )}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'providers'}>
         {(visitedModules.has('providers') || activeModule === 'providers') && (
-          <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} onSaved={() => setProviderRevision((value) => value + 1)} /></div>
+          <ModuleErrorBoundary>
+            <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} onSaved={() => setProviderRevision((value) => value + 1)} /></div>
+          </ModuleErrorBoundary>
         )}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'radar'}>
-        {(visitedModules.has('radar') || activeModule === 'radar') && <RadarPanel baseUrl={baseUrl} />}
+        {(visitedModules.has('radar') || activeModule === 'radar') && <ModuleErrorBoundary><RadarPanel baseUrl={baseUrl} /></ModuleErrorBoundary>}
       </div>
     </div>
   )
