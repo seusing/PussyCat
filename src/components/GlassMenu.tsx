@@ -54,7 +54,7 @@ export function useGlassMenuSurface(ref: RefObject<HTMLElement | null>, active: 
 
 type MenuPosition = { top: number; left: number; width: number; maxHeight: number }
 
-function positionMenu(trigger: HTMLElement, menu: HTMLElement): MenuPosition {
+export function positionMenu(trigger: HTMLElement, menu: HTMLElement): MenuPosition {
   const gap = 6
   const margin = 8
   const rect = trigger.getBoundingClientRect()

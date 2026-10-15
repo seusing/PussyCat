@@ -15,25 +15,45 @@ export const STORYLINE_IN_PROGRESS = new Set<string>(['waiting', 'queued', 'runn
 /** 详情里手动发起串联后广播,视频解析页据此开始盯这条串联的结果。 */
 export const VK_STORYLINE_STARTED_EVENT = 'vk:storyline-started'
 
+/** 故事线与观点对比的总数;null、旧版引擎缺这个键都按 0 算。 */
+export function storylineOutputCount(row: VkStorylineRow): number {
+  return (row.storyline_count ?? 0) + (row.comparison_count ?? 0)
+}
+
+function settledStatusText(row: VkStorylineRow): string {
+  const stories = row.storyline_count ?? 0
+  const comparisons = row.comparison_count ?? 0
+  const partial = row.status === 'partial'
+  let text: string
+  if (stories + comparisons === 0) {
+    text = partial ? '没有串成故事线，部分内容生成失败' : '这批视频之间没有发现关联，各自保留单独笔记'
+  } else {
+    text = stories > 0
+      ? `已串成 ${stories} 条故事线${comparisons > 0 ? `、${comparisons} 组观点对比` : ''}`
+      : `已整理出 ${comparisons} 组观点对比`
+    const standalone = row.standalone_count ?? 0
+    if (standalone > 0) text += `，${standalone} 个视频未归入`
+    if (partial) text += '。部分内容生成失败'
+  }
+  return row.reason ? `${text}（${row.reason}）` : text
+}
+
 export function storylineStatusText(row: VkStorylineRow): string {
   switch (row.status) {
     case 'waiting': return '等本批全部解析完再串联'
     case 'queued': return '排队中'
     case 'running': return '串联中…'
     case 'done':
-    case 'partial': {
-      const text = `已串成 ${row.storyline_count ?? 0} 条故事线，${row.standalone_count ?? 0} 个视频未归入`
-      return row.status === 'partial' ? `${text}。部分内容生成失败` : text
-    }
+    case 'partial': return settledStatusText(row)
     case 'skipped': return row.reason ? `可串联的视频不足 2 个（${row.reason}）` : '可串联的视频不足 2 个'
     case 'failed': return '串联失败'
     default: return ''
   }
 }
 
-/** 这条记录有可看的故事线笔记。 */
+/** 这条记录有可看的故事线或观点对比笔记。 */
 export function storylineViewable(row: VkStorylineRow | undefined): row is VkStorylineRow {
-  return !!row && (row.status === 'done' || row.status === 'partial') && (row.storyline_count ?? 0) > 0
+  return !!row && (row.status === 'done' || row.status === 'partial') && storylineOutputCount(row) > 0
 }
 
 /** 该故事线各集对应成员里最常见的非空作者;并列取最先出现的。 */
@@ -52,8 +72,9 @@ function commonAuthor(story: VkStoryline, members: readonly VkStorylineMember[])
   return best
 }
 
+/** 先是各条故事线,再是各组观点对比。 */
 export function storylineTabs(result: VkStorylineResult): VkOutputTab[] {
-  return result.storylines.map((story) => {
+  const storyTabs = result.storylines.map((story) => {
     const author = commonAuthor(story, result.members)
     const first = [...story.episodes].sort((left, right) => left.order - right.order)[0]
     return {
@@ -62,11 +83,23 @@ export function storylineTabs(result: VkStorylineResult): VkOutputTab[] {
       content: story.markdown,
       libraryTitle: author ? `${author} · ${story.title}` : story.title,
       ...(first?.url ? { source: first.url } : {}),
+      ...(story.terms?.length ? { terms: story.terms } : {}),
     }
   })
+  const comparisonTabs = (result.comparisons ?? []).map((comparison) => {
+    const label = `观点对比 · ${comparison.title}`
+    return {
+      id: `comparison:${result.storyline_id}:${comparison.id}`,
+      label,
+      content: comparison.markdown,
+      libraryTitle: label,
+      ...(comparison.terms?.length ? { terms: comparison.terms } : {}),
+    }
+  })
+  return [...storyTabs, ...comparisonTabs]
 }
 
-/** 该批最新一次串联的故事线标签;没有、没做完或取不到都返回空数组。 */
+/** 该批最新一次串联的故事线与观点对比标签;没有、没做完或取不到都返回空数组。 */
 export async function loadStorylineTabs(batchId: string, baseUrl?: string): Promise<VkOutputTab[]> {
   try {
     const latest = (await fetchVkStorylines(batchId, baseUrl))[0]

@@ -1,7 +1,7 @@
 import { HostRequestError } from './errors'
 import {
-  fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
-  isVkEngineNotReady, postVkJob, postVkStoryline, vkOutputPath,
+  deleteVkJevConfig, enableVkJevConfig, fetchVkJevConfigs, fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
+  isVkEngineNotReady, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkOutputPath,
 } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
@@ -89,6 +89,27 @@ describe('vkClient', () => {
       expect(error).toBeInstanceOf(HostRequestError)
       expect(error.status).toBe(404)
     }
+  })
+
+  it('drives Jev config items through the Host proxy and leaves the key out of a rename', async () => {
+    const impl = stubFetch(200, { configured: true, configs: [], active_id: null })
+    const base = 'http://127.0.0.1:9999'
+    await fetchVkJevConfigs(base)
+    await saveVkJevConfigItem('主 Key', 'jev-secret', undefined, base)
+    await saveVkJevConfigItem('新名称', '', 'cfg 1', base)
+    await enableVkJevConfig('cfg 1', base)
+    await testVkJevConfig('cfg 1', base)
+    await deleteVkJevConfig('cfg 1', base)
+    expect(impl.mock.calls.map(([url, init]) => `${init?.method ?? 'GET'} ${url}`)).toEqual([
+      `GET ${base}/vk/v1/jev/configs`,
+      `POST ${base}/vk/v1/jev/configs`,
+      `PUT ${base}/vk/v1/jev/configs/cfg%201`,
+      `POST ${base}/vk/v1/jev/configs/cfg%201/enable`,
+      `POST ${base}/vk/v1/jev/configs/cfg%201/test`,
+      `DELETE ${base}/vk/v1/jev/configs/cfg%201`,
+    ])
+    expect(JSON.parse(String(impl.mock.calls[1][1]?.body))).toEqual({ name: '主 Key', api_key: 'jev-secret' })
+    expect(JSON.parse(String(impl.mock.calls[2][1]?.body))).toEqual({ name: '新名称', id: 'cfg 1' })
   })
 
   it('recognizes a 503 from a not-installed or not-configured engine, and nothing else', () => {

@@ -1,7 +1,7 @@
 // 解析任务、批次与串联从进行中落定时的系统通知:状态变化检测与文案是纯函数,
 // 发送只在 Tauri 壳里、窗口不在前台时进行,其余一律安静跳过。
 import type { VkJobRow, VkStorylineRow } from '../../host/vkClient'
-import { STORYLINE_IN_PROGRESS, storylineStatusText } from './storyline'
+import { STORYLINE_IN_PROGRESS, storylineOutputCount, storylineStatusText } from './storyline'
 
 const ACTIVE_JOB_STATUSES = new Set([
   'queued', 'running', 'cancel_requested', 'submitted', 'processing',
@@ -105,7 +105,10 @@ export function snapshotStorylineStatuses(rows: readonly VkStorylineRow[]): Map<
   return new Map(rows.map((row) => [row.storyline_id, row.status]))
 }
 
-/** 上一次还在串联、这一次已经出结果(完成、部分完成或失败)的记录;「不足两个视频」的 skipped 不通知。 */
+/**
+ * 上一次还在串联、这一次已经出结果(完成、部分完成或失败)的记录;「不足两个视频」的 skipped,
+ * 以及什么都没串出来(没有故事线也没有观点对比)的完成/部分完成都不通知。
+ */
 export function detectStorylineSettlements(
   previous: ReadonlyMap<string, string> | null,
   rows: readonly VkStorylineRow[],
@@ -113,8 +116,9 @@ export function detectStorylineSettlements(
   if (!previous) return []
   return rows.filter((row) => {
     const before = previous.get(row.storyline_id)
-    return !!before && STORYLINE_IN_PROGRESS.has(before)
-      && (row.status === 'done' || row.status === 'partial' || row.status === 'failed')
+    if (!before || !STORYLINE_IN_PROGRESS.has(before)) return false
+    if (row.status === 'failed') return true
+    return (row.status === 'done' || row.status === 'partial') && storylineOutputCount(row) > 0
   })
 }
 

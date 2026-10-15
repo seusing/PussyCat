@@ -1994,6 +1994,29 @@ describe('故事线串联', () => {
       })
     })
 
+    it('只有观点对比、没有故事线时,打开结果默认选中第一组对比,存入灵感库用「观点对比 · 标题」', async () => {
+      const comparisonRecord = { ...record, storyline_count: 0, comparison_count: 1 }
+      const comparison = {
+        id: 'c1', title: '黑洞视界', logline: '', members: [], common_points: [], differences: [],
+        unique_points: [], action_items: [], markdown: '# 观点对比笔记', markdown_path: '',
+      }
+      stubRoutes({
+        ...baseRoutes(),
+        'GET /vk/v1/storylines': { body: [comparisonRecord] },
+        'GET /vk/v1/storylines/sl_1': { body: { ...comparisonRecord, result: { ...result, storylines: [], comparisons: [comparison] } } },
+      })
+      render(<VkPanel baseUrl={BASE} />)
+      await screen.findByTestId('vk-job-open-a')
+      await openBatch({ storyline: true })
+
+      await screen.findByRole('heading', { name: '观点对比笔记' })
+      expect(screen.getByRole('tab', { name: '观点对比 · 黑洞视界' })).toHaveAttribute('aria-selected', 'true')
+      await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+      expect(loadInspirationLibrary().items.at(-1)).toMatchObject({
+        title: '观点对比 · 黑洞视界', content: '# 观点对比笔记',
+      })
+    })
+
     it('旧版引擎没有串联接口时只显示单视频标签,不报错', async () => {
       stubRoutes(baseRoutes())
       render(<VkPanel baseUrl={BASE} />)
@@ -2454,7 +2477,7 @@ describe('解析完成的系统通知', () => {
     storylinesRoute.body = [storyline('done')]
     await refresh()
     await waitFor(() => expect(sendNotification).toHaveBeenCalledTimes(2))
-    expect(sent()[1]).toEqual({ title: '串联完成', body: '已串成 1 条故事线，0 个视频未归入' })
+    expect(sent()[1]).toEqual({ title: '串联完成', body: '已串成 1 条故事线' })
 
     await refresh()
     await act(async () => {})

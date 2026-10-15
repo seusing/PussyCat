@@ -1,0 +1,40 @@
+.vk-term {
+  text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.vk-term:focus-visible {
+  border-radius: 3px;
+  outline: 1px solid var(--color-accent, #8fb2ff);
+  outline-offset: 2px;
+}
+
+.vk-term-card {
+  width: max-content;
+  min-width: 200px;
+  max-width: min(320px, calc(100vw - 16px));
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: left;
+}
+.vk-term-card-body { padding: 8px 10px; }
+.vk-term-card-body p { margin: 4px 0 0; }
+.vk-term-card-term { font-weight: 650; }
+.vk-term-card-context { color: var(--color-fg-dim, #a8abb2); }
+.vk-term-card-note { color: var(--color-fg-dim, #a8abb2); font-size: 11px; opacity: .8; }
+.vk-term-card-known {
+  margin-top: 8px;
+  min-height: 28px;
+  border: 1px solid var(--color-line, rgb(255 255 255 / 16%));
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--color-fg, #f5f5f5);
+  font-size: 12px;
+  cursor: pointer;
+}
+.vk-term-card-known:hover,
+.vk-term-card-known:focus-visible {
+  outline: none;
+  background: rgb(255 255 255 / 8%);
+}
+.vk-term-card-known:focus-visible { border-color: var(--color-accent, #8fb2ff); }

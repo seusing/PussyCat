@@ -145,9 +145,40 @@ describe('串联通知', () => {
     expect(detectStorylineSettlements(null, [storyline('s1', 'done')])).toEqual([])
   })
 
+  it('完成或部分完成但什么都没串出来(没有故事线也没有观点对比)时不通知', () => {
+    const previous = snapshotStorylineStatuses([
+      storyline('s1', 'running'), storyline('s2', 'running'), storyline('s3', 'running'),
+      storyline('s4', 'running'), storyline('s5', 'running'), storyline('s6', 'running'),
+    ])
+    const settled = detectStorylineSettlements(previous, [
+      storyline('s1', 'done', { storyline_count: 0, comparison_count: 0 }),
+      storyline('s2', 'partial', { storyline_count: 0, comparison_count: 0 }),
+      storyline('s3', 'done', { storyline_count: 0 }),
+      storyline('s4', 'done', { storyline_count: null, comparison_count: null }),
+      storyline('s5', 'failed', { storyline_count: null, comparison_count: null, error: '模型超时' }),
+      storyline('s6', 'done', { storyline_count: 1, comparison_count: 0 }),
+    ])
+    expect(settled.map((item) => item.storyline_id)).toEqual(['s5', 's6'])
+  })
+
+  it('只有观点对比、没有故事线时照常通知', () => {
+    const previous = snapshotStorylineStatuses([storyline('s1', 'running'), storyline('s2', 'waiting')])
+    const settled = detectStorylineSettlements(previous, [
+      storyline('s1', 'done', { storyline_count: 0, comparison_count: 2 }),
+      storyline('s2', 'partial', { storyline_count: 0, comparison_count: 1 }),
+    ])
+    expect(settled.map((item) => item.storyline_id)).toEqual(['s1', 's2'])
+    expect(storylineNotice(settled[0])).toEqual({
+      title: '串联完成', body: '已整理出 2 组观点对比，1 个视频未归入',
+    })
+  })
+
   it('文案', () => {
     expect(storylineNotice(storyline('s1', 'done'))).toEqual({
       title: '串联完成', body: '已串成 2 条故事线，1 个视频未归入',
+    })
+    expect(storylineNotice(storyline('s1', 'done', { comparison_count: 1, standalone_count: 0 }))).toEqual({
+      title: '串联完成', body: '已串成 2 条故事线、1 组观点对比',
     })
     expect(storylineNotice(storyline('s1', 'failed'), '模型服务限流了')).toEqual({ title: '串联失败', body: '模型服务限流了' })
     expect(storylineNotice(storyline('s1', 'failed')).body).toBe('串联失败')

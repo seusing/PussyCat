@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { fetchVkJob, fetchVkOutputText, type VkJobView } from '../../host/vkClient'
@@ -7,11 +7,17 @@ import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
 import { HostRequestError } from '../../host/errors'
+import { loadKnownTerms } from '../../data/knownTerms'
+import { loadVkTermHints } from './termHints'
 
 vi.mock('../../host/vkClient', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../host/vkClient')>()),
   fetchVkJob: vi.fn(),
   fetchVkOutputText: vi.fn(),
+}))
+vi.mock('./termHints', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./termHints')>()),
+  loadVkTermHints: vi.fn(),
 }))
 vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn() }))
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
@@ -43,6 +49,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   vi.mocked(fetchVkJob).mockReset().mockImplementation(async (id) => ({ outputs: { note_path: `${id}.md` } }) as VkJobView)
   vi.mocked(fetchVkOutputText).mockReset().mockImplementation(async (id) => `# ${id}\n\n正文 ${id}`)
+  vi.mocked(loadVkTermHints).mockReset().mockResolvedValue(null)
   vi.mocked(copyText).mockReset().mockResolvedValue(true)
   vi.mocked(saveTextFileAs).mockReset().mockResolvedValue(true)
 })
@@ -420,4 +427,106 @@ it('shows a plain-language hint instead of host wording when the engine is not r
   expect(alert).toHaveTextContent('解析引擎还没准备好，请先在视频解析页完成一键准备')
   expect(alert.textContent).not.toMatch(/not-installed|video-knowledge/)
   expect(alert).toHaveAttribute('title', 'video-knowledge runtime 未安装或未配置(not-installed)')
+})
+
+const noteTerms = {
+  terms: [{ term: '减载', explanation: '主动降低一周训练量来恢复', in_video: '每四周安排一次' }],
+  note: '未经 Jev 筛选：HTTP 451：Typesafe is not available in your region.',
+}
+const termCard = () => screen.findByRole('dialog', { name: '术语：减载' })
+
+it('单个视频笔记读完后按 jobId 补读术语,悬停显示卡片,复制与收藏仍用原始 Markdown', async () => {
+  vi.mocked(loadVkTermHints).mockResolvedValue(noteTerms)
+  vi.mocked(fetchVkOutputText).mockImplementation(async (id) => `# ${id}\n\n每四周做一次减载,别忘了减载。`)
+  render(<Harness />)
+  const term = await screen.findByRole('button', { name: '减载' })
+  expect(loadVkTermHints).toHaveBeenCalledTimes(1)
+  expect(loadVkTermHints).toHaveBeenCalledWith('a', 'http://host')
+  expect(screen.getAllByRole('button', { name: '减载' })).toHaveLength(1)
+  expect(term).toHaveClass('vk-term')
+
+  await userEvent.hover(term)
+  const card = await termCard()
+  expect(card).toHaveTextContent('主动降低一周训练量来恢复')
+  expect(card).toHaveTextContent('在这个视频里：每四周安排一次')
+  expect(card).toHaveTextContent('未经 Jev 筛选：HTTP 451')
+
+  await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
+  expect(copyText).toHaveBeenLastCalledWith('# a.md\n\n每四周做一次减载,别忘了减载。')
+  await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+  expect(loadInspirationLibrary().items.at(-1)).toMatchObject({ content: '# a.md\n\n每四周做一次减载,别忘了减载。' })
+
+  await userEvent.click(screen.getByRole('tab', { name: '任务 2' }))
+  await screen.findByRole('heading', { name: 'b.md' })
+  await waitFor(() => expect(loadVkTermHints).toHaveBeenCalledWith('b', 'http://host'))
+  await userEvent.click(screen.getByRole('tab', { name: '任务 1' }))
+  await screen.findByRole('button', { name: '减载' })
+  expect(loadVkTermHints).toHaveBeenCalledTimes(2)
+})
+
+it('术语读取失败(null)时照常渲染笔记,没有下划线', async () => {
+  vi.mocked(fetchVkOutputText).mockResolvedValue('# 标题\n\n每四周做一次减载')
+  render(<Harness />)
+  await screen.findByRole('heading', { name: '标题' })
+  await waitFor(() => expect(loadVkTermHints).toHaveBeenCalled())
+  expect(screen.getByTestId('vk-output-viewer-content').querySelector('.vk-term')).toBeNull()
+})
+
+it('术语卡片打开时 Esc 只关卡片,不关结果窗口;再按一次才关窗口', async () => {
+  vi.mocked(loadVkTermHints).mockResolvedValue(noteTerms)
+  vi.mocked(fetchVkOutputText).mockResolvedValue('# 标题\n\n每四周做一次减载')
+  render(<Harness />)
+  const term = await screen.findByRole('button', { name: '减载' })
+  await userEvent.hover(term)
+  await termCard()
+
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '术语：减载' })).not.toBeInTheDocument())
+  expect(screen.getByTestId('vk-output-viewer')).toBeInTheDocument()
+
+  await userEvent.keyboard('{Escape}')
+  expect(screen.queryByTestId('vk-output-viewer')).not.toBeInTheDocument()
+})
+
+it('点「我已了解」后写入存储、当前笔记的下划线消失,别的笔记也不再标这个词', async () => {
+  vi.mocked(loadVkTermHints).mockResolvedValue(noteTerms)
+  vi.mocked(fetchVkOutputText).mockImplementation(async (id) => `# ${id}\n\n每四周做一次减载`)
+  render(<Harness />)
+  await userEvent.hover(await screen.findByRole('button', { name: '减载' }))
+  await userEvent.click(within(await termCard()).getByRole('button', { name: '我已了解' }))
+
+  expect(loadKnownTerms().has('减载')).toBe(true)
+  expect(screen.getByTestId('vk-output-viewer-content').querySelector('.vk-term')).toBeNull()
+  expect(screen.getByTestId('vk-output-viewer-content')).toHaveTextContent('每四周做一次减载')
+
+  await userEvent.click(screen.getByRole('tab', { name: '任务 2' }))
+  await screen.findByRole('heading', { name: 'b.md' })
+  await waitFor(() => expect(loadVkTermHints).toHaveBeenCalledWith('b', 'http://host'))
+  expect(screen.getByTestId('vk-output-viewer-content').querySelector('.vk-term')).toBeNull()
+})
+
+const storyTerms = ['甲术语', '乙术语', '丙术语', '丁术语', '戊术语', '己术语'].map((term, index) => ({
+  term, explanation: `${term}的解释`, in_video: `${term}的含义`, job_id: `job-${index}`, video_title: `第${index + 1}集`,
+}))
+
+it('故事线标签用自带的术语(最多标 5 个),卡片写出处视频,不再请求术语', async () => {
+  const tab: VkOutputTab = {
+    id: 'storyline:sl:s1', label: '故事线 · 装修日记',
+    content: `# 装修日记\n\n${[...storyTerms].reverse().map((item) => item.term).join('、')}`,
+    terms: storyTerms,
+  }
+  render(<Harness items={[tab, ...tabs]} />)
+  await screen.findByRole('heading', { name: '装修日记' })
+  const content = screen.getByTestId('vk-output-viewer-content')
+  expect([...content.querySelectorAll('.vk-term')].map((element) => element.textContent).sort())
+    .toEqual(['丁术语', '丙术语', '乙术语', '戊术语', '甲术语'])
+  expect(loadVkTermHints).not.toHaveBeenCalled()
+
+  await userEvent.hover(within(content).getByRole('button', { name: '丙术语' }))
+  const card = await screen.findByRole('dialog', { name: '术语：丙术语' })
+  expect(card).toHaveTextContent('丙术语的解释')
+  expect(card).toHaveTextContent('在《第3集》里：丙术语的含义')
+
+  await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
+  expect(copyText).toHaveBeenLastCalledWith(tab.content)
 })

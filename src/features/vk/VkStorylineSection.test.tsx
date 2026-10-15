@@ -101,7 +101,12 @@ describe('VkStorylineSection', () => {
   it.each([
     [row({ status: 'done' }), '已串成 2 条故事线，1 个视频未归入', true],
     [row({ status: 'partial' }), '已串成 2 条故事线，1 个视频未归入。部分内容生成失败', true],
-    [row({ status: 'done', storyline_count: 0, standalone_count: 3 }), '已串成 0 条故事线，3 个视频未归入', false],
+    [row({ status: 'done', storyline_count: 0, standalone_count: 3 }), '这批视频之间没有发现关联，各自保留单独笔记', false],
+    [row({ status: 'done', storyline_count: 0, comparison_count: 0, standalone_count: 3 }), '这批视频之间没有发现关联，各自保留单独笔记', false],
+    [row({ status: 'partial', storyline_count: 0, comparison_count: 0, standalone_count: 3 }), '没有串成故事线，部分内容生成失败', false],
+    [row({ status: 'done', comparison_count: 1 }), '已串成 2 条故事线、1 组观点对比，1 个视频未归入', true],
+    [row({ status: 'done', comparison_count: 1, reason: '1 个视频摘要失败' }), '已串成 2 条故事线、1 组观点对比，1 个视频未归入（1 个视频摘要失败）', true],
+    [row({ status: 'done', storyline_count: 0, comparison_count: 2, standalone_count: 1 }), '已整理出 2 组观点对比，1 个视频未归入', true],
     [row({ status: 'skipped', reason: '只有 1 个视频有字幕', storyline_count: null, standalone_count: null }), '可串联的视频不足 2 个（只有 1 个视频有字幕）', false],
     [row({ status: 'failed', error: '模型超时' }), '串联失败', false],
   ] as const)('终态 %#:状态文案、重新串联与查看按钮', async (record, text, viewable) => {
@@ -110,6 +115,27 @@ describe('VkStorylineSection', () => {
     expect(await screen.findByTestId('vk-storyline-status')).toHaveTextContent(text)
     expect(screen.getByTestId('vk-storyline-start')).toBeEnabled()
     expect(screen.queryByTestId('vk-storyline-view') !== null).toBe(viewable)
+  })
+
+  it.each([
+    ['有故事线', row({ status: 'done' }), '查看故事线'],
+    ['故事线与观点对比都有', row({ status: 'done', comparison_count: 1 }), '查看故事线'],
+    ['旧版引擎没有 comparison_count', row({ status: 'done' }), '查看故事线'],
+    ['只有观点对比', row({ status: 'done', storyline_count: 0, comparison_count: 2 }), '查看观点对比'],
+    ['部分完成且只有观点对比', row({ status: 'partial', storyline_count: 0, comparison_count: 1 }), '查看观点对比'],
+  ] as const)('查看按钮文字:%s → %s', async (_name, record, label) => {
+    stubStorylineApi([record])
+    renderSection()
+    const button = await screen.findByTestId('vk-storyline-view')
+    expect(button).toHaveTextContent(label)
+    expect(button).toHaveAccessibleName(label)
+  })
+
+  it('什么都没串出来时不出现查看按钮', async () => {
+    stubStorylineApi([row({ status: 'done', storyline_count: 0, comparison_count: 0 })])
+    renderSection()
+    await screen.findByTestId('vk-storyline-status')
+    expect(screen.queryByTestId('vk-storyline-view')).not.toBeInTheDocument()
   })
 
   it('failed 记录用人话说明原因,引擎原文收进「原始信息」', async () => {

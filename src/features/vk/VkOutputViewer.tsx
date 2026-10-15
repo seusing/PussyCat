@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useDragControls, useMotionValue } from 'motion/react'
 import { BookmarkPlus, Check, Copy, Download } from 'lucide-react'
-import Markdown from 'react-markdown'
 import { fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
@@ -9,6 +8,8 @@ import { GlassSelect } from '../../components/GlassMenu'
 import { addInspirationItem } from '../inspiration/inspirationLibrary'
 import { vkPrimaryOutput, vkResultVersionLabel, type VkResultVersion } from './taskResults'
 import { vkErrorNote, type VkErrorNote } from './vkErrors'
+import { TermHintMarkdown } from './TermHint'
+import { loadVkTermHints, type VkTermHint, type VkTermHints } from './termHints'
 import './VkOutputViewer.css'
 
 export type VkOutputTab = {
@@ -22,8 +23,11 @@ export type VkOutputTab = {
   content?: string
   /** 存入灵感库时用的标题;缺省用 label。 */
   libraryTitle?: string
+  /** 已经在手的术语(如故事线汇总的各集术语);单视频笔记没有它,由查看器按 jobId 读取。 */
+  terms?: VkTermHint[]
 }
 type LoadedOutput = { outputId: string; content: string }
+const NO_TERMS: VkTermHints = { terms: [], note: null }
 export type VkOutputCache = Map<string, LoadedOutput>
 
 function outputFileName(outputId: string): string {
@@ -75,6 +79,13 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
     ?? resultCache.get(requestKey)
     ?? (loadedState?.key === outputKey ? loadedState.value : undefined)
   const error = loadError?.key === outputKey ? loadError : null
+  // 单视频笔记的术语在笔记读到之后按 jobId 补读(随结果文件变化重取);故事线标签自带术语。
+  const termJobId = activeTab && activeTab.terms === undefined && activeTab.content === undefined ? activeTab.jobId : undefined
+  const termKey = termJobId && loaded ? JSON.stringify([baseUrl, termJobId, loaded.outputId]) : null
+  const termCache = useRef(new Map<string, VkTermHints>())
+  const [loadedTerms, setLoadedTerms] = useState<{ key: string; value: VkTermHints } | null>(null)
+  const fetchedTerms = termKey ? termCache.current.get(termKey) ?? (loadedTerms?.key === termKey ? loadedTerms.value : undefined) : undefined
+  const termHints: VkTermHints = activeTab?.terms !== undefined ? { terms: activeTab.terms, note: null } : fetchedTerms ?? NO_TERMS
   const dragControls = useDragControls()
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
   const [size, setSize] = useState(() => ({ width: Math.min(960, window.innerWidth - 24), height: Math.min(700, window.innerHeight - 24) }))
@@ -145,6 +156,17 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
     })()
     return () => { current = false }
   }, [outputKey, requestKey, resultCache, activeTab?.id, activeTab?.jobId, activeTab?.outputId, baseUrl, retry])
+
+  useEffect(() => {
+    if (!termKey || !termJobId || termCache.current.has(termKey)) return
+    let current = true
+    void loadVkTermHints(termJobId, baseUrl).then((value) => {
+      if (!current || !value) return
+      termCache.current.set(termKey, value)
+      setLoadedTerms({ key: termKey, value })
+    })
+    return () => { current = false }
+  }, [termKey, termJobId, baseUrl])
 
   const resetOutputDownload = useCallback(() => {
     outputDownloadController.current?.abort()
@@ -342,7 +364,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
             data-testid="vk-output-viewer-content" className="vk-output-viewer-content" aria-busy={!loaded && !error}>
             {actionError && <p role="alert" title={actionError.title}>{actionError.text}</p>}
             {error ? <div role="alert" title={error.title}>{error.text}<button type="button" onClick={() => setRetry((value) => value + 1)}>重试</button></div>
-              : loaded ? <Markdown>{loaded.content}</Markdown> : <p role="status">正在读取结果…</p>}
+              : loaded ? <TermHintMarkdown terms={termHints.terms} note={termHints.note}>{loaded.content}</TermHintMarkdown> : <p role="status">正在读取结果…</p>}
           </div>
         </div>
         <span className="vk-output-resize-hint" aria-hidden="true">◢</span>

@@ -285,6 +285,56 @@ export async function postVkPreview(
   return parseVkResponse<VkProcessingRequest>(response, '预检失败')
 }
 
+export interface VkJevConfig {
+  id: string
+  name: string
+  masked_key: string
+  enabled: boolean
+  test_status?: string
+  last_test_at?: string | null
+  last_used_at?: string | null
+  input_tokens?: number
+  output_tokens?: number
+  estimated_cost_usd?: number
+}
+
+export interface VkJevConfigsResult {
+  configured: boolean
+  model: string
+  intent_tree_version: string
+  configs: VkJevConfig[]
+  active_id: string | null
+  balance_status?: string
+}
+
+export async function fetchVkJevConfigs(baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs`)
+  return parseVkResponse(response, 'Jev 配置读取失败')
+}
+
+export async function saveVkJevConfigItem(name: string, apiKey: string, id?: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs${id ? `/${encodePathSegment(id)}` : ''}`, { ...jsonInit({ name, ...(apiKey ? { api_key: apiKey } : {}), ...(id ? { id } : {}) }), method: id ? 'PUT' : 'POST' })
+  return parseVkResponse(response, 'Jev 配置保存失败')
+}
+
+async function postJevConfigAction(id: string, action: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult | { ok: boolean; model: string; message: string }> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs/${encodePathSegment(id)}/${action}`, jsonInit({}))
+  return parseVkResponse(response, 'Jev 配置操作失败')
+}
+
+export async function enableVkJevConfig(id: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  return await postJevConfigAction(id, 'enable', baseUrl) as VkJevConfigsResult
+}
+
+export async function deleteVkJevConfig(id: string, baseUrl = DEFAULT_BASE_URL): Promise<VkJevConfigsResult> {
+  const response = await fetch(`${baseUrl}/vk/v1/jev/configs/${encodePathSegment(id)}`, { method: 'DELETE' })
+  return parseVkResponse(response, 'Jev 配置删除失败')
+}
+
+export async function testVkJevConfig(id: string, baseUrl = DEFAULT_BASE_URL): Promise<{ ok: boolean; model: string; message: string }> {
+  return await postJevConfigAction(id, 'test', baseUrl) as { ok: boolean; model: string; message: string }
+}
+
 export async function postVkJob(
   payload: VkSubmitPayload,
   baseUrl = DEFAULT_BASE_URL,
@@ -318,6 +368,8 @@ export interface VkStorylineRow {
   storyline_count: number | null
   standalone_count: number | null
   cost_cny: number | null
+  /** 观点对比的组数;旧记录、未运行完和失败时是 null,skipped 时是 0,旧版引擎没有这个键。 */
+  comparison_count?: number | null
 }
 
 export interface VkStorylineMember {
@@ -349,6 +401,15 @@ export interface VkStorylineCallback {
   text: string
 }
 
+/** 某一集笔记里的术语;故事线汇总各集的术语,可能超过 5 个,由前端截取。 */
+export interface VkStorylineTerm {
+  term: string
+  explanation: string
+  in_video: string
+  job_id: string
+  video_title: string
+}
+
 export interface VkStoryline {
   id: string
   title: string
@@ -360,6 +421,8 @@ export interface VkStoryline {
   /** 这条故事线的完整 Markdown 笔记,查看器直接渲染它。 */
   markdown: string
   markdown_path: string
+  /** 各集术语的并集;旧版引擎没有这个字段。 */
+  terms?: VkStorylineTerm[]
 }
 
 export interface VkStorylineStandalone {
@@ -377,6 +440,23 @@ export interface VkStorylineLink {
   evidence: Array<{ job_id: string; time_ms: number; quote: string }>
 }
 
+/** 不同博主谈同一件事时整理出的一组观点对比。 */
+export interface VkComparison {
+  id: string
+  title: string
+  logline: string
+  members: Array<{ job_id: string; title: string; url: string; author: string | null }>
+  common_points: Array<{ text: string; job_ids: string[] }>
+  differences: Array<{ aspect: string; positions: Array<{ job_id: string; view: string }> }>
+  unique_points: Array<{ job_id: string; text: string }>
+  action_items: string[]
+  /** 这组对比的完整 Markdown 笔记,查看器直接渲染它。 */
+  markdown: string
+  markdown_path: string
+  /** 各视频术语的并集;引擎未提供时没有这个字段。 */
+  terms?: VkStorylineTerm[]
+}
+
 /** 结果文件内容(schema_version: storyline_result@1)。 */
 export interface VkStorylineResult {
   schema_version: string
@@ -389,6 +469,8 @@ export interface VkStorylineResult {
   storylines: VkStoryline[]
   standalone: VkStorylineStandalone[]
   links: VkStorylineLink[]
+  /** 旧结果没有这个键,按空处理。 */
+  comparisons?: VkComparison[]
 }
 
 export type VkStorylineView = VkStorylineRow & {

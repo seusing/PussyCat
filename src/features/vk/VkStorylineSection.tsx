@@ -1,4 +1,4 @@
-// 批量任务详情里的「串联分析」区块:展示这批的串联状态,可手动发起,有结果时可打开故事线。
+// 批量任务详情里的「串联分析」区块:展示这批的串联状态,可手动发起,有结果时可打开故事线或观点对比。
 // 引擎没有 /storylines 接口(旧版,404)时整块不渲染。
 import { useCallback, useEffect, useState } from 'react'
 import { BookOpen, Waypoints } from 'lucide-react'
@@ -94,7 +94,7 @@ export function VkStorylineSection({ batchId, baseUrl, parsedCount, onView }: {
         {storylineViewable(latest) && (
           <button type="button" data-testid="vk-storyline-view" onClick={onView}>
             <BookOpen size={14} aria-hidden="true" />
-            <span>查看故事线</span>
+            <span>{(latest.storyline_count ?? 0) > 0 ? '查看故事线' : '查看观点对比'}</span>
           </button>
         )}
       </div>
