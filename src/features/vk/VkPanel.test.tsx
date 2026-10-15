@@ -1829,42 +1829,48 @@ describe('故事线串联', () => {
     .filter((call) => call.key === 'POST /vk/v1/jobs')
     .map((call) => JSON.parse(String(call.init?.body)) as Record<string, unknown>)
 
-  it('只有 2 个及以上不同链接时才出现串联开关,默认关并带说明', async () => {
-    submitRoutes()
+  it('2 个及以上链接时自动串联:只有同批最后一条任务带 storyline: true,且同批共用一个 batch_id', async () => {
+    const { calls } = submitRoutes()
     render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
-    await act(async () => {})
-    const source = screen.getByTestId('vk-source')
-    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
-
-    fireEvent.change(source, { target: { value: LINK_A } })
-    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
-    fireEvent.change(source, { target: { value: `${LINK_A}\n${LINK_A}` } })
-    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
-
-    fireEvent.change(source, { target: { value: `${LINK_A}\n${LINK_B}` } })
-    const toggle = screen.getByRole('checkbox', { name: '解析完成后串联相关内容' })
-    expect(toggle).toBe(screen.getByTestId('vk-storyline-toggle'))
-    expect(toggle).not.toBeChecked()
-    expect(screen.getByTestId('vk-storyline-option'))
-      .toHaveTextContent('把续集、回顾等相关视频串成故事线，每条故事线一篇笔记')
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: `${LINK_A}\n${LINK_B}` } })
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(2))
+    const jobs = submittedJobs(calls)
+    expect(jobs.map((job) => 'storyline' in job)).toEqual([false, true])
+    expect(jobs[1].storyline).toBe(true)
+    expect(jobs[0].batch_id).toBeTruthy()
+    expect(new Set(jobs.map((job) => job.batch_id)).size).toBe(1)
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/preview')).toHaveLength(2)
   })
 
-  it('开着时只有同批最后一条任务带 storyline: true,且同批共用一个 batch_id', async () => {
+  it('3 个链接时依然只有最后一条带 storyline', async () => {
     const { calls } = submitRoutes()
     render(<VkPanel baseUrl={BASE} />)
     fireEvent.change(screen.getByTestId('vk-source'), { target: { value: `${LINK_A}\n${LINK_B}\n${LINK_C}` } })
-    await userEvent.click(screen.getByTestId('vk-storyline-toggle'))
     await userEvent.click(screen.getByTestId('vk-submit-button'))
     await waitFor(() => expect(submittedJobs(calls)).toHaveLength(3))
     const jobs = submittedJobs(calls)
     expect(jobs.map((job) => 'storyline' in job)).toEqual([false, false, true])
     expect(jobs[2].storyline).toBe(true)
-    expect(jobs[0].batch_id).toBeTruthy()
-    expect(new Set(jobs.map((job) => job.batch_id)).size).toBe(1)
+    expect(calls.filter((call) => call.key === 'POST /vk/v1/preview')).toHaveLength(3)
   })
 
-  it('开着但中途某条提交失败时,已发出的任务都不带 storyline', async () => {
+  it.each([
+    ['1 个链接', LINK_A],
+    ['同一链接重复两行', `${LINK_A}\n${LINK_A}`],
+  ])('只有 1 个有效来源时没有任何请求带 storyline:%s', async (_label, value) => {
+    const { calls } = submitRoutes()
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value } })
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(1))
+    await waitFor(() => expect(screen.getByTestId('vk-submit-button')).toBeEnabled())
+    const posts = calls.filter((call) => call.key.startsWith('POST '))
+    expect(posts.map((call) => call.key)).toEqual(['POST /vk/v1/preview', 'POST /vk/v1/jobs'])
+    for (const call of posts) expect(JSON.parse(String(call.init?.body))).not.toHaveProperty('storyline')
+  })
+
+  it('中途某条提交失败时,已发出的任务都不带 storyline', async () => {
     let posted = 0
     const { calls } = stubRoutes({
       'GET /vk/v1/health': { body: HEALTH },
@@ -1881,7 +1887,6 @@ describe('故事线串联', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     fireEvent.change(screen.getByTestId('vk-source'), { target: { value: `${LINK_A}\n${LINK_B}\n${LINK_C}` } })
-    await userEvent.click(screen.getByTestId('vk-storyline-toggle'))
     await userEvent.click(screen.getByTestId('vk-submit-button'))
     expect(await screen.findByTestId('vk-submit-error')).toHaveTextContent('网络中断')
     const jobs = submittedJobs(calls)
@@ -1889,48 +1894,16 @@ describe('故事线串联', () => {
     for (const job of jobs) expect(job).not.toHaveProperty('storyline')
   })
 
-  it('关着时不带 storyline 字段', async () => {
+  it('从其他页面导入的多个链接同样自动串联', async () => {
     const { calls } = submitRoutes()
-    render(<VkPanel baseUrl={BASE} />)
-    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: `${LINK_A}\n${LINK_B}` } })
-    await userEvent.click(screen.getByTestId('vk-submit-button'))
-    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(2))
-    for (const job of submittedJobs(calls)) expect(job).not.toHaveProperty('storyline')
-  })
-
-  it('从「博主全部笔记」导入的多个链接默认开启串联', async () => {
-    const { calls } = submitRoutes()
-    useAppStore.getState().setVkHandoff({
-      url: `${LINK_A}\n${LINK_B}`, commandKey: 'xiaohongshu/user-posts', collectedAt: 1754000000000,
-    })
-    render(<VkPanel baseUrl={BASE} />)
-    const toggle = await screen.findByTestId('vk-storyline-toggle')
-    expect(toggle).toBeChecked()
-    await userEvent.click(screen.getByTestId('vk-submit-button'))
-    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(2))
-    expect(submittedJobs(calls).map((job) => 'storyline' in job)).toEqual([false, true])
-  })
-
-  it('其他来源导入的多个链接默认不串联', async () => {
-    submitRoutes()
     useAppStore.getState().setVkHandoff({
       url: `${LINK_A}\n${LINK_B}`, commandKey: 'bilibili/hot', collectedAt: 1754000000000,
     })
     render(<VkPanel baseUrl={BASE} />)
-    expect(await screen.findByTestId('vk-storyline-toggle')).not.toBeChecked()
-  })
-
-  it('博主笔记只导入 1 个链接时不显示开关,提交也不带 storyline', async () => {
-    const { calls } = submitRoutes()
-    useAppStore.getState().setVkHandoff({
-      url: LINK_A, commandKey: 'xiaohongshu/user-posts', collectedAt: 1754000000000,
-    })
-    render(<VkPanel baseUrl={BASE} />)
-    await waitFor(() => expect((screen.getByTestId('vk-source') as HTMLTextAreaElement).value).toBe(LINK_A))
-    expect(screen.queryByTestId('vk-storyline-toggle')).not.toBeInTheDocument()
+    await waitFor(() => expect((screen.getByTestId('vk-source') as HTMLTextAreaElement).value).toBe(`${LINK_A}\n${LINK_B}`))
     await userEvent.click(screen.getByTestId('vk-submit-button'))
-    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(1))
-    expect(submittedJobs(calls)[0]).not.toHaveProperty('storyline')
+    await waitFor(() => expect(submittedJobs(calls)).toHaveLength(2))
+    expect(submittedJobs(calls).map((job) => 'storyline' in job)).toEqual([false, true])
   })
 
   describe('结果窗口', () => {

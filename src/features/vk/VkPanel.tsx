@@ -152,8 +152,6 @@ const CHANNEL_PROBE_TTL_MS = 10 * 60_000
 const CHANNEL_PROBE_WARN_REASONS = new Set(['timeout', 'unreachable', 'provider-error', 'rate-limited'])
 // 认证失败的措辞与动作和任务失败原因共用同一份。
 const CHANNEL_AUTH_BLOCK = describeVkFailure('HTTP 401')
-// 从「博主全部笔记」一键导入的链接天然是同一作者的系列内容,串联默认开。
-const STORYLINE_DEFAULT_ON_COMMAND = 'xiaohongshu/user-posts'
 
 function loadBooleanRecord(key: string): Record<string, boolean> {
   try {
@@ -640,7 +638,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [maxCost, setMaxCost] = useState('')
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
-  const [storyline, setStoryline] = useState(false)
   const sourceList = useMemo(() => sourceLines(source), [source])
   const sourceCount = sourceList.length
   const [pasteNotice, setPasteNotice] = useState<{ sources: number; dropped: number } | null>(null)
@@ -669,7 +666,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     if (!handoff) return
     setSource(handoff.url)
     setProvenance({ commandKey: handoff.commandKey, collectedAt: handoff.collectedAt })
-    setStoryline(handoff.commandKey === STORYLINE_DEFAULT_ON_COMMAND)
     useAppStore.getState().clearVkHandoff()
   }, [handoff])
 
@@ -844,7 +840,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     // 列表据此把它们归为一个任务编号，详情页据此说清"这次共几个视频、进度到哪"。
     // 单个视频也带上：批量与否是提交时的事实，不该让下游去猜。
     const batchId = crypto.randomUUID()
-    const chainStoryline = storyline && sources.length >= 2
+    const chainStoryline = sources.length >= 2
     try {
       if (await refreshProviders() === false) {
         addTaskBanners([{
@@ -870,9 +866,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       for (const [index, sourceValue] of sources.entries()) {
         const previewedRequest = await postVkPreview(buildProjection(sourceValue, goalSnapshot), base)
         const request = { ...previewedRequest, source: sourceValue }
-        // 引擎在「该批没有排队/运行中的任务」时触发自动串联,且每批只触发一次。job 是逐条提交的,
-        // 前几条若很快跑完(如命中缓存),串联会带着已完成的成员提前跑掉、之后不再补跑。
-        // 所以 storyline 只挂在**最后一条**上(引擎按 batch_id 去重,带一次就够)。中途某条提交
+        // 同批有 2 个及以上来源就自动串联。引擎在「该批没有排队/运行中的任务」时触发串联,且每批只触发
+        // 一次。job 是逐条提交的,前几条若很快跑完(如命中缓存),串联会带着已完成的成员提前跑掉、之后
+        // 不再补跑。所以 storyline 只挂在**最后一条**上(引擎按 batch_id 去重,带一次就够)。中途某条提交
         // 失败、循环提前结束时最后一条不会发出,本批就不带——用户可在任务详情里手动「串联分析」。
         const lastInBatch = index === sources.length - 1
         await postVkJob({
@@ -1527,20 +1523,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             </p>
           )}
         </div>
-        {sourceCount >= 2 && (
-          <div data-testid="vk-storyline-option" className="vk-storyline-option mb-2">
-            <label>
-              <input
-                type="checkbox"
-                data-testid="vk-storyline-toggle"
-                checked={storyline}
-                onChange={(event) => setStoryline(event.target.checked)}
-              />
-              <span>解析完成后串联相关内容</span>
-            </label>
-            <p>把续集、回顾等相关视频串成故事线，每条故事线一篇笔记</p>
-          </div>
-        )}
         <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
           你想重点了解什么（选填）
           <textarea
