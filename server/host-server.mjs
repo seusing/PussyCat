@@ -19,6 +19,7 @@ import { VkRuntimeError } from './vk-runtime.mjs'
 import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from './vk-capability-packs.mjs'
 import { WechatArticleError, fetchWechatArticle, requestArticleImage } from './wechat-article.mjs'
 import { createRadarService, diagnosticOf, reasonOf } from './radar.mjs'
+import { checkOpencliRelease } from './opencli-release.mjs'
 import { InspirationStoreError } from './inspiration-store.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
@@ -209,6 +210,7 @@ export function createHostServer({
   vkJobShadow = null,
   vkRuntime = null,
   radarService = createRadarService(),
+  opencliRelease = checkOpencliRelease,
   inspirationStore = null,
   wechatArticle = { fetchWechatArticle, requestArticleImage },
 } = {}) {
@@ -353,6 +355,16 @@ export function createHostServer({
       // 本端点永不 5xx:诊断失败本身也是结构化的诊断结果(daemon: stopped/unreachable/error)。
       if (url.pathname === '/browser-bridge/health' && request.method === 'GET') {
         writeJson(response, 200, await probeBrowserBridge())
+        return
+      }
+
+      // OpenCLI 新版提示:只查 npm 上的最新版本,不升级。上游不可达是 502,不是 Host 自己的错。
+      if (url.pathname === '/opencli/release' && request.method === 'GET') {
+        try {
+          writeJson(response, 200, await opencliRelease({ currentVersion: activePolicy().opencliVersion }))
+        } catch (error) {
+          writeJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
+        }
         return
       }
 

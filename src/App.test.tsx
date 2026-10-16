@@ -8,6 +8,7 @@ import { liveCatalogSource, type CatalogSource } from './host'
 import { createNodeBridgeHost, type EventSourceLike } from './host/nodeBridgeHost'
 import { normalizeHostError } from './App'
 import { HostRequestError } from './host/errors'
+import type { OpencliRelease } from './host/opencliRelease'
 import type { PolicyDecision } from './data/policy'
 import { renderWithHost } from './testing/renderWithHost'
 
@@ -155,18 +156,14 @@ function sourceOf(loads: Array<() => Promise<{ snapshot: ReturnType<typeof SNAP>
   return { kind: 'live', load: () => loads[Math.min(i++, loads.length - 1)]() }
 }
 
-test('刷新成功 → 目录更新 + generatedAt 显示', async () => {
+test('首载成功 → 目录更新 + 目录摘要只显示条数,没有手动刷新入口', async () => {
   const source = sourceOf([
-    async () => ({ snapshot: SNAP() }),
     async () => ({ snapshot: SNAP({ generatedAt: 2000, commands: [{ command: 'c/d', site: 'c', name: 'd', description: '', access: 'read', browser: false, args: [] }] }) }),
   ])
   render(<App catalogSource={source} />)
-  await screen.findByTestId('refresh-catalog')
-  expect(screen.getByTestId('refresh-catalog')).toHaveTextContent('刷新命令列表')
-  expect(screen.getByTestId('refresh-catalog')).toHaveAttribute('title', expect.stringContaining('已安装 OpenCLI 版本'))
-  await userEvent.click(screen.getByTestId('refresh-catalog'))
-  await waitFor(() => expect(useAppStore.getState().commands[0].command).toBe('c/d'))
-  expect(screen.getByTestId('catalog-meta')).toBeInTheDocument()
+  await waitFor(() => expect(useAppStore.getState().commands[0]?.command).toBe('c/d'))
+  expect((await screen.findByTestId('catalog-meta')).textContent).toBe('1 条')
+  expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
 })
 
 test('目录摘要只统计界面可见命令', async () => {
@@ -183,10 +180,12 @@ test('目录摘要只统计界面可见命令', async () => {
 
 test('登录和视频模块不显示命令列表操作', async () => {
   useAppStore.setState({ activeModule: 'login' })
-  render(<App />)
-  expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
+  render(<App mode="connected" />)
+  expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
   act(() => useAppStore.setState({ activeModule: 'vk' }))
-  expect(screen.queryByTestId('refresh-catalog')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
+  act(() => useAppStore.setState({ activeModule: 'commands' }))
+  expect(screen.getByTestId('check-updates')).toBeInTheDocument()
 })
 
 test('导航栏没有公众号模块', () => {
@@ -196,42 +195,25 @@ test('导航栏没有公众号模块', () => {
   expect(screen.queryByRole('button', { name: '公众号' })).not.toBeInTheDocument()
 })
 
-test('刷新失败 → 目录保持 ready(不出错误屏),按钮旁提示', async () => {
+test('首载降级(degraded) → 目录更新 + 降级提示', async () => {
   const source = sourceOf([
-    async () => ({ snapshot: SNAP() }),
-    async () => { throw new Error('all down') },
-  ])
-  render(<App catalogSource={source} />)
-  await screen.findByTestId('refresh-catalog')
-  await userEvent.click(screen.getByTestId('refresh-catalog'))
-  await screen.findByTestId('refresh-error')
-  expect(useAppStore.getState().catalogStatus).toBe('ready')          // 决策④:不打翻现有目录
-  expect(screen.queryByTestId('catalog-retry')).not.toBeInTheDocument()  // 无首载错误屏
-})
-
-test('刷新降级(degraded) → 目录更新 + 降级提示', async () => {
-  const source = sourceOf([
-    async () => ({ snapshot: SNAP() }),
     async () => ({ snapshot: SNAP({ generatedAt: 3000 }), degraded: 'Host 不可达' }),
   ])
   render(<App catalogSource={source} />)
-  await screen.findByTestId('refresh-catalog')
-  await userEvent.click(screen.getByTestId('refresh-catalog'))
   await screen.findByTestId('refresh-degraded')
+  expect(screen.getByTestId('refresh-degraded')).toHaveAttribute('title', 'Host 不可达')
 })
 
-test('latest-wins:慢速首载响应不得覆盖已成功的手动刷新(三轮复审 F1)', async () => {
+test('latest-wins:慢速旧加载响应不得覆盖已成功的新加载(三轮复审 F1)', async () => {
   let resolveFirst!: (v: { snapshot: ReturnType<typeof SNAP>; degraded?: string }) => void
   const firstLoad = new Promise<{ snapshot: ReturnType<typeof SNAP>; degraded?: string }>((r) => { resolveFirst = r })
-  const source: CatalogSource = {
+  const sourceA: CatalogSource = { kind: 'live', load: () => firstLoad }                       // 首载:悬挂中
+  const sourceB: CatalogSource = {
     kind: 'live',
-    load: vi.fn()
-      .mockReturnValueOnce(firstLoad)                          // 首载:悬挂中
-      .mockResolvedValueOnce({ snapshot: SNAP({ generatedAt: 2000, commands: [{ command: 'c/d', site: 'c', name: 'd', description: '', access: 'read', browser: false, args: [] }] }) }),
+    load: async () => ({ snapshot: SNAP({ generatedAt: 2000, commands: [{ command: 'c/d', site: 'c', name: 'd', description: '', access: 'read', browser: false, args: [] }] }) }),
   }
-  render(<App catalogSource={source} />)
-  await screen.findByTestId('refresh-catalog')                 // header 常驻,首载悬挂时按钮即可用
-  await userEvent.click(screen.getByTestId('refresh-catalog'))  // 手动刷新:立即成功 new/live
+  const { rerender } = render(<App catalogSource={sourceA} />)
+  rerender(<App catalogSource={sourceB} />)                    // catalogSource 变化 → 新一轮加载立即成功 new/live
   await waitFor(() => expect(useAppStore.getState().commands[0]?.command).toBe('c/d'))
   resolveFirst({ snapshot: SNAP({ generatedAt: 1000 }), degraded: 'Host 不可达' })   // 慢首载:旧数据+降级
   await new Promise((r) => setTimeout(r, 50))                  // 给过期响应一个提交窗口
@@ -239,19 +221,98 @@ test('latest-wins:慢速首载响应不得覆盖已成功的手动刷新(三轮�
   expect(screen.queryByTestId('refresh-degraded')).not.toBeInTheDocument()   // 未错误显示降级
 })
 
-test('世代接管归位 refreshing:依赖变化顶掉在途刷新后按钮不卡死(评审 P3)', async () => {
-  let calls = 0
-  const sourceA: CatalogSource = {
-    kind: 'live',
-    load: () => { calls += 1; return calls === 1 ? Promise.resolve({ snapshot: SNAP() }) : new Promise(() => {}) },
+describe('检查更新', () => {
+  const BASE = 'http://127.0.0.1:43117'
+  const RELEASE_ENDPOINT = `${BASE}/opencli/release`
+  const releaseOf = (over: Partial<OpencliRelease> = {}): OpencliRelease => ({
+    checkedAt: 1, current: '1.8.6', latest: '1.8.6', updateAvailable: false,
+    releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.6', ...over,
+  })
+  const okResponse = (body: OpencliRelease) => Promise.resolve({ ok: true, status: 200, json: async () => body } as Response)
+  const failResponse = (status: number, error: string) => Promise.resolve({ ok: false, status, json: async () => ({ error }) } as Response)
+
+  // 只应答 /opencli/release;其它请求沿用全局桩的"永不 settle",免得 SystemHealthPill 等报错。
+  function stubReleaseApi(...responders: Array<() => Promise<Response>>) {
+    let i = 0
+    const fetchMock = vi.fn((url: string) => (
+      url === RELEASE_ENDPOINT ? responders[Math.min(i++, responders.length - 1)]() : new Promise<Response>(() => {})
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    return () => fetchMock.mock.calls.filter(([url]) => url === RELEASE_ENDPOINT).length
   }
-  const { rerender } = render(<App catalogSource={sourceA} />)
-  await screen.findByTestId('refresh-catalog')
-  await userEvent.click(screen.getByTestId('refresh-catalog'))          // 在途刷新:悬挂
-  expect(screen.getByTestId('refresh-catalog')).toBeDisabled()
-  const sourceB: CatalogSource = { kind: 'live', load: async () => ({ snapshot: SNAP({ generatedAt: 3000 }) }) }
-  rerender(<App catalogSource={sourceB} />)                             // catalogSource 变化 → fetchCatalog 世代顶掉在途刷新
-  await waitFor(() => expect(screen.getByTestId('refresh-catalog')).not.toBeDisabled())
+  const renderConnected = () => render(
+    <App catalogSource={sourceOf([async () => ({ snapshot: SNAP() })])} mode="connected" baseUrl={BASE} />,
+  )
+
+  test('启动后自动检查:已是最新', async () => {
+    const requests = stubReleaseApi(() => okResponse(releaseOf()))
+    renderConnected()
+
+    expect(await screen.findByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.6 · 已是最新')
+    expect(requests()).toBe(1)
+    expect(screen.getByTestId('check-updates')).toHaveTextContent('检查更新')
+    expect(screen.getByTestId('check-updates')).toHaveAttribute('title', '检查 OpenCLI 有没有新版本')
+    expect(screen.getByTestId('check-updates')).toBeEnabled()
+  })
+
+  test('有新版 → 链接指向发布页', async () => {
+    const releaseUrl = 'https://github.com/jackwener/opencli/releases/tag/v1.8.8'
+    stubReleaseApi(() => okResponse(releaseOf({ latest: '1.8.8', updateAvailable: true, releaseUrl })))
+    renderConnected()
+
+    const link = await screen.findByRole('link', { name: 'OpenCLI 1.8.8 可用' })
+    expect(link).toHaveAttribute('href', releaseUrl)
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(link).toHaveAttribute('title', '当前 1.8.6，新版 OpenCLI 会随爪爪新版本提供')
+  })
+
+  test('点「检查更新」再查一次;检查中按钮禁用并保留上次结果', async () => {
+    let finish!: (value: Response) => void
+    const pending = () => new Promise<Response>((resolve) => { finish = resolve })
+    const requests = stubReleaseApi(() => okResponse(releaseOf()), pending)
+    renderConnected()
+    await screen.findByText('OpenCLI 1.8.6 · 已是最新')
+
+    await userEvent.click(screen.getByTestId('check-updates'))
+    expect(requests()).toBe(2)
+    expect(screen.getByTestId('check-updates')).toHaveTextContent('检查中…')
+    expect(screen.getByTestId('check-updates')).toBeDisabled()
+    expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.6 · 已是最新')
+
+    await act(async () => { finish({ ok: true, status: 200, json: async () => releaseOf({ latest: '1.8.8', updateAvailable: true }) } as Response) })
+    expect(await screen.findByRole('link', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
+    expect(screen.getByTestId('check-updates')).toHaveTextContent('检查更新')
+    expect(screen.getByTestId('check-updates')).toBeEnabled()
+  })
+
+  test('502 → 「检查失败」,原因在 title;再点一次成功后恢复', async () => {
+    const requests = stubReleaseApi(
+      () => failResponse(502, '连不上 npm registry：connect ETIMEDOUT'),
+      () => okResponse(releaseOf()),
+    )
+    renderConnected()
+
+    const status = await screen.findByTestId('opencli-release')
+    expect(status).toHaveTextContent('检查失败')
+    expect(status).toHaveAttribute('title', '连不上 npm registry：connect ETIMEDOUT')
+    expect(screen.getByTestId('check-updates')).toBeEnabled()
+
+    await userEvent.click(screen.getByTestId('check-updates'))
+    expect(await screen.findByText('OpenCLI 1.8.6 · 已是最新')).toBeInTheDocument()
+    expect(screen.queryByText('检查失败')).not.toBeInTheDocument()
+    expect(requests()).toBe(2)
+  })
+
+  test('demo 模式不显示检查更新,也不请求 Host', async () => {
+    const requests = stubReleaseApi(() => okResponse(releaseOf()))
+    render(<App catalogSource={sourceOf([async () => ({ snapshot: SNAP() })])} />)
+
+    await screen.findByTestId('catalog-meta')
+    expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
+    expect(requests()).toBe(0)
+  })
 })
 
 describe('normalizeHostError 契约(块 C)', () => {

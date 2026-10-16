@@ -23,6 +23,7 @@ import {
 import type { CommandManifest } from './data/types'
 import type { HostBridge } from './host/types'
 import { HostRequestError } from './host/errors'
+import { fetchOpencliRelease, type OpencliRelease } from './host/opencliRelease'
 import { isRunnable } from './data/policy'
 import { isAcknowledged } from './data/preferences'
 import { visibleCommands } from './data/supportedSites'
@@ -69,8 +70,10 @@ export default function App({
   const [vkRightPanelOpen, setVkRightPanelOpen] = useState(false)
   const [vkJobsRevision, setVkJobsRevision] = useState(0)
   const [providerRevision, setProviderRevision] = useState(0)
-  const [refresh, setRefresh] = useState<{ state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }>({ state: 'idle' })
-  const loadGen = useRef(0)   // 请求世代:latest-wins,过期响应(首载或刷新)一律丢弃(三轮复审 F1)
+  const [refresh, setRefresh] = useState<{ generatedAt?: number; degraded?: string }>({})
+  const loadGen = useRef(0)   // 请求世代:latest-wins,被后一次加载顶掉的旧响应一律丢弃(三轮复审 F1)
+  const [release, setRelease] = useState<ReleaseState>({ state: 'idle' })
+  const releaseGen = useRef(0)   // 同上,检查更新自成一条世代线
   const searchInputRef = useRef<HTMLInputElement>(null)
   const submitFormRef = useRef<(() => void) | null>(null)
   const registerSubmit = useCallback((fn: (() => void) | null) => { submitFormRef.current = fn }, [])
@@ -81,13 +84,11 @@ export default function App({
       .then(({ snapshot, degraded, decisions }) => {
         if (gen !== loadGen.current) return
         setCommands(snapshot.commands, decisions)
-        // 世代接管即整块归位:被顶掉的在途手动刷新留下的 refreshing/error 残留一并清掉,按钮不卡死(评审 P3)
-        setRefresh({ state: 'idle', generatedAt: snapshot.generatedAt, degraded })
+        setRefresh({ generatedAt: snapshot.generatedAt, degraded })
         if (degraded) console.warn('[catalog]', degraded)
       })
       .catch((err) => {
         if (gen !== loadGen.current) return
-        setRefresh((r) => (r.state === 'refreshing' ? { ...r, state: 'idle' } : r))   // 同上:失败也不许卡 refreshing
         setCatalogStatus('error', err instanceof Error ? err.message : String(err))
       })
   }
@@ -229,20 +230,23 @@ export default function App({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  const onRefreshCatalog = () => {
-    const gen = ++loadGen.current
-    setRefresh((r) => ({ ...r, state: 'refreshing', error: undefined, degraded: undefined }))
-    catalogSource.load({ refresh: true })
-      .then(({ snapshot, degraded, decisions }) => {
-        if (gen !== loadGen.current) return
-        useAppStore.getState().setCommands(snapshot.commands, decisions)
-        setRefresh({ state: 'idle', generatedAt: snapshot.generatedAt, degraded })
+  // 检查更新只在连着 Host 时有意义;失败保留上次结果,界面只提示「检查失败」。
+  const checkRelease = () => {
+    if (mode !== 'connected') return
+    const gen = ++releaseGen.current
+    setRelease((r) => ({ state: 'checking', data: r.data }))
+    fetchOpencliRelease(baseUrl)
+      .then((data) => {
+        if (gen === releaseGen.current) setRelease({ state: 'idle', data })
       })
       .catch((err) => {
-        if (gen !== loadGen.current) return
-        setRefresh((r) => ({ ...r, state: 'error', error: err instanceof Error ? err.message : String(err) }))
+        if (gen === releaseGen.current) {
+          setRelease((r) => ({ ...r, state: 'error', error: err instanceof Error ? err.message : String(err) }))
+        }
       })
   }
+  // 每次打开 app 查一次;checkRelease 每次渲染重建,但只在 mode / baseUrl 变化时需要重查
+  useEffect(() => { checkRelease() }, [mode, baseUrl])
 
   // 409(fingerprint-stale)/428(acknowledgement-required) 是"需要重新确认",不是普通失败——
   // 不把服务端原始错误甩给用户(Task 8 铁律),而是重拉目录、作废本地陈旧确认、重新弹确认框。
@@ -398,7 +402,9 @@ export default function App({
         catalogStatus={catalogStatus}
         catalogError={catalogError}
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
-        headerActions={activeModule === 'commands' ? <CatalogRefresh refresh={refresh} onRefresh={onRefreshCatalog} /> : undefined}
+        headerActions={activeModule === 'commands'
+          ? <CatalogHeaderActions refresh={refresh} release={release} showRelease={mode === 'connected'} onCheck={checkRelease} />
+          : undefined}
         baseUrl={baseUrl}
       />
       <UndoToast />
@@ -411,9 +417,13 @@ export default function App({
   )
 }
 
-function CatalogRefresh({ refresh, onRefresh }: {
-  refresh: { state: 'idle' | 'refreshing' | 'error'; error?: string; degraded?: string; generatedAt?: number }
-  onRefresh: () => void
+type ReleaseState = { state: 'idle' | 'checking' | 'error'; data?: OpencliRelease; error?: string }
+
+function CatalogHeaderActions({ refresh, release, showRelease, onCheck }: {
+  refresh: { generatedAt?: number; degraded?: string }
+  release: ReleaseState
+  showRelease: boolean
+  onCheck: () => void
 }) {
   const commands = useAppStore((s) => s.commands)
   const count = visibleCommands(commands).length
@@ -426,22 +436,34 @@ function CatalogRefresh({ refresh, onRefresh }: {
         </span>
       )}
       {refresh.generatedAt !== undefined && (
-        <span data-testid="catalog-meta">
-          {count} 条 · {new Date(refresh.generatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新
-        </span>
-      )}
-      {refresh.state === 'error' && (
-        <span data-testid="refresh-error" title={refresh.error} style={{ color: 'var(--color-danger)' }}>刷新失败</span>
+        <span data-testid="catalog-meta">{count} 条</span>
       )}
       {refresh.degraded && (
         <span data-testid="refresh-degraded" title={refresh.degraded} style={{ color: 'var(--color-warning)' }}>已降级：本地快照</span>
       )}
-      <button data-testid="refresh-catalog" disabled={refresh.state === 'refreshing'} onClick={onRefresh}
-        className="rounded-lg px-2 py-1 disabled:opacity-50"
-        style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-        title="刷新已安装 OpenCLI 版本的可用命令和执行许可">
-        {refresh.state === 'refreshing' ? '刷新中…' : '刷新命令列表'}
-      </button>
+      {showRelease && release.state === 'error' && (
+        <span data-testid="opencli-release" title={release.error} style={{ color: 'var(--color-danger)' }}>检查失败</span>
+      )}
+      {showRelease && release.state !== 'error' && release.data && (
+        <span data-testid="opencli-release">
+          {release.data.updateAvailable
+            ? (
+              <a href={release.data.releaseUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)' }}
+                title={`当前 ${release.data.current}，新版 OpenCLI 会随爪爪新版本提供`}>
+                OpenCLI {release.data.latest} 可用
+              </a>
+            )
+            : `OpenCLI ${release.data.current} · 已是最新`}
+        </span>
+      )}
+      {showRelease && (
+        <button data-testid="check-updates" disabled={release.state === 'checking'} onClick={onCheck}
+          className="rounded-lg px-2 py-1 disabled:opacity-50"
+          style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
+          title="检查 OpenCLI 有没有新版本">
+          {release.state === 'checking' ? '检查中…' : '检查更新'}
+        </button>
+      )}
     </div>
   )
 }

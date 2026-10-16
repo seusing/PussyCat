@@ -708,8 +708,9 @@ describe('/catalog/effective', () => {
 // 所以它必须在**HTTP 响应体**这一层被守住,而不只是在异常对象的属性上。
 //
 // 夹具坑,先看清再改:本文件顶部那个 policy 夹具是手捏的,造不出 acknowledgement-required;
-// 而 reviewShapeHash 含 opencliVersion(spec §4.1.2),任何非 1.8.6 的合成快照都会让
-// 全部 legacy 条目集体漂出基线 → 每条命令都落 unknown/no-tier,428/409 根本不可达。
+// 审定记录的 reviewedAgainst 由真快照现算,reviewShapeHash 又含 opencliVersion(spec §4.1.2),
+// 手捏的合成快照里没有这些命令,或形状与之对不上 → 判决落 unknown,428/409 根本不可达
+// (legacy 基线已清空,没有别的放行路径)。
 // 故本节用**真快照**构造 policy 直接注入:不挂 catalogService,activePolicy() 自然回落到它。
 describe('/start 状态码表逐格(HTTP 层)', () => {
   const realPolicy = loadExecutionPolicy(resolve('public/catalog.snapshot.json'))
@@ -1220,5 +1221,38 @@ describe('/browser-bridge/health', () => {
     const { baseUrl } = await setup()
     const res = await fetch(`${baseUrl}/browser-bridge/health`, { headers: { Origin: 'http://evil.example' } })
     expect(res.status).toBe(403)
+  })
+})
+
+describe('/opencli/release', () => {
+  const release = { checkedAt: 1, current: '1.8.6', latest: '1.8.8', updateAvailable: true, releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.8' }
+
+  it('返回检查结果,当前版本取自生效 policy', async () => {
+    const opencliRelease = vi.fn(async () => release)
+    const { baseUrl } = await setup({ opencliRelease })
+    const res = await fetch(`${baseUrl}/opencli/release`, { headers: { Origin: origin } })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual(release)
+    expect(opencliRelease).toHaveBeenCalledTimes(1)
+    expect(opencliRelease).toHaveBeenCalledWith({ currentVersion: policy.opencliVersion })
+  })
+
+  it('检查失败返回 502 和错误原因', async () => {
+    const opencliRelease = vi.fn(async () => { throw new Error('连不上 npm registry：connect ETIMEDOUT') })
+    const { baseUrl } = await setup({ opencliRelease })
+    const res = await fetch(`${baseUrl}/opencli/release`, { headers: { Origin: origin } })
+
+    expect(res.status).toBe(502)
+    await expect(res.json()).resolves.toEqual({ error: '连不上 npm registry：connect ETIMEDOUT' })
+  })
+
+  it('受 Origin 白名单管辖 —— 非法 Origin 不会触发对外请求', async () => {
+    const opencliRelease = vi.fn(async () => release)
+    const { baseUrl } = await setup({ opencliRelease })
+    const res = await fetch(`${baseUrl}/opencli/release`, { headers: { Origin: 'http://evil.example' } })
+
+    expect(res.status).toBe(403)
+    expect(opencliRelease).not.toHaveBeenCalled()
   })
 })
