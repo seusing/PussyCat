@@ -69,6 +69,18 @@ describe('xiaohongshu user-posts helpers', () => {
         }
     });
 
+    it('takes the short link or the full profile link out of a profile share text', async () => {
+        const shortFetch = redirectingFetch(SHARED_PROFILE);
+        await expect(resolveXhsProfileTarget(`我在小红书发现了一个宝藏博主 ${SHORT_LINK} 复制本条信息打开App`, { fetch: shortFetch })).resolves.toEqual(SHARED_TARGET);
+        await expect(resolveXhsProfileTarget(`宝藏博主 ${SHORT_LINK}，复制本条信息打开App`, { fetch: shortFetch })).resolves.toEqual(SHARED_TARGET);
+        expect(shortFetch).toHaveBeenCalledTimes(2);
+        expect(shortFetch.mock.calls.map(([url]) => url)).toEqual([SHORT_LINK, SHORT_LINK]);
+
+        const fullFetch = redirectingFetch(SHARED_PROFILE);
+        await expect(resolveXhsProfileTarget(`宝藏博主 ${SHARED_PROFILE} 复制本条信息打开App`, { fetch: fullFetch })).resolves.toEqual(SHARED_TARGET);
+        expect(fullFetch).not.toHaveBeenCalled();
+    });
+
     it('resolves user ids and full profile URLs without any request', async () => {
         const fetch = redirectingFetch(SHARED_PROFILE);
         for (const input of ['6836832c000000001d00be52', 'https://www.xiaohongshu.com/user/profile/abc?xsec_token=T&xsec_source=pc_search', 'https://example.com/xhslink.cn/user/profile/abc']) {

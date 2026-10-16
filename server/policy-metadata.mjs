@@ -75,7 +75,7 @@ export const REVIEWED_RECORDS = new Map([
 
   // ── browser-cookie-read-pilot ──────────────────────────────────────────────
   // 审定全文见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md(逐条附源码行号)。
-  // **十三条共同前提**:effects/residues 的取值以「Host 不放行 --trace / --site-session /
+  // **十五条共同前提**:effects/residues 的取值以「Host 不放行 --trace / --site-session /
   // --keep-tab / --window」为条件(审定 §1.2 口径 F)。这些是 opencli 的运行时全局选项
   // (commanderAdapter.js:49,53-55),不是 manifest args,因此**不进 reviewShapeHash**——
   // 它们的封堵由 policy.mjs 的 assertDeclaredArgvOnly 在 Host 侧兑现,不能只靠前端 buildArgv。
@@ -90,7 +90,7 @@ export const REVIEWED_RECORDS = new Map([
       effects: [],
       credentialFlow: 'consume',
       // siteSession:'persistent' → 共享会话名 site:xiaohongshu + keepTab=true,标签租约不释放
-      // (execution.js:461,465,479,314)。
+      // (execution.js:551,558,572,355)。
       residues: ['persistent-session'],
     },
   }],
@@ -98,13 +98,13 @@ export const REVIEWED_RECORDS = new Map([
     get reviewedAgainst() { return shapeOf('xiaohongshu/feed') },
     metadata: {
       executionPath: 'browser-bridge',
-      // goto /explore 后纯客户端读注水的 Pinia store,无额外请求(clis/xiaohongshu/feed.js:105,29-66)。
+      // goto /explore 后纯客户端读注水的 Pinia store,无额外请求(clis/xiaohongshu/feed.js:99,30-67)。
       authorities: ['browser-profile', 'public-network'],
-      // 账号个性化推荐流;url 内嵌 note 级 xsec_token(feed.js:88-97),按审定口径 D 不升 secret。
+      // 账号个性化推荐流;url 内嵌 note 级 xsec_token(feed.js:82-91),按审定口径 D 不升 secret。
       exposure: 'personal',
       effects: [],
       credentialFlow: 'consume',
-      // ephemeral 会话 + keepTab=false,成功/失败两路径都调 closeWindow(execution.js:466,480,314,339)。
+      // ephemeral 会话 + keepTab=false,成功/失败两路径都调 closeWindow(execution.js:559,573,355,382)。
       residues: [],
     },
   }],
@@ -162,9 +162,37 @@ export const REVIEWED_RECORDS = new Map([
     metadata: {
       executionPath: 'browser-bridge',
       // goto /explore 再 goto 博主主页,读注水的 Pinia store 并滚动(opencli-overrides/xiaohongshu/user-posts.js:41-42,25,56)。
-      // xhslink 短链接先在 Node 里请求一次、不跟随跳转、只读 Location(opencli-overrides/xiaohongshu/short-link.js:16)。
+      // xhslink 短链接先在 Node 里请求一次、不跟随跳转、只读 Location(opencli-overrides/xiaohongshu/short-link.js:32)。
       authorities: ['browser-profile', 'public-network'],
       // 博主公开笔记列表;url 内嵌 note 级 xsec_token,按审定口径 D 不升 secret。
+      exposure: 'public',
+      effects: [],
+      credentialFlow: 'consume',
+      residues: [],
+    },
+  }],
+  ['xiaohongshu/note', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/note') },
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 短链接 / 分享文案里的 xhslink 先在 Node 里请求一次、不跟随跳转、只读 Location(opencli-overrides/xiaohongshu/short-link.js:32)。
+      // 再 goto 笔记页读页面(clis/xiaohongshu/risk-control.js:63,65 的 readXhsDetailPage;遇风控软拦截最多冷却后重读一次,:73-76)。
+      authorities: ['browser-profile', 'public-network'],
+      // 他人公开笔记的正文和互动数(clis/xiaohongshu/note.js:109-120)。
+      exposure: 'public',
+      effects: [],
+      credentialFlow: 'consume',
+      residues: [],
+    },
+  }],
+  ['xiaohongshu/comments', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/comments') },
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 短链接处理同 xiaohongshu/note;goto 笔记页读评论区,同样经 readXhsDetailPage
+      // (clis/xiaohongshu/comments.js:307;risk-control.js:63,65,73-76)。
+      authorities: ['browser-profile', 'public-network'],
+      // 他人公开笔记的评论正文、评论者、点赞数和评论图片链接(comments.js:325-336)。
       exposure: 'public',
       effects: [],
       credentialFlow: 'consume',
@@ -175,7 +203,7 @@ export const REVIEWED_RECORDS = new Map([
     get reviewedAgainst() { return shapeOf('bilibili/whoami') },
     metadata: {
       executionPath: 'browser-bridge',
-      // goto bilibili.com + 页内 credentials:'include' 打 api.bilibili.com(clis/bilibili/auth.js:12; utils.js:130,181)。
+      // goto bilibili.com + 页内 credentials:'include' 打 api.bilibili.com(clis/bilibili/auth.js:12; utils.js:158,210)。
       authorities: ['browser-profile', 'public-network'],
       // 输出 mid/username/level(auth.js:16-20)。
       exposure: 'personal',
@@ -202,9 +230,9 @@ export const REVIEWED_RECORDS = new Map([
     get reviewedAgainst() { return shapeOf('twitter/whoami') },
     metadata: {
       executionPath: 'browser-bridge',
-      // getCookies(x.com) 只读 cookie 名 + goto x.com/home(clis/twitter/auth.js:6,15)。
+      // getCookies(x.com) 只读 cookie 名 + goto x.com/home(clis/twitter/auth.js:10,58;之后轮询读主页链接,:41-52)。
       authorities: ['browser-profile', 'public-network'],
-      // 输出 username/url(auth.js:25)。
+      // 输出 username/url(auth.js:67)。
       exposure: 'personal',
       effects: [],
       credentialFlow: 'consume',
@@ -216,8 +244,8 @@ export const REVIEWED_RECORDS = new Map([
     metadata: {
       executionPath: 'browser-bridge',
       // 出网面**超出** catalog 的 domain=x.com:queryId 解析会打 raw.githubusercontent.com
-      // (clis/twitter/shared.js:280),无 credentials 故不带 cookie;回退时整包下载至多 30 个
-      // x.com 脚本(shared.js:305-315)。记此一笔:domain 不是出网面的完整表达。
+      // (clis/twitter/shared.js:302),无 credentials 故不带 cookie;回退时整包下载至多 30 个
+      // x.com 脚本(shared.js:327-337)。记此一笔:domain 不是出网面的完整表达。
       authorities: ['browser-profile', 'public-network'],
       // 本账号的个性化时间线;ct0 只进请求头不进返回行(timeline.js:173-178 vs :159)。
       exposure: 'personal',
@@ -263,11 +291,11 @@ export const REVIEWED_RECORDS = new Map([
  * 条一次性拉进 tier,其中 488 条随即因 metadata-missing 落 unknown。结果仍 fail-closed,但
  * 三处代价真实存在——tier 名字("pilot")与成员规模不符;`no-tier` 与 `metadata-missing` 两个
  * reasonCode 的语义被搅混;§4.1.2 L2「触碰即处置」的记账面凭空扩大 60 倍。
- * **显式集合是「试点」的诚实表达**:进 tier 的只有这十三条,其余命令继续 `unknown/no-tier`。
+ * **显式集合是「试点」的诚实表达**:进 tier 的只有这十五条,其余命令继续 `unknown/no-tier`。
  */
 export const BROWSER_COOKIE_READ_PILOT = new Set([
   'xiaohongshu/whoami', 'xiaohongshu/feed', 'xiaohongshu/saved', 'xiaohongshu/collections', 'xiaohongshu/liked',
-  'xiaohongshu/search', 'xiaohongshu/user-posts',
+  'xiaohongshu/search', 'xiaohongshu/user-posts', 'xiaohongshu/note', 'xiaohongshu/comments',
   'bilibili/whoami', 'bilibili/hot',
   'twitter/whoami', 'twitter/timeline',
   'youtube/whoami', 'youtube/subscriptions',

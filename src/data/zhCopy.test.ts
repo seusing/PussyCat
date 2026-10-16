@@ -63,7 +63,7 @@ test('collections 保留旧记录的中文说明', () => {
   expect(argHelp('xiaohongshu/collections', 'id')).toContain('当前登录账号')
 })
 
-test.each(['xiaohongshu/search', 'xiaohongshu/user-posts', 'twitter/timeline'])('%s 的参数和每个下拉选项都有中文', (key) => {
+test.each(['xiaohongshu/search', 'xiaohongshu/user-posts', 'xiaohongshu/note', 'xiaohongshu/comments', 'twitter/timeline'])('%s 的参数和每个下拉选项都有中文', (key) => {
   const snapshot = JSON.parse(readFileSync(resolve(process.cwd(), 'public/catalog.snapshot.json'), 'utf8'))
   const command = snapshot.commands.find((c: { command: string }) => c.command === key)
   expect(hasZhCopy(key)).toBe(true)

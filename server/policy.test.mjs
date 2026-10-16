@@ -48,7 +48,7 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
       expect(policy.allowedCommands.has(key), key).toBe(false)
       expect(policy.decisionByKey.get(key).decisionSource, key).toBe('explicit-deny')
     }
-    expect(policy.allowedCommands.has('36kr/news')).toBe(true)
+    expect(policy.allowedCommands.has('trae-cn/setup')).toBe(true)
   })
 
   it('deny 理由进入 403 detail,而不是只回一个命令名', () => {
@@ -127,24 +127,23 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(policy.allowedCommands.size).toBe(runnable.size)
   })
 
-  it('执行面增量恰为三条 local-direct 加十三条试点命令,且没有任何条目被移除', () => {
-    // 只断言总数 287 挡不住「减掉一条 legacy、多进来两条别的」——必须钉住**增量本身**。
-    // 试点开放后增量从 3 条变 16 条:多出的十三条**逐条列名**,任何额外命令都会红。
+  it('执行面恰为三条 local-direct 加十五条试点命令,legacy 基线清空后原三条件派生集全部不可执行', () => {
+    // 只断言总数 18 挡不住「少一条、多进来别的一条」——必须钉住**成员本身**:十八条**逐条列名**,任何额外命令都会红。
+    // 原三条件派生集(read+public+browser=false 减 deny)不再有基线承接,也没有人工审定,
+    // opencli 1.8.8 升级时明确接受这部分执行面收缩(spec §4.1.2)。
     const legacyDerived = new Set(snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
       .map((c) => c.command)
       .filter((k) => COMMAND_POLICY_OVERRIDES[k]?.decision !== 'deny'))
-    const added = [...policy.allowedCommands].filter((k) => !legacyDerived.has(k)).sort()
-    const removed = [...legacyDerived].filter((k) => !policy.allowedCommands.has(k)).sort()
-    expect(added).toEqual([
+    expect([...policy.allowedCommands].sort()).toEqual([
       'antigravity/recent-paths', 'bilibili/hot', 'bilibili/whoami',
       'mercury/reimbursement-plan', 'trae-cn/setup', 'twitter/timeline', 'twitter/whoami',
-      'xiaohongshu/collections', 'xiaohongshu/feed', 'xiaohongshu/liked', 'xiaohongshu/saved',
-      'xiaohongshu/search', 'xiaohongshu/user-posts', 'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
+      'xiaohongshu/collections', 'xiaohongshu/comments', 'xiaohongshu/feed', 'xiaohongshu/liked',
+      'xiaohongshu/note', 'xiaohongshu/saved', 'xiaohongshu/search', 'xiaohongshu/user-posts',
+      'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
     ])
-    expect(removed).toEqual([])
-    expect(legacyDerived.size).toBe(276)
-    expect(policy.allowedCommands.size).toBe(292)
+    expect(legacyDerived.size).toBeGreaterThan(0)
+    expect([...legacyDerived].filter((k) => policy.allowedCommands.has(k))).toEqual([])
   })
 
   it('注入缝不经 buildExecutionPolicy 透传 —— 传第二参也不改变任何判决', () => {
@@ -167,17 +166,17 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
 })
 
 describe('P0-B execution policy', () => {
-  it('allows 36kr/news and pins catalog/OpenCLI version', () => {
-    expect(policy.opencliVersion).toBe('1.8.6')
-    expect(policy.allowedCommands.has('36kr/news')).toBe(true)
+  it('allows trae-cn/setup and pins catalog/OpenCLI version', () => {
+    expect(policy.opencliVersion).toBe('1.8.8')
+    expect(policy.allowedCommands.has('trae-cn/setup')).toBe(true)
     expect(validateStartRequest({
       runId: 'run-1',
-      commandKey: '36kr/news',
-      argv: ['36kr', 'news', '-f', 'json'],
+      commandKey: 'trae-cn/setup',
+      argv: ['trae-cn', 'setup', '-f', 'json'],
     }, policy)).toEqual({
       runId: 'run-1',
-      commandKey: '36kr/news',
-      argv: ['36kr', 'news', '-f', 'json'],
+      commandKey: 'trae-cn/setup',
+      argv: ['trae-cn', 'setup', '-f', 'json'],
     })
   })
 
@@ -198,13 +197,13 @@ describe('P0-B execution policy', () => {
   it('requires explicit JSON as the effective output format', () => {
     expect(() => validateStartRequest({
       runId: 'run-1',
-      commandKey: '36kr/news',
-      argv: ['36kr', 'news'],
+      commandKey: 'trae-cn/setup',
+      argv: ['trae-cn', 'setup'],
     }, policy)).toThrow(/explicit JSON/)
     expect(() => validateStartRequest({
       runId: 'run-2',
-      commandKey: '36kr/news',
-      argv: ['36kr', 'news', '-f', 'json', '--format=yaml'],
+      commandKey: 'trae-cn/setup',
+      argv: ['trae-cn', 'setup', '-f', 'json', '--format=yaml'],
     }, policy)).toThrow(/explicit JSON/)
   })
 
@@ -359,17 +358,16 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
     }
   })
 
-  it('白名单**只作用于试点命令** —— legacy 基线命令的 argv 形状不受影响', () => {
-    // 范围有意收窄:legacy 276 条没有任何声称 effects/residues 的人工审定,
-    // 不存在被 --trace 推翻的结论。贸然收紧会波及一大片未审定过 argv 形状的命令。
+  it('白名单**只作用于试点命令** —— 其余已放行命令(local-direct 三条)的 argv 形状不受影响', () => {
+    // 范围有意收窄:白名单只挂在试点成员上,贸然收紧会波及未审定过 argv 形状的命令。
     // 这条同时是**误伤守卫**:白名单若漏挂成全局,这里会红。
-    expect(policy.argvConstraintByKey.has('36kr/news')).toBe(false)
+    expect(policy.argvConstraintByKey.has('trae-cn/setup')).toBe(false)
     expect(validateStartRequest({
-      runId: 'r', commandKey: '36kr/news', argv: ['36kr', 'news', '--trace', 'on', '-f', 'json'],
-    }, policy).commandKey).toBe('36kr/news')
+      runId: 'r', commandKey: 'trae-cn/setup', argv: ['trae-cn', 'setup', '--trace', 'on', '-f', 'json'],
+    }, policy).commandKey).toBe('trae-cn/setup')
   })
 
-  it('十三条试点命令都挂上了约束,且 flags 与位置参数数恰为各自 manifest 声明的', () => {
+  it('十五条试点命令都挂上了约束,且 flags 与位置参数数恰为各自 manifest 声明的', () => {
     const expected = new Map([
       ['xiaohongshu/whoami', [[], 0]],
       ['xiaohongshu/feed', [['--limit'], 0]],
@@ -378,6 +376,8 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
       ['xiaohongshu/liked', [['--id', '--limit'], 0]],
       ['xiaohongshu/search', [['--limit', '--sort', '--time', '--type'], 1]],
       ['xiaohongshu/user-posts', [['--range', '--sort', '--timeout'], 1]],
+      ['xiaohongshu/note', [[], 1]],
+      ['xiaohongshu/comments', [['--limit', '--with-replies'], 1]],
       ['bilibili/whoami', [[], 0]],
       ['bilibili/hot', [['--limit'], 0]],
       ['twitter/whoami', [[], 0]],

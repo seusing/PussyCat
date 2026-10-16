@@ -1,5 +1,5 @@
 import { ArgumentError } from '@jackwener/opencli/errors';
-import { isXhsShortLink, readXhsShortLink } from './short-link.js';
+import { findXhsLink, isXhsShortLink, readXhsShortLink } from './short-link.js';
 
 /** Side-effect-free helpers shared by xiaohongshu note and comments commands. */
 /** Extract a bare note ID from a full URL or raw ID string. */
@@ -69,19 +69,53 @@ export function buildNoteUrl(input, options = {}) {
     throw new ArgumentError(message, hint);
 }
 
-/** 笔记命令先把 xhslink 短链接换成它跳转到的签名笔记链接；其他输入原样返回，仍由 buildNoteUrl 校验。 */
-export async function expandXhsNoteLink(input, { fetch } = {}) {
-    const raw = String(input);
-    const link = raw.trim();
-    if (!isXhsShortLink(link)) return raw;
-    const location = await readXhsShortLink(link, { fetch });
+const LINK_HINT = '请在小红书 App 里点「分享 → 复制链接」，或从搜索结果、博主主页复制完整链接';
+const NOTE_PATH = /^\/(?:(?:explore|note|search_result|discovery\/item)\/[a-f0-9]+|user\/profile\/[^/?#]+\/[a-f0-9]+)(?:[/?#]|$)/i;
+
+function parseXiaohongshuUrl(link) {
     try {
-        if (location) return buildNoteUrl(location);
+        const url = new URL(link);
+        return /^https?:$/.test(url.protocol) && isHostMatch(url.hostname, 'xiaohongshu.com') ? url : null;
     } catch {
-        // 跳到了首页、博主主页等非笔记页，下面统一报中文错误。
+        return null;
+    }
+}
+
+/**
+ * 笔记命令的链接入口：从分享文案或链接里取出小红书链接，一定返回带 xsec_token 的签名笔记链接，否则抛中文 ArgumentError。
+ * xhslink 短链接先展开成它跳转到的签名笔记链接；完整链接交给 buildNoteUrl 校验；裸笔记 ID 已经打不开。
+ */
+export async function resolveXhsNoteLink(input, { fetch } = {}) {
+    const text = String(input);
+    const link = findXhsLink(text) ?? text.trim();
+    if (isXhsShortLink(link)) {
+        const location = await readXhsShortLink(link, { fetch });
+        try {
+            if (location) return buildNoteUrl(location);
+        } catch {
+            // 跳到了首页、博主主页等非笔记页，下面统一报中文错误。
+        }
+        throw new ArgumentError(
+            `这条短链接打开的不是笔记：${link} → ${location || '没有跳转'}`,
+            '请在小红书 App 打开笔记，点「分享 → 复制链接」；博主主页的短链接请用「博主全部笔记」，短链接失效时重新复制一次即可',
+        );
+    }
+    const url = parseXiaohongshuUrl(link);
+    if (url) {
+        try {
+            return buildNoteUrl(link);
+        } catch {
+            // 下面区分是缺 xsec_token 还是根本不是笔记链接。
+        }
+        throw new ArgumentError(
+            NOTE_PATH.test(url.pathname)
+                ? `这条笔记链接缺少 xsec_token，小红书只认带签名的链接：${link}`
+                : `这不是小红书笔记链接：${link}`,
+            LINK_HINT,
+        );
     }
     throw new ArgumentError(
-        `这条短链接打开的不是笔记：${link} → ${location || '没有跳转'}`,
-        '请在小红书 App 打开笔记，点「分享 → 复制链接」；博主主页的短链接请用「博主全部笔记」，短链接失效时重新复制一次即可',
+        '请填写小红书笔记链接',
+        '支持 App「分享 → 复制链接」得到的短链接（或整段分享文案），以及带 xsec_token 的完整笔记链接；单独的笔记 ID 已经打不开',
     );
 }

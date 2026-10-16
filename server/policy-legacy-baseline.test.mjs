@@ -5,7 +5,6 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { reviewShapeHash } from './policy-fingerprint.mjs'
-import { COMMAND_POLICY_OVERRIDES } from './policy.mjs'
 
 const baseline = JSON.parse(readFileSync(resolve('server/policy-legacy-baseline.json'), 'utf8'))
 const snapshotRaw = readFileSync(resolve('public/catalog.snapshot.json'))
@@ -19,7 +18,6 @@ describe('legacy 基线 artifact', () => {
     const sha = createHash('sha256').update(sourceRaw).digest('hex')
     expect(baseline.materializedFrom.sha256).toBe(sha)
     expect(baseline.materializedFrom.path).toBe('public/catalog.snapshot.json')
-    expect(baseline.opencliVersion).toBe(snapshot.opencliVersion)
   })
 
   // 上面那条是**自反的**:artifact 若从另一份快照重新物化,它的 sha 与当时的快照仍然自洽,
@@ -33,13 +31,12 @@ describe('legacy 基线 artifact', () => {
     expect(baseline.opencliVersion).toBe('1.8.6')
   })
 
-  it('条目 = P0-B 三条件派生结果 − 显式 deny,恰 276 条', () => {
-    const derived = snapshot.commands
-      .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
-      .map((c) => c.command)
-      .filter((k) => COMMAND_POLICY_OVERRIDES[k]?.decision !== 'deny')
-    expect(Object.keys(baseline.entries).sort()).toEqual(derived.sort())
-    expect(derived.length).toBe(276)
+  // opencli 升级到 1.8.8 后 reviewShapeHash(含 opencliVersion)让 276 条全部漂移,升级 PR 明确接受执行面收缩
+  // 并删光条目(spec §4.1.2)。materializedFrom / opencliVersion 记录的是物化来源,不随之改动;
+  // 基线只减不增,所以这里钉死为空 —— 任何 key 重新出现都是违规,无论它从哪份快照算出来。
+  it('升级到 1.8.8 后条目全部迁出,基线为空', () => {
+    expect(snapshot.opencliVersion).toBe('1.8.8')
+    expect(Object.keys(baseline.entries)).toEqual([])
   })
 
   it('每条记录的 reviewShapeHash 与当前快照一致', () => {

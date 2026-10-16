@@ -1,7 +1,7 @@
 // 命令运行失败的归类:把 OpenCLI 的失败翻成中文 summary(带下一步),原始英文摘要与
 // stderr 尾部放进 detail,界面默认只露前者。
 //
-// 归类依据(@jackwener/opencli 1.8.6,dist/src 下):
+// 归类依据(@jackwener/opencli 1.8.8,dist/src 下):
 //  · errors.js           CliError 的 code / exitCode 表与 toEnvelope() 的字段
 //  · commanderAdapter.js renderError():站点命令失败时向 stderr 写 yaml.dump(envelope),
 //                        其中 `  code: XXX` 是稳定标识,message/help 才是英文文案

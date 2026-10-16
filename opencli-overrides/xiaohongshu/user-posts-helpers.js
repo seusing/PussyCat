@@ -1,5 +1,5 @@
 import { ArgumentError } from '@jackwener/opencli/errors';
-import { isXhsShortLink, readXhsShortLink } from './short-link.js';
+import { findXhsLink, isXhsShortLink, readXhsShortLink } from './short-link.js';
 
 export const MAX_POSTED_NOTES = 1000;
 const DAY_MS = 86_400_000;
@@ -60,11 +60,12 @@ export function parseXhsProfileTarget(input) {
     };
 }
 
-/** 在 parseXhsProfileTarget 之上多认 xhslink 短链接：只请求一次、读它自己的 Location，不跟随——匿名打开主页会再跳到登录页。 */
+/** 在 parseXhsProfileTarget 之上多认 xhslink 短链接和带链接的分享文案：只请求一次、读它自己的 Location，不跟随——匿名打开主页会再跳到登录页。 */
 export async function resolveXhsProfileTarget(input, { fetch } = {}) {
-    const raw = String(input ?? '').trim();
-    if (!isXhsShortLink(raw)) return parseXhsProfileTarget(raw);
-    const location = await readXhsShortLink(raw, { fetch });
+    const text = String(input ?? '').trim();
+    const link = findXhsLink(text) ?? text;
+    if (!isXhsShortLink(link)) return parseXhsProfileTarget(link);
+    const location = await readXhsShortLink(link, { fetch });
     let target = null;
     try {
         if (location) target = parseXhsProfileTarget(location);
@@ -73,7 +74,7 @@ export async function resolveXhsProfileTarget(input, { fetch } = {}) {
     }
     if (target) return target;
     throw new ArgumentError(
-        `这条短链接打开的不是博主主页：${raw} → ${location || '没有跳转'}`,
+        `这条短链接打开的不是博主主页：${link} → ${location || '没有跳转'}`,
         '请在小红书 App 进入博主主页，点「分享 → 复制链接」；笔记的分享链接不能用在这里，短链接失效时重新复制一次即可',
     );
 }

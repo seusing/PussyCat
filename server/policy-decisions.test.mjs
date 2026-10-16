@@ -17,12 +17,12 @@ describe('准入算法', () => {
     expect(d.reasonCode).toBe('explicit-deny')
   })
 
-  it('legacy 基线命中 → ready,且不下发 metadata/fingerprint', () => {
+  // 基线已清空(opencli 1.8.8 升级时接受执行面收缩):原基线里的命令不再有人工审定,一律落 unknown。
+  it('legacy 基线为空 → 原基线命令(36kr/news)是 unknown/no-tier,没有任何判决来自 legacy-baseline', () => {
     const d = decisions.get('36kr/news')
-    expect(d.state).toBe('ready')
-    expect(d.decisionSource).toBe('legacy-baseline')
-    expect(d.metadata).toBeUndefined()
-    expect(d.fingerprint).toBeUndefined()
+    expect(d.state).toBe('unknown')
+    expect(d.reasonCode).toBe('no-tier')
+    expect([...decisions.values()].filter((x) => x.decisionSource === 'legacy-baseline')).toEqual([])
   })
 
   it('三条审定命令进 tier-evaluation', () => {
@@ -44,14 +44,6 @@ describe('准入算法', () => {
     const d = decisions.get('xiaohongshu/login')     // write+cookie+browser
     expect(d.state).toBe('unknown')
     expect(d.reasonCode).toBe('no-tier')
-  })
-
-  it('legacy 形状漂移 → 退出基线', () => {
-    const drifted = { ...snapshot, commands: snapshot.commands.map((c) =>
-      c.command === '36kr/news' ? { ...c, args: [...(c.args ?? []), { name: 'injected' }] } : c) }
-    const d = byKey(buildPolicyDecisions(drifted)).get('36kr/news')
-    expect(d.decisionSource).not.toBe('legacy-baseline')
-    expect(d.state).toBe('unknown')
   })
 
   it('审定过期(reviewShapeHash 变) → unknown/review-stale,而非仅要求重确认', () => {
@@ -76,18 +68,18 @@ describe('准入算法', () => {
     expect(decisions.size).toBe(snapshot.commands.length)
   })
 
-  it('可执行面 = legacy 276 + 三条 local-direct + 十三条试点', () => {
+  it('可执行面 = legacy 0 + 三条 local-direct + 十五条试点', () => {
     const runnable = [...decisions.values()].filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
-    expect(runnable.length).toBe(276 + 3 + 13)
+    expect(runnable.length).toBe(0 + 3 + 15)
   })
 
   // 上一条的「全状态」是遍历**恰好出现的**状态,证明不了四个状态都能构造出来。
-  // 这条把它钉死:四个 state、四个 decisionSource 必须各自真的出现过。
-  it('四个 state 与四个 decisionSource 都真的出现,而非「恰好遇到的那几个」', () => {
+  // 这条把它钉死:四个 state 必须各自真的出现过;decisionSource 因 legacy 基线已清空只会出现其余三个。
+  it('四个 state 与三个 decisionSource 都真的出现,而非「恰好遇到的那几个」', () => {
     expect(new Set([...decisions.values()].map((d) => d.state)))
       .toEqual(new Set(['ready', 'acknowledgement-required', 'denied', 'unknown']))
     expect(new Set([...decisions.values()].map((d) => d.decisionSource)))
-      .toEqual(new Set(['explicit-deny', 'legacy-baseline', 'tier-evaluation', 'unclassified']))
+      .toEqual(new Set(['explicit-deny', 'tier-evaluation', 'unclassified']))
   })
 })
 
@@ -139,12 +131,12 @@ describe('准入算法 —— 真实数据到不了的出口(注入夹具)', () 
 
 // ——— browser-cookie-read-pilot 试点 ————————————————————————————————————————
 // 审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md。
-  // 这一组守的是三件事:十三条真的进了 tier 且只能落 ready/ack;**没进试点的同 cohort 命令
+  // 这一组守的是三件事:十五条真的进了 tier 且只能落 ready/ack;**没进试点的同 cohort 命令
 // 一条都没被带出来**;write/ui/intercept/download/login 继续被拒。
 describe('browser-cookie-read-pilot', () => {
   const PILOT = [
     'xiaohongshu/whoami', 'xiaohongshu/feed', 'xiaohongshu/saved', 'xiaohongshu/collections', 'xiaohongshu/liked',
-    'xiaohongshu/search', 'xiaohongshu/user-posts',
+    'xiaohongshu/search', 'xiaohongshu/user-posts', 'xiaohongshu/note', 'xiaohongshu/comments',
     'bilibili/whoami', 'bilibili/hot',
     'twitter/whoami', 'twitter/timeline',
     'youtube/whoami', 'youtube/subscriptions',
@@ -162,7 +154,7 @@ describe('browser-cookie-read-pilot', () => {
     expect(d.metadata.credentialFlow).toBe('consume')
   })
 
-  it('十三条只能得 ready 或 acknowledgement-required —— 不得出现 denied/unknown', () => {
+  it('十五条只能得 ready 或 acknowledgement-required —— 不得出现 denied/unknown', () => {
     for (const key of PILOT) {
       expect(['ready', 'acknowledgement-required'], key).toContain(decisions.get(key).state)
     }
@@ -177,13 +169,19 @@ describe('browser-cookie-read-pilot', () => {
     expect(d.state).toBe('acknowledgement-required')
   })
 
+  it('xiaohongshu/search、note、comments 读的是他人公开笔记,exposure 为 public', () => {
+    for (const key of ['xiaohongshu/search', 'xiaohongshu/note', 'xiaohongshu/comments']) {
+      expect(decisions.get(key).metadata.exposure, key).toBe('public')
+    }
+  })
+
   it('四条 whoami 的 persistent-session 如实进 metadata,并随判决下发', () => {
     for (const key of ['xiaohongshu/whoami', 'bilibili/whoami', 'twitter/whoami', 'youtube/whoami']) {
       expect(decisions.get(key).metadata.residues, key).toEqual(['persistent-session'])
     }
   })
 
-  it('**同 cohort 的非成员一条都没被带出来** —— read+cookie+browser 里只放行这十三条', () => {
+  it('**同 cohort 的非成员一条都没被带出来** —— read+cookie+browser 里只放行这十五条', () => {
     const cohort = snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'cookie' && c.browser === true)
       .map((c) => c.command)
@@ -199,7 +197,7 @@ describe('browser-cookie-read-pilot', () => {
   it.each([
     ['bilibili/history', 'read+cookie 同站非成员'],
     ['bilibili/following', 'read+cookie 同站非成员'],
-    ['xiaohongshu/comments', 'read+cookie 同站非成员'],
+    ['xiaohongshu/download', 'read+cookie 同站非成员(会写本地文件)'],
     ['12306/orders', 'read+cookie 他站非成员'],
   ])('%s(%s)保持 unknown/no-tier', (key) => {
     const d = decisions.get(key)

@@ -1,12 +1,12 @@
 // BrowserBridge 健康诊断 —— **复用 opencli 自己的结构化接口,不另起一套 daemon。**
 //
-// 数据源是 opencli daemon 的 `GET /status`(dist/src/daemon.js:207-237),一个真正的 JSON 端点。
+// 数据源是 opencli daemon 的 `GET /status`(dist/src/daemon.js:225-257),一个真正的 JSON 端点。
 // 不去解析 `opencli doctor` 的人读 stdout:那是给人看的排版,措辞随版本漂移,拿它当协议迟早断。
 // (`@jackwener/opencli` 的 package.json exports 没有映射 `./doctor` 与 `./browser/daemon-client`,
 //  所以也没法直接 import 它们的编程接口 —— HTTP 是本仓唯一能稳定拿到的结构化面。)
 //
 // **必须由 Host 代理,前端不得直连**:daemon 拒绝非 `chrome-extension://` 的 Origin
-// (daemon.js:353-360)并要求 `X-OpenCLI` 头(:203-206)。WebView 本来就打不通,
+// (daemon.js:420-427)并要求 `X-OpenCLI` 头(:221-224)。WebView 本来就打不通,
 // 这两道防线不该因为「前端要看状态」而被绕开或放宽。
 
 // daemon 端口是**写死的**:constants.js:5 定义 19825,且 :19-25 明写 OPENCLI_DAEMON_PORT
@@ -28,7 +28,7 @@ const DEFAULT_TIMEOUT_MS = 2000
  *     (observation/artifact.js:16),稳定且可关联到具体浏览器 profile;
  *   · `profiles[]` —— 每项都含 contextId 与 lastSeenAt(浏览器活动时间戳,一种行为信号),
  *     只转发**条数**。
- * daemon 的 /status 本身不含 cookie / token / 账号数据(已核 daemon.js:207-237),
+ * daemon 的 /status 本身不含 cookie / token / 账号数据(已核 daemon.js:225-257),
  * 但本函数的白名单是**正向枚举**,即便上游将来加了这类字段也流不出去。
  */
 function projectStatus(status, { opencliVersion, checkedAt }) {

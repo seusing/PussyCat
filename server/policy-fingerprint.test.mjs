@@ -157,28 +157,34 @@ describe('decisionFingerprint', () => {
   // / Task 5 的 revision),改动它的动机只会变多,所以照 Task 3「固定源身份」那条的做法
   // 补一组**写死字面量**:值变了这里必须有人手动改,并解释为什么。
   //
+  // 冻结值随 opencliVersion 整组变化:reviewShapeHash 含 opencliVersion(spec §4.1.2),
+  // 每次升级 opencli 都要整组重算,代价是已保存的 acknowledgement 作废一次(409 fingerprint-stale)。
+  // 重算前先用旧版本的 shape 复现旧冻结值,确认 canonicalJson 本身没漂。
+  //
   // 漂移的后果:fingerprint 全变 → 用户已保存的 acknowledgement 被**无声**作废,
   // 全部需确认的命令重新弹窗。按 I-P5 它不是安全边界(acknowledgement 本就不是安全授权),
   // 但「无声」这一点本身要治。
   it('全部人工记录的 decisionFingerprint 冻结值(挡住 canonicalJson 的无声漂移)', () => {
     const frozen = new Map([
-      ['trae-cn/setup', '2a2994c1470e84f106181d5999102a24c04c4a2deba0b43a4e0ae788c3627d27'],
-      ['mercury/reimbursement-plan', '2f06f817986e5a2acca50dea3fca05d60893e6c227de69e6a9b730e89d8cf0e6'],
-      ['antigravity/recent-paths', '80e57cf850a677eb934eb8c65b00b721f9f0cd73fd6ddcd8be2e7a6f02645207'],
-      // browser-cookie-read-pilot 十三条(审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md)
-      ['xiaohongshu/whoami', '213fc041ef1582b8f390040cee1f9327160e8e19c33cef3156e59f44a44ab372'],
-      ['xiaohongshu/feed', '61eed464da4b2059f6b1ead8f4826118ecacb4385d7710c40d7c71b5d0608fb4'],
-      ['xiaohongshu/saved', '4c47126f559db2c5d4e1bdad5577fd1b67afa7b831e8081290c0d7f1ddb795e4'],
-      ['xiaohongshu/collections', 'e4e39940aea94da2a16b71426efe5d35686183d8e175c80f598abd4bde9a8339'],
-      ['xiaohongshu/liked', '5cbce01ed962238e57096e6864c53c71203ab3e0f33953d8ba7ed15063600a4a'],
-      ['xiaohongshu/search', 'c73e34c0565a6fa4439f262a4174e2139f9ff1b34428094658faeca88d3fdd9d'],
-      ['xiaohongshu/user-posts', 'b7f710ac5d78127b93cbfccdbf82eb54ac3ec1a1262c8a22ed2373680b05718e'],
-      ['bilibili/whoami', 'a0f3a88f084e94b0e574be103ab1780e0934700d9ebe8831c0fae91087dfc0ac'],
-      ['bilibili/hot', '1ba4acade06562708a7909cecf03e7c511e672158aa57e62af3e5ca6cc9487d9'],
-      ['twitter/whoami', '41c9df6793cd51215225398da9793f08d7c1a0c6330fc50131123c44e9468424'],
-      ['twitter/timeline', '80736fef052501d8424b529b59a1dbba0db341028f159067070bf94a86ecb244'],
-      ['youtube/whoami', '37d950f7e4db1165b55e119894a2cea703319fd8ec874aef386bb828453d1a94'],
-      ['youtube/subscriptions', 'bae6964b7090046942df998449fd9bbe9f2762d1e02b990e4f9eb20cc29251a6'],
+      ['trae-cn/setup', '3b6267e9c77868fd7b7b7b47f655c3f1a6fc58bfac04bf65cb62f0ddb9debd72'],
+      ['mercury/reimbursement-plan', '3539d68bac77006fdb696428eb87e84179902ab0f7f5373f507dfe7262988b10'],
+      ['antigravity/recent-paths', '77b620beb544611d6a2fb7f97010a0c09505c9a16b93745a5f1e5d48884bfa5d'],
+      // browser-cookie-read-pilot 十五条(审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md)
+      ['xiaohongshu/whoami', '50cc47e6271ff4c4301e9a2c724f84deb006173196db66c3c98630b7446259ed'],
+      ['xiaohongshu/feed', '79c1582eb9e8c9f3838da803cefd3ceca3c21f965d83f4667b15bfd92540c677'],
+      ['xiaohongshu/saved', 'edc77cb3ea323c3700c938e961387ce64412a1acaddbb3bca235770c5e477c82'],
+      ['xiaohongshu/collections', '86db268efe6a2d33880ab34ba234f4baed6cd16cc253cb14f1a6ccfd4e0727f7'],
+      ['xiaohongshu/liked', '13aa70bb578822950e62ae179494af16955d9bbb42029c99bcdc84677222f3c2'],
+      ['xiaohongshu/search', 'b9881d442dc6cbe625beabba8cfe783168b55b3438fc3c63e1e9a4e3910c1dea'],
+      ['xiaohongshu/user-posts', '7f3a09ea2421ad3360e0ba783be1bfdb4043dd1bae5015e11c93d14c716baa37'],
+      ['xiaohongshu/note', '08c36d5238927b92123bfe3586416713dc6443668be8f8fc1285867d35681680'],
+      ['xiaohongshu/comments', '6a27e6840bb1d864e057a9baaf524f0311e94de0bc8c9c655ce44be0d9034ac7'],
+      ['bilibili/whoami', '04d7346d24ccd1004d75c40dc15a5a9efbba8ded13278a55343c3e329487692c'],
+      ['bilibili/hot', 'a6bc803de2ab2b149cf565e84531e6757f91de3be5998747c97c4f3a90dbb191'],
+      ['twitter/whoami', 'aee2d171333eb29fc5b5d8e381f59f434505b9cda6e8639c182d46eec9ba1b49'],
+      ['twitter/timeline', '941d5b951e3d29dc3bb99e128191372fc28ca5f10e10149734004e7fdbf53430'],
+      ['youtube/whoami', '9ba8a51c5ea84d624b8f77cc54279e82305fec8ef95cf640c8013e461316eb44'],
+      ['youtube/subscriptions', 'c18ad0f50381a177a35da43cc560658b799698d7b3798c4a77f52cde8ed28224'],
     ])
     // 先证明冻结集就是 REVIEWED_RECORDS 的全部,否则将来再加记录时,
     // 这个冻结集会**静默地只覆盖一部分**。

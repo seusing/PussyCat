@@ -41,18 +41,9 @@ const ARG_PATCHES = {
     { name: 'collection', type: 'string', required: false, help: '按收藏夹名称筛选；留空读取全部收藏' },
     { name: 'list-collections', type: 'bool', default: false, required: false, help: '只列出收藏夹，不读取笔记' },
   ],
-  search: [
-    { name: 'sort', type: 'string', default: 'general', required: false, choices: ['general', 'latest', 'likes', 'comments', 'collects'], help: 'Sort order: general, latest, likes, comments, collects' },
-    { name: 'time', type: 'string', default: 'all', required: false, choices: ['all', 'day', 'week', 'half-year'], help: 'Publish time: all, day, week, half-year' },
-    { name: 'type', type: 'string', default: 'all', required: false, choices: ['all', 'video', 'image'], help: 'Note type: all, video, image' },
-  ],
 }
 
-const COLUMN_PATCHES = {
-  search: ['rank', 'title', 'author', 'likes', 'type', 'published_at', 'url'],
-}
-
-// 新增命令：整条写入，插在 after 指向的命令之后。
+// 整条写入：新增命令插在 after 指向的命令之后；上游已有的同名条目（如 search）原位整条替换，不保留上游的参数。
 const NEW_ENTRIES = [
   {
     after: 'saved',
@@ -68,6 +59,25 @@ const NEW_ENTRIES = [
       columns: ['rank', 'id', 'name', 'count', 'url'],
       modulePath: 'xiaohongshu/collections.js',
       sourceFile: 'xiaohongshu/collections.js',
+    },
+  },
+  {
+    after: 'collections',
+    entry: {
+      site: 'xiaohongshu',
+      name: 'search',
+      description: '搜索小红书笔记',
+      ...browserCommand,
+      args: [
+        { name: 'query', type: 'str', required: true, positional: true, help: 'Search keyword' },
+        { name: 'limit', type: 'int', default: 20, required: false, help: 'Number of results' },
+        { name: 'sort', type: 'string', default: 'general', required: false, choices: ['general', 'latest', 'likes', 'comments', 'collects'], help: 'Sort order: general, latest, likes, comments, collects' },
+        { name: 'time', type: 'string', default: 'all', required: false, choices: ['all', 'day', 'week', 'half-year'], help: 'Publish time: all, day, week, half-year' },
+        { name: 'type', type: 'string', default: 'all', required: false, choices: ['all', 'video', 'image'], help: 'Note type: all, video, image' },
+      ],
+      columns: ['rank', 'title', 'author', 'likes', 'type', 'published_at', 'url'],
+      modulePath: 'xiaohongshu/search.js',
+      sourceFile: 'xiaohongshu/search.js',
     },
   },
   {
@@ -108,12 +118,6 @@ for (const [name, args] of Object.entries(ARG_PATCHES)) {
     if (index >= 0) entry.args[index] = arg
     else entry.args.push(arg)
   }
-}
-
-for (const [name, columns] of Object.entries(COLUMN_PATCHES)) {
-  const entry = findEntry(name)
-  if (!entry) throw new Error(`[opencli-overrides] xiaohongshu/${name} is missing from cli-manifest.json`)
-  entry.columns = columns
 }
 
 for (const { after, entry } of NEW_ENTRIES) {

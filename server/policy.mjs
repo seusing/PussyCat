@@ -232,7 +232,7 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
  * 因此**不进 reviewShapeHash**(policy-fingerprint.mjs 只投影 command.args)。而八条审定记录里
  * `effects: []` 与 `residues: []` 的成立恰恰以「不追加这些选项」为前提:
  *   · `--trace on` → observation/artifact.js:57 真的 writeFileSync 落盘 → local-file-write + temp-file;
- *   · `--site-session persistent` → execution.js:461 让**用户值优先**,四条 ephemeral 命令当场变
+ *   · `--site-session persistent` → execution.js:551 让**用户值优先**,四条 ephemeral 命令当场变
  *     persistent,residues 失真。
  * 这个前提此前只由前端 src/data/command.ts 的 buildArgv 保证,而 I-P1 说**绕过前端不得获得额外
  * 执行能力** —— 在这里恰恰能获得。所以这道闸必须在 Host 侧,不能在前端。

@@ -1,6 +1,6 @@
 // 多 Chrome profile 的选择 —— 「列出已连接的 profile」与「选一个当默认」。
 //
-// 数据源是 opencli 自带的 `profile list` / `profile use <别名>` 子命令(dist/src/cli.js:3049-3120):
+// 数据源是 opencli 自带的 `profile list` / `profile use <别名>` 子命令(dist/src/cli.js:3162-3233):
 //   · `profile use <profile>` 接受别名或 contextId,把它写成默认 profile,成功退出码 0;
 //   · `profile list` **没有 JSON 输出**(没有 -f 选项),只有人读的文本。已连接的 profile 每行:
 //       `  <contextId>[ <别名>][ default] — connected[ v<扩展版本>| version unknown]`

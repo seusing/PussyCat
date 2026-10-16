@@ -29,6 +29,11 @@ const ZH: Record<string, CommandCopy> = {
   'xiaohongshu/comments': {
     title: '笔记评论',
     description: '读取小红书笔记的评论，可选包含楼中楼回复',
+    args: {
+      'note-id': '笔记链接或分享文案',
+      limit: '一级评论条数（最多 50）',
+      'with-replies': '包含楼中楼回复',
+    },
   },
   'xiaohongshu/creator-note-detail': {
     title: '单篇笔记数据',
@@ -94,6 +99,7 @@ const ZH: Record<string, CommandCopy> = {
   'xiaohongshu/note': {
     title: '笔记详情',
     description: '读取小红书笔记的正文和互动数据',
+    args: { 'note-id': '笔记链接或分享文案' },
   },
   'xiaohongshu/notifications': {
     title: '我的通知',
@@ -173,6 +179,10 @@ const ZH: Record<string, CommandCopy> = {
   'bilibili/comments': {
     title: '视频评论',
     description: '获取 B站视频的评论，也可读取某条评论下的楼中楼回复',
+  },
+  'bilibili/creator-stats': {
+    title: '稿件创作数据',
+    description: '读取当前账号某个稿件在创作中心的核心指标：播放、点赞、评论、弹幕、收藏、投币、分享、涨粉，以及完播率、互动率等',
   },
   'bilibili/download': {
     title: '下载视频',
@@ -281,6 +291,10 @@ const ZH: Record<string, CommandCopy> = {
     title: '我的书签',
     description: '读取你的书签（收藏的推文，最新的在前）',
   },
+  'twitter/collection': {
+    title: '按时间读推文',
+    description: '读取某个用户的推文，一直翻到指定时间为止，每条带转发、引用的关系信息，并附完成回执',
+  },
   'twitter/delete': {
     title: '删除推文',
     description: '按链接删除指定的推文',
@@ -356,6 +370,10 @@ const ZH: Record<string, CommandCopy> = {
   'twitter/login': {
     title: '登录账号',
     description: '打开 X 登录页，等浏览器完成登录',
+  },
+  'twitter/mute-word': {
+    title: '添加屏蔽词',
+    description: '给你的 X 账号添加一个屏蔽词或短语',
   },
   'twitter/notifications': {
     title: '我的通知',
