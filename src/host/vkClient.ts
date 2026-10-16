@@ -153,6 +153,9 @@ export interface VkJobView {
   outputs?: Partial<VkJobOutputs>
 }
 
+/** Jev(TypeSafe)调用在 model_attempts 里的接口风格,用来和大模型调用区分。 */
+export const JEV_API_STYLE = 'typesafe_systemone'
+
 export interface VkModelAttempt {
   attempt_number: number
   stage: string
@@ -192,7 +195,7 @@ export interface VkStageMetric {
   output_tokens: number
   cached_tokens: number
   model_calls: number
-  /** 阶段 failed/quarantined 时引擎给的脱敏原因(最多 300 字),其余为 null;旧引擎不下发。 */
+  /** 阶段 failed/quarantined/skipped 时引擎给的脱敏原因(最多 300 字),其余为 null;旧引擎不下发。 */
   error?: string | null
 }
 
@@ -370,6 +373,8 @@ export interface VkStorylineRow {
   cost_cny: number | null
   /** 观点对比的组数;旧记录、未运行完和失败时是 null,skipped 时是 0,旧版引擎没有这个键。 */
   comparison_count?: number | null
+  /** 这次串联运行的 id,可用 `fetchVkJob(`run:${run_id}`)` 取进度;运行开始前(waiting/queued)为 null,旧版引擎没有这个键。 */
+  run_id?: string | null
 }
 
 export interface VkStorylineMember {

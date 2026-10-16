@@ -3,6 +3,15 @@ import { useMemo } from 'react'
 import { describeVkFailure } from './vkFailure'
 import './VkFailureNote.css'
 
+export function VkRawInfo({ raw }: { raw: string }) {
+  return (
+    <details className="vk-failure-raw">
+      <summary>原始信息</summary>
+      <pre>{raw}</pre>
+    </details>
+  )
+}
+
 export function VkFailureNote({ raw, className }: { raw: string; className?: string }) {
   const failure = useMemo(() => describeVkFailure(raw), [raw])
   return (
@@ -14,10 +23,7 @@ export function VkFailureNote({ raw, className }: { raw: string; className?: str
           {failure.action.label}
         </button>
       )}
-      <details className="vk-failure-raw">
-        <summary>原始信息</summary>
-        <pre>{raw}</pre>
-      </details>
+      <VkRawInfo raw={raw} />
     </div>
   )
 }

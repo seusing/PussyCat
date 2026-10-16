@@ -1,8 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, ChevronDown, ChevronUp, Pause, RefreshCw, Send, Square, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Minus, Pause, RefreshCw, Send, Square, X } from 'lucide-react'
 import {
+  JEV_API_STYLE,
   fetchVkJob,
   fetchVkJobs,
   fetchVkProviderSettings,
@@ -10,7 +11,8 @@ import {
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
 import { vkErrorText } from './vkErrors'
-import { VkFailureNote } from './VkFailureNote'
+import { VkFailureNote, VkRawInfo } from './VkFailureNote'
+import { describeVkFailure } from './vkFailure'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { useGlassMenuSurface } from '../../components/GlassMenu'
@@ -162,7 +164,7 @@ type TaskPhase = Readonly<{ label: string; stages: readonly string[] }>
 
 const QUICK_SUMMARY_PHASES: readonly TaskPhase[] = [
   { label: '获取视频内容', stages: ['acquire', 'normalize'] },
-  { label: '理解视频重点', stages: ['chapter'] },
+  { label: '理解视频重点', stages: ['chapter', 'jev_terms'] },
   { label: '整理知识笔记', stages: ['note'] },
   { label: '生成解析结果', stages: ['product'] },
 ]
@@ -175,23 +177,82 @@ const FULL_ANALYSIS_PHASES: readonly TaskPhase[] = [
   { label: '生成解析结果', stages: ['product'] },
 ]
 
+const STORYLINE_PHASES: readonly TaskPhase[] = [
+  { label: 'Jev 判断关联', stages: ['storyline_relate'] },
+  { label: '串联摘要', stages: ['series_digest'] },
+  { label: '关系判定', stages: ['storyline_link'] },
+  { label: '故事线汇总', stages: ['storyline_reduce'] },
+  { label: '观点对比', stages: ['storyline_compare'] },
+]
+
 const STAGE_LABELS: Record<string, string> = {
   acquire: '采集与转写',
   normalize: '整理字幕',
   chapter: '理解视频',
+  jev_terms: 'Jev 筛选术语',
   summary_map: '分段提取',
   summary_reduce: '分层汇总',
   claim: '提取关键信息',
   qc: '核对关键信息',
   note: '整理知识笔记',
   product: '生成解析结果',
+  storyline_relate: 'Jev 判断关联',
+  series_digest: '串联摘要',
+  storyline_link: '关系判定',
+  storyline_reduce: '故事线汇总',
+  storyline_compare: '观点对比',
 }
 
 function stageLabel(stage: string): string {
   return STAGE_LABELS[stage] ?? stage
 }
 
-function stageProgress(job: VkJobView, successful: boolean): {
+const DONE_METRIC_STATUS = /^(done|success|ok)$/i
+const FAILED_STAGE_METRIC_STATUSES = new Set(['quarantined', 'failed'])
+const isRunningMetric = (metric: VkStageMetric) => /^running$/i.test(metric.status ?? '')
+const isSkippedMetric = (metric: VkStageMetric) => /^skipped$/i.test(metric.status ?? '')
+const isFailedMetric = (metric: VkStageMetric) => FAILED_STAGE_METRIC_STATUSES.has((metric.status ?? '').toLowerCase())
+
+function stageMetricsOf(job: VkJobView): VkStageMetric[] {
+  const raw = job.progress?.stage_metrics
+  return (Array.isArray(raw) ? raw : [])
+    .filter((metric): metric is VkStageMetric => !!metric && typeof metric.stage === 'string' && metric.stage.length > 0)
+}
+
+/** 同名阶段的指标归到一起:串联摘要每个视频跑一次,同一个阶段名会出现多条。 */
+function groupStageMetrics(metrics: readonly VkStageMetric[]): Map<string, VkStageMetric[]> {
+  const groups = new Map<string, VkStageMetric[]>()
+  for (const metric of metrics) {
+    const group = groups.get(metric.stage)
+    if (group) group.push(metric)
+    else groups.set(metric.stage, [metric])
+  }
+  return groups
+}
+
+/** 指标全是 skipped 的阶段算跳过;它若还是当前阶段,说明引擎没往下走,不算。 */
+function stageSkipped(stage: string, group: readonly VkStageMetric[], currentStage: string | undefined): boolean {
+  return group.length > 0 && group.every(isSkippedMetric) && stage !== currentStage
+}
+
+/**
+ * 阶段是否已经结束:`done` 由调用方按各自口径给出,跳过的阶段同样算结束。
+ * 同名重复的阶段只要有一次完成,completed_stages 就会带上这个名字,所以它还有一次在跑、
+ * 或就是当前阶段时不能算完成。只出现一次的阶段仍以 `done` 为准。
+ */
+function stageFinished(
+  stage: string, done: boolean, group: readonly VkStageMetric[], currentStage: string | undefined,
+): boolean {
+  if (group.length > 1 && (stage === currentStage || group.some(isRunningMetric))) return false
+  return done || stageSkipped(stage, group, currentStage)
+}
+
+function stageProgress(
+  job: VkJobView,
+  successful: boolean,
+  explicitPhases?: readonly TaskPhase[],
+  doneLabel = '解析完成',
+): {
   completed: number
   total: number
   percent: number
@@ -206,12 +267,16 @@ function stageProgress(job: VkJobView, successful: boolean): {
   for (const attempt of job.progress?.model_attempts ?? []) observedStages.add(attempt.stage)
   const sawFullAnalysis = observedStages.has('claim') || observedStages.has('qc')
   const quickRequested = job.auto_route?.processing_depth === 'quick' || job.request?.preset === 'quick-summary'
-  const phases = !sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES
+  const phases = explicitPhases ?? (!sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES)
+  const metricGroups = groupStageMetrics(stageMetricsOf(job))
   let completed = 0
   if (successful) completed = phases.length
   else {
     for (const phase of phases) {
-      if (!phase.stages.every((stage) => completedStages.has(stage))) break
+      const finished = (stage: string) => stageFinished(
+        stage, completedStages.has(stage), metricGroups.get(stage) ?? [], currentStage,
+      )
+      if (!phase.stages.every(finished)) break
       completed += 1
     }
   }
@@ -226,38 +291,58 @@ function stageProgress(job: VkJobView, successful: boolean): {
     completed,
     total: phases.length,
     percent: Math.round((completed / phases.length) * 100),
-    currentLabel: successful ? '解析完成' : current.label,
+    currentLabel: successful ? doneLabel : current.label,
   }
 }
 
 type StageDisplay = {
   stage: string
-  metric: VkStageMetric | null
-  state: 'completed' | 'active' | 'interrupted' | 'failed' | 'recorded'
+  state: 'completed' | 'active' | 'interrupted' | 'failed' | 'skipped' | 'recorded'
+  /** 同名阶段出现的次数(串联摘要每个视频一次),界面合并成一行。 */
+  count: number
+  /** 同名阶段里失败/隔离的次数。 */
+  failedCount: number
+  /** 各次用时里有记录的部分之和;一次都没记录为 null。 */
+  elapsedS: number | null
+  /** 这一阶段最新一次模型调用答的模型(Jev 的调用也算);没有调用为 null。 */
+  model: string | null
   /** 只在引擎明确判了这一阶段隔离/失败时有值。 */
   failureReason: string | null
   /** 引擎随这一阶段下发的原始错误;没给时为 null,界面只显示 failureReason 的兜底说明。 */
   failureRaw: string | null
+  /** 阶段被跳过时引擎给的原因;没给时为 null。 */
+  skippedReason: string | null
 }
 
 // 原因优先取引擎随 stage_metrics 下发的 error;旧引擎或引擎没给时,如实说「没有产出」。
 const STAGE_NO_RESULT_REASON = '这一步没有产出可用结果'
-const FAILED_STAGE_METRIC_STATUSES = new Set(['quarantined', 'failed'])
+// 旧引擎的 skipped 阶段 error 是 missing_transcript 这类原始错误码,不能原样给用户看。
+const ENGINE_ERROR_CODE = /^[a-z][a-z0-9_]*$/i
+
+/** skipped 阶段的原因是原始错误码:认得出的按失败文案说明,认不出的只说没有执行,原码收进「原始信息」。 */
+function SkippedCodeReason({ raw }: { raw: string }) {
+  return (
+    <div className="vk-task-detail-step-reason is-skipped">
+      {describeVkFailure(raw).kind !== 'unknown'
+        ? <VkFailureNote raw={raw} />
+        : <>已跳过：这一步没有执行<VkRawInfo raw={raw} /></>}
+    </div>
+  )
+}
 
 /**
  * 只返回后端已经触及的阶段。阶段列表不是预先绘制的计划清单：
  * completed_stages、当前阶段、阶段指标和模型调用记录中的任一项，才足以让阶段出现在 UI。
  */
-function stageDisplayEntries(job: VkJobView): StageDisplay[] {
+function stageDisplayEntries(job: VkJobView, explicitPhases?: readonly TaskPhase[]): StageDisplay[] {
   const progress = job.progress
   const completedStages = new Set(
     (Array.isArray(progress?.completed_stages) ? progress.completed_stages : [])
       .filter((stage): stage is string => typeof stage === 'string' && stage.length > 0),
   )
-  const metrics = (Array.isArray(progress?.stage_metrics) ? progress.stage_metrics : [])
-    .filter((metric): metric is VkStageMetric => !!metric && typeof metric.stage === 'string' && metric.stage.length > 0)
-  const metricByStage = new Map<string, VkStageMetric>()
-  for (const metric of metrics) metricByStage.set(metric.stage, metric)
+  const metrics = stageMetricsOf(job)
+  const metricGroups = groupStageMetrics(metrics)
+  const groupOf = (stage: string) => metricGroups.get(stage) ?? []
 
   const observed = new Set<string>(completedStages)
   for (const metric of metrics) observed.add(metric.stage)
@@ -272,7 +357,7 @@ function stageDisplayEntries(job: VkJobView): StageDisplay[] {
 
   const sawFullAnalysis = observed.has('claim') || observed.has('qc')
   const quickRequested = job.auto_route?.processing_depth === 'quick' || job.request?.preset === 'quick-summary'
-  const phases = !sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES
+  const phases = explicitPhases ?? (!sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES)
   const phaseOrder = phases.flatMap((phase) => phase.stages)
   const orderedStages = [
     ...phaseOrder.filter((stage) => observed.has(stage)),
@@ -280,36 +365,57 @@ function stageDisplayEntries(job: VkJobView): StageDisplay[] {
   ]
   const latestMetricStage = metrics.at(-1)?.stage
   const latestAttemptStage = progress?.model_attempts?.at(-1)?.stage
-  const isCompleted = (stage: string) => completedStages.has(stage)
-    || /^(done|success|ok)$/i.test(metricByStage.get(stage)?.status ?? '')
+  const isCompleted = (stage: string) => stageFinished(
+    stage,
+    completedStages.has(stage) || DONE_METRIC_STATUS.test(groupOf(stage).at(-1)?.status ?? ''),
+    groupOf(stage),
+    currentStage,
+  )
   const unfinishedStages = orderedStages.filter((stage) => !isCompleted(stage))
   const latestStage = [currentStage, latestAttemptStage, latestMetricStage]
     .find((stage) => stage && !isCompleted(stage)) ?? unfinishedStages.at(-1)
   const status = job.status.toLowerCase()
+  const attempts = progress?.model_attempts ?? []
 
   return orderedStages.map((stage) => {
-    const metric = metricByStage.get(stage) ?? null
-    let state: StageDisplay['state'] = isCompleted(stage) ? 'completed' : 'recorded'
+    const group = groupOf(stage)
+    const metric = group.at(-1) ?? null
+    const skipped = stageSkipped(stage, group, currentStage)
+    let state: StageDisplay['state'] = skipped ? 'skipped' : isCompleted(stage) ? 'completed' : 'recorded'
     let failureReason: string | null = null
     let failureRaw: string | null = null
     // 被隔离/失败的阶段不论是不是最后一个、任务整体算不算失败(partial 任务就带着
     // 一个被隔离的阶段),都要显示成失败,否则只会落成一个看不出含义的序号。
-    if (state !== 'completed' && FAILED_STAGE_METRIC_STATUSES.has((metric?.status ?? '').toLowerCase())) {
+    if (state !== 'completed' && metric && isFailedMetric(metric)) {
       state = 'failed'
-      failureRaw = metric?.error?.trim() || null
+      failureRaw = metric.error?.trim() || null
       failureReason = failureRaw ?? STAGE_NO_RESULT_REASON
     } else if (stage === latestStage && state !== 'completed') {
       if (ACTIVE_STATUSES.has(status)) state = 'active'
       else if (INTERRUPTED_STATUSES.has(status)) state = 'interrupted'
       else if (batchState(status) === 'failed') state = 'failed'
     }
-    return { stage, metric, state, failureReason, failureRaw }
+    const elapsed = group.flatMap((item) => typeof item.elapsed_s === 'number' ? [item.elapsed_s] : [])
+    const attempt = attempts.filter((item) => item?.stage === stage).at(-1)
+    return {
+      stage,
+      state,
+      count: Math.max(group.length, 1),
+      failedCount: group.filter(isFailedMetric).length,
+      elapsedS: elapsed.length > 0 ? elapsed.reduce((sum, value) => sum + value, 0) : null,
+      model: (attempt?.model_reported || attempt?.model_requested || '').trim() || null,
+      failureReason,
+      failureRaw,
+      skippedReason: skipped ? metric?.error?.trim() || null : null,
+    }
   })
 }
 
 function configuredModelName(job: VkJobView, settings: VkProviderSettings | null): string {
   const actualRoutes = [...new Set(
-    (job.progress?.model_attempts ?? []).map((attempt) => attempt.provider_route),
+    (job.progress?.model_attempts ?? [])
+      .filter((attempt) => attempt.api_style !== JEV_API_STYLE)
+      .map((attempt) => attempt.provider_route),
   )]
   if (actualRoutes.length > 0) {
     return actualRoutes.map((route) => modelAttemptName(route, settings)).join(' → ')
@@ -421,12 +527,14 @@ const MemoTaskRow = memo(TaskRow, (previous, next) => (
 ))
 
 function TaskProgressDetails({
-  job, progress,
+  job, progress, phases,
 }: {
   job: VkJobView
   progress: ReturnType<typeof stageProgress>
+  /** 不传时按单视频任务的快速/完整阶段分组。 */
+  phases?: readonly TaskPhase[]
 }) {
-  const entries = stageDisplayEntries(job)
+  const entries = stageDisplayEntries(job, phases)
   const stageCountLabel = ACTIVE_STATUSES.has(job.status)
     ? `阶段 ${Math.min(progress.completed + 1, progress.total)} / ${progress.total}`
     : `${entries.length} 个阶段已记录`
@@ -444,12 +552,11 @@ function TaskProgressDetails({
       {entries.length > 0 ? (
         <ol className="vk-task-detail-steps" aria-label="解析阶段">
           {entries.map((entry, index) => {
-            const metric = entry.metric
             const elapsed = entry.state === 'active'
-              ? metric?.elapsed_s == null ? '进行中' : `${vkDurationLabel(metric.elapsed_s)} · 进行中`
-              : metric?.elapsed_s == null
+              ? entry.elapsedS == null ? '进行中' : `${vkDurationLabel(entry.elapsedS)} · 进行中`
+              : entry.elapsedS == null
                 ? '未记录'
-                : vkDurationLabel(metric.elapsed_s)
+                : vkDurationLabel(entry.elapsedS)
             return (
             <li
               key={entry.stage}
@@ -461,9 +568,10 @@ function TaskProgressDetails({
             >
               <span className="vk-task-detail-step-indicator">
                 {entry.state === 'completed' ? <Check size={13} aria-label="已完成" />
-                  : entry.state === 'interrupted' ? <Pause size={12} aria-label="已中断" />
-                    : entry.state === 'failed' ? <X size={13} aria-label="失败" />
-                      : index + 1}
+                  : entry.state === 'skipped' ? <Minus size={13} aria-label="已跳过" />
+                    : entry.state === 'interrupted' ? <Pause size={12} aria-label="已中断" />
+                      : entry.state === 'failed' ? <X size={13} aria-label="失败" />
+                        : index + 1}
                 {entry.state === 'active' && (
                   <span className="vk-task-detail-step-spinner" role="progressbar" aria-label={`${stageLabel(entry.stage)}进行中`} />
                 )}
@@ -472,12 +580,27 @@ function TaskProgressDetails({
                 <span className={`vk-task-detail-step-connector is-${entries[index + 1].state}`} aria-hidden="true" />
               )}
               <div className="vk-task-detail-step-content">
-                <strong>{stageLabel(entry.stage)}</strong>
+                <strong>
+                  {stageLabel(entry.stage)}
+                  {entry.count > 1 && ` ×${entry.count}`}
+                  {entry.model && <span className="vk-task-detail-step-model"> · {entry.model}</span>}
+                </strong>
                 <span>{elapsed}</span>
               </div>
-              {entry.failureRaw
-                ? <div className="vk-task-detail-step-reason"><VkFailureNote raw={entry.failureRaw} /></div>
-                : entry.failureReason && <span className="vk-task-detail-step-reason">{entry.failureReason}</span>}
+              {entry.state === 'skipped'
+                ? entry.skippedReason && ENGINE_ERROR_CODE.test(entry.skippedReason)
+                  ? <SkippedCodeReason raw={entry.skippedReason} />
+                  : (
+                    <span className="vk-task-detail-step-reason is-skipped">
+                      {entry.skippedReason ? `已跳过：${entry.skippedReason}` : '已跳过'}
+                    </span>
+                  )
+                : entry.failureRaw
+                  ? <div className="vk-task-detail-step-reason"><VkFailureNote raw={entry.failureRaw} /></div>
+                  : entry.failureReason && <span className="vk-task-detail-step-reason">{entry.failureReason}</span>}
+              {entry.count > 1 && entry.failedCount > 0 && (
+                <span className="vk-task-detail-step-reason">其中 {entry.failedCount} 次失败</span>
+              )}
             </li>
             )
           })}
@@ -1040,6 +1163,13 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
               batchId={job.batch_id}
               baseUrl={baseUrl}
               parsedCount={batchMembers.filter((member) => producedResult(member.state)).length}
+              renderRunProgress={(run) => (
+                <TaskProgressDetails
+                  job={run}
+                  phases={STORYLINE_PHASES}
+                  progress={stageProgress(run, SUCCESS_STATUSES.has(run.status), STORYLINE_PHASES, '串联完成')}
+                />
+              )}
               onView={() => {
                 window.dispatchEvent(new CustomEvent(VK_OPEN_OUTPUT_EVENT, {
                   detail: { jobId, title: '解析结果', storyline: true },

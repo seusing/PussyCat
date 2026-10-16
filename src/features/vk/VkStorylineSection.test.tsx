@@ -1,8 +1,9 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkStorylineSection } from './VkStorylineSection'
-import type { VkStorylineRow } from '../../host/vkClient'
+import type { VkJobView, VkStorylineRow } from '../../host/vkClient'
 
 const BASE = 'http://127.0.0.1:17373'
 
@@ -13,11 +14,28 @@ const row = (over: Partial<VkStorylineRow> = {}): VkStorylineRow => ({
   ...over,
 })
 
-/** 模拟 Host 的 /storylines:rows 为 null 时表示旧引擎(404)。 */
+const runView = (over: Partial<VkJobView> = {}): VkJobView => ({
+  job_id: 'run:run-1', kind: 'storyline', status: 'done',
+  submitted_at: '2026-09-01T00:00:00Z', finished_at: '2026-09-01T00:01:00Z',
+  parent_job_id: null, cache_bypass: false,
+  ...over,
+})
+
+const showRun = (run: VkJobView): ReactNode => <p data-testid="run-view">{run.job_id}:{run.status}</p>
+
+/** 模拟 Host 的 /storylines:rows 为 null 时表示旧引擎(404);run 为 null 时 /jobs/run:* 回 404。 */
 function stubStorylineApi(initial: VkStorylineRow[] | null, postStatus = 201) {
-  const state = { rows: initial, posts: [] as unknown[], lists: 0 }
+  const state = {
+    rows: initial, posts: [] as unknown[], lists: 0,
+    run: null as VkJobView | null, runGets: [] as string[],
+  }
   const impl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
+    if (url.pathname.startsWith('/vk/v1/jobs/')) {
+      state.runGets.push(url.pathname)
+      if (!state.run) return new Response(JSON.stringify({ error: '串联运行不存在' }), { status: 404 })
+      return new Response(JSON.stringify(state.run))
+    }
     if (init?.method === 'POST') {
       state.posts.push(JSON.parse(String(init.body)))
       if (postStatus >= 400) return new Response(JSON.stringify({ error: '批次不存在' }), { status: postStatus })
@@ -46,8 +64,20 @@ function captureIntervals() {
   return timers
 }
 
-function renderSection(props: { parsedCount?: number; onView?: () => void } = {}) {
-  return render(<VkStorylineSection batchId="batch-1" baseUrl={BASE} parsedCount={props.parsedCount ?? 3} onView={props.onView ?? (() => {})} />)
+function renderSection(props: {
+  parsedCount?: number
+  onView?: () => void
+  renderRunProgress?: (run: VkJobView) => ReactNode
+} = {}) {
+  return render(
+    <VkStorylineSection
+      batchId="batch-1"
+      baseUrl={BASE}
+      parsedCount={props.parsedCount ?? 3}
+      onView={props.onView ?? (() => {})}
+      renderRunProgress={props.renderRunProgress}
+    />,
+  )
 }
 
 afterEach(() => {
@@ -197,5 +227,95 @@ describe('VkStorylineSection', () => {
     renderSection()
     await screen.findByTestId('vk-storyline-status')
     expect(timers.size).toBe(0)
+  })
+
+  describe('串联过程', () => {
+    const toggle = () => screen.queryByRole('button', { name: '串联过程' })
+
+    it.each([
+      ['有 run_id 但没有渲染器', row({ run_id: 'run-1' }), undefined, false],
+      ['有渲染器但 run_id 为空(排队中)', row({ status: 'queued', run_id: null }), showRun, false],
+      ['有渲染器但旧版引擎没有 run_id', row(), showRun, false],
+      ['run_id 和渲染器都有', row({ run_id: 'run-1' }), showRun, true],
+    ])('%s', async (_name, record, renderRunProgress, shown) => {
+      const state = stubStorylineApi([record])
+      renderSection({ renderRunProgress })
+      await screen.findByTestId('vk-storyline-status')
+      expect(toggle() !== null).toBe(shown)
+      if (shown) expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+      expect(state.runGets).toEqual([])
+    })
+
+    it('展开前不请求运行进度,展开后按 run:<id> 取并交给渲染器,收起后不再显示', async () => {
+      const state = stubStorylineApi([row({ run_id: 'run-1' })])
+      state.run = runView()
+      renderSection({ renderRunProgress: showRun })
+      const button = await screen.findByRole('button', { name: '串联过程' })
+      await act(async () => {})
+      expect(state.runGets).toEqual([])
+
+      await userEvent.click(button)
+      expect(button).toHaveAttribute('aria-expanded', 'true')
+      expect(await screen.findByTestId('run-view')).toHaveTextContent('run:run-1:done')
+      expect(state.runGets).toEqual(['/vk/v1/jobs/run:run-1'])
+
+      await userEvent.click(button)
+      expect(button).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByTestId('run-view')).not.toBeInTheDocument()
+    })
+
+    it('读取失败就地显示错误,不影响串联状态行', async () => {
+      stubStorylineApi([row({ run_id: 'run-1' })])
+      renderSection({ renderRunProgress: showRun })
+      await userEvent.click(await screen.findByRole('button', { name: '串联过程' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('串联运行不存在')
+      expect(screen.getByTestId('vk-storyline-status')).toHaveTextContent('已串成 2 条故事线')
+    })
+
+    it('串联还在进行或运行视图是 running 时每 1.5 秒轮询,两者都结束后停止', async () => {
+      const timers = captureIntervals()
+      const state = stubStorylineApi([row({ status: 'running', run_id: 'run-1' })])
+      state.run = runView({ status: 'running', finished_at: null })
+      renderSection({ renderRunProgress: showRun })
+      await userEvent.click(await screen.findByRole('button', { name: '串联过程' }))
+      await screen.findByTestId('run-view')
+      const runPolls = () => [...timers.values()].filter((timer) => timer.delay === 1_500)
+      expect(runPolls()).toHaveLength(1)
+
+      state.run = runView()
+      await act(async () => { runPolls()[0].run() })
+      await waitFor(() => expect(screen.getByTestId('run-view')).toHaveTextContent('run:run-1:done'))
+      expect(state.runGets).toHaveLength(2)
+      // 串联行还没刷新(15 秒一次),仍在进行中,继续盯着运行视图
+      expect(runPolls()).toHaveLength(1)
+
+      state.rows = [row({ status: 'done', run_id: 'run-1' })]
+      const rowPoll = [...timers.values()].find((timer) => timer.delay === 15_000)!
+      await act(async () => { rowPoll.run() })
+      await waitFor(() => expect(runPolls()).toHaveLength(0))
+    })
+
+    it('串联换了一次运行或行状态变化时重新请求,不拿上一次的进度充数', async () => {
+      const timers = captureIntervals()
+      const state = stubStorylineApi([row({ status: 'running', run_id: 'run-1' })])
+      state.run = runView({ job_id: 'run:run-1', status: 'running', finished_at: null })
+      renderSection({ renderRunProgress: showRun })
+      await userEvent.click(await screen.findByRole('button', { name: '串联过程' }))
+      expect(await screen.findByTestId('run-view')).toHaveTextContent('run:run-1:running')
+
+      state.rows = [row({ status: 'running', run_id: 'run-2' })]
+      state.run = runView({ job_id: 'run:run-2', status: 'running', finished_at: null })
+      const rowPoll = [...timers.values()].find((timer) => timer.delay === 15_000)!
+      await act(async () => { rowPoll.run() })
+      await waitFor(() => expect(screen.getByTestId('run-view')).toHaveTextContent('run:run-2:running'))
+      expect(state.runGets.at(-1)).toBe('/vk/v1/jobs/run:run-2')
+
+      const before = state.runGets.length
+      state.rows = [row({ status: 'done', run_id: 'run-2' })]
+      state.run = runView({ job_id: 'run:run-2', status: 'done' })
+      await act(async () => { rowPoll.run() })
+      await waitFor(() => expect(screen.getByTestId('run-view')).toHaveTextContent('run:run-2:done'))
+      expect(state.runGets.length).toBeGreaterThan(before)
+    })
   })
 })

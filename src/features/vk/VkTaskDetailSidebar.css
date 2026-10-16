@@ -225,6 +225,13 @@
 }
 .vk-storyline-actions button:hover:not(:disabled) { background: #292d35; }
 .vk-storyline-actions button:disabled { opacity: .45; }
+.vk-storyline-run { margin-top: 10px; }
+.vk-storyline-run-toggle { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; padding: 2px 0; color: var(--color-fg-dim); font-size: 12px; transition: color 150ms ease; }
+.vk-storyline-run-toggle:hover { color: var(--color-fg); }
+.vk-storyline-run-chevron { transition: transform 180ms ease; }
+.vk-storyline-run-toggle[aria-expanded='true'] .vk-storyline-run-chevron { transform: rotate(180deg); }
+.vk-storyline-run-body { margin-top: 6px; }
+.vk-storyline-run-note { margin: 0; color: var(--color-fg-dim); font-size: 11px; }
 
 /* 整批重跑:范围比旁边几个按钮大,给个醒目边框,别跟"只作用于当前这一条"的混淆。 */
 .vk-task-batch-rerun-button { border-color: var(--color-accent, #4c8dff) !important; }
@@ -333,17 +340,22 @@
 .vk-task-detail-step.is-active .vk-task-detail-step-indicator { border-color: var(--color-accent); color: var(--color-accent); }
 .vk-task-detail-step.is-interrupted .vk-task-detail-step-indicator { border-color: var(--color-warning); color: var(--color-warning); }
 .vk-task-detail-step.is-failed .vk-task-detail-step-indicator { border-color: var(--color-danger); color: var(--color-danger); }
+.vk-task-detail-step.is-skipped .vk-task-detail-step-indicator { opacity: .55; }
+.vk-task-detail-step.is-skipped .vk-task-detail-step-content { opacity: .6; }
 .vk-task-detail-step-spinner { position: absolute; inset: -5px; border: 2px solid transparent; border-top-color: var(--color-accent); border-right-color: var(--color-accent); border-radius: 50%; animation: vk-task-step-spin 800ms linear infinite; }
 .vk-task-detail-step-connector { position: absolute; top: 22px; bottom: 0; left: 10px; width: 2px; background: var(--color-line); }
 .vk-task-detail-step-connector.is-completed { background: var(--color-success); }
 .vk-task-detail-step-connector.is-active { background: var(--color-accent); }
 .vk-task-detail-step-connector.is-interrupted { background: var(--color-warning); }
 .vk-task-detail-step-connector.is-failed { background: var(--color-danger); }
+.vk-task-detail-step-connector.is-skipped { background: var(--color-line); opacity: .5; }
 .vk-task-detail-step-content { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; padding-top: 3px; }
 .vk-task-detail-step-content strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .vk-task-detail-step-content > span { flex: 0 0 auto; color: var(--color-fg-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.vk-task-detail-step-model { color: var(--color-fg-dim); font-weight: 400; }
 .vk-task-detail-step-reason { grid-column: 2; margin-top: -4px; color: color-mix(in srgb, var(--color-danger) 72%, var(--color-fg-dim)); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .vk-task-detail-step-reason .vk-failure-note { margin-top: 4px; font-size: 11px; }
+.vk-task-detail-step-reason.is-skipped { color: var(--color-fg-dim); opacity: .75; }
 .vk-task-detail-stage-empty { margin: 0; color: var(--color-fg-dim); font-size: 11px; }
 .vk-task-detail-task-empty { list-style: none; color: var(--color-fg-dim); font-size: 12px; }
 

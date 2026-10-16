@@ -10,6 +10,7 @@ export type VkFailureKind =
   | 'timeout'
   | 'ceiling'
   | 'empty'
+  | 'no-transcript'
   | 'download'
   | 'login-required'
   | 'bad-source'
@@ -101,6 +102,13 @@ export function describeVkFailure(raw: string): VkFailure {
       kind: 'empty',
       headline: '模型返回了空内容',
       advice: '重试；反复出现就换模型或调低推理强度',
+    }
+  }
+  if (/missing_transcript/.test(raw)) {
+    return {
+      kind: 'no-transcript',
+      headline: '没有拿到字幕或语音转写',
+      advice: '这个视频没有可用字幕，语音转写也没有成功，可以重试或换一个有字幕的来源',
     }
   }
   if (/media_acquisition_failed|DownloadError/.test(raw)) {

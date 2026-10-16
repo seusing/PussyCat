@@ -38,6 +38,7 @@ const REAL_SAMPLES: Array<[string, string, VkFailureKind]> = [
   ['流式总超时(推理档过高)', STREAM_TIMEOUT_HIGH_EFFORT, 'timeout'],
   ['思考超限', STREAM_CEILING, 'ceiling'],
   ['不是链接', NOT_A_LINK, 'bad-source'],
+  ['缺少字幕', 'missing_transcript', 'no-transcript'],
 ]
 
 // 引擎源码里的固定文案(acquisition/coordinator.py、models/gateway.py)。
@@ -162,6 +163,16 @@ describe('describeVkFailure 文案与动作', () => {
       headline: '这一行不是有效的视频链接或文件',
       advice: '检查输入内容',
     })
+  })
+
+  it('缺少字幕或语音转写:不是失败也不是下载问题,没有动作按钮', () => {
+    const expected = {
+      kind: 'no-transcript',
+      headline: '没有拿到字幕或语音转写',
+      advice: '这个视频没有可用字幕，语音转写也没有成功，可以重试或换一个有字幕的来源',
+    }
+    expect(describeVkFailure('missing_transcript')).toEqual(expected)
+    expect(describeVkFailure('media_acquisition_failed: missing_transcript')).toEqual(expected)
   })
 
   it('「去模型配置」把应用切到模型配置模块', () => {

@@ -1769,6 +1769,21 @@ describe('VkTaskDetailSidebar', () => {
     expect(screen.queryByText('解析结果')).not.toBeInTheDocument()
   })
 
+  // 阶段审计用的夹具:阶段指标、大模型调用与 Jev 调用(接口风格 typesafe_systemone)。
+  const stageMetric = (stage: string, status: string, elapsed: number | null, error?: string) => ({
+    stage, status, elapsed_s: elapsed, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0,
+    ...(error === undefined ? {} : { error }),
+  })
+  const modelAttempt = (stage: string, over: Record<string, unknown> = {}) => ({
+    attempt_number: 1, stage, provider_route: 'primary:default', model_requested: 'gpt-6-sol',
+    model_reported: 'gpt-6-sol', api_style: 'openai_responses', retry_index: 0, latency_ms: 800,
+    status: 'ok', created_at: '2026-09-18T00:00:01Z', switch_reason: null, ...over,
+  })
+  const jevAttempt = (stage: string, over: Record<string, unknown> = {}) => modelAttempt(stage, {
+    provider_route: 'typesafe:jev-latest', model_requested: 'jev-latest', model_reported: 'jev-1.13.0',
+    api_style: 'typesafe_systemone', ...over,
+  })
+
   describe('串联分析区块', () => {
     const storyline = (over: Record<string, unknown> = {}) => ({
       storyline_id: 'sl_1', batch_id: 'batch-one', status: 'done', trigger: 'auto',
@@ -1857,6 +1872,314 @@ describe('VkTaskDetailSidebar', () => {
       await act(async () => {})
       expect(screen.queryByTestId('vk-storyline-section')).not.toBeInTheDocument()
       expect(storylineRequests).toEqual([])
+    })
+
+    /** 在 withStorylines 之上再叠一层 /vk/v1/jobs/run:<id>,返回串联运行的进度视图。 */
+    function withStorylineRun(rows: Record<string, unknown>[], runView: () => Record<string, unknown>) {
+      const base = withStorylines(rows)
+      const inner = globalThis.fetch
+      const runRequests: string[] = []
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input))
+        if (url.pathname.startsWith('/vk/v1/jobs/run:')) {
+          runRequests.push(url.pathname)
+          return new Response(JSON.stringify(runView()))
+        }
+        return inner(input, init)
+      }))
+      return { ...base, runRequests }
+    }
+
+    const storylineRun = (status: string, progress: Record<string, unknown>) => ({
+      job_id: 'run:run-9', kind: 'storyline', status,
+      submitted_at: '2026-09-18T00:02:00Z', finished_at: status === 'running' ? null : '2026-09-18T00:03:00Z',
+      parent_job_id: null, cache_bypass: false, progress,
+    })
+    const finishedStorylineRun = () => storylineRun('done', {
+      completed_stages: ['storyline_relate', 'series_digest', 'storyline_link', 'storyline_reduce', 'storyline_compare'],
+      stage_metrics: [
+        stageMetric('storyline_relate', 'done', 1.2),
+        stageMetric('series_digest', 'done', 2),
+        stageMetric('series_digest', 'done', 3),
+        stageMetric('series_digest', 'done', 1.5),
+        stageMetric('series_digest', 'done', 2.5),
+        stageMetric('storyline_link', 'done', 4),
+        stageMetric('storyline_reduce', 'done', 5),
+        stageMetric('storyline_compare', 'done', 6),
+      ],
+      model_attempts: [
+        jevAttempt('storyline_relate'),
+        ...[1, 2, 3, 4].map(() => modelAttempt('series_digest')),
+        modelAttempt('storyline_link'),
+        modelAttempt('storyline_reduce'),
+        modelAttempt('storyline_compare'),
+      ],
+    })
+
+    it('「串联过程」默认收起且不发请求,展开后按顺序列出 5 步,串联摘要合并成一行', async () => {
+      const { runRequests } = withStorylineRun([storyline({ run_id: 'run-9' })], finishedStorylineRun)
+      render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+      const section = await screen.findByTestId('vk-storyline-section')
+      const toggle = await within(section).findByRole('button', { name: '串联过程' })
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await act(async () => {})
+      expect(runRequests).toEqual([])
+      expect(screen.queryByTestId('vk-storyline-run')).not.toBeInTheDocument()
+
+      await userEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      const region = await screen.findByTestId('vk-storyline-run')
+      const steps = await within(region).findByRole('list', { name: '解析阶段' })
+      expect(runRequests).toEqual(['/vk/v1/jobs/run:run-9'])
+      const items = [...steps.querySelectorAll<HTMLElement>('li.vk-task-detail-step')]
+      expect(items.map((item) => item.dataset.stage)).toEqual([
+        'storyline_relate', 'series_digest', 'storyline_link', 'storyline_reduce', 'storyline_compare',
+      ])
+      expect(items[0]).toHaveTextContent('Jev 判断关联 · jev-1.13.0')
+      expect(items[1].querySelector('strong')).toHaveTextContent('串联摘要 ×4 · gpt-6-sol')
+      expect(items[1].querySelector('.vk-task-detail-step-content > span')).toHaveTextContent('9s')
+      expect(items[2]).toHaveTextContent('关系判定')
+      expect(items[3]).toHaveTextContent('故事线汇总')
+      expect(items[4]).toHaveTextContent('观点对比')
+      items.forEach((item) => expect(item).toHaveAttribute('data-stage-state', 'completed'))
+      expect(region).toHaveTextContent('串联完成')
+      expect(region).toHaveTextContent('5 个阶段已记录')
+
+      await userEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByTestId('vk-storyline-run')).not.toBeInTheDocument()
+    })
+
+    it('串联摘要还有一次在跑、或它就是当前阶段时不算完成,运行中每 1.5 秒轮询一次', async () => {
+      const polls = captureMemberPolling()
+      const digests = (statuses: string[]) => statuses.map((status, index) => stageMetric('series_digest', status, index + 1))
+      let run = storylineRun('running', {
+        completed_stages: ['storyline_relate', 'series_digest'], current_stage: 'series_digest',
+        stage_metrics: [stageMetric('storyline_relate', 'done', 1), ...digests(['done', 'done', 'running'])],
+        model_attempts: [jevAttempt('storyline_relate'), modelAttempt('series_digest')],
+      })
+      const { runRequests } = withStorylineRun([storyline({ status: 'running', run_id: 'run-9' })], () => run)
+      render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+      const section = await screen.findByTestId('vk-storyline-section')
+      await userEvent.click(await within(section).findByRole('button', { name: '串联过程' }))
+      const region = await screen.findByTestId('vk-storyline-run')
+      await within(region).findByRole('list', { name: '解析阶段' })
+      const digest = () => region.querySelector<HTMLElement>('[data-stage="series_digest"]')!
+      expect(digest()).toHaveAttribute('data-stage-state', 'active')
+      expect(digest().querySelector('strong')).toHaveTextContent('串联摘要 ×3')
+      expect(within(digest()).queryByLabelText('已完成')).not.toBeInTheDocument()
+      expect(region).toHaveTextContent('阶段 2 / 5')
+      expect(polls.size).toBe(1)
+
+      // 当前阶段已经不是它,但还有一次在跑:仍然不算完成。
+      run = { ...run, progress: { ...(run.progress as object), current_stage: undefined } }
+      let before = runRequests.length
+      await act(async () => {
+        await [...polls.values()][0]()
+        await new Promise((resolve) => window.setTimeout(resolve, 20))
+      })
+      expect(runRequests.length).toBe(before + 1)
+      expect(digest()).toHaveAttribute('data-stage-state', 'active')
+      expect(region).toHaveTextContent('阶段 2 / 5')
+
+      // 最后一次也跑完:整行完成,进度推进。
+      run = {
+        ...run,
+        progress: {
+          ...(run.progress as object),
+          stage_metrics: [stageMetric('storyline_relate', 'done', 1), ...digests(['done', 'done', 'done'])],
+        },
+      }
+      before = runRequests.length
+      await act(async () => {
+        await [...polls.values()][0]()
+        await new Promise((resolve) => window.setTimeout(resolve, 20))
+      })
+      expect(runRequests.length).toBe(before + 1)
+      await waitFor(() => expect(digest()).toHaveAttribute('data-stage-state', 'completed'))
+      expect(digest().querySelector('.vk-task-detail-step-content > span')).toHaveTextContent('6s')
+      expect(region).toHaveTextContent('阶段 3 / 5')
+    })
+
+    it.each([
+      ['还没有 run_id(排队中)', { status: 'queued', run_id: null }],
+      ['旧版引擎没有 run_id 这个键', {}],
+    ])('%s:不出现「串联过程」', async (_name, over) => {
+      const { runRequests } = withStorylineRun([storyline(over)], finishedStorylineRun)
+      render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+      const section = await screen.findByTestId('vk-storyline-section')
+      await within(section).findByTestId('vk-storyline-status')
+      expect(within(section).queryByRole('button', { name: '串联过程' })).not.toBeInTheDocument()
+      expect(runRequests).toEqual([])
+    })
+  })
+
+  describe('Jev 筛选术语与每步模型', () => {
+    const jevJob = (progress: Record<string, unknown>, status = 'done'): VkJobView => ({
+      job_id: 'job-jev', kind: 'run', status,
+      submitted_at: '2026-09-18T00:00:00Z', finished_at: status === 'running' ? null : '2026-09-18T00:01:00Z',
+      parent_job_id: null, cache_bypass: false,
+      request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      progress,
+    })
+    async function openJevJob(job: VkJobView) {
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.endsWith('/vk/v1/jobs/job-jev')) return new Response(JSON.stringify(job), { status: 200 })
+        if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({
+          channels: [{ id: 'primary', name: '主站' }], roles: {},
+        }), { status: 200 })
+        if (url.endsWith('/vk/v1/jobs')) return new Response('[]', { status: 200 })
+        return new Response('{}', { status: 404 })
+      }))
+      render(<VkTaskDetailSidebar jobId="job-jev" baseUrl={BASE} onClose={() => {}} />)
+      await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-source-0'))
+      const steps = await screen.findByRole('list', { name: '解析阶段' })
+      return {
+        details: screen.getByTestId('vk-task-detail-stage-details'),
+        steps,
+        step: (stage: string) => steps.querySelector<HTMLElement>(`[data-stage="${stage}"]`)!,
+      }
+    }
+
+    it('快速摘要在「理解视频」后多一行「Jev 筛选术语」,每步标注答题的模型,仍是 4 段', async () => {
+      const { details, steps, step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'normalize', 'chapter', 'jev_terms'], current_stage: 'note',
+        stage_metrics: [
+          stageMetric('acquire', 'done', 2), stageMetric('normalize', 'done', 1),
+          stageMetric('chapter', 'done', 8), stageMetric('jev_terms', 'done', 0.6),
+          stageMetric('note', 'running', null),
+        ],
+        model_attempts: [modelAttempt('chapter'), jevAttempt('jev_terms')],
+      }, 'running'))
+
+      expect([...steps.querySelectorAll<HTMLElement>('li.vk-task-detail-step')].map((item) => item.dataset.stage))
+        .toEqual(['acquire', 'normalize', 'chapter', 'jev_terms', 'note'])
+      expect(step('chapter').querySelector('strong')).toHaveTextContent('理解视频 · gpt-6-sol')
+      expect(step('jev_terms').querySelector('strong')).toHaveTextContent('Jev 筛选术语 · jev-1.13.0')
+      expect(step('jev_terms')).toHaveAttribute('data-stage-state', 'completed')
+      expect(step('note').querySelector('strong')?.textContent).toBe('整理知识笔记')
+      expect(step('note')).toHaveAttribute('data-stage-state', 'active')
+      expect(step('acquire').querySelector('strong')?.textContent).toBe('采集与转写')
+      expect(steps.querySelectorAll('.vk-task-detail-step-content > span')).toHaveLength(5)
+      expect(details).toHaveTextContent('阶段 3 / 4')
+    })
+
+    it('「模型配置」只列大模型渠道,不含 Jev', async () => {
+      await openJevJob(jevJob({
+        completed_stages: ['acquire', 'normalize', 'chapter', 'jev_terms', 'note', 'product'],
+        stage_metrics: [stageMetric('chapter', 'done', 8), stageMetric('jev_terms', 'done', 0.6)],
+        model_attempts: [modelAttempt('chapter'), jevAttempt('jev_terms')],
+      }))
+      const metadata = screen.getByTestId('vk-task-detail-metadata')
+      expect(within(metadata).getByText('主站')).toBeInTheDocument()
+      expect(metadata.textContent).not.toMatch(/typesafe|jev/i)
+    })
+
+    it('Jev 被跳过:Minus 图标、整行变暗,原因写成「已跳过：…」,且不会被当成最新一步', async () => {
+      const { steps, step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'normalize', 'chapter'],
+        stage_metrics: [
+          stageMetric('chapter', 'done', 8),
+          stageMetric('jev_terms', 'skipped', 0.3, 'HTTP 451：该地区暂不提供服务'),
+        ],
+        model_attempts: [modelAttempt('chapter'), jevAttempt('jev_terms', { model_reported: '', status: 'transient_error' })],
+      }, 'running'))
+
+      const jev = step('jev_terms')
+      expect(jev).toHaveAttribute('data-stage-state', 'skipped')
+      expect(jev).toHaveClass('is-skipped')
+      expect(within(jev).getByLabelText('已跳过')).toBeInTheDocument()
+      expect(jev).toHaveTextContent('已跳过：HTTP 451：该地区暂不提供服务')
+      expect(jev.querySelector('strong')).toHaveTextContent('Jev 筛选术语 · jev-latest')
+      expect(steps.querySelectorAll('.vk-task-detail-step-connector.is-skipped')).toHaveLength(1)
+      expect(steps.querySelector('[data-stage-state="active"]')).toBeNull()
+      expect(steps.querySelector('[aria-current="step"]')).toBeNull()
+    })
+
+    it('旧引擎 skipped 阶段的原始错误码走失败文案映射,不直接显示;没有原因时只写「已跳过」', async () => {
+      const { step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'chapter'],
+        stage_metrics: [
+          stageMetric('normalize', 'skipped', 0, 'missing_transcript'),
+          stageMetric('chapter', 'done', 8),
+          stageMetric('jev_terms', 'skipped', 0),
+        ],
+      }))
+
+      const legacy = step('normalize')
+      expect(legacy).toHaveAttribute('data-stage-state', 'skipped')
+      expect(within(legacy).getByTestId('vk-failure-note')).toBeInTheDocument()
+      expect(legacy).not.toHaveTextContent('已跳过：missing_transcript')
+      expect(within(legacy).getByText('missing_transcript').closest('details')).not.toBeNull()
+      const plain = step('jev_terms')
+      expect(plain).toHaveAttribute('data-stage-state', 'skipped')
+      expect(plain.querySelector('.vk-task-detail-step-reason')?.textContent).toBe('已跳过')
+    })
+
+    it('skipped 阶段的 missing_transcript 显示「没有拿到字幕或语音转写」,原码收在原始信息里', async () => {
+      const { step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'chapter'],
+        stage_metrics: [
+          stageMetric('normalize', 'skipped', 0, 'missing_transcript'),
+          stageMetric('chapter', 'done', 8),
+        ],
+      }))
+
+      const skipped = step('normalize')
+      const note = within(skipped).getByTestId('vk-failure-note')
+      expect(note).toHaveAttribute('data-kind', 'no-transcript')
+      expect(note).toHaveTextContent('没有拿到字幕或语音转写')
+      expect(skipped).not.toHaveTextContent('解析失败')
+      const raw = within(skipped).getByText('missing_transcript')
+      expect(raw.tagName).toBe('PRE')
+      expect(raw.closest('details')).not.toBeNull()
+    })
+
+    it('skipped 阶段认不出的原始错误码只说「这一步没有执行」,原码收在原始信息里', async () => {
+      const { step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'chapter'],
+        stage_metrics: [
+          stageMetric('normalize', 'skipped', 0, 'missing_visual_frames'),
+          stageMetric('chapter', 'done', 8),
+        ],
+      }))
+
+      const skipped = step('normalize')
+      expect(skipped).toHaveAttribute('data-stage-state', 'skipped')
+      expect(within(skipped).queryByTestId('vk-failure-note')).toBeNull()
+      expect(skipped).not.toHaveTextContent('解析失败')
+      const reason = skipped.querySelector('.vk-task-detail-step-reason')!
+      expect(reason.firstChild?.textContent).toBe('已跳过：这一步没有执行')
+      const raw = within(skipped).getByText('missing_visual_frames')
+      expect(raw.tagName).toBe('PRE')
+      expect(raw.closest('details')).not.toBeNull()
+    })
+
+    it('skipped 阶段的 HTTP 限流或故障原因按原样显示,不翻成模型服务限流或故障', async () => {
+      const { step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'normalize', 'chapter'],
+        stage_metrics: [
+          stageMetric('chapter', 'done', 8),
+          stageMetric('jev_terms', 'skipped', 0.3, 'HTTP 429：请求过于频繁'),
+        ],
+      }, 'running'))
+
+      const jev = step('jev_terms')
+      expect(jev).toHaveTextContent('已跳过：HTTP 429：请求过于频繁')
+      expect(within(jev).queryByTestId('vk-failure-note')).toBeNull()
+      expect(jev).not.toHaveTextContent('模型服务')
+    })
+
+    it('只出现一次的阶段不显示「×N」,用时仍取该次指标', async () => {
+      const { step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'normalize', 'chapter', 'jev_terms', 'note', 'product'],
+        stage_metrics: [stageMetric('chapter', 'done', 7.25), stageMetric('jev_terms', 'done', 0.5)],
+      }))
+      expect(step('chapter').querySelector('strong')?.textContent).toBe('理解视频')
+      expect(step('chapter').querySelector('.vk-task-detail-step-content > span')).toHaveTextContent('7.25s')
+      expect(step('jev_terms').querySelector('.vk-task-detail-step-content > span')).toHaveTextContent('500ms')
+      expect(step('jev_terms').textContent).not.toContain('×')
     })
   })
 })
