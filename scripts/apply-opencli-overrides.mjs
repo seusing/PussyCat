@@ -19,6 +19,11 @@ const FILES = [
   'search.js',
   'user-posts.js',
   'user-posts-helpers.js',
+  'short-link.js',
+  'note-helpers.js',
+  'note.js',
+  'comments.js',
+  'download.js',
 ]
 
 const browserCommand = {

@@ -161,7 +161,8 @@ export const REVIEWED_RECORDS = new Map([
     commandTimeoutMs: 630_000,
     metadata: {
       executionPath: 'browser-bridge',
-      // goto /explore 再 goto 博主主页,读注水的 Pinia store 并滚动(opencli-overrides/xiaohongshu/user-posts.js:41-42,25,54)。
+      // goto /explore 再 goto 博主主页,读注水的 Pinia store 并滚动(opencli-overrides/xiaohongshu/user-posts.js:41-42,25,56)。
+      // xhslink 短链接先在 Node 里请求一次、不跟随跳转、只读 Location(opencli-overrides/xiaohongshu/short-link.js:16)。
       authorities: ['browser-profile', 'public-network'],
       // 博主公开笔记列表;url 内嵌 note 级 xsec_token,按审定口径 D 不升 secret。
       exposure: 'public',

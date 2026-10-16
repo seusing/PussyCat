@@ -8,9 +8,9 @@ import {
     buildProfileUrl,
     parseChoice,
     parseTimeoutSeconds,
-    parseXhsProfileTarget,
     rangeStartMs,
     reachedRangeEnd,
+    resolveXhsProfileTarget,
     selectPostedNotes,
 } from './user-posts-helpers.js';
 
@@ -29,14 +29,14 @@ async function readPostedState(page) {
     return state;
 }
 
-export async function fetchUserPosts(page, kwargs, { now = Date.now, random = Math.random } = {}) {
-    const target = parseXhsProfileTarget(kwargs.id);
+export async function fetchUserPosts(page, kwargs, { now = Date.now, random = Math.random, fetch = globalThis.fetch } = {}) {
     const range = parseChoice('range', kwargs.range, RANGES, 'all');
     const sort = parseChoice('sort', kwargs.sort, SORTS, 'time');
     const startedAt = now();
     const startMs = rangeStartMs(range, startedAt);
     // 留 20 秒给收尾，避免被 opencli 的命令超时直接中断而拿不到已加载的笔记。
     const deadline = startedAt + (parseTimeoutSeconds(kwargs.timeout) - 20) * 1000;
+    const target = await resolveXhsProfileTarget(kwargs.id, { fetch });
     // 浏览器扩展会拒绝新开的自动化标签页直接跳到他人主页，先进发现页再进主页就能打开。
     await page.goto('https://www.xiaohongshu.com/explore');
     await page.goto(buildProfileUrl(target));

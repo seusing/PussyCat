@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
-import { ArgumentError, AuthRequiredError, EmptyResultError } from '@jackwener/opencli/errors';
+import { ArgumentError, AuthRequiredError, CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
 import { getRegistry } from '@jackwener/opencli/registry';
 import {
     POSTED_STATE_JS,
@@ -11,6 +11,7 @@ import {
     parseXhsProfileTarget,
     rangeStartMs,
     reachedRangeEnd,
+    resolveXhsProfileTarget,
     selectPostedNotes,
 } from './user-posts-helpers.js';
 import { fetchUserPosts } from './user-posts.js';
@@ -18,6 +19,10 @@ import { fetchUserPosts } from './user-posts.js';
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const note = (id, time, extra = {}) => ({ id, title: `笔记${id}`, type: 'video', likes: '1', sticky: false, time, xsecToken: `t-${id}`, ...extra });
+const SHORT_LINK = 'https://xhslink.cn/m/9HpfvCBRfr3';
+const SHARED_PROFILE = 'https://www.xiaohongshu.com/user/profile/63b98bad0000000026010302?xsec_token=YB0A8B0snagcgYQB8wcA8p4kfwLEul40CDqJU82B7JiR4=&xsec_source=app_share&xhsshare=CopyLink&shareRedId=ODYyMDQ-RTw2NzUyOTgwNjY0OTc1PD0_&apptime=1792120761&share_id=11a6ce7e4d9644f4ad6e47776c49284b';
+const SHARED_TARGET = { userId: '63b98bad0000000026010302', xsecToken: 'YB0A8B0snagcgYQB8wcA8p4kfwLEul40CDqJU82B7JiR4=', xsecSource: 'app_share' };
+const redirectingFetch = (location) => vi.fn(async () => new Response(null, { status: location ? 302 : 200, headers: location ? { location } : {} }));
 
 describe('xiaohongshu user-posts helpers', () => {
     it('starts "today" at Beijing midnight and other ranges from now', () => {
@@ -46,6 +51,56 @@ describe('xiaohongshu user-posts helpers', () => {
         expect(buildProfileUrl({ userId: 'abc', xsecToken: 'T', xsecSource: '' })).toBe('https://www.xiaohongshu.com/user/profile/abc?xsec_token=T&xsec_source=pc_note');
         expect(buildNoteUrl('n1', 'T')).toBe('https://www.xiaohongshu.com/explore/n1?xsec_token=T&xsec_source=pc_user');
         expect(buildNoteUrl('n1', '')).toBe('https://www.xiaohongshu.com/explore/n1');
+    });
+
+    it('resolves an xhslink short link with one non-following request and keeps the share token', async () => {
+        const fetch = redirectingFetch(SHARED_PROFILE);
+        await expect(resolveXhsProfileTarget(SHORT_LINK, { fetch })).resolves.toEqual(SHARED_TARGET);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(fetch).toHaveBeenCalledWith(SHORT_LINK, expect.objectContaining({ redirect: 'manual' }));
+    });
+
+    it('recognises xhslink.com and subdomains in any letter case', async () => {
+        for (const link of ['http://xhslink.com/a/AbCd', 'https://XHSLINK.COM/m/AbCd', ' https://www.xhslink.cn/m/AbCd ']) {
+            const fetch = redirectingFetch(SHARED_PROFILE);
+            await expect(resolveXhsProfileTarget(link, { fetch })).resolves.toEqual(SHARED_TARGET);
+            expect(fetch).toHaveBeenCalledTimes(1);
+            expect(fetch.mock.calls[0][0]).toBe(link.trim());
+        }
+    });
+
+    it('resolves user ids and full profile URLs without any request', async () => {
+        const fetch = redirectingFetch(SHARED_PROFILE);
+        for (const input of ['6836832c000000001d00be52', 'https://www.xiaohongshu.com/user/profile/abc?xsec_token=T&xsec_source=pc_search', 'https://example.com/xhslink.cn/user/profile/abc']) {
+            await expect(resolveXhsProfileTarget(input, { fetch })).resolves.toEqual(parseXhsProfileTarget(input));
+        }
+        await expect(resolveXhsProfileTarget('https://www.xiaohongshu.com/explore/123', { fetch })).rejects.toThrow(ArgumentError);
+        await expect(resolveXhsProfileTarget('  ', { fetch })).rejects.toThrow(ArgumentError);
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects short links that do not land on a profile and names the destination', async () => {
+        const cases = [
+            ['https://www.xiaohongshu.com', 'https://www.xiaohongshu.com'],
+            ['https://www.xiaohongshu.com/discovery/item/68f0000000000000000000aa?xsec_token=T', 'https://www.xiaohongshu.com/discovery/item/68f0000000000000000000aa?xsec_token=T'],
+            ['', '没有跳转'],
+        ];
+        for (const [location, shown] of cases) {
+            const error = await resolveXhsProfileTarget(SHORT_LINK, { fetch: redirectingFetch(location) }).catch((e) => e);
+            expect(error).toBeInstanceOf(ArgumentError);
+            expect(error.message).toContain(SHORT_LINK);
+            expect(error.message).toContain('博主主页');
+            expect(error.message).toContain(shown);
+            expect(error.hint).toContain('分享 → 复制链接');
+        }
+    });
+
+    it('reports a failed short link request as a command error', async () => {
+        const fetch = vi.fn(async () => { throw new TypeError('fetch failed'); });
+        const error = await resolveXhsProfileTarget(SHORT_LINK, { fetch }).catch((e) => e);
+        expect(error).toBeInstanceOf(CommandExecutionError);
+        expect(error.message).toContain('短链接');
+        expect(error.message).toContain('fetch failed');
     });
 
     it('prefers the card time and falls back to the note id timestamp', () => {
@@ -141,6 +196,32 @@ describe('xiaohongshu user-posts command', () => {
             .rejects.toBeInstanceOf(AuthRequiredError);
         await expect(fetchUserPosts(profilePage([loaded([], false)]), { id: 'u' }))
             .rejects.toBeInstanceOf(EmptyResultError);
+    });
+
+    it('opens the profile behind a shared short link', async () => {
+        const page = profilePage([loaded([note('a', 30 * DAY)], false)]);
+        const fetch = redirectingFetch(SHARED_PROFILE);
+        const rows = await fetchUserPosts(page, { id: SHORT_LINK }, { now: () => 31 * DAY, random: () => 0, fetch });
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(page.goto.mock.calls.map(([url]) => url)).toEqual([
+            'https://www.xiaohongshu.com/explore',
+            'https://www.xiaohongshu.com/user/profile/63b98bad0000000026010302?xsec_token=YB0A8B0snagcgYQB8wcA8p4kfwLEul40CDqJU82B7JiR4%3D&xsec_source=app_share',
+        ]);
+        expect(rows.map((row) => row.title)).toEqual(['笔记a']);
+    });
+
+    it('does not open the browser when the short link cannot be resolved or the options are wrong', async () => {
+        const page = profilePage([loaded([], false)]);
+        await expect(fetchUserPosts(page, { id: SHORT_LINK }, { fetch: redirectingFetch('https://www.xiaohongshu.com') }))
+            .rejects.toBeInstanceOf(ArgumentError);
+        const failing = vi.fn(async () => { throw new TypeError('fetch failed'); });
+        await expect(fetchUserPosts(page, { id: SHORT_LINK }, { fetch: failing }))
+            .rejects.toBeInstanceOf(CommandExecutionError);
+        const unused = redirectingFetch(SHARED_PROFILE);
+        await expect(fetchUserPosts(page, { id: SHORT_LINK, range: '2d' }, { fetch: unused }))
+            .rejects.toBeInstanceOf(ArgumentError);
+        expect(unused).not.toHaveBeenCalled();
+        expect(page.goto).not.toHaveBeenCalled();
     });
 
     it('rejects an unknown range', async () => {
