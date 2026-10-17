@@ -24,7 +24,7 @@ beforeEach(() => {
     // 不是准入——所以给夹具命令播一条最简 ready 判决，把闸门置于「已放行」状态，
     // 让下面的用例照旧测它们本来要测的东西。准入本身由 App.test.tsx 的两组对抗 fixture 守。
     decisions: new Map([[cmd.command, {
-      commandKey: cmd.command, state: 'ready' as const, decisionSource: 'legacy-baseline' as const,
+      commandKey: cmd.command, state: 'ready' as const, decisionSource: 'tier-evaluation' as const,
     }]]),
   })
 })

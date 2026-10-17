@@ -20,8 +20,8 @@ const cmdB: CommandManifest = {
 // P1 Task7:运行按钮现由 Host 判决闸控(I-P1)。这两条命令补一条最简 ready 判决,
 // 否则按钮会因 decisions 为空而 disabled——语义变更,改写而非删除既有断言(R7)。
 const readyDecisions = new Map([
-  [cmd.command, { commandKey: cmd.command, state: 'ready' as const, decisionSource: 'legacy-baseline' as const }],
-  [cmdB.command, { commandKey: cmdB.command, state: 'ready' as const, decisionSource: 'legacy-baseline' as const }],
+  [cmd.command, { commandKey: cmd.command, state: 'ready' as const, decisionSource: 'tier-evaluation' as const }],
+  [cmdB.command, { commandKey: cmdB.command, state: 'ready' as const, decisionSource: 'tier-evaluation' as const }],
 ])
 
 beforeEach(() => useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined, decisions: readyDecisions }))
@@ -181,7 +181,7 @@ describe('select 空选项', () => {
   })
 
   beforeEach(() => {
-    useAppStore.setState({ decisions: new Map([['x/sel', { commandKey: 'x/sel', state: 'ready' as const, decisionSource: 'legacy-baseline' as const }]]) })
+    useAppStore.setState({ decisions: new Map([['x/sel', { commandKey: 'x/sel', state: 'ready' as const, decisionSource: 'tier-evaluation' as const }]]) })
   })
 
   test('有 default 时选项列表不含空选项', async () => {
@@ -215,7 +215,7 @@ describe('表单网格与布尔开关', () => {
 
   beforeEach(() => {
     useAppStore.setState({
-      decisions: new Map([['x/mixed', { commandKey: 'x/mixed', state: 'ready' as const, decisionSource: 'legacy-baseline' as const }]]),
+      decisions: new Map([['x/mixed', { commandKey: 'x/mixed', state: 'ready' as const, decisionSource: 'tier-evaluation' as const }]]),
     })
     useAppStore.getState().selectCommand(mixed)
   })

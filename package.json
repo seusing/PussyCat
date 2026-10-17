@@ -26,7 +26,6 @@
     "build:host": "node scripts/build-host-runtime.mjs",
     "build:vk-bundle": "node scripts/build-vk-bundle.mjs",
     "verify:host": "node scripts/verify-host-closure.mjs",
-    "check:legacy": "node scripts/check-legacy-baseline.mjs",
     "package": "node scripts/package-app.mjs",
     "package:check": "node scripts/package-app.mjs --check",
     "tauri": "tauri"

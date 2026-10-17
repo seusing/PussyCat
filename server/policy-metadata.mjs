@@ -7,7 +7,7 @@ import { reviewShapeHash } from './policy-fingerprint.mjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-// 读盘**惰性 + memo**:模块求值期一律不碰磁盘。理由见 policy.mjs 里 legacyBaseline() 的注释——
+// 读盘**惰性 + memo**:模块求值期一律不碰磁盘。理由:
 // index.mjs 的 try/catch 在静态 import **之后**才生效,顶层 JSON.parse 一旦失败就是裸 SyntaxError,
 // failReady() 收不到,supervisor 拿不到 opencliHostReady:false。
 let snapshotMemo = null

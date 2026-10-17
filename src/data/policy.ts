@@ -12,7 +12,7 @@ export type PolicyMetadata = {
 export type PolicyDecision = {
   commandKey: string
   state: 'ready' | 'acknowledgement-required' | 'denied' | 'unknown'
-  decisionSource: 'explicit-deny' | 'legacy-baseline' | 'tier-evaluation' | 'unclassified'
+  decisionSource: 'explicit-deny' | 'tier-evaluation' | 'unclassified'
   fingerprint?: string
   metadata?: PolicyMetadata
   reasonCode?: string

@@ -1,30 +1,7 @@
 import { readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { isCompleteRecord } from './policy-types.mjs'
 import { BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS } from './policy-metadata.mjs'
 import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewShapeHash } from './policy-fingerprint.mjs'
-
-const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-
-// OPENCLI_HOST_LEGACY_BASELINE_PATH 是**测试注入点**(供 readiness.test.mjs 制造损坏基线),
-// 与 index.mjs 的 OPENCLI_HOST_CATALOG_PATH 同一套路;默认行为不变。
-const LEGACY_BASELINE_PATH = process.env.OPENCLI_HOST_LEGACY_BASELINE_PATH
-  ?? join(moduleRoot, 'server/policy-legacy-baseline.json')
-
-// 读盘**惰性 + memo**:模块求值期一律不碰磁盘。
-// 理由是 readiness 失败协议(见 index.mjs 的 failReady 注释):index.mjs 的 try/catch 包住的是
-// `loadExecutionPolicy`,而静态 ESM import 在 try **之前**求值 —— 若把 JSON.parse 放在模块顶层,
-// 基线损坏会以**裸 SyntaxError** 抛在 module job 里,`failReady()` 从未被调用,
-// supervisor 收不到 `opencliHostReady:false`,于是「协议内失败」被误判成 process-failed,
-// 给用户的文案与排障方向全错。惰性化让这类损坏落进 loadExecutionPolicy 的 try,走结构化失败。
-let legacyBaselineMemo = null
-function legacyBaseline() {
-  if (legacyBaselineMemo === null) {
-    legacyBaselineMemo = JSON.parse(readFileSync(LEGACY_BASELINE_PATH, 'utf8'))
-  }
-  return legacyBaselineMemo
-}
 
 export class RequestPolicyError extends Error {
   constructor(statusCode, message, detail) {
@@ -139,16 +116,6 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
 
     const shape = reviewShapeHash(command, version)
 
-    // 2. legacy 基线:命中且形状未漂移 → ready,不下发 metadata/fingerprint
-    //
-    // **这一行就是 legacy 完整性的第二层。** 闸门(check:legacy)只管 key 集合的增删,
-    // 管不了「同一个 key 的 hash 被改成别的值」;真正兜住那一面的是这里的等值比较——
-    // 入库哈希与当前形状对不上,该命令自动退出基线落入 unknown。
-    // 两层缺一不可,**任何一层被当成单独兜底都是误解**(spec §4.1.2 L1 / L2)。
-    if (legacyBaseline().entries[commandKey] === shape) {
-      return { ...base, state: 'ready', decisionSource: 'legacy-baseline' }
-    }
-
     // 3. tier
     const tier = tierOf(command)
     if (!tier) {
@@ -236,10 +203,6 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
  *     persistent,residues 失真。
  * 这个前提此前只由前端 src/data/command.ts 的 buildArgv 保证,而 I-P1 说**绕过前端不得获得额外
  * 执行能力** —— 在这里恰恰能获得。所以这道闸必须在 Host 侧,不能在前端。
- *
- * **范围是有意收窄的**:legacy 基线的 276 条不走这道闸(它们没有任何声称 effects/residues 的
- * 人工审定,不存在被 `--trace` 推翻的结论),贸然收紧会波及未审定过 argv 形状的一大片命令。
- * 该残余口子记在审定文档 §8.2,不在本次口径内。
  */
 function buildArgvConstraint(command) {
   const args = command.args ?? []
@@ -337,9 +300,8 @@ export function buildExecutionPolicy(snapshot) {
 
   // description 是**用户可见文案**:host-server.mjs 把它当 /health 的 executionPolicy 字段下发,
   // index.mjs 打进启动日志。所以它必须说的是**当前真实的事实源**。
-  // 旧文案写着 `access=read, strategy=public, browser=false` —— 那正是 spec §4.3 已废除的三条件
-  // (public-direct 不再是需要允许集的 tier,改由 legacy 基线承接)。留着就是对用户说假话。
-  const legacyCount = decisions.filter((d) => d.decisionSource === 'legacy-baseline').length
+  // 旧文案写着 `access=read, strategy=public, browser=false` —— 那正是 spec §4.3 已废除的三条件。
+  // 留着就是对用户说假话。
   const tierCount = decisions.filter((d) => (
     d.decisionSource === 'tier-evaluation'
     && (d.state === 'ready' || d.state === 'acknowledgement-required')
@@ -353,7 +315,7 @@ export function buildExecutionPolicy(snapshot) {
     decisionByKey,
     argvConstraintByKey,
     timeoutMsByKey,
-    description: `逐命令判决:legacy 基线 ${legacyCount} 条 + tier 审定放行 ${tierCount} 条;`
+    description: `逐命令判决:tier 审定放行 ${tierCount} 条;`
       + `显式 deny ${deniedCommands.size} 条,其余一律 unknown 拒绝(fail-closed)`,
   }
 }

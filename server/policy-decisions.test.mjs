@@ -17,14 +17,6 @@ describe('准入算法', () => {
     expect(d.reasonCode).toBe('explicit-deny')
   })
 
-  // 基线已清空(opencli 1.8.8 升级时接受执行面收缩):原基线里的命令不再有人工审定,一律落 unknown。
-  it('legacy 基线为空 → 原基线命令(36kr/news)是 unknown/no-tier,没有任何判决来自 legacy-baseline', () => {
-    const d = decisions.get('36kr/news')
-    expect(d.state).toBe('unknown')
-    expect(d.reasonCode).toBe('no-tier')
-    expect([...decisions.values()].filter((x) => x.decisionSource === 'legacy-baseline')).toEqual([])
-  })
-
   it('三条审定命令进 tier-evaluation', () => {
     expect(decisions.get('trae-cn/setup').decisionSource).toBe('tier-evaluation')
     expect(decisions.get('trae-cn/setup').state).toBe('ready')
@@ -40,7 +32,7 @@ describe('准入算法', () => {
     expect(d.reasonCode).toBe('metadata-missing')
   })
 
-  it('不在任何 tier 且不在 legacy → unknown/no-tier', () => {
+  it('不在任何 tier → unknown/no-tier', () => {
     const d = decisions.get('xiaohongshu/login')     // write+cookie+browser
     expect(d.state).toBe('unknown')
     expect(d.reasonCode).toBe('no-tier')
@@ -57,7 +49,7 @@ describe('准入算法', () => {
   it('每条 decision 的必填性随 state 成立(全状态可构造)', () => {
     for (const d of decisions.values()) {
       expect(['ready', 'acknowledgement-required', 'denied', 'unknown']).toContain(d.state)
-      expect(['explicit-deny', 'legacy-baseline', 'tier-evaluation', 'unclassified']).toContain(d.decisionSource)
+      expect(['explicit-deny', 'tier-evaluation', 'unclassified']).toContain(d.decisionSource)
       if (d.state === 'acknowledgement-required') expect(typeof d.fingerprint).toBe('string')
       if (d.decisionSource === 'tier-evaluation') expect(d.metadata).toBeDefined()
       if (d.decisionSource !== 'tier-evaluation') expect(d.metadata).toBeUndefined()
@@ -68,13 +60,13 @@ describe('准入算法', () => {
     expect(decisions.size).toBe(snapshot.commands.length)
   })
 
-  it('可执行面 = legacy 0 + 三条 local-direct + 十五条试点', () => {
+  it('可执行面 = 三条 local-direct + 十五条试点', () => {
     const runnable = [...decisions.values()].filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
-    expect(runnable.length).toBe(0 + 3 + 15)
+    expect(runnable.length).toBe(3 + 15)
   })
 
   // 上一条的「全状态」是遍历**恰好出现的**状态,证明不了四个状态都能构造出来。
-  // 这条把它钉死:四个 state 必须各自真的出现过;decisionSource 因 legacy 基线已清空只会出现其余三个。
+  // 这条把它钉死:四个 state、三个 decisionSource 必须各自真的出现过。
   it('四个 state 与三个 decisionSource 都真的出现,而非「恰好遇到的那几个」', () => {
     expect(new Set([...decisions.values()].map((d) => d.state)))
       .toEqual(new Set(['ready', 'acknowledgement-required', 'denied', 'unknown']))

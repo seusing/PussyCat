@@ -21,7 +21,7 @@ const policy = {
   opencliVersion: '1.8.6',
   description: 'test public read policy',
   decisionByKey: new Map([
-    ['36kr/news', { commandKey: '36kr/news', state: 'ready', decisionSource: 'legacy-baseline' }],
+    ['36kr/news', { commandKey: '36kr/news', state: 'ready', decisionSource: 'tier-evaluation' }],
   ]),
 }
 
@@ -464,7 +464,7 @@ describe('GET /catalog + 动态 policy', () => {
       opencliVersion: '9.9.9',
       description: 'refreshed',
       decisionByKey: new Map([
-        ['newsite/hello', { commandKey: 'newsite/hello', state: 'ready', decisionSource: 'legacy-baseline' }],
+        ['newsite/hello', { commandKey: 'newsite/hello', state: 'ready', decisionSource: 'tier-evaluation' }],
       ]),
     }
     let state
@@ -709,8 +709,7 @@ describe('/catalog/effective', () => {
 //
 // 夹具坑,先看清再改:本文件顶部那个 policy 夹具是手捏的,造不出 acknowledgement-required;
 // 审定记录的 reviewedAgainst 由真快照现算,reviewShapeHash 又含 opencliVersion(spec §4.1.2),
-// 手捏的合成快照里没有这些命令,或形状与之对不上 → 判决落 unknown,428/409 根本不可达
-// (legacy 基线已清空,没有别的放行路径)。
+// 手捏的合成快照里没有这些命令,或形状与之对不上 → 判决落 unknown,428/409 根本不可达。
 // 故本节用**真快照**构造 policy 直接注入:不挂 catalogService,activePolicy() 自然回落到它。
 describe('/start 状态码表逐格(HTTP 层)', () => {
   const realPolicy = loadExecutionPolicy(resolve('public/catalog.snapshot.json'))

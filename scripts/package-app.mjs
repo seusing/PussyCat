@@ -318,7 +318,6 @@ if (!SKIP_GATES) {
   for (const [label, cmd, cmdArgs] of [
     ['类型检查', 'npx', ['tsc', '--noEmit']],
     ['单元测试', 'npx', ['vitest', 'run']],
-    ['legacy 基线闸', 'npm', ['run', 'check:legacy']],
   ]) {
     console.log(`\n[package] ${label}…`)
     const { status } = run(cmd, cmdArgs)

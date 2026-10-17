@@ -27,7 +27,7 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
     expect(target.browser).toBe(false)
 
     // **这一条是本用例的命门。** 只断言「不在允许集里」对 deny 已**失去敏感度**:
-    // paperreview/review 不在 legacy 基线(基线 = 派生 − 它)、strategy==='public' 又过不了
+    // paperreview/review 的 strategy==='public' 过不了
     // tierOf,所以就算把第 1 步的 deny 短路整个关掉,它照样落 unknown/no-tier、照样不在允许集,
     // 用例仍然全绿 —— 名字写着「deny 优先」,却对 deny 是死的。
     // 钉住**判决来源**才能真的守住 I-P3:关掉第 1 步,这行立刻红。
@@ -86,8 +86,8 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
     expect(policy.description).not.toContain('access=read')
     expect(policy.description).not.toContain('strategy=public')
     expect(policy.description).not.toContain('browser=false')
-    // 正向:必须点名真正的两个来源与 fail-closed 缺省
-    expect(policy.description).toContain('legacy 基线')
+    // 正向:必须点名真正的来源(tier 审定、显式 deny)与 fail-closed 缺省;已退役的 legacy 不得再出现
+    expect(policy.description).not.toContain('legacy')
     expect(policy.description).toContain('tier')
     expect(policy.description).toContain('deny')
     expect(policy.description).toContain('fail-closed')
@@ -101,8 +101,8 @@ describe('命令策略覆盖表(P1-B 能力模型的种子)', () => {
         { command: 'demo/ok', access: 'read', strategy: 'public', browser: false },
       ],
     })
-    // 正向控制:证明这次调用确实产出了判决(9.9.9 下 legacy 基线集体失效,允许集为空是
-    // spec §4.1.2 的预期行为,故控制臂改从 decisionByKey 取)。
+    // 正向控制:证明这次调用确实产出了判决(demo/ok 不落任何 tier,允许集为空是
+    // fail-closed 的预期行为,故控制臂从 decisionByKey 取)。
     expect(built.decisionByKey.get('demo/ok')).toBeDefined()
     // deny 臂**加强**:钉住被拒的**原因**,而不只是「不在允许集里」——后者在空集上平凡成立。
     expect(built.decisionByKey.get('paperreview/review').decisionSource).toBe('explicit-deny')
@@ -127,11 +127,11 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(policy.allowedCommands.size).toBe(runnable.size)
   })
 
-  it('执行面恰为三条 local-direct 加十五条试点命令,legacy 基线清空后原三条件派生集全部不可执行', () => {
+  it('执行面恰为三条 local-direct 加十五条试点命令,原三条件派生集全部不可执行', () => {
     // 只断言总数 18 挡不住「少一条、多进来别的一条」——必须钉住**成员本身**:十八条**逐条列名**,任何额外命令都会红。
     // 原三条件派生集(read+public+browser=false 减 deny)不再有基线承接,也没有人工审定,
     // opencli 1.8.8 升级时明确接受这部分执行面收缩(spec §4.1.2)。
-    const legacyDerived = new Set(snapshot.commands
+    const threeConditionDerived = new Set(snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'public' && c.browser === false)
       .map((c) => c.command)
       .filter((k) => COMMAND_POLICY_OVERRIDES[k]?.decision !== 'deny'))
@@ -142,8 +142,8 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
       'xiaohongshu/note', 'xiaohongshu/saved', 'xiaohongshu/search', 'xiaohongshu/user-posts',
       'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/whoami',
     ])
-    expect(legacyDerived.size).toBeGreaterThan(0)
-    expect([...legacyDerived].filter((k) => policy.allowedCommands.has(k))).toEqual([])
+    expect(threeConditionDerived.size).toBeGreaterThan(0)
+    expect([...threeConditionDerived].filter((k) => policy.allowedCommands.has(k))).toEqual([])
   })
 
   it('注入缝不经 buildExecutionPolicy 透传 —— 传第二参也不改变任何判决', () => {
@@ -214,9 +214,8 @@ describe('P0-B execution policy', () => {
 })
 
 // 改名自「buildExecutionPolicy: 纯函数过滤 read+public+browser=false」——
-// 那个名字就是 spec §4.3 已**废除**的三条件规则本身(public-direct 不再是需要允许集的 tier,
-// 改由 legacy 基线承接)。留着旧名字就是本仓反复栽过的「名字比内容大」。
-it('buildExecutionPolicy: 三条件不再等于准入 —— 不在基线又不落 tier 的命令一律 unknown/no-tier', () => {
+// 那个名字就是 spec §4.3 已**废除**的三条件规则本身。留着旧名字就是本仓反复栽过的「名字比内容大」。
+it('buildExecutionPolicy: 三条件不再等于准入 —— 不落 tier 的命令一律 unknown/no-tier', () => {
   const policy = buildExecutionPolicy({
     opencliVersion: '9.9.9',
     commands: [
@@ -226,7 +225,7 @@ it('buildExecutionPolicy: 三条件不再等于准入 —— 不在基线又不�
       { command: 'a/br', access: 'read', strategy: 'public', browser: true },
     ],
   })
-  // a/ok 满足全部三条件,但它不在 legacy 基线里(捏造的 key)、strategy 也不是 local
+  // a/ok 满足全部三条件,但 strategy 不是 local
   // (过不了 tierOf) → 落 unknown/no-tier。**这是 I-P2 fail-closed 的直接守卫**:
   // 没人审定过的命令不得可执行,比原来的「三条件即准入」更强。
   expect(policy.decisionByKey.get('a/ok').state).toBe('unknown')

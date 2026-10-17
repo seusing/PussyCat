@@ -3,7 +3,7 @@ import { explainDecision, isRunnable, type PolicyDecision } from './policy'
 const base = { commandKey: 'x/y' } as const
 
 test('isRunnable: ready → true', () => {
-  expect(isRunnable({ ...base, state: 'ready', decisionSource: 'legacy-baseline' })).toBe(true)
+  expect(isRunnable({ ...base, state: 'ready', decisionSource: 'tier-evaluation' })).toBe(true)
 })
 test('isRunnable: acknowledgement-required → true', () => {
   expect(isRunnable({ ...base, state: 'acknowledgement-required', decisionSource: 'tier-evaluation' })).toBe(true)

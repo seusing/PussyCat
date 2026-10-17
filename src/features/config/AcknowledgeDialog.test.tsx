@@ -11,7 +11,7 @@ const cmd: CommandManifest = {
 const pending = (): PendingAcknowledgement => ({
   command: cmd,
   decision: {
-    commandKey: cmd.command, state: 'ready' as const, decisionSource: 'legacy-baseline' as const,
+    commandKey: cmd.command, state: 'ready' as const, decisionSource: 'tier-evaluation' as const,
   },
 })
 

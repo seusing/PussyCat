@@ -6,7 +6,7 @@ import {
 import type { PolicyDecision } from './policy'
 
 const decision = (over: Partial<PolicyDecision>): PolicyDecision => ({
-  commandKey: 'x/whoami', state: 'ready', decisionSource: 'legacy-baseline', ...over,
+  commandKey: 'x/whoami', state: 'ready', decisionSource: 'tier-evaluation', ...over,
 })
 
 describe('由判决决定可检查状态 —— 前端不复制准入规则', () => {

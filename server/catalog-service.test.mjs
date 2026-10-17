@@ -70,9 +70,8 @@ describe('CatalogService', () => {
     expect(snapshot.commands[0].type).toBe('json')            // manifest 字段已 merge
     expect(snapshot.opencliVersion).toBe('9.9.9')
     // 正向控制:证明 policy 确实从**新快照**重建过。判决覆盖全目录,新命令出现在判决里即是证据。
-    // 为什么不再用 allowedCommands:本夹具 opencliVersion 是 9.9.9,而 reviewShapeHash 含它,
-    // 于是全部 legacy 条目形状漂移、集体退出基线 —— 这是 spec §4.1.2 明写的**升级连带后果**,
-    // 9.9.9 下允许集为空是**正确行为**,不是需要绕开的障碍。
+    // 为什么不用 allowedCommands:夹具里的 a/ok 不落任何 tier,允许集为空是 fail-closed 的
+    // **正确行为**,不是需要绕开的障碍。
     const decision = service.current().policy.decisionByKey.get('a/ok')
     expect(decision).toBeDefined()
     expect(decision.state).toBe('unknown')

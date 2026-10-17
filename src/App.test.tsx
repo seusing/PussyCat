@@ -26,7 +26,7 @@ const cmd: CommandManifest = {
 }
 // P1 Task7:执行准入现在由 Host 判决闸控(I-P1)。既有用例给自己用到的命令补一条最简 ready
 // 判决,否则运行按钮会因 decisions 为空而 disabled——语义变更,改写而非删除既有断言(R7)。
-const readyDecision = (commandKey: string): PolicyDecision => ({ commandKey, state: 'ready', decisionSource: 'legacy-baseline' })
+const readyDecision = (commandKey: string): PolicyDecision => ({ commandKey, state: 'ready', decisionSource: 'tier-evaluation' })
 // 所有手动提交都先弹「是否确认提交？」:点运行 / Ctrl+Enter 之后,要再点一次「确认提交」才真正发请求。
 const confirmSubmit = async () => { await userEvent.click(await screen.findByTestId('ack-confirm')) }
 

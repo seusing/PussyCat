@@ -17,7 +17,7 @@ test('snapshot source: no-store 拉快照,无 degraded', async () => {
 // P1 Task7:liveCatalogSource 改打 /catalog/effective,envelope 为 {revision, snapshot, policy:{decisions}}
 // (snapshot 与判决共享同一 revision 下发,I-P4)——不再是拍平的 CatalogSnapshot。
 test('live source: GET {base}/catalog/effective 成功,无 degraded,decisions 透传', async () => {
-  const decisions = [{ commandKey: 'a/b', state: 'ready', decisionSource: 'legacy-baseline' }]
+  const decisions = [{ commandKey: 'a/b', state: 'ready', decisionSource: 'tier-evaluation' }]
   const fetchImpl = vi.fn().mockResolvedValue(okJson({
     revision: 'r1', snapshot: SNAP, policy: { schemaVersion: 1, generatedAt: 1, decisions },
   }))
