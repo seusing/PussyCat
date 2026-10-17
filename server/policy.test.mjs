@@ -374,7 +374,7 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
       ['xiaohongshu/collections', [['--id', '--limit'], 0]],
       ['xiaohongshu/liked', [['--id', '--limit'], 0]],
       ['xiaohongshu/search', [['--limit', '--sort', '--time', '--type'], 1]],
-      ['xiaohongshu/user-posts', [['--range', '--sort', '--timeout'], 1]],
+      ['xiaohongshu/user-posts', [['--keyword', '--range', '--sort', '--timeout'], 1]],
       ['xiaohongshu/note', [[], 1]],
       ['xiaohongshu/comments', [['--limit', '--with-replies'], 1]],
       ['bilibili/whoami', [[], 0]],

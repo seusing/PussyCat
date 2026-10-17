@@ -158,9 +158,10 @@ const ZH: Record<string, CommandCopy> = {
   },
   'xiaohongshu/user-posts': {
     title: '博主全部笔记',
-    description: '提取小红书博主的全部笔记链接，可按发布时间筛选、按点赞数排序',
+    description: '提取小红书博主的全部笔记链接，可按标题关键词、发布时间筛选，按点赞数排序',
     args: {
       id: '博主 ID 或主页链接',
+      keyword: '标题关键词，空格分隔',
       range: '发布时间范围，默认全部',
       sort: '排序，默认按发布时间',
       timeout: '最长加载秒数（30–600）',

@@ -176,7 +176,7 @@ describe('decisionFingerprint', () => {
       ['xiaohongshu/collections', '86db268efe6a2d33880ab34ba234f4baed6cd16cc253cb14f1a6ccfd4e0727f7'],
       ['xiaohongshu/liked', '13aa70bb578822950e62ae179494af16955d9bbb42029c99bcdc84677222f3c2'],
       ['xiaohongshu/search', 'b9881d442dc6cbe625beabba8cfe783168b55b3438fc3c63e1e9a4e3910c1dea'],
-      ['xiaohongshu/user-posts', '7f3a09ea2421ad3360e0ba783be1bfdb4043dd1bae5015e11c93d14c716baa37'],
+      ['xiaohongshu/user-posts', '237711b5d210ee3119706cd67f058252328ef4e9a0dc5b697e1ef0bb2dc6d713'],
       ['xiaohongshu/note', '08c36d5238927b92123bfe3586416713dc6443668be8f8fc1285867d35681680'],
       ['xiaohongshu/comments', '6a27e6840bb1d864e057a9baaf524f0311e94de0bc8c9c655ce44be0d9034ac7'],
       ['bilibili/whoami', '04d7346d24ccd1004d75c40dc15a5a9efbba8ded13278a55343c3e329487692c'],

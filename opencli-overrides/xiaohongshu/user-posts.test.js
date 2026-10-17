@@ -7,6 +7,7 @@ import {
     buildNoteUrl,
     buildProfileUrl,
     noteTimeMs,
+    parseKeywords,
     parseXhsCount,
     rangeStartMs,
     reachedRangeEnd,
@@ -147,6 +148,48 @@ describe('xiaohongshu user-posts helpers', () => {
         expect(byLikes.map((row) => row.likes_count)).toEqual([90000, 12000, 3000, 10]);
     });
 
+    it('splits keywords on any whitespace and drops empty and case-duplicate words', () => {
+        expect(parseKeywords(undefined)).toEqual([]);
+        expect(parseKeywords(null)).toEqual([]);
+        expect(parseKeywords('')).toEqual([]);
+        expect(parseKeywords('   ')).toEqual([]);
+        expect(parseKeywords('  美食   探店  ')).toEqual(['美食', '探店']);
+        expect(parseKeywords('美食　探店\t打卡')).toEqual(['美食', '探店', '打卡']);
+        expect(parseKeywords('Vlog vlog VLOG 日常')).toEqual(['Vlog', '日常']);
+    });
+
+    it('keeps only notes whose title contains every keyword, ignoring case', () => {
+        const notes = [
+            note('a', 12 * DAY, { title: 'Vlog｜周末探店' }),
+            note('b', 11 * DAY, { title: '周末在家' }),
+            note('c', 10 * DAY, { title: '探店 vlog 合集' }),
+            note('d', 9 * DAY, { title: '' }),
+        ];
+        const titles = (keywords) => selectPostedNotes(notes, { startMs: null, sort: 'time', keywords }).map((row) => row.title);
+        expect(titles(['探店'])).toEqual(['Vlog｜周末探店', '探店 vlog 合集']);
+        expect(titles(['VLOG', '探店'])).toEqual(['Vlog｜周末探店', '探店 vlog 合集']);
+        expect(titles(['周末', '探店'])).toEqual(['Vlog｜周末探店']);
+        expect(titles(['周末', '合集'])).toEqual([]);
+        expect(titles([])).toEqual(['Vlog｜周末探店', '周末在家', '探店 vlog 合集', '']);
+        expect(selectPostedNotes(notes, { startMs: null, sort: 'time' })).toHaveLength(4);
+    });
+
+    it('applies keywords together with range and sort and numbers ranks from 1', () => {
+        const notes = [
+            note('a', 12 * DAY, { title: '探店A', likes: '10' }),
+            note('b', 11 * DAY, { title: '日常B', likes: '9万' }),
+            note('c', 11 * DAY - HOUR, { title: '探店C', likes: '1.2万' }),
+            note('old', 5 * DAY, { title: '探店旧', likes: '5万' }),
+            note('a', 12 * DAY, { title: '探店A', likes: '10' }),
+        ];
+        const byTime = selectPostedNotes(notes, { startMs: 10 * DAY, sort: 'time', keywords: ['探店'] });
+        expect(byTime.map((row) => [row.rank, row.title])).toEqual([[1, '探店A'], [2, '探店C']]);
+        const byLikes = selectPostedNotes(notes, { startMs: 10 * DAY, sort: 'likes', keywords: ['探店'] });
+        expect(byLikes.map((row) => [row.rank, row.title])).toEqual([[1, '探店C'], [2, '探店A']]);
+        expect(selectPostedNotes(notes, { startMs: null, sort: 'likes', keywords: ['探店'] }).map((row) => row.title)).toEqual(['探店旧', '探店C', '探店A']);
+        expect(selectPostedNotes(notes, { startMs: 10 * DAY, sort: 'time', keywords: ['不存在'] })).toEqual([]);
+    });
+
     it('reads the posted tab from the hydrated profile store', () => {
         const window = { __INITIAL_STATE__: { user: {
             loggedIn: { _value: true },
@@ -179,7 +222,8 @@ describe('xiaohongshu user-posts command', () => {
     it('is registered as a read-only browser command with the documented options', () => {
         const command = getRegistry().get('xiaohongshu/user-posts');
         expect(command).toMatchObject({ access: 'read', browser: true });
-        expect(command.args.map((arg) => arg.name)).toEqual(['id', 'range', 'sort', 'timeout']);
+        expect(command.args.map((arg) => arg.name)).toEqual(['id', 'keyword', 'range', 'sort', 'timeout']);
+        expect(command.args.find((arg) => arg.name === 'keyword')).toMatchObject({ type: 'string', required: false });
     });
 
     it('scrolls until the profile has no more notes', async () => {
@@ -205,6 +249,26 @@ describe('xiaohongshu user-posts command', () => {
         const rows = await fetchUserPosts(page, { id: USER_ID, range: '7d', sort: 'time', timeout: 600 }, { now: () => 31 * DAY, random: () => 0 });
         expect(page.autoScroll).not.toHaveBeenCalled();
         expect(rows.map((row) => row.title)).toEqual(['笔记a']);
+    });
+
+    it('filters by title keywords locally without changing the browser navigation', async () => {
+        const states = () => [
+            loaded([note('a', 30 * DAY, { title: '周末探店' })], true),
+            loaded([note('a', 30 * DAY, { title: '周末探店' }), note('b', 29 * DAY, { title: '日常' })], true),
+            loaded([note('a', 30 * DAY, { title: '周末探店' }), note('b', 29 * DAY, { title: '日常' }), note('c', 28 * DAY, { title: '探店 周末 合集' })], false),
+        ];
+        const options = { now: () => 31 * DAY, random: () => 0 };
+        const plainPage = profilePage(states());
+        await fetchUserPosts(plainPage, { id: USER_ID, range: 'all', sort: 'time', timeout: 600 }, options);
+        const keywordPage = profilePage(states());
+        const fetch = redirectingFetch(SHARED_PROFILE);
+        const rows = await fetchUserPosts(keywordPage, { id: USER_ID, keyword: ' 探店　周末 ', range: 'all', sort: 'time', timeout: 600 }, { ...options, fetch });
+        expect(keywordPage.goto.mock.calls).toEqual(plainPage.goto.mock.calls);
+        expect(keywordPage.autoScroll).toHaveBeenCalledTimes(plainPage.autoScroll.mock.calls.length);
+        expect(fetch).not.toHaveBeenCalled();
+        expect(rows.map((row) => [row.rank, row.title])).toEqual([[1, '周末探店'], [2, '探店 周末 合集']]);
+        const none = await fetchUserPosts(profilePage(states()), { id: USER_ID, keyword: '不存在' }, options);
+        expect(none).toEqual([]);
     });
 
     it('reports a login wall and an empty profile distinctly', async () => {

@@ -90,5 +90,5 @@ test('user-posts 只写入一次，并紧跟在 user 之后', () => {
   expect(names.indexOf('user-posts')).toBe(names.indexOf('user') + 1)
   const entry = manifest.find((item) => item.name === 'user-posts')
   expect(entry).toMatchObject({ access: 'read', strategy: 'cookie', browser: true, modulePath: 'xiaohongshu/user-posts.js' })
-  expect(entry.args.map((arg) => arg.name)).toEqual(['id', 'range', 'sort', 'timeout'])
+  expect(entry.args.map((arg) => arg.name)).toEqual(['id', 'keyword', 'range', 'sort', 'timeout'])
 })

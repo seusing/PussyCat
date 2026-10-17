@@ -75,14 +75,28 @@ export function reachedRangeEnd(notes, startMs) {
     });
 }
 
-export function selectPostedNotes(notes, { startMs, sort }) {
+/** 标题关键词：按任意空白（含全角空格）切词，去空、按小写去重；没填返回 []。 */
+export function parseKeywords(value) {
+    const seen = new Set();
+    return String(value ?? '').split(/\s+/).filter((word) => {
+        const key = word.toLowerCase();
+        if (!word || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+export function selectPostedNotes(notes, { startMs, sort, keywords = [] }) {
     const seen = new Set();
     const rows = [];
+    const needles = keywords.map((word) => word.toLowerCase());
     for (const note of notes) {
         if (!note.id || seen.has(note.id)) continue;
         seen.add(note.id);
         const time = noteTimeMs(note);
         if (startMs !== null && (!time || time < startMs)) continue;
+        const title = String(note.title ?? '').toLowerCase();
+        if (!needles.every((word) => title.includes(word))) continue;
         rows.push({
             title: note.title,
             type: note.type,

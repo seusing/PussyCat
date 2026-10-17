@@ -87,6 +87,7 @@ test('twitter/timeline 的类型下拉有中文标签', () => {
 
 // 参数说明充当字段标题:格子里的 select/number 放不下折成多行会把整行控件往下顶,所以要一行放得下。
 test('user-posts / timeline 的参数说明是标题式短文案', () => {
+  expect(argHelp('xiaohongshu/user-posts', 'keyword')).toBe('标题关键词，空格分隔')
   expect(argHelp('xiaohongshu/user-posts', 'sort')).toBe('排序，默认按发布时间')
   expect(argHelp('xiaohongshu/user-posts', 'timeout')).toBe('最长加载秒数（30–600）')
   expect(argHelp('twitter/timeline', 'type')).toBe('时间线类型')

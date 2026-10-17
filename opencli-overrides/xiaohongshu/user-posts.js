@@ -7,6 +7,7 @@ import {
     SORTS,
     buildProfileUrl,
     parseChoice,
+    parseKeywords,
     parseTimeoutSeconds,
     rangeStartMs,
     reachedRangeEnd,
@@ -32,6 +33,7 @@ async function readPostedState(page) {
 export async function fetchUserPosts(page, kwargs, { now = Date.now, random = Math.random, fetch = globalThis.fetch } = {}) {
     const range = parseChoice('range', kwargs.range, RANGES, 'all');
     const sort = parseChoice('sort', kwargs.sort, SORTS, 'time');
+    const keywords = parseKeywords(kwargs.keyword);
     const startedAt = now();
     const startMs = rangeStartMs(range, startedAt);
     // 留 20 秒给收尾，避免被 opencli 的命令超时直接中断而拿不到已加载的笔记。
@@ -63,7 +65,7 @@ export async function fetchUserPosts(page, kwargs, { now = Date.now, random = Ma
     if (state.notes.length === 0) {
         throw new EmptyResultError('xiaohongshu user-posts', '该用户没有公开笔记（可能销号 / 私密 / 全部删除）。');
     }
-    return selectPostedNotes(state.notes.slice(0, MAX_POSTED_NOTES), { startMs, sort });
+    return selectPostedNotes(state.notes.slice(0, MAX_POSTED_NOTES), { startMs, sort, keywords });
 }
 
 cli({
@@ -77,6 +79,7 @@ cli({
     browser: true,
     args: [
         { name: 'id', type: 'string', required: true, positional: true, help: 'User id or profile URL' },
+        { name: 'keyword', type: 'string', required: false, help: 'Only keep notes whose title contains all of these words (space-separated); titles only' },
         { name: 'range', type: 'string', default: 'all', choices: RANGES, help: 'Publish time range' },
         { name: 'sort', type: 'string', default: 'time', choices: SORTS, help: 'Sort by publish time or likes' },
         { name: 'timeout', type: 'int', default: 600, help: 'Max seconds to spend scrolling the profile' },

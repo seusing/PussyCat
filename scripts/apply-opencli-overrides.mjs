@@ -89,6 +89,7 @@ const NEW_ENTRIES = [
       ...browserCommand,
       args: [
         { name: 'id', type: 'string', required: true, positional: true, help: 'User id or profile URL' },
+        { name: 'keyword', type: 'string', required: false, help: 'Only keep notes whose title contains all of these words (space-separated); titles only' },
         { name: 'range', type: 'string', default: 'all', required: false, choices: ['all', 'today', '3d', '7d', '15d', '1m', '3m', '6m'], help: 'Publish time range' },
         { name: 'sort', type: 'string', default: 'time', required: false, choices: ['time', 'likes'], help: 'Sort by publish time or likes' },
         { name: 'timeout', type: 'int', default: 600, required: false, help: 'Max seconds to spend scrolling the profile' },
