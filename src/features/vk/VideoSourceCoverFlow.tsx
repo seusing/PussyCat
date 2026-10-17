@@ -34,7 +34,7 @@ const VIDEO_SOURCES: readonly VideoSourceDefinition[] = [
     id: 'xiaohongshu',
     label: '小红书',
     logo: '/site-logos/xiaohongshu.svg',
-    domains: ['xiaohongshu.com', 'xhslink.com'],
+    domains: ['xiaohongshu.com', 'xhslink.com', 'xhslink.cn'],
   },
   {
     id: 'youtube',

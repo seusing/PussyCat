@@ -1,6 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import samples from '../../../opencli-overrides/xiaohongshu/xhs-link-samples.json'
 import { detectVideoSources, VideoSourceCoverFlow } from './VideoSourceCoverFlow'
+import { extractSources } from './sourceInput'
+
+// 与 VkPanel 的预检同一条路径:先整理成来源列表,再按来源识别平台。
+const detectedIds = (input: string) => detectVideoSources(extractSources(input).sources.join('\n')).map(({ id }) => id)
 
 describe('VideoSourceCoverFlow', () => {
   it('recognizes supported video-link domains and uses the colored site logos', () => {
@@ -61,5 +66,20 @@ describe('VideoSourceCoverFlow', () => {
     render(<VideoSourceCoverFlow source={'not a link\nhttps://example.com/video'} />)
 
     expect(screen.queryByTestId('video-source-coverflow')).not.toBeInTheDocument()
+  })
+
+  it('recognizes every Xiaohongshu sample link as Xiaohongshu, including App share texts', () => {
+    for (const { input, link, kind } of samples.samples) {
+      if (!link) continue
+      expect(extractSources(input).sources, `${kind}: ${input}`).toContain(link)
+      expect(detectedIds(input), `${kind}: ${input}`).toContain('xiaohongshu')
+    }
+  })
+
+  it('does not take look-alike hosts, other schemes or plain text for Xiaohongshu', () => {
+    const others = samples.samples.filter(({ kind }) => kind === 'other')
+    expect(others.length).toBeGreaterThan(0)
+    for (const { input } of others) expect(detectedIds(input), input).not.toContain('xiaohongshu')
+    expect(detectedIds('https://www.bilibili.com/video/BV1xx411c7mD')).toEqual(['bilibili'])
   })
 })

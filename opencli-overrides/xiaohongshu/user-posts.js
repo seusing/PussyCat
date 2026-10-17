@@ -10,9 +10,9 @@ import {
     parseTimeoutSeconds,
     rangeStartMs,
     reachedRangeEnd,
-    resolveXhsProfileTarget,
     selectPostedNotes,
 } from './user-posts-helpers.js';
+import { resolveXhsProfileTarget } from './short-link.js';
 
 function unwrapEvaluateResult(payload) {
     if (payload && !Array.isArray(payload) && typeof payload === 'object' && 'session' in payload && 'data' in payload) {

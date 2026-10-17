@@ -70,7 +70,6 @@ export function buildNoteUrl(input, options = {}) {
 }
 
 const LINK_HINT = '请在小红书 App 里点「分享 → 复制链接」，或从搜索结果、博主主页复制完整链接';
-const NOTE_PATH = /^\/(?:(?:explore|note|search_result|discovery\/item)\/[a-f0-9]+|user\/profile\/[^/?#]+\/[a-f0-9]+)(?:[/?#]|$)/i;
 
 function parseXiaohongshuUrl(link) {
     try {
@@ -108,7 +107,7 @@ export async function resolveXhsNoteLink(input, { fetch } = {}) {
             // 下面区分是缺 xsec_token 还是根本不是笔记链接。
         }
         throw new ArgumentError(
-            NOTE_PATH.test(url.pathname)
+            isSupportedNotePath(url.pathname)
                 ? `这条笔记链接缺少 xsec_token，小红书只认带签名的链接：${link}`
                 : `这不是小红书笔记链接：${link}`,
             LINK_HINT,

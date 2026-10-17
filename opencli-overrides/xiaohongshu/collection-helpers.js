@@ -1,4 +1,5 @@
 import { ArgumentError, AuthRequiredError, CommandExecutionError } from '@jackwener/opencli/errors';
+import { resolveXhsProfileTarget } from './short-link.js';
 function buildXhsNoteUrl(userId, noteId, xsecToken) {
     const url = new URL(`https://www.xiaohongshu.com/user/profile/${String(userId).trim()}/${String(noteId).trim()}`);
     if (String(xsecToken ?? '').trim()) {
@@ -6,12 +7,6 @@ function buildXhsNoteUrl(userId, noteId, xsecToken) {
         url.searchParams.set('xsec_source', 'pc_user');
     }
     return url.toString();
-}
-
-function normalizeXhsUserId(input) {
-    const trimmed = String(input ?? '').trim().replace(/[?#].*$/, '');
-    const matched = trimmed.match(/\/user\/profile\/([a-zA-Z0-9]+)/);
-    return matched?.[1] ?? trimmed.replace(/\/+$/, '').split('/').pop() ?? trimmed;
 }
 
 export const COLLECT_API_PATTERN = 'note/collect/page';
@@ -196,7 +191,7 @@ async function accumulateInterceptedNotes(page, bucket, fallbackUserId) {
 }
 
 export async function resolveXhsUserId(page, rawId) {
-    if (rawId) return normalizeXhsUserId(String(rawId));
+    if (rawId) return (await resolveXhsProfileTarget(rawId)).userId;
     await page.goto('https://www.xiaohongshu.com/explore');
     await page.wait(2);
     await throwIfLoginWall(page);

@@ -8,17 +8,17 @@ import {
     buildProfileUrl,
     noteTimeMs,
     parseXhsCount,
-    parseXhsProfileTarget,
     rangeStartMs,
     reachedRangeEnd,
-    resolveXhsProfileTarget,
     selectPostedNotes,
 } from './user-posts-helpers.js';
+import { parseXhsProfileTarget, resolveXhsProfileTarget } from './short-link.js';
 import { fetchUserPosts } from './user-posts.js';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const note = (id, time, extra = {}) => ({ id, title: `笔记${id}`, type: 'video', likes: '1', sticky: false, time, xsecToken: `t-${id}`, ...extra });
+const USER_ID = '6836832c000000001d00be52';
 const SHORT_LINK = 'https://xhslink.cn/m/9HpfvCBRfr3';
 const SHARED_PROFILE = 'https://www.xiaohongshu.com/user/profile/63b98bad0000000026010302?xsec_token=YB0A8B0snagcgYQB8wcA8p4kfwLEul40CDqJU82B7JiR4=&xsec_source=app_share&xhsshare=CopyLink&shareRedId=ODYyMDQ-RTw2NzUyOTgwNjY0OTc1PD0_&apptime=1792120761&share_id=11a6ce7e4d9644f4ad6e47776c49284b';
 const SHARED_TARGET = { userId: '63b98bad0000000026010302', xsecToken: 'YB0A8B0snagcgYQB8wcA8p4kfwLEul40CDqJU82B7JiR4=', xsecSource: 'app_share' };
@@ -45,9 +45,12 @@ describe('xiaohongshu user-posts helpers', () => {
     });
 
     it('accepts a user id or a profile URL and keeps its xsec_token', () => {
-        expect(parseXhsProfileTarget('6836832c000000001d00be52')).toEqual({ userId: '6836832c000000001d00be52', xsecToken: '', xsecSource: '' });
+        expect(parseXhsProfileTarget(USER_ID)).toEqual({ userId: USER_ID, xsecToken: '', xsecSource: '' });
         expect(parseXhsProfileTarget('https://www.xiaohongshu.com/user/profile/abc?xsec_token=T&xsec_source=pc_search')).toEqual({ userId: 'abc', xsecToken: 'T', xsecSource: 'pc_search' });
         expect(() => parseXhsProfileTarget('https://www.xiaohongshu.com/explore/123')).toThrow(ArgumentError);
+        for (const input of ['u', 'abc', '复制后打开小红书', USER_ID.slice(1), `${USER_ID}0`]) {
+            expect(() => parseXhsProfileTarget(input)).toThrow('请填写小红书博主 ID 或主页链接');
+        }
         expect(buildProfileUrl({ userId: 'abc', xsecToken: 'T', xsecSource: '' })).toBe('https://www.xiaohongshu.com/user/profile/abc?xsec_token=T&xsec_source=pc_note');
         expect(buildNoteUrl('n1', 'T')).toBe('https://www.xiaohongshu.com/explore/n1?xsec_token=T&xsec_source=pc_user');
         expect(buildNoteUrl('n1', '')).toBe('https://www.xiaohongshu.com/explore/n1');
@@ -83,11 +86,12 @@ describe('xiaohongshu user-posts helpers', () => {
 
     it('resolves user ids and full profile URLs without any request', async () => {
         const fetch = redirectingFetch(SHARED_PROFILE);
-        for (const input of ['6836832c000000001d00be52', 'https://www.xiaohongshu.com/user/profile/abc?xsec_token=T&xsec_source=pc_search', 'https://example.com/xhslink.cn/user/profile/abc']) {
+        for (const input of [USER_ID, 'https://www.xiaohongshu.com/user/profile/abc?xsec_token=T&xsec_source=pc_search', 'https://example.com/xhslink.cn/user/profile/abc']) {
             await expect(resolveXhsProfileTarget(input, { fetch })).resolves.toEqual(parseXhsProfileTarget(input));
         }
         await expect(resolveXhsProfileTarget('https://www.xiaohongshu.com/explore/123', { fetch })).rejects.toThrow(ArgumentError);
         await expect(resolveXhsProfileTarget('  ', { fetch })).rejects.toThrow(ArgumentError);
+        await expect(resolveXhsProfileTarget('复制后打开小红书', { fetch })).rejects.toThrow(ArgumentError);
         expect(fetch).not.toHaveBeenCalled();
     });
 
@@ -198,15 +202,15 @@ describe('xiaohongshu user-posts command', () => {
             loaded([note('a', 30 * DAY), note('old', 20 * DAY)], true),
             loaded([note('a', 30 * DAY), note('old', 20 * DAY), note('older', 19 * DAY)], true),
         ]);
-        const rows = await fetchUserPosts(page, { id: 'u', range: '7d', sort: 'time', timeout: 600 }, { now: () => 31 * DAY, random: () => 0 });
+        const rows = await fetchUserPosts(page, { id: USER_ID, range: '7d', sort: 'time', timeout: 600 }, { now: () => 31 * DAY, random: () => 0 });
         expect(page.autoScroll).not.toHaveBeenCalled();
         expect(rows.map((row) => row.title)).toEqual(['笔记a']);
     });
 
     it('reports a login wall and an empty profile distinctly', async () => {
-        await expect(fetchUserPosts(profilePage([{ storePresent: true, loginWall: true, notes: [], hasMore: false }]), { id: 'u' }))
+        await expect(fetchUserPosts(profilePage([{ storePresent: true, loginWall: true, notes: [], hasMore: false }]), { id: USER_ID }))
             .rejects.toBeInstanceOf(AuthRequiredError);
-        await expect(fetchUserPosts(profilePage([loaded([], false)]), { id: 'u' }))
+        await expect(fetchUserPosts(profilePage([loaded([], false)]), { id: USER_ID }))
             .rejects.toBeInstanceOf(EmptyResultError);
     });
 
@@ -237,7 +241,7 @@ describe('xiaohongshu user-posts command', () => {
     });
 
     it('rejects an unknown range', async () => {
-        await expect(fetchUserPosts(profilePage([loaded([], false)]), { id: 'u', range: '2d' }))
+        await expect(fetchUserPosts(profilePage([loaded([], false)]), { id: USER_ID, range: '2d' }))
             .rejects.toBeInstanceOf(ArgumentError);
     });
 });

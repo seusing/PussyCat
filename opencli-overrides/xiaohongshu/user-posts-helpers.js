@@ -1,5 +1,4 @@
 import { ArgumentError } from '@jackwener/opencli/errors';
-import { findXhsLink, isXhsShortLink, readXhsShortLink } from './short-link.js';
 
 export const MAX_POSTED_NOTES = 1000;
 const DAY_MS = 86_400_000;
@@ -32,51 +31,6 @@ export function rangeStartMs(range, now) {
         return local - (local % DAY_MS) - BEIJING_OFFSET_MS;
     }
     return now - RANGE_DAYS[range] * DAY_MS;
-}
-
-/** 接受博主 id 或主页链接；主页链接里的 xsec_token 保留下来，部分主页不带它打不开。 */
-export function parseXhsProfileTarget(input) {
-    const raw = String(input ?? '').trim();
-    if (!raw) throw new ArgumentError('请填写小红书博主 ID 或主页链接');
-    let url = null;
-    try {
-        url = new URL(raw);
-    } catch {
-        url = null;
-    }
-    if (!url) return { userId: raw.replace(/[?#].*$/, ''), xsecToken: '', xsecSource: '' };
-    const match = url.pathname.match(/\/user\/profile\/([^/]+)/);
-    const userId = match ? match[1] : '';
-    if (!userId) {
-        throw new ArgumentError(
-            `不是小红书博主主页链接：${raw}`,
-            '支持博主 ID、博主主页链接（www.xiaohongshu.com/user/profile/…），以及 App 里博主主页「分享 → 复制链接」得到的 xhslink 短链接',
-        );
-    }
-    return {
-        userId,
-        xsecToken: url.searchParams.get('xsec_token') || '',
-        xsecSource: url.searchParams.get('xsec_source') || '',
-    };
-}
-
-/** 在 parseXhsProfileTarget 之上多认 xhslink 短链接和带链接的分享文案：只请求一次、读它自己的 Location，不跟随——匿名打开主页会再跳到登录页。 */
-export async function resolveXhsProfileTarget(input, { fetch } = {}) {
-    const text = String(input ?? '').trim();
-    const link = findXhsLink(text) ?? text;
-    if (!isXhsShortLink(link)) return parseXhsProfileTarget(link);
-    const location = await readXhsShortLink(link, { fetch });
-    let target = null;
-    try {
-        if (location) target = parseXhsProfileTarget(location);
-    } catch {
-        target = null;
-    }
-    if (target) return target;
-    throw new ArgumentError(
-        `这条短链接打开的不是博主主页：${link} → ${location || '没有跳转'}`,
-        '请在小红书 App 进入博主主页，点「分享 → 复制链接」；笔记的分享链接不能用在这里，短链接失效时重新复制一次即可',
-    );
 }
 
 export function buildProfileUrl({ userId, xsecToken, xsecSource }) {

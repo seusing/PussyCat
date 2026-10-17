@@ -10,12 +10,15 @@ import {
   buildProfileCollectionUrl,
   buildCollectionStateJs,
   fetchXhsCollectionNotes,
+  resolveXhsUserId,
 } from './collection-helpers.js';
 import './collections.js';
 import './saved.js';
 
 const note = { noteId: '662908190000000001007366', xsecToken: 'token', displayTitle: '收藏笔记', user: { userId: 'author-1', nickName: '作者' } };
 const profileLocation = { hostname: 'www.xiaohongshu.com', pathname: '/user/profile/user-1', href: 'https://www.xiaohongshu.com/user/profile/user-1' };
+const USER_ID = '63b98bad0000000026010302';
+const redirectingFetch = (location) => vi.fn(async () => new Response(null, { status: location ? 302 : 200, headers: location ? { location } : {} }));
 
 function collectionPage(state) {
   return {
@@ -131,9 +134,30 @@ describe('xiaohongshu read-only collection adapter', () => {
     const albums = [{ id: 'board-1', name: '旅行', count: '3', url: 'https://www.xiaohongshu.com/board/board-1' }];
     const page = collectionPage(null);
     page.evaluate.mockImplementation(async (script) => script.includes('userBoardList') ? albums
-      : script.includes('location.href') ? profileLocation : false);
+      : script.includes('location.href') ? { ...profileLocation, pathname: `/user/profile/${USER_ID}` } : false);
     const command = getRegistry().get('xiaohongshu/saved');
     expect(command.args).toContainEqual(expect.objectContaining({ name: 'list-collections', type: 'bool' }));
-    await expect(command.func(page, { id: 'user-1', limit: 20, 'list-collections': true })).resolves.toEqual([{ rank: 1, ...albums[0] }]);
+    await expect(command.func(page, { id: USER_ID, limit: 20, 'list-collections': true })).resolves.toEqual([{ rank: 1, ...albums[0] }]);
+  });
+
+  it('takes the user id from a bare id, a profile link, a short link or a share text', async () => {
+    const fetch = redirectingFetch(`https://www.xiaohongshu.com/user/profile/${USER_ID}?xsec_token=T&xsec_source=app_share`);
+    vi.stubGlobal('fetch', fetch);
+    try {
+      for (const input of [USER_ID, `https://www.xiaohongshu.com/user/profile/${USER_ID}?xsec_token=T`, 'https://xhslink.cn/m/AtxBJ5E7pvr', '我在小红书发现了一个宝藏博主 https://xhslink.cn/m/AtxBJ5E7pvr 复制本条信息打开App']) {
+        await expect(resolveXhsUserId(null, input)).resolves.toBe(USER_ID);
+      }
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('rejects an id that is not a user id or profile link, without opening the browser', async () => {
+    const page = { goto: vi.fn(), wait: vi.fn(), evaluate: vi.fn() };
+    for (const input of ['user-1', '复制后打开小红书', 'https://www.xiaohongshu.com/explore/6a6a1379000000001f01c03c']) {
+      await expect(resolveXhsUserId(page, input)).rejects.toBeInstanceOf(ArgumentError);
+    }
+    expect(page.goto).not.toHaveBeenCalled();
   });
 });
