@@ -1775,6 +1775,146 @@ describe('批量任务的整批状态', () => {
   })
 })
 
+describe('批量任务的应用内横幅', () => {
+  const RATE_LIMITED = 'channel-a:default HTTP 429（阶段 chapter，角色 basic，路由 channel-a:default，已尝试 2 次；同角色未配置备用通道；不会跨角色自动切换）'
+  const member = (batchId: string, index: number, status: string, over: Record<string, unknown> = {}) => ({
+    kind: 'request', parent_job_id: null, cache_bypass: false, run_id: null, cost_cny: 0,
+    job_id: `${batchId}-${index}`, batch_id: batchId, status,
+    source: `https://example.com/${batchId}/${index}`,
+    submitted_at: `2026-08-01T00:00:0${index}Z`,
+    finished_at: status === 'running' || status === 'queued' ? null : '2026-08-01T00:10:00Z',
+    ...over,
+  })
+  const batch = (batchId: string, statuses: string[]) => statuses.map((status, index) => member(batchId, index, status))
+  const setup = async (initial: Array<{ job_id: string }>, extra: Record<string, Route> = {}) => {
+    const jobsRoute: Route = { body: initial }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute, ...extra })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId(`vk-job-open-${initial[0].job_id}`)
+    return {
+      refresh: async (next: unknown[]) => {
+        jobsRoute.body = next
+        await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+      },
+    }
+  }
+  const banners = () => screen.queryAllByTestId('vk-task-banner')
+  const summaries = () => screen.queryAllByText(/已全部结束/)
+
+  it('批内成员落定时,横幅写明任务编号与小任务编号;全批没结束就没有汇总', async () => {
+    const { refresh } = await setup(batch('b', ['running', 'running', 'running', 'running']), {
+      'GET /vk/v1/jobs/b-2': { body: { ...member('b', 2, 'failed'), error: RATE_LIMITED } },
+    })
+    await refresh(batch('b', ['done', 'cancelled', 'failed', 'running']))
+
+    await waitFor(() => expect(banners()).toHaveLength(3))
+    const find = (pattern: RegExp) => banners().find((item) => pattern.test(item.textContent ?? ''))!
+    expect(find(/^任务1的小任务1已完成/)).toHaveAttribute('data-tone', 'success')
+    expect(find(/^任务1的小任务2已中断/)).toHaveAttribute('data-tone', 'warning')
+    const failed = find(/^任务1的小任务3遇到了些问题/)
+    expect(failed).toHaveAttribute('data-tone', 'danger')
+    expect(failed).toHaveTextContent('模型服务限流了')
+    expect(summaries()).toHaveLength(0)
+  })
+
+  it('单视频任务和只有一个视频的批次,横幅仍是「任务n…」,不带小任务', async () => {
+    const solo = member('solo', 0, 'running')
+    const plain = member('plain', 0, 'running', { job_id: 'plain', batch_id: null })
+    const finished = { status: 'done', finished_at: '2026-08-01T00:10:00Z' }
+    const { refresh } = await setup([plain, solo])
+    await refresh([{ ...plain, ...finished }, { ...solo, ...finished }])
+
+    await waitFor(() => expect(banners()).toHaveLength(2))
+    for (const banner of banners()) {
+      expect(banner).toHaveTextContent(/^任务\d+已完成$/)
+    }
+    expect(summaries()).toHaveLength(0)
+  })
+
+  it('最后一个成员落定时有且只有一条汇总,计数正确', async () => {
+    const { refresh } = await setup(batch('s', ['running', 'running', 'running']))
+
+    await refresh(batch('s', ['done', 'running', 'running']))
+    await waitFor(() => expect(banners()).toHaveLength(1))
+    expect(banners()[0]).toHaveTextContent('任务1的小任务1已完成')
+    expect(summaries()).toHaveLength(0)
+
+    await refresh(batch('s', ['done', 'done', 'running']))
+    await waitFor(() => expect(banners()).toHaveLength(2))
+    expect(summaries()).toHaveLength(0)
+
+    await refresh(batch('s', ['done', 'done', 'failed']))
+    await waitFor(() => expect(summaries()).toHaveLength(1))
+    const summary = summaries()[0].closest('[data-testid="vk-task-banner"]')!
+    expect(summary).toHaveTextContent('任务1已全部结束：2 个成功，1 个失败')
+    expect(summary).toHaveAttribute('data-tone', 'warning')
+    expect(banners()[0]).toBe(summary)
+    expect(banners()[1]).toHaveTextContent('任务1的小任务3遇到了些问题')
+
+    await refresh(batch('s', ['done', 'done', 'failed']))
+    await act(async () => {})
+    expect(summaries()).toHaveLength(1)
+    expect(banners()).toHaveLength(4)
+  })
+
+  it.each([
+    [['done', 'done'], '任务1已全部结束：2 个成功', 'success'],
+    [['done', 'failed'], '任务1已全部结束：1 个成功，1 个失败', 'warning'],
+    [['done', 'cancelled'], '任务1已全部结束：1 个成功，1 个中断', 'warning'],
+    [['failed', 'failed'], '任务1已全部结束：0 个成功，2 个失败', 'danger'],
+    [['failed', 'cancelled'], '任务1已全部结束：0 个成功，1 个失败，1 个中断', 'danger'],
+  ])('成员 %j 同一轮全部落定:汇总「%s」,色调 %s', async (statuses, text, tone) => {
+    const { refresh } = await setup(batch('t', ['running', 'running']))
+    await refresh(batch('t', statuses))
+
+    await waitFor(() => expect(summaries()).toHaveLength(1))
+    const summary = summaries()[0].closest('[data-testid="vk-task-banner"]')!
+    expect(summary).toHaveTextContent(text)
+    expect(summary).toHaveAttribute('data-tone', tone)
+    expect(banners()).toHaveLength(3)
+  })
+
+  it('全部由用户中断时只有成员横幅,没有汇总', async () => {
+    const { refresh } = await setup(batch('c', ['running', 'running']))
+    await refresh(batch('c', ['cancelled', 'cancelled']))
+
+    await waitFor(() => expect(banners()).toHaveLength(2))
+    expect(summaries()).toHaveLength(0)
+  })
+
+  it('重跑的成员沿用原来的小任务编号,落定后汇总照常出现', async () => {
+    const failedFirst = member('r', 1, 'failed')
+    const retry = member('r', 2, 'running', {
+      job_id: 'r-1-retry', parent_job_id: 'r-1', source: failedFirst.source, submitted_at: '2026-08-01T00:30:00Z',
+    })
+    const { refresh } = await setup([member('r', 0, 'done'), failedFirst, retry])
+    await refresh([member('r', 0, 'done'), failedFirst, { ...retry, status: 'done', finished_at: '2026-08-01T00:40:00Z' }])
+
+    await waitFor(() => expect(summaries()).toHaveLength(1))
+    expect(summaries()[0]).toHaveTextContent('任务1已全部结束：2 个成功')
+    expect(banners().map((item) => item.textContent)).toEqual([
+      expect.stringContaining('任务1已全部结束'),
+      expect.stringContaining('任务1的小任务2已完成'),
+    ])
+  })
+
+  it('关掉所属任务的通知开关后,成员横幅和汇总都不弹,别的任务不受影响', async () => {
+    const { refresh } = await setup([...batch('muted', ['running', 'running']), ...batch('loud', ['running', 'running'])])
+    // 编号按列表顺序分配:muted 是任务 1,loud 是任务 2
+    await userEvent.click(screen.getByRole('switch', { name: '关闭任务 1 完成通知' }))
+
+    // 被关掉的任务里,落定的是批内第二个成员(不是表格那一行的行首成员)
+    await refresh([...batch('muted', ['running', 'done']), ...batch('loud', ['done', 'running'])])
+    await waitFor(() => expect(banners()).toHaveLength(1))
+    expect(banners()[0]).toHaveTextContent('任务2的小任务1已完成')
+
+    await refresh([...batch('muted', ['failed', 'done']), ...batch('loud', ['done', 'done'])])
+    await waitFor(() => expect(summaries()).toHaveLength(1))
+    expect(summaries()[0]).toHaveTextContent('任务2已全部结束：2 个成功')
+    expect(banners().map((item) => item.textContent).join('\n')).not.toMatch(/^任务1/m)
+  })
+})
+
 it.each(['cancelled', 'failed'])('opens previous successful versions after a %s retry', async (status) => {
   const common = { kind: 'request', status: 'done', source: 'https://example.com/video', finished_at: '2026-08-01T00:10:00Z', parent_job_id: null, cache_bypass: false, run_id: null, cost_cny: 0 }
   const jobs = [

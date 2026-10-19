@@ -2183,3 +2183,145 @@ describe('VkTaskDetailSidebar', () => {
     })
   })
 })
+
+describe('批次顶部状态与排队显示', () => {
+  type Member = { job_id: string; status: string }
+  const settledAt = (status: string, index: number) =>
+    status === 'queued' || status === 'running' ? null : `2026-09-05T00:01:0${index}Z`
+
+  // members 是可变数组:改状态就等于引擎推进了一步,下一次请求读到新值。
+  const stubBatch = (members: Member[], batchId: string | null = 'batch-top') => {
+    const view = (member: Member, index: number) => ({
+      job_id: member.job_id, kind: 'run', status: member.status, batch_id: batchId,
+      submitted_at: `2026-09-05T00:00:0${index}Z`, finished_at: settledAt(member.status, index),
+      parent_job_id: null, cache_bypass: false,
+    })
+    const sourceOf = (member: Member) => `https://example.com/${member.job_id}`
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/vk/v1/providers') return new Response(JSON.stringify({ channels: [], roles: {} }))
+      if (path === '/vk/v1/jobs') {
+        return new Response(JSON.stringify(members.map((member, index) => ({ ...view(member, index), source: sourceOf(member) }))))
+      }
+      const index = members.findIndex((member) => path === `/vk/v1/jobs/${member.job_id}`)
+      if (index < 0) return new Response('{}', { status: 404 })
+      return new Response(JSON.stringify({
+        ...view(members[index], index), request: { source: sourceOf(members[index]), preset: 'quick-summary' },
+      }))
+    }))
+    return members
+  }
+  const members = (...statuses: string[]): Member[] => statuses.map((status, index) => ({ job_id: `m-${index}`, status }))
+  const badge = () => document.querySelector('.vk-task-detail-badge') as HTMLElement
+  const rowOf = (jobId: string) => screen.getByTestId(`vk-task-detail-task-row-${jobId}`).closest('li')!
+  const open = async (jobId: string, lastMember: string) => {
+    render(<VkTaskDetailSidebar jobId={jobId} baseUrl={BASE} onClose={() => {}} />)
+    await screen.findByTestId(`vk-task-detail-task-row-${lastMember}`)
+  }
+
+  it.each([
+    [['done', 'running'], '正在执行', 'is-running'],
+    [['done', 'queued'], '正在执行', 'is-running'],
+    [['failed', 'queued', 'running'], '正在执行', 'is-running'],
+    [['done', 'failed'], '部分成功', 'is-partial'],
+    [['done', 'cancelled'], '部分成功', 'is-partial'],
+    [['done', 'partial'], '部分成功', 'is-partial'],
+    [['done', 'done'], '已完成', 'is-completed'],
+    [['failed', 'failed'], '失败', 'is-failed'],
+    [['cancelled', 'interrupted'], '已中断', 'is-interrupted'],
+    [['partial', 'partial'], '部分完成', 'is-partial'],
+  ])('成员 %j 时,打开第一条,顶部状态是「%s」', async (statuses, label, className) => {
+    stubBatch(members(...statuses))
+    await open('m-0', `m-${statuses.length - 1}`)
+
+    expect(badge()).toHaveTextContent(label)
+    expect(badge()).toHaveClass(className)
+  })
+
+  it('打开的这条已经完成,批里还有成员在跑时,顶部不能先说「已完成」', async () => {
+    const batch = stubBatch(members('done', 'running'))
+    const polls = captureMemberPolling()
+    await open('m-0', 'm-1')
+    expect(badge()).toHaveTextContent('正在执行')
+    expect(rowOf('m-0')).toHaveTextContent('已完成')
+
+    batch[1].status = 'failed'
+    await act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
+    await waitFor(() => expect(badge()).toHaveTextContent('部分成功'))
+  })
+
+  it('排队中的小任务显示「排队中」、没有耗时,运行中的照常带耗时,也不算已处理', async () => {
+    const user = userEvent.setup()
+    stubBatch(members('running', 'queued'))
+    await open('m-0', 'm-1')
+
+    const queued = rowOf('m-1')
+    expect(queued).toHaveAttribute('data-state', 'queued')
+    expect(queued).toHaveAttribute('data-color', 'neutral')
+    expect(queued).toHaveTextContent('排队中')
+    expect(queued).not.toHaveTextContent('耗时')
+    expect(queued).not.toHaveTextContent('进行中')
+    expect(rowOf('m-0')).toHaveTextContent('进行中')
+    expect(rowOf('m-0')).toHaveTextContent('耗时')
+    expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 0/2')
+
+    await user.click(screen.getByTestId('vk-task-detail-task-row-m-1'))
+    const queuedDetails = await within(queued).findByTestId('vk-task-detail-stage-details')
+    expect(queuedDetails).toHaveTextContent('排队中，等待空闲名额')
+    expect(queuedDetails).not.toHaveTextContent('等待阶段数据')
+    await user.click(screen.getByTestId('vk-task-detail-task-row-m-0'))
+    expect(await within(rowOf('m-0')).findByTestId('vk-task-detail-stage-details')).toHaveTextContent('等待阶段数据')
+  })
+
+  it('样式表为排队中配了独立的中性色', () => {
+    const css = readFileSync(resolve(import.meta.dirname, 'VkTaskDetailSidebar.css'), 'utf8')
+    expect(css).toContain(".vk-task-detail-task-row[data-state='queued']")
+    expect(css).toContain('.vk-task-detail-batch-status.is-queued')
+    expect(css).toContain('.vk-task-batch-rerun-option.is-queued')
+  })
+
+  it('单视频任务排队中:顶部仍是「正在执行」,任务行显示「排队中」且没有耗时', async () => {
+    stubBatch(members('queued'), null)
+    render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+    const row = (await screen.findByTestId('vk-task-detail-task-row-source-0')).closest('li')!
+
+    expect(badge()).toHaveTextContent('正在执行')
+    expect(row).toHaveTextContent('排队中')
+    expect(row).not.toHaveTextContent('耗时')
+  })
+
+  it('排队中的小任务不能重跑,选择菜单里置灰并标明排队中', async () => {
+    const user = userEvent.setup()
+    stubBatch(members('done', 'failed', 'queued'))
+    await open('m-0', 'm-2')
+
+    expect(await screen.findByRole('button', { name: /重跑小任务2/ })).toBeInTheDocument()
+    expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 2/3')
+    await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+    const option = within(await screen.findByRole('menu')).getByRole('menuitemcheckbox', { name: /小任务3/ })
+    expect(option).toBeDisabled()
+    expect(option).toHaveTextContent('排队中')
+    expect(option).toHaveAttribute('data-color', 'neutral')
+  })
+
+  it('只剩排队中的成员也继续轮询,拿到名额后带上耗时,全部落定后停止轮询', async () => {
+    const polls = captureMemberPolling()
+    const batch = stubBatch(members('done', 'queued'))
+    await open('m-0', 'm-1')
+    await waitFor(() => expect(polls.size).toBe(1))
+    expect(rowOf('m-1')).not.toHaveTextContent('耗时')
+
+    batch[1].status = 'running'
+    await act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
+    await waitFor(() => expect(rowOf('m-1')).toHaveAttribute('data-state', 'running'))
+    expect(rowOf('m-1')).toHaveTextContent('耗时')
+    expect(polls.size).toBe(1)
+    expect(badge()).toHaveTextContent('正在执行')
+
+    batch[1].status = 'done'
+    await act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
+    await waitFor(() => expect(badge()).toHaveTextContent('已完成'))
+    expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 2/2')
+    expect(polls.size).toBe(0)
+  })
+})

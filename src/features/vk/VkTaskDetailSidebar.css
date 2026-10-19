@@ -293,6 +293,8 @@
 .vk-task-detail-task-row[data-state='failed'] { --batch-state-color: var(--color-danger); }
 .vk-task-detail-batch-member[data-state='running'],
 .vk-task-detail-task-row[data-state='running'] { --batch-state-color: var(--color-accent); }
+.vk-task-detail-batch-member[data-state='queued'],
+.vk-task-detail-task-row[data-state='queued'] { --batch-state-color: var(--color-fg-dim); }
 .vk-task-detail-task-row > button[data-current] { box-shadow: inset 3px 0 0 var(--batch-state-color); }
 
 .vk-task-detail-task-main {
@@ -320,6 +322,7 @@
 .vk-task-detail-batch-status.is-interrupted { color: var(--color-warning); }
 .vk-task-detail-batch-status.is-partial { color: var(--color-warning); }
 .vk-task-detail-batch-status.is-running { color: var(--color-accent); }
+.vk-task-detail-batch-status.is-queued { color: var(--color-fg-dim); }
 
 .vk-task-detail-task-disclosure {
   display: grid;
@@ -447,6 +450,7 @@
 .vk-task-batch-rerun-option.is-partial { --batch-state-color: var(--color-warning); }
 .vk-task-batch-rerun-option.is-failed { --batch-state-color: var(--color-danger); }
 .vk-task-batch-rerun-option.is-running { --batch-state-color: var(--color-accent); }
+.vk-task-batch-rerun-option.is-queued { --batch-state-color: var(--color-fg-dim); }
 .vk-task-batch-rerun-option:hover:not(:disabled),
 .vk-task-batch-rerun-option:focus-visible:not(:disabled) {
   background: color-mix(in srgb, var(--batch-state-color) 16%, #292d35) !important;

@@ -25,14 +25,12 @@ import './VkTaskDetailSidebar.css'
 import { VkResultActions } from './VkResultActions'
 import { VkStorylineSection } from './VkStorylineSection'
 import { vkJobRowFromView, vkPrimaryOutput, vkTaskResultGroups, type VkTaskResultGroup } from './taskResults'
+import {
+  ACTIVE_STATUSES, FAILED_STATUSES, INTERRUPTED_STATUSES, SUCCESS_STATUSES,
+  aggregateBatchStatus, batchState, collapseAttempts, memberInFlight,
+  type BatchMember, type BatchState,
+} from './batchMembers'
 
-const ACTIVE_STATUSES = new Set([
-  'queued', 'running', 'cancel_requested', 'submitted', 'processing',
-  'retry_requested', 'retrying', 'rerunning',
-])
-const FAILED_STATUSES = new Set(['failed', 'quarantined', 'error'])
-const INTERRUPTED_STATUSES = new Set(['cancelled', 'interrupted', 'completed_after_cancel_request'])
-const SUCCESS_STATUSES = new Set(['done', 'partial'])
 const VK_JOB_DETAIL_TERMINAL_EVENT = 'vk:job-detail-terminal'
 const VK_JOB_TERMINAL_EVENT = 'vk:job-terminal'
 const VK_JOB_RETRY_SUBMITTED_EVENT = 'vk:job-retry-submitted'
@@ -41,9 +39,8 @@ function detailError(error: unknown): string {
   return vkErrorText(error, '任务详情获取失败')
 }
 
-type BatchState = 'running' | 'done' | 'partial' | 'failed' | 'interrupted'
-
 const BATCH_STATE_LABELS: Record<BatchState, string> = {
+  queued: '排队中',
   running: '进行中',
   done: '已完成',
   partial: '部分完成',
@@ -51,7 +48,8 @@ const BATCH_STATE_LABELS: Record<BatchState, string> = {
   interrupted: '已中断',
 }
 
-const BATCH_STATE_COLORS: Record<BatchState, 'primary' | 'success' | 'warning' | 'danger'> = {
+const BATCH_STATE_COLORS: Record<BatchState, 'neutral' | 'primary' | 'success' | 'warning' | 'danger'> = {
+  queued: 'neutral',
   running: 'primary',
   done: 'success',
   partial: 'warning',
@@ -59,99 +57,25 @@ const BATCH_STATE_COLORS: Record<BatchState, 'primary' | 'success' | 'warning' |
   interrupted: 'warning',
 }
 
-function batchState(status: string): BatchState {
-  const value = status.trim().toLowerCase()
-  if (value === 'partial') return 'partial'
-  if (SUCCESS_STATUSES.has(value)) return 'done'
-  if (INTERRUPTED_STATUSES.has(value)) return 'interrupted'
-  if (FAILED_STATUSES.has(value) || /fail|error|quarantin/.test(value)) return 'failed'
-  return 'running'
+/** 批次顶部状态:成员各取最新一次尝试,口径与列表里的整批状态一致。 */
+function batchBadge(members: readonly BatchMember[]): { className: string; label: string } {
+  if (members.some((member) => memberInFlight(member.state))) return { className: 'is-running', label: '正在执行' }
+  const status = aggregateBatchStatus(members).trim().toLowerCase()
+  if (status === 'partial_success') return { className: 'is-partial', label: '部分成功' }
+  if (status === 'partial') return { className: 'is-partial', label: '部分完成' }
+  if (SUCCESS_STATUSES.has(status)) return { className: 'is-completed', label: '已完成' }
+  if (INTERRUPTED_STATUSES.has(status)) return { className: 'is-interrupted', label: '已中断' }
+  return { className: 'is-failed', label: '失败' }
+}
+
+/** 排队中的小任务还没开始跑,不显示耗时(从提交算起会把排队时间算成运行时间)。 */
+function elapsedLabel(state: BatchState, submittedAt: string, finishedAt?: string | null): string {
+  return state === 'queued' ? '' : `耗时 ${vkElapsedLabel(submittedAt, finishedAt)}`
 }
 
 /** done 与 partial 都有可用结果:重跑走 refresh 且会再计费,串联分析也算它。 */
 function producedResult(state: BatchState): boolean {
   return state === 'done' || state === 'partial'
-}
-
-type BatchMember = {
-  job_id: string
-  source: string
-  state: BatchState
-  submitted_at: string
-  finished_at: string | null
-}
-
-/** 批量成员的来源:一条 job 一个视频,取不到就退回 job_id。
- *
- * **列表接口把 source 放在行的顶层**,不在 `request` 里(那是单条详情的形状)。
- * 之前只读 `request.source`,于是永远取不到,六条小任务显示的全是 UUID —— 功能看着
- * 做完了、测试也绿,实际一次都没生效。两处都读,顺序按接口的真实形状来。 */
-function memberSource(row: { source?: string; request?: { source?: string } }): string {
-  const source = row.source ?? row.request?.source
-  return typeof source === 'string' ? source.split(/\r?\n/)[0].trim() : ''
-}
-
-/** 把「同一个视频的多次尝试」折成一行。
- *
- * 重试在后端是一条新 job(parent_job_id 指回被重试的那条、batch_id 不变),这是对的
- * ——审计要看得见每一次尝试。但**界面上不该因此多出一行**:用户重跑的是「小任务2」,
- * 看到的就该还是小任务2,状态从「已中断」变成「进行中」,而不是列表尾巴上又冒出
- * 「小任务3」。真机上两个视频重跑一次就变成四条,谁也说不清哪条对哪条。
- *
- * 折叠取**最新一次尝试**的状态与 job_id(点进去、重跑都该落在它身上),来源取链上
- * 任意一条能取到的——同一个视频,链接本来就一样。
- */
-function collapseAttempts(
-  rows: readonly {
-    job_id: string; parent_job_id?: string | null; submitted_at: string
-    finished_at?: string | null; status: string; source?: string
-  }[],
-): BatchMember[] {
-  const byId = new Map(rows.map((row) => [row.job_id, row]))
-  const rootOf = (row: typeof rows[number]): string => {
-    let current = row
-    const seen = new Set<string>()
-    while (current.parent_job_id && !seen.has(current.job_id)) {
-      seen.add(current.job_id)
-      const parent = byId.get(current.parent_job_id)
-      if (!parent) break
-      current = parent
-    }
-    return current.job_id
-  }
-  // 归并键:**同一个视频**。优先用来源链接——那是"这一条小任务是哪个视频"的唯一
-  // 事实,与后端怎么串联尝试无关。取不到来源(老数据)才退回重试链的根。
-  //
-  // 只按重试链归并是不够的:重跑一条已完成的曾经走的是"另开一条新任务"(带 batch、
-  // 不带 parent),那条链认不出来,小任务列表于是一次比一次长。那条路已经改成 refresh
-  // 了,但**显示不该依赖后端一定串对**——用户的要求是"提交时几条,永远显示几条"。
-  const chains = new Map<string, typeof rows[number][]>()
-  for (const row of rows) {
-    const key = memberSource(row) || rootOf(row)
-    const chain = chains.get(key)
-    if (chain) chain.push(row)
-    else chains.set(key, [row])
-  }
-  return [...chains.entries()]
-    .map(([, attempts]) => {
-      const ordered = [...attempts].sort(
-        (left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at),
-      )
-      const latest = ordered[ordered.length - 1]
-      const source = ordered.map(memberSource).find(Boolean) ?? ''
-      return { first: ordered[0], latest, source }
-    })
-    // 排序按**首次**提交,这样重跑不会把行的位置打乱——小任务2 永远是小任务2。
-    .sort((left, right) => Date.parse(left.first.submitted_at) - Date.parse(right.first.submitted_at))
-    .map(({ latest, source }) => ({
-      job_id: latest.job_id,
-      source,
-      state: batchState(latest.status),
-      // 耗时按**最新那次尝试**算。从首次提交算起会把中间等着的时间也算进去,
-      // 那不是这次跑用了多久。
-      submitted_at: latest.submitted_at,
-      finished_at: latest.finished_at ?? null,
-    }))
 }
 
 function sourceItems(job: VkJobView | null): string[] {
@@ -535,6 +459,7 @@ function TaskProgressDetails({
   phases?: readonly TaskPhase[]
 }) {
   const entries = stageDisplayEntries(job, phases)
+  const queued = entries.length === 0 && batchState(job.status) === 'queued'
   const stageCountLabel = ACTIVE_STATUSES.has(job.status)
     ? `阶段 ${Math.min(progress.completed + 1, progress.total)} / ${progress.total}`
     : `${entries.length} 个阶段已记录`
@@ -545,10 +470,12 @@ function TaskProgressDetails({
       data-testid="vk-task-detail-stage-details"
       data-stage-count={entries.length}
     >
-      <div className="vk-task-detail-stage-progress-meta">
-        <span>{progress.currentLabel}</span>
-        <strong>{stageCountLabel}</strong>
-      </div>
+      {!queued && (
+        <div className="vk-task-detail-stage-progress-meta">
+          <span>{progress.currentLabel}</span>
+          <strong>{stageCountLabel}</strong>
+        </div>
+      )}
       {entries.length > 0 ? (
         <ol className="vk-task-detail-steps" aria-label="解析阶段">
           {entries.map((entry, index) => {
@@ -607,7 +534,7 @@ function TaskProgressDetails({
         </ol>
       ) : (
         <p className="vk-task-detail-stage-empty">
-          {ACTIVE_STATUSES.has(job.status) ? '等待阶段数据' : '尚未返回阶段数据'}
+          {queued ? '排队中，等待空闲名额' : ACTIVE_STATUSES.has(job.status) ? '等待阶段数据' : '尚未返回阶段数据'}
         </p>
       )}
     </div>
@@ -723,20 +650,20 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     () => vkTaskNumberFor(jobId) ?? vkTaskNumberForBatch(job?.batch_id ?? null),
     [jobId, job?.batch_id],
   )
-  const batchSettledCount = batchMembers.filter((member) => member.state !== 'running').length
+  const batchSettledCount = batchMembers.filter((member) => !memberInFlight(member.state)).length
   const currentSource = batchMembers.find((member) => member.job_id === jobId)?.source
     ?? sourceItems(job)[0]
     ?? ''
-  // 还在跑的不参与重跑:它本来就在跑,再点一次只会白花一次额度。
+  // 排队或还在跑的不参与重跑:它本来就要跑,再点一次只会白花一次额度。
   const rerunable = useMemo(
-    () => batchMembers.filter((member) => member.state !== 'running'),
+    () => batchMembers.filter((member) => !memberInFlight(member.state)),
     [batchMembers],
   )
   const failedIds = useMemo(
     () => rerunable.filter((member) => member.state === 'failed').map((member) => member.job_id),
     [rerunable],
   )
-  const batchTerminal = batchMembers.length > 1 && batchMembers.every((member) => member.state !== 'running')
+  const batchTerminal = batchMembers.length > 1 && batchMembers.every((member) => !memberInFlight(member.state))
   // 悬停展开,但**不只靠悬停**:纯 hover 菜单键盘用不了,鼠标移向菜单项的途中也容易掠出
   // 容器把菜单收掉(实测就是这么翻的)。点箭头可以「钉住」,钉住后移开不收。
   const [rerunMenuOpen, setRerunMenuOpen] = useState(false)
@@ -955,7 +882,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     return () => window.removeEventListener(VK_JOB_TERMINAL_EVENT, syncTerminalDetail)
   }, [jobId, load])
   useEffect(() => {
-    const batchActive = batchMembers.some((member) => member.state === 'running')
+    const batchActive = batchMembers.some((member) => memberInFlight(member.state))
     if (!job || (!ACTIVE_STATUSES.has(job.status) && !batchActive)) return
     const timer = window.setInterval(load, 1500)
     return () => window.clearInterval(timer)
@@ -969,6 +896,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const failed = !!job && (FAILED_STATUSES.has(job.status) || (!active && !interrupted && !completedSuccessfully))
   const stopping = job?.status === 'cancel_requested'
   const rerunning = active && !!job && (!!job.parent_job_id || isVkJobRerun(job.job_id))
+  // 批次的顶部状态汇总全部成员,不看打开的这一条:批里第一个小任务跑完时整批还在跑,
+  // 顶部不能先说「已完成」。停止、重试、再次提交这几个按钮仍只作用于打开的这一条,
+  // 继续按它自己的状态显隐。
+  const badge = batchMembers.length > 1
+    ? batchBadge(batchMembers)
+    : {
+      className: failed ? 'is-failed' : interrupted ? 'is-interrupted' : rerunning ? 'is-rerunning' : active ? 'is-running' : partial ? 'is-partial' : 'is-completed',
+      label: failed ? '失败' : interrupted ? '已中断' : stopping ? '正在停止' : rerunning ? '重跑中' : active ? '正在执行' : partial ? '部分完成' : '已完成',
+    }
   const progress = job
     ? stageProgress(job, completedSuccessfully)
     : { completed: 0, total: 4, percent: 0, currentLabel: '准备处理' }
@@ -1013,7 +949,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     let firstNewJobId: string | null = null
     for (const member of batchMembers) {
       if (!selection.has(member.job_id)) continue
-      if (member.state === 'running') continue    // 还在跑的没什么可重跑的
+      if (memberInFlight(member.state)) continue    // 排队或还在跑的没什么可重跑的
       try {
         // 两条路都走 job action,**都会把 parent_job_id 指回被重跑的那条**:
         //   失败/中断 → retry(沿用请求,走缓存)
@@ -1092,8 +1028,8 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
       {job && (
         <div className="vk-task-detail-body">
           <div className="vk-task-detail-summary">
-            <span role="status" aria-live="polite" className={`vk-task-detail-badge ${failed ? 'is-failed' : interrupted ? 'is-interrupted' : rerunning ? 'is-rerunning' : active ? 'is-running' : partial ? 'is-partial' : 'is-completed'}`}>
-              {failed ? '失败' : interrupted ? '已中断' : stopping ? '正在停止' : rerunning ? '重跑中' : active ? '正在执行' : partial ? '部分完成' : '已完成'}
+            <span role="status" aria-live="polite" className={`vk-task-detail-badge ${badge.className}`}>
+              {badge.label}
             </span>
             <button type="button" onClick={() => { void load() }} aria-label="刷新任务详情" title="刷新">
               <RefreshCw size={15} aria-hidden="true" />
@@ -1120,7 +1056,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     label={`小任务${index + 1}`}
                     source={member.source || member.job_id}
                     state={member.state}
-                    elapsed={`耗时 ${vkElapsedLabel(member.submitted_at, member.finished_at)}`}
+                    elapsed={elapsedLabel(member.state, member.submitted_at, member.finished_at)}
                     current={member.job_id === jobId}
                     expanded={expandedTaskIds.has(member.job_id)}
                     onToggle={() => toggleTask(member.job_id)}
@@ -1140,7 +1076,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                         label="链接"
                         source={source}
                         state={batchState(job.status)}
-                        elapsed={`耗时 ${vkElapsedLabel(job.submitted_at, job.finished_at)}`}
+                        elapsed={elapsedLabel(batchState(job.status), job.submitted_at, job.finished_at)}
                         current
                         expanded={expandedTaskIds.has(rowId)}
                         onToggle={() => toggleTask(rowId)}
@@ -1223,7 +1159,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     transition={{ duration: reduceMotion ? 0 : 0.2 }}
                   >
                     {batchMembers.map((member, index) => {
-                      const disabled = member.state === 'running'
+                      const disabled = memberInFlight(member.state)
                       const checked = selection.has(member.job_id)
                       return (
                         <button

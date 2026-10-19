@@ -62,6 +62,7 @@ import {
   storylineNotice,
   type JobSettlement,
 } from './jobNotifications'
+import { aggregateBatchStatus, subtaskNumbers } from './batchMembers'
 import { STORYLINE_IN_PROGRESS, VK_STORYLINE_STARTED_EVENT } from './storyline'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow, detectVideoSources } from './VideoSourceCoverFlow'
@@ -239,26 +240,6 @@ function attachLogicalTaskIds(rows: VkJobRow[]): VkJobRow[] {
   })
 }
 
-const TERMINAL_JOB_STATUSES = new Set([
-  'done', 'partial', 'failed', 'quarantined', 'error',
-  'cancelled', 'interrupted', 'completed_after_cancel_request',
-])
-
-/** 一批里若还有没跑完的,整批算「正在执行」。都跑完了:全成功、全失败、全中断各算各的;
- * 结果混杂但至少有一条产出了结果(done/partial),整批算合成状态 `partial_success`,
- * 不能因为一条失败就把另外几条的成果一并说成失败。没有任何产出的混合(失败 + 中断)仍按失败。 */
-function aggregateBatchStatus(members: VkJobRow[]): string {
-  const pending = members.find((row) => !TERMINAL_JOB_STATUSES.has(row.status.trim().toLowerCase()))
-  if (pending) return pending.status
-  const statusOf = (row: VkJobRow) => row.status.trim().toLowerCase()
-  const failed = members.find((row) => /fail|error|quarantin/.test(statusOf(row)))
-  const interrupted = members.find((row) => /cancel|interrupt/.test(statusOf(row)))
-  const done = members.some((row) => statusOf(row) === 'done')
-  const partial = members.some((row) => statusOf(row) === 'partial')
-  if ((done || partial) && (failed || interrupted || (done && partial))) return 'partial_success'
-  return failed?.status ?? interrupted?.status ?? members[0].status
-}
-
 /** The sidecar exposes pipeline runs for historical inspection. They are not
  * additional user submissions, so hide a run row when its request row is
  * present in the same polling snapshot. */
@@ -335,6 +316,30 @@ function latestLogicalTasks(rows: VkJobRow[]): VkJobRow[] {
   })
 
   return collapsed.sort((left, right) => Date.parse(right.submitted_at) - Date.parse(left.submitted_at))
+}
+
+/** 多视频批次里这条 job 是第几个小任务,编号与详情页的「小任务n」一致;
+ * 单视频任务(含只有一个视频的批次)返回 null。 */
+function subtaskOf(row: VkJobRow, rows: readonly VkJobRow[]): number | null {
+  if (!row.batch_id) return null
+  const numbers = subtaskNumbers(rows.filter((item) => item.batch_id === row.batch_id))
+  if (Math.max(...numbers.values()) < 2) return null
+  return numbers.get(row.job_id) ?? null
+}
+
+function batchSummaryMessage(settlement: JobSettlement): string {
+  const counts = [
+    `${settlement.succeeded} 个成功`,
+    settlement.failed > 0 && `${settlement.failed} 个失败`,
+    settlement.interrupted > 0 && `${settlement.interrupted} 个中断`,
+  ].filter(Boolean).join('，')
+  return `任务${settlement.taskNumber}已全部结束：${counts}`
+}
+
+const BATCH_SUMMARY_TONES: Record<JobSettlement['outcome'], TaskBannerTone> = {
+  done: 'success',
+  partial: 'warning',
+  failed: 'danger',
 }
 
 function outputFileName(outputId: string): string {
@@ -1047,25 +1052,40 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             if (reason) failureHeadlines.set(row.job_id, describeVkFailure(reason).headline)
           }))
         if (gen !== jobsGen.current) return
+        const logicalRows = latestLogicalTasks(rows)
+        const settlements = detectJobSettlements(previousLogicalStatusesRef.current, logicalRows)
         if (previous) {
-          const notices = rows.flatMap((row) => {
+          // 通知开关按表格里那一行的 job_id 记(批次折成一行后是行首成员),
+          // 批内成员落定时要回到所属任务那一行去查,不能按成员自己的 job_id。
+          const prefKeys = new Map(logicalRows.map((item) => [item.logicalTaskId ?? item.job_id, item.job_id]))
+          const prefKeyOf = (row: VkJobRow) => prefKeys.get(row.logicalTaskId ?? row.job_id) ?? row.job_id
+          const memberNotices = rows.flatMap((row) => {
             const before = previous.get(row.job_id)
             if (!before || !ACTIVE_STATUSES.has(before) || ACTIVE_STATUSES.has(row.status)) return []
-            if (notificationPrefsRef.current[row.job_id] === false) return []
+            if (notificationPrefsRef.current[prefKeyOf(row)] === false) return []
             const success = SUCCESS_STATUSES.has(row.status)
             const interrupted = INTERRUPTED_STATUSES.has(row.status)
+            const subtask = subtaskOf(row, rows)
+            const label = subtask === null ? `任务${row.taskNumber}` : `任务${row.taskNumber}的小任务${subtask}`
             return [{
               id: `${row.job_id}:${row.finished_at ?? row.status}`,
-              message: success ? `任务${row.taskNumber}已完成` : `任务${row.taskNumber}遇到了些问题`,
+              message: interrupted ? `${label}已中断` : success ? `${label}已完成` : `${label}遇到了些问题`,
               description: failureHeadlines.get(row.job_id),
-              tone: success ? 'success' as const : 'danger' as const,
+              tone: interrupted ? 'warning' as const : success ? 'success' as const : 'danger' as const,
               createdAt: Date.now(),
-              ...(interrupted ? {
-                message: `\u4efb\u52a1${row.taskNumber}\u5df2\u4e2d\u65ad`,
-                tone: 'warning' as const,
-              } : {}),
             }]
           })
+          const summaryNotices = settlements.flatMap((settlement) => {
+            if (settlement.total < 2 || notificationPrefsRef.current[settlement.jobId] === false) return []
+            const row = logicalRows.find((item) => item.job_id === settlement.jobId)
+            return [{
+              id: `${settlement.jobId}:summary:${row?.finished_at ?? row?.status}`,
+              message: batchSummaryMessage(settlement),
+              tone: BATCH_SUMMARY_TONES[settlement.outcome],
+              createdAt: Date.now(),
+            }]
+          })
+          const notices = [...summaryNotices, ...memberNotices]
           if (notices.length) {
             setTaskBanners((current) => [
               ...notices.filter((notice) => !current.some((item) => item.id === notice.id)),
@@ -1074,8 +1094,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           }
         }
         previousStatusesRef.current = new Map(rows.map((row) => [row.job_id, row.status]))
-        const logicalRows = latestLogicalTasks(rows)
-        const settlements = detectJobSettlements(previousLogicalStatusesRef.current, logicalRows)
         previousLogicalStatusesRef.current = snapshotJobStatuses(logicalRows)
         if (settlements.length) void announceSettlements(settlements)
         const batchInFlight = logicalRows.some((row) => (row.batchMembers?.length ?? 0) > 1 && ACTIVE_STATUSES.has(row.status))
