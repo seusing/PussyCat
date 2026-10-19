@@ -178,6 +178,41 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     expect(screen.getByRole('toolbar', { name: '任务操作' })).toHaveClass('run-panel-actions')
   })
 
+  test('成功但结果为空：日志上方给出说明，日志照常显示', () => {
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: {
+        id: 'run-empty', command: cmd, values: {}, state: 'succeeded',
+        startedAt: Date.now(), endedAt: Date.now(),
+        lines: [{ runId: 'run-empty', seq: 0, at: 1, stream: 'stdout' as const, text: '[]' }],
+        result: [],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.getByTestId('empty-result')).toHaveTextContent('执行成功，没有符合条件的结果')
+    expect(screen.getByText('[]')).toBeInTheDocument()
+    expect(screen.queryByText('表格结果')).not.toBeInTheDocument()
+  })
+
+  test('成功且有结果、或失败时，不出现空结果说明', () => {
+    const base = { command: cmd, values: {}, startedAt: Date.now(), endedAt: Date.now(), lines: [] }
+    useAppStore.setState({
+      selected: cmd,
+      values: {},
+      currentRun: { ...base, id: 'run-has-result', state: 'succeeded', result: [{ status: 'ok' }] },
+    })
+    const { unmount } = render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.queryByTestId('empty-result')).not.toBeInTheDocument()
+    unmount()
+
+    useAppStore.setState({
+      currentRun: { ...base, id: 'run-failed-empty', state: 'failed', result: [], error: { summary: 'boom' } },
+    })
+    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    expect(screen.queryByTestId('empty-result')).not.toBeInTheDocument()
+  })
+
   test('成功结果按视频/图文分组，并把视频链接按换行交给视频解析', async () => {
     const user = userEvent.setup()
     useAppStore.setState({

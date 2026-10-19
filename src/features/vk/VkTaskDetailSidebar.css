@@ -413,14 +413,18 @@
   .vk-task-detail-step-spinner { animation: none; }
 }
 
-/* 批量重跑:菜单通过 portal 挂到 body,不受详情滚动容器的 overflow 裁切。 */
+/* 批量重跑:菜单通过 portal 挂到 body,不受详情滚动容器的 overflow 裁切。
+   结构是「可滚动列表 + 固定底栏」:选项一行一条且永不压缩,放不下时只有列表滚动。 */
 .vk-task-batch-rerun { position: relative; }
 .vk-task-batch-rerun-menu {
   position: fixed;
   z-index: 60;
+  display: flex;
   max-width: calc(100vw - 24px);
   max-height: min(320px, calc(100vh - 24px));
-  overflow-y: auto;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
   border: 1px solid var(--color-line);
   border-radius: 9px;
   background: #171a20;
@@ -430,54 +434,57 @@
 }
 .vk-task-batch-rerun-menu button {
   display: flex;
-  min-height: 38px;
-  width: 100%;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: #20232a;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--color-fg);
-  padding: 6px 8px;
+  padding: 0 8px;
   font-size: 12px;
   text-align: left;
 }
 .vk-task-batch-rerun-menu button:hover:not(:disabled),
-.vk-task-batch-rerun-menu button:focus-visible:not(:disabled) { background: #292d35; }
-.vk-task-batch-rerun-option { border-color: color-mix(in srgb, var(--batch-state-color) 48%, var(--color-line)) !important; background: color-mix(in srgb, var(--batch-state-color) 8%, #20232a) !important; }
-.vk-task-batch-rerun-option.is-done { --batch-state-color: var(--color-success); }
-.vk-task-batch-rerun-option.is-interrupted { --batch-state-color: var(--color-warning); }
-.vk-task-batch-rerun-option.is-partial { --batch-state-color: var(--color-warning); }
-.vk-task-batch-rerun-option.is-failed { --batch-state-color: var(--color-danger); }
-.vk-task-batch-rerun-option.is-running { --batch-state-color: var(--color-accent); }
-.vk-task-batch-rerun-option.is-queued { --batch-state-color: var(--color-fg-dim); }
-.vk-task-batch-rerun-option:hover:not(:disabled),
-.vk-task-batch-rerun-option:focus-visible:not(:disabled) {
-  background: color-mix(in srgb, var(--batch-state-color) 16%, #292d35) !important;
+.vk-task-batch-rerun-menu button:focus-visible:not(:disabled) { background: rgb(255 255 255 / 7%); }
+
+.vk-task-batch-rerun-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.vk-task-batch-rerun-menu .vk-task-batch-rerun-option {
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  flex: none;
+}
+.vk-task-batch-rerun-option b { flex: 0 0 auto; font-weight: 650; white-space: nowrap; }
+.vk-task-batch-rerun-source {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 没勾选时占住勾的位置,免得条目左右跳动 */
 .vk-task-batch-rerun-blank { display: inline-block; width: 15px; flex: 0 0 auto; }
 
-.vk-task-batch-rerun-item {
+.vk-task-batch-rerun-footer {
   display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 1px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid #343a45;
+  padding-top: 4px;
 }
-.vk-task-batch-rerun-item b { font-weight: 600; }
-.vk-task-batch-rerun-item em {
-  overflow: hidden;
-  color: var(--color-fg-dim);
-  font-size: 11px;
-  font-style: normal;
-  text-overflow: ellipsis;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.vk-task-batch-rerun-all { border-top: 1px solid #343a45; margin-top: 3px; padding-top: 6px; }
+.vk-task-batch-rerun-footer .vk-task-batch-rerun-all { width: auto; min-height: 32px; flex: none; }
+.vk-task-batch-rerun-hint { min-width: 0; color: var(--color-fg-dim); font-size: 11px; text-align: right; }
 .vk-task-batch-rerun-caret { margin-left: auto; color: var(--color-fg-dim); }
 
 @media (max-width: 320px) {

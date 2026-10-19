@@ -127,10 +127,13 @@ export class RunManager {
 
     let child
     try {
+      // OpenCLI 仅在设了 CI 时跳过「有新版本」提示和后台 npm 检查。OpenCLI 随爪爪升级,
+      // 提示里的 npm install -g 对爪爪用户是错的,还会红字混进空结果里让人以为命令失效。
+      // 只改这一个子进程的环境,不动全局 process.env(Python 引擎等不受影响)。
       child = this.spawnImpl(
         this.nodePath,
         [this.opencliEntry, ...request.argv],
-        { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+        { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CI: '1' } },
       )
       record.child = child
     } catch (error) {

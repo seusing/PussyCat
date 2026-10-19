@@ -52,7 +52,7 @@ describe('RunManager', () => {
     expect(calls[0]).toEqual([
       'C:\\fixture\\node.exe',
       ['C:\\fixture\\opencli\\dist\\src\\main.js', '36kr', 'news', '-f', 'json'],
-      { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+      { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: expect.any(Object) },
     ])
 
     child.stdout.write('[\n{"rank":1,"title":"A"}\n]\n')
@@ -71,6 +71,23 @@ describe('RunManager', () => {
       exitCode: 0,
       result: [{ rank: 1, title: 'A' }],
     })
+  })
+
+  it('sets CI=1 for the OpenCLI child to skip its update notice, keeping the rest of process.env', () => {
+    const previous = process.env.RUN_MANAGER_ENV_SENTINEL
+    process.env.RUN_MANAGER_ENV_SENTINEL = 'kept'
+    try {
+      const ciBefore = process.env.CI
+      const { calls, manager } = setup()
+      manager.start(request)
+      const { env } = calls[0][2]
+      expect(env.CI).toBe('1')
+      expect(env.RUN_MANAGER_ENV_SENTINEL).toBe('kept')
+      expect(process.env.CI).toBe(ciBefore)
+    } finally {
+      if (previous === undefined) delete process.env.RUN_MANAGER_ENV_SENTINEL
+      else process.env.RUN_MANAGER_ENV_SENTINEL = previous
+    }
   })
 
   it('normalizes nonzero exit and invalid JSON to error done events', () => {

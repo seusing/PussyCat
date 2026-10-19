@@ -78,6 +78,11 @@ function producedResult(state: BatchState): boolean {
   return state === 'done' || state === 'partial'
 }
 
+/** 菜单里的链接只留辨识部分:去掉协议和 www.,路径与查询串保留(B 站分 P 靠 ?p= 区分)。 */
+function compactSource(source: string): string {
+  return source.replace(/^https?:\/\/(?:www\.)?/i, '')
+}
+
 function sourceItems(job: VkJobView | null): string[] {
   const source = job?.request?.source
   if (typeof source !== 'string') return []
@@ -714,7 +719,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     const anchor = rerunMenuRef.current?.getBoundingClientRect()
     if (!anchor) return
     const margin = 12
-    const width = Math.min(Math.max(anchor.width, 320), Math.max(220, window.innerWidth - margin * 2))
+    const width = Math.min(Math.max(anchor.width, 360), Math.max(220, window.innerWidth - margin * 2))
     const left = Math.max(margin, Math.min(anchor.right - width, window.innerWidth - margin - width))
     const bottom = Math.max(margin, window.innerHeight - anchor.top + 6)
     setRerunMenuPosition({ left, bottom, width })
@@ -790,6 +795,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     return new Set(rerunable.map((member) => member.job_id))
   }, [batchTerminal, rerunPicked, failedIds, rerunable])
   const selectedCount = rerunable.filter((member) => selection.has(member.job_id)).length
+  const rebillCount = rerunable.filter((member) => selection.has(member.job_id) && producedResult(member.state)).length
   const selectedLabel = useMemo(() => {
     const picked = rerunable
       .map((member, index) => ({ member, ordinal: batchMembers.indexOf(member) + 1, index }))
@@ -1158,53 +1164,58 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     exit={{ opacity: 0.96, y: 5, scaleY: 0.96, pointerEvents: 'none' }}
                     transition={{ duration: reduceMotion ? 0 : 0.2 }}
                   >
-                    {batchMembers.map((member, index) => {
-                      const disabled = memberInFlight(member.state)
-                      const checked = selection.has(member.job_id)
-                      return (
-                        <button
-                          key={member.job_id}
-                          type="button"
-                          role="menuitemcheckbox"
-                          className={`vk-task-batch-rerun-option is-${member.state}`}
-                          data-state={member.state}
-                          data-color={BATCH_STATE_COLORS[member.state]}
-                          aria-checked={checked}
-                          disabled={disabled}
-                          onClick={() => {
-                            const next = new Set(selection)
-                            if (next.has(member.job_id)) next.delete(member.job_id)
-                            else next.add(member.job_id)
-                            setRerunPicked(next)
-                          }}
-                        >
-                          {checked ? <Check size={15} aria-hidden="true" /> : <span className="vk-task-batch-rerun-blank" />}
-                          <span className="vk-task-batch-rerun-item">
+                    <div className="vk-task-batch-rerun-list scroll-fade">
+                      {batchMembers.map((member, index) => {
+                        const disabled = memberInFlight(member.state)
+                        const checked = selection.has(member.job_id)
+                        const source = member.source || member.job_id
+                        return (
+                          <button
+                            key={member.job_id}
+                            type="button"
+                            role="menuitemcheckbox"
+                            className={`vk-task-batch-rerun-option is-${member.state}`}
+                            data-state={member.state}
+                            data-color={BATCH_STATE_COLORS[member.state]}
+                            aria-checked={checked}
+                            disabled={disabled}
+                            title={source}
+                            onClick={() => {
+                              const next = new Set(selection)
+                              if (next.has(member.job_id)) next.delete(member.job_id)
+                              else next.add(member.job_id)
+                              setRerunPicked(next)
+                            }}
+                          >
+                            {checked ? <Check size={15} aria-hidden="true" /> : <span className="vk-task-batch-rerun-blank" />}
                             <b>小任务{index + 1}</b>
-                            <em>{member.source || member.job_id}</em>
-                          </span>
-                          {/* 重跑已完成的会再花一次额度,选之前得看得见 */}
-                          <span className={`vk-task-detail-batch-status is-${member.state}`} data-state={member.state}>
-                            {producedResult(member.state)
-                              ? `${BATCH_STATE_LABELS[member.state]} · 再计费`
-                              : BATCH_STATE_LABELS[member.state]}
-                          </span>
-                        </button>
-                      )
-                    })}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="vk-task-batch-rerun-all"
-                      onClick={() => setRerunPicked(
-                        selectedCount === rerunable.length
-                          ? new Set(failedIds)
-                          : new Set(rerunable.map((member) => member.job_id)),
+                            <span className="vk-task-batch-rerun-source">{compactSource(source)}</span>
+                            <span className={`vk-task-detail-batch-status is-${member.state}`} data-state={member.state}>
+                              {BATCH_STATE_LABELS[member.state]}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div className="vk-task-batch-rerun-footer">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="vk-task-batch-rerun-all"
+                        onClick={() => setRerunPicked(
+                          selectedCount === rerunable.length
+                            ? new Set(failedIds)
+                            : new Set(rerunable.map((member) => member.job_id)),
+                        )}
+                      >
+                        <RefreshCw size={15} aria-hidden="true" />
+                        <span>{selectedCount === rerunable.length ? '只选失败的' : '全选'}</span>
+                      </button>
+                      {/* 重跑已有结果的小任务会再花一次额度,选之前得看得见;提示随勾选实时变化 */}
+                      {rebillCount > 0 && (
+                        <span className="vk-task-batch-rerun-hint">其中 {rebillCount} 个已有结果，重跑会再计费</span>
                       )}
-                    >
-                      <RefreshCw size={15} aria-hidden="true" />
-                      <span>{selectedCount === rerunable.length ? '只选失败的' : '全选'}</span>
-                    </button>
+                    </div>
                   </motion.div>}
                   </AnimatePresence>,
                   document.body,

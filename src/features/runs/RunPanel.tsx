@@ -36,6 +36,8 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
     ? ['rank', 'id', 'name', 'count', 'url']
     : run.command.columns ?? []
   const showTable = run.state === 'succeeded' && columns.length > 0 && (run.result?.length ?? 0) > 0
+  // 命令成功但结果为空时日志里只有一个 `[]`,看起来像命令失效;补一句说明
+  const emptyResult = run.state === 'succeeded' && columns.length > 0 && (run.result?.length ?? 0) === 0
   const terminal = run.state === 'succeeded' || run.state === 'failed' || run.state === 'cancelled'
   const payload = terminal ? copyPayloadFor(run) : null
   const saveLinks = async () => {
@@ -130,6 +132,12 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
               {detailOpen && run.error.detail && (
                 <pre data-testid="error-detail" className="mt-2 max-h-48 overflow-auto text-xs" style={{ color: 'var(--color-fg-dim)' }}>{run.error.detail}</pre>
               )}
+            </div>
+          )}
+
+          {emptyResult && (
+            <div data-testid="empty-result" className="mb-2 rounded-lg p-2 text-sm" style={{ background: 'var(--color-canvas)', color: 'var(--color-fg-dim)' }}>
+              执行成功，没有符合条件的结果
             </div>
           )}
 

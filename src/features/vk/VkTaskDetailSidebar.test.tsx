@@ -443,7 +443,8 @@ describe('VkTaskDetailSidebar', () => {
     expect(css).toContain('data-current')
     expect(css).not.toContain('@keyframes vk-rerun-item-in')
     expect(css).toContain('max-width: calc(100vw - 24px)')
-    expect(css).toContain('.vk-task-batch-rerun-option.is-done')
+    expect(css).toMatch(/\.vk-task-batch-rerun-list\s*\{[^}]*overflow-y:\s*auto/)
+    expect(css).toMatch(/\.vk-task-batch-rerun-option\s*\{[^}]*flex:\s*none/)
     expect(css).toContain('.vk-stage-metric-chip')
     expect(css).toContain('prefers-reduced-motion')
   })
@@ -860,9 +861,11 @@ describe('VkTaskDetailSidebar', () => {
 
       const button = await screen.findByRole('button', { name: '重新提交全部任务' })
       await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
-      const option = within(await screen.findByRole('menu')).getByRole('menuitemcheckbox', { name: /小任务1/ })
-      expect(option).toHaveTextContent('部分完成 · 再计费')
+      const menu = await screen.findByRole('menu')
+      const option = within(menu).getByRole('menuitemcheckbox', { name: /小任务1/ })
+      expect(option).toHaveTextContent('部分完成')
       expect(option).toHaveAttribute('data-color', 'warning')
+      expect(menu).toHaveTextContent('其中 1 个已有结果，重跑会再计费')
       await user.click(button)
       await waitFor(() => expect(actions).toEqual(['refresh:m97-3', 'retry:m97-4']))
     })
@@ -1087,10 +1090,11 @@ describe('VkTaskDetailSidebar', () => {
     const menuQueries = within(menu)
     const doneItem = menuQueries.getByRole('menuitemcheckbox', { name: /小任务1/ })
     expect(doneItem).toHaveAttribute('aria-checked', 'false')
-    expect(doneItem).toHaveTextContent('再计费')      // 重跑已完成的会再花钱,得写明
+    expect(menu).not.toHaveTextContent('再计费')      // 只选了失败的那条,不会多花额度
     // 进行中的那条不能选:它本来就在跑
     expect(menuQueries.getByRole('menuitemcheckbox', { name: /小任务3/ })).toBeDisabled()
     await user.click(doneItem)
+    expect(menu).toHaveTextContent('其中 1 个已有结果，重跑会再计费')  // 勾上已完成的会再花钱,得写明
 
     await user.click(await screen.findByRole('button', { name: /重跑全部 2 个/ }))
 
@@ -1219,6 +1223,64 @@ describe('VkTaskDetailSidebar', () => {
     expect(options[4]).toHaveTextContent('小任务5')
     expect(options[0]).toHaveAttribute('data-color', 'success')
     expect(options[1]).toHaveAttribute('data-color', 'warning')
+  })
+
+  describe('批量重跑菜单的选项与底栏', () => {
+    async function openRerunMenu(members: { job_id: string; status: string; source: string }[]) {
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        const hit = members.find((member) => url.endsWith(`/vk/v1/jobs/${member.job_id}`))
+        const payload = (member: typeof members[number]) => ({
+          job_id: member.job_id, kind: 'run', status: member.status,
+          submitted_at: '2026-08-28T12:15:21+08:00', finished_at: '2026-08-28T12:16:21+08:00',
+          parent_job_id: null, batch_id: 'batch-menu', cache_bypass: false,
+          request: { source: member.source, preset: 'quick-summary' },
+        })
+        if (hit) return new Response(JSON.stringify(payload(hit)), { status: 200 })
+        if (url.endsWith('/vk/v1/jobs')) return new Response(JSON.stringify(members.map(payload)), { status: 200 })
+        return new Response('{}', { status: 404 })
+      }))
+      const user = userEvent.setup()
+      render(<VkTaskDetailSidebar jobId={members[0].job_id} baseUrl={BASE} onClose={() => {}} />)
+      await screen.findByRole('button', { name: '重新提交全部任务' })
+      await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+      return { user, menu: await screen.findByRole('menu') }
+    }
+
+    it('选项只写编号、去掉协议和 www 的链接与状态,完整链接放在 title,不再写再计费', async () => {
+      const full = 'https://www.xiaohongshu.com/explore/6a9a8c3700000000110337ea'
+      const { menu } = await openRerunMenu([
+        { job_id: 'c-1', status: 'done', source: full },
+        { job_id: 'c-2', status: 'failed', source: 'http://www.bilibili.com/video/BV1xx?p=2' },
+      ])
+      const options = within(menu).getAllByRole('menuitemcheckbox')
+
+      expect(options[0]).toHaveTextContent('小任务1')
+      expect(options[0]).toHaveTextContent('xiaohongshu.com/explore/6a9a8c3700000000110337ea')
+      expect(options[0]).not.toHaveTextContent('https://')
+      expect(options[0]).not.toHaveTextContent('www.')
+      expect(options[0]).toHaveTextContent('已完成')
+      expect(options[0]).toHaveAttribute('title', full)
+      expect(options[1]).toHaveTextContent('bilibili.com/video/BV1xx?p=2')
+      expect(options[1]).toHaveAttribute('title', 'http://www.bilibili.com/video/BV1xx?p=2')
+      for (const option of options) expect(option).not.toHaveTextContent('再计费')
+    })
+
+    it('底栏提示按选中且已有结果的个数显示,只选失败项时不出现', async () => {
+      const { user, menu } = await openRerunMenu([
+        { job_id: 'h-1', status: 'done', source: 'https://example.com/one' },
+        { job_id: 'h-2', status: 'done', source: 'https://example.com/two' },
+        { job_id: 'h-3', status: 'failed', source: 'https://example.com/three' },
+      ])
+
+      // 终态批量默认全选
+      expect(menu).toHaveTextContent('其中 2 个已有结果，重跑会再计费')
+      await user.click(within(menu).getByRole('menuitem', { name: '只选失败的' }))
+      expect(menu).not.toHaveTextContent('再计费')
+      await user.click(within(menu).getByRole('menuitemcheckbox', { name: /小任务1/ }))
+      expect(menu).toHaveTextContent('其中 1 个已有结果，重跑会再计费')
+      expect(within(menu).getByRole('menuitem', { name: '全选' })).toBeInTheDocument()
+    })
   })
 
   it('只重跑选中的那一条:没勾的不动', async () => {
@@ -2277,7 +2339,6 @@ describe('批次顶部状态与排队显示', () => {
     const css = readFileSync(resolve(import.meta.dirname, 'VkTaskDetailSidebar.css'), 'utf8')
     expect(css).toContain(".vk-task-detail-task-row[data-state='queued']")
     expect(css).toContain('.vk-task-detail-batch-status.is-queued')
-    expect(css).toContain('.vk-task-batch-rerun-option.is-queued')
   })
 
   it('单视频任务排队中:顶部仍是「正在执行」,任务行显示「排队中」且没有耗时', async () => {
