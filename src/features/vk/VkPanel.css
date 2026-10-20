@@ -51,9 +51,9 @@
   z-index: 10;
   max-width: min(18rem, calc(100vw - 2rem));
   padding: 8px 12px;
-  border: 1px solid rgb(0 0 0 / 6%);
+  border: 1px solid var(--glass-edge);
   border-radius: 8px;
-  background: #222;
+  background: var(--glass-menu-fill);
   color: #f0f0f0;
   content: attr(data-tooltip);
   font-size: 0.75rem;
@@ -64,7 +64,8 @@
   transform-origin: 50% 100%;
   transition: opacity 120ms ease, transform 120ms ease;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgb(0 0 0 / 5%), 0 4px 42px rgb(0 0 0 / 6%);
+  box-shadow: var(--glass-highlight), var(--glass-menu-shadow);
+  backdrop-filter: var(--glass-blur);
 }
 
 .vk-source-file-input:hover::after,

@@ -31,7 +31,7 @@
 .inspiration-library-search:focus-within { border-color: #8fb2ff; }
 .inspiration-library-search input:focus-visible { outline: 0; }
 .inspiration-library-search > button { display: grid; width: 22px; height: 22px; place-items: center; color: #8d96a5; }
-.inspiration-library-search-listbox { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; left: 0; overflow: hidden; border: 1px solid #3a4352; border-radius: 8px; background: #1a1e25; box-shadow: 0 14px 28px rgb(0 0 0 / 35%); padding: 4px; }
+.inspiration-library-search-listbox { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; left: 0; overflow: hidden; border: 1px solid var(--glass-edge); border-radius: 8px; background: var(--glass-menu-fill); box-shadow: var(--glass-highlight), var(--glass-menu-shadow); backdrop-filter: var(--glass-blur); padding: 4px; }
 .inspiration-library-search-listbox [role='option'] { display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: 5px; color: #c8d0dc; cursor: pointer; padding: 8px; }
 .inspiration-library-search-listbox [role='option']:hover,
 .inspiration-library-search-listbox [role='option'].is-active { background: #29243a; color: #f0e8ff; }
@@ -221,14 +221,14 @@
 .inspiration-library-mobile-add { display: none; }
 
 .inspiration-library-dialog-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; background: rgb(5 7 10 / 68%); padding: 20px; }
-.inspiration-library-dialog { width: min(430px, 100%); border: 1px solid #3a4351; border-radius: 11px; background: #191d24; box-shadow: 0 22px 60px rgb(0 0 0 / 48%); padding: 20px; }
+.inspiration-library-dialog { width: min(430px, 100%); border: 1px solid var(--glass-edge); border-radius: 11px; background: var(--glass-overlay-fill); box-shadow: var(--glass-highlight), var(--glass-overlay-shadow); backdrop-filter: var(--glass-blur); padding: 20px; }
 .inspiration-library-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .inspiration-library-dialog-heading h2 { margin: 0; color: #eff2f6; font-size: 17px; font-weight: 650; }
 .inspiration-library-dialog-heading button { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 6px; color: #9ca6b5; }
 .inspiration-library-dialog-heading button:hover { background: #292e38; color: #fff; }
 .inspiration-library-dialog p { margin: 18px 0 0; color: #d8dee8; font-size: 13px; line-height: 1.55; }
 .inspiration-library-dialog .inspiration-library-dialog-detail { margin-top: 6px; color: #8f99a8; font-size: 12px; }
-.inspiration-library-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #2b313c; margin-top: 20px; padding-top: 14px; }
+.inspiration-library-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--glass-divider); margin-top: 20px; padding-top: 14px; }
 .inspiration-library-article-dialog input { width: 100%; margin-top: 12px; border: 1px solid #3a4350; border-radius: 6px; outline: 0; background: #101217; color: #eef0f4; padding: 8px 10px; font-size: 13px; }
 .inspiration-library-article-dialog input:focus-visible { border-color: #8fb2ff; }
 .inspiration-library-dialog .inspiration-library-article-error { margin-top: 8px; color: #f28b82; font-size: 12px; }

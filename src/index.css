@@ -45,6 +45,30 @@
 }
 
 :root { color-scheme: dark; }
+
+/* 浮层玻璃:overlay 档给窗口和对话框,menu 档给菜单、浮层、tooltip、toast。
+   底色比页面面板(--color-panel)明显更亮,再靠磨砂、1px 亮边、顶部内高光和投影跟页面分层。 */
+:root {
+  --glass-overlay-fill: rgb(44 50 63 / 62%);
+  --glass-menu-fill: rgb(44 50 63 / 72%);
+  --glass-reading-fill: rgb(9 11 15 / 16%);
+  --glass-blur: blur(22px) saturate(150%);
+  --glass-edge: rgb(255 255 255 / 14%);
+  --glass-divider: rgb(255 255 255 / 8%);
+  --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 10%);
+  --glass-overlay-shadow: 0 24px 64px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 30%);
+  --glass-menu-shadow: 0 12px 32px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 25%);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-overlay-fill: #242934;
+    --glass-menu-fill: #272c37;
+    --glass-reading-fill: #1c2028;
+    --glass-blur: none;
+  }
+}
+
 html, body, #root { height: 100%; }
 html,
 body,
@@ -298,9 +322,9 @@ select:focus-visible {
   position: fixed;
   z-index: 2000;
   padding: 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--color-line) 72%, white);
+  border: 1px solid var(--glass-edge);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-panel) 86%, transparent);
+  background: var(--glass-menu-fill);
   color: var(--color-fg);
   font-size: 12px;
   line-height: 1.35;
@@ -308,8 +332,8 @@ select:focus-visible {
   transform: translateY(-100%) scale(.98);
   transform-origin: 0 100%;
   white-space: normal;
-  box-shadow: 0 14px 36px rgb(0 0 0 / 36%), inset 0 1px 0 rgb(255 255 255 / 5%);
-  backdrop-filter: blur(10px) saturate(1.08);
+  box-shadow: var(--glass-highlight), var(--glass-menu-shadow);
+  backdrop-filter: var(--glass-blur);
   animation: overflow-tooltip-in 150ms ease-out 80ms both;
 }
 
@@ -1084,16 +1108,15 @@ select:focus-visible {
 }
 
 .app-glass-dialog {
-  border: 1px solid color-mix(in srgb, var(--color-line) 84%, transparent);
-  background: color-mix(in srgb, var(--color-panel) 82%, transparent);
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-overlay-fill);
   color: var(--color-fg);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 4%);
-  backdrop-filter: blur(12px) saturate(1.08);
+  box-shadow: var(--glass-highlight), var(--glass-overlay-shadow);
+  backdrop-filter: var(--glass-blur);
 }
 
 .app-glass-dialog-backdrop {
   background: rgb(0 0 0 / 48%);
-  backdrop-filter: blur(2px);
 }
 .login-operation-item {
   display: flex;

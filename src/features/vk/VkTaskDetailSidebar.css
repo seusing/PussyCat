@@ -425,10 +425,7 @@
   flex-direction: column;
   gap: 4px;
   overflow: hidden;
-  border: 1px solid var(--color-line);
   border-radius: 9px;
-  background: #171a20;
-  box-shadow: 0 18px 44px rgb(0 0 0 / 38%);
   padding: 6px;
   transform-origin: bottom;
 }

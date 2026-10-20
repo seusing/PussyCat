@@ -1485,7 +1485,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             }}
           >
             <div data-testid="vk-provider-modal-shell" className="relative max-h-[90vh] w-full max-w-2xl">
-              <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="relative max-h-[90vh] w-full overflow-y-auto rounded-xl p-5 shadow-2xl" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+              <div data-testid="vk-provider-modal" role="dialog" aria-modal="true" aria-labelledby="vk-provider-modal-title" className="vk-provider-modal relative max-h-[90vh] w-full overflow-y-auto rounded-xl p-5">
               {alertSlot('modal')}
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 id="vk-provider-modal-title" className="text-lg font-semibold">{isNew ? '创建配置' : '编辑配置'}</h3>

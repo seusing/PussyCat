@@ -24,9 +24,9 @@
   width: max-content;
   max-width: min(18rem, calc(100vw - 2rem));
   padding: 0.35rem 0.55rem;
-  border: 1px solid var(--color-line);
+  border: 1px solid var(--glass-edge);
   border-radius: 0.45rem;
-  background: color-mix(in srgb, var(--color-panel) 92%, transparent);
+  background: var(--glass-menu-fill);
   color: var(--color-fg);
   font-size: 0.75rem;
   line-height: 1.25;
@@ -37,11 +37,8 @@
   transform: translate(-50%, 0) scale(0.98);
   transform-origin: 50% 100%;
   transition: opacity 50ms ease-out, transform 50ms ease-out;
-  box-shadow:
-    0 0 0 1px rgb(0 0 0 / 6%),
-    0 2px 6px rgb(0 0 0 / 5%),
-    0 4px 42px rgb(0 0 0 / 6%);
-  backdrop-filter: blur(10px) saturate(1.08);
+  box-shadow: var(--glass-highlight), var(--glass-menu-shadow);
+  backdrop-filter: var(--glass-blur);
 }
 
 .vk-icon-action:hover::after,
@@ -184,11 +181,12 @@
   overflow-y: auto;
   margin: auto;
   padding: 24px;
-  border: 1px solid var(--color-line);
+  border: 1px solid var(--glass-edge);
   border-radius: 12px;
-  background: var(--color-panel);
+  background: var(--glass-overlay-fill);
   color: var(--color-fg);
-  box-shadow: 0 20px 60px rgb(0 0 0 / 40%);
+  box-shadow: var(--glass-highlight), var(--glass-overlay-shadow);
+  backdrop-filter: var(--glass-blur);
 }
 
 .vk-provider-delete-dialog::backdrop { background: rgb(0 0 0 / 55%); }
@@ -267,4 +265,4 @@
 }
 .vk-provider-modal-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / 55%); }
 .vk-provider-modal-shell { width: min(32rem, 100%); max-height: 90vh; }
-.vk-provider-modal { max-height: 90vh; overflow-y: auto; border: 1px solid var(--color-line); border-radius: 0.75rem; padding: 1.25rem; background: var(--color-panel); box-shadow: 0 24px 80px rgb(0 0 0 / 35%); }
+.vk-provider-modal { max-height: 90vh; overflow-y: auto; border: 1px solid var(--glass-edge); border-radius: 0.75rem; padding: 1.25rem; background: var(--glass-overlay-fill); box-shadow: var(--glass-highlight), var(--glass-overlay-shadow); backdrop-filter: var(--glass-blur); }

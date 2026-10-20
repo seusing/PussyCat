@@ -54,13 +54,13 @@
 
 .glass-menu-surface,
 .glass-menu-effect {
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--glass-edge);
   border-radius: 8px;
-  background: rgba(25, 27, 31, 0.86);
+  background: var(--glass-menu-fill);
   color: var(--color-fg, #f5f5f5);
-  -webkit-backdrop-filter: var(--hyalite, blur(4.5px));
-  backdrop-filter: var(--hyalite, blur(4.5px));
-  box-shadow: var(--hyalite-edge, 0 10px 32px rgba(0, 0, 0, 0.38));
+  -webkit-backdrop-filter: var(--hyalite, var(--glass-blur));
+  backdrop-filter: var(--hyalite, var(--glass-blur));
+  box-shadow: var(--hyalite-edge, var(--glass-highlight)), var(--glass-menu-shadow);
   animation: glass-menu-enter 130ms ease-out;
 }
 
