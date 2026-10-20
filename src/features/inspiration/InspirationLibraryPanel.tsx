@@ -9,6 +9,7 @@ import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { EmptyState } from '../../components/EmptyState'
 import { GlassSelect } from '../../components/GlassMenu'
+import { NOTE_REMARK_PLUGINS, noteUrlTransform } from '../../lib/noteMarkdown'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import {
   INSPIRATION_LIBRARY_EVENT,
@@ -701,7 +702,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
                 {viewMode === 'edit' ? (
                   <textarea data-testid="inspiration-content-input" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} aria-label="灵感内容" placeholder="写点什么..." />
                 ) : (
-                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown components={markdownComponents}>{contentDraft || '*还没有内容*'}</Markdown></div>
+                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown remarkPlugins={NOTE_REMARK_PLUGINS} components={markdownComponents} skipHtml urlTransform={noteUrlTransform}>{contentDraft || '*还没有内容*'}</Markdown></div>
                 )}
                 <div className="inspiration-library-editor-footer">
                   <span>更新于 {formatDate(selectedItem.updatedAt)}</span>

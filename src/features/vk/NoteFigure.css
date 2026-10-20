@@ -1,0 +1,18 @@
+.vk-figure-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 82%);
+  cursor: zoom-out;
+}
+.vk-figure-lightbox:focus-visible { outline: none; }
+.vk-figure-lightbox img {
+  display: block;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  border-radius: 6px;
+  object-fit: contain;
+}

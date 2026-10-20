@@ -17,6 +17,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import Markdown, { type Components, type ExtraProps } from 'react-markdown'
 import { positionMenu, useGlassMenuSurface } from '../../components/GlassMenu'
 import { addKnownTerm, loadKnownTerms, normalizeTerm } from '../../data/knownTerms'
+import { NOTE_REMARK_PLUGINS, noteUrlTransform } from '../../lib/noteMarkdown'
+import { FIGURE_SRC, NoteFigure } from './NoteFigure'
 import { rehypeTermHints, TERM_HINT_LIMIT, type VkTermHint } from './termHints'
 import './TermHint.css'
 
@@ -196,6 +198,8 @@ type TermHintContextValue = {
   terms: readonly VkTermHint[]
   note: string | null
   onKnown: (term: string) => void
+  /** 配图所在的任务;没有时笔记里的 figures/ 引用不解析,按普通图片渲染。 */
+  figure: { jobId: string; baseUrl?: string } | null
 }
 
 const TermHintContext = createContext<TermHintContextValue | null>(null)
@@ -211,25 +215,44 @@ function TermHintSpan({ node: _node, ...props }: ComponentProps<'span'> & ExtraP
   return <TermHint key={id} hint={hint} note={context.note} onKnown={context.onKnown}>{props.children}</TermHint>
 }
 
-const TERM_HINT_COMPONENTS: Components = { span: TermHintSpan }
+// react-markdown 的 img 覆盖:figures/<name>.jpg 在有任务可查时走 NoteFigure,其余图片原样输出。
+function NoteImage({ node: _node, ...props }: ComponentProps<'img'> & ExtraProps) {
+  const figure = useContext(TermHintContext)?.figure
+  const name = typeof props.src === 'string' ? FIGURE_SRC.exec(props.src)?.[1] : undefined
+  if (figure && name) return <NoteFigure jobId={figure.jobId} baseUrl={figure.baseUrl} name={name} alt={props.alt ?? ''} />
+  return <img {...props} />
+}
 
-/** 渲染笔记 Markdown,并给 terms 里的术语(最多 TERM_HINT_LIMIT 个、已了解的除外)挂上悬停卡片。 */
-export function TermHintMarkdown({ children, terms, note }: {
+const TERM_HINT_COMPONENTS: Components = { span: TermHintSpan, img: NoteImage }
+
+/**
+ * 渲染笔记 Markdown,并给 terms 里的术语(最多 TERM_HINT_LIMIT 个、已了解的除外)挂上悬停卡片。
+ * 传 figureJobId 时,笔记里的 figures/ 配图按该任务取回显示。
+ */
+export function TermHintMarkdown({ children, terms, note, figureJobId, baseUrl }: {
   children: string
   terms: readonly VkTermHint[]
   note: string | null
+  figureJobId?: string
+  baseUrl?: string
 }) {
   const [known, setKnown] = useState(() => loadKnownTerms())
   const markKnown = useCallback((term: string) => {
     addKnownTerm(term)
     setKnown((current) => new Set(current).add(normalizeTerm(term)))
   }, [])
-  const context = useMemo(() => ({ terms, note, onKnown: markKnown }), [terms, note, markKnown])
+  const context = useMemo(
+    () => ({ terms, note, onKnown: markKnown, figure: figureJobId ? { jobId: figureJobId, baseUrl } : null }),
+    [terms, note, markKnown, figureJobId, baseUrl],
+  )
   return (
     <TermHintContext.Provider value={context}>
       <Markdown
+        remarkPlugins={NOTE_REMARK_PLUGINS}
         rehypePlugins={[[rehypeTermHints, { terms, known, limit: TERM_HINT_LIMIT }]]}
         components={TERM_HINT_COMPONENTS}
+        skipHtml
+        urlTransform={noteUrlTransform}
       >{children}</Markdown>
     </TermHintContext.Provider>
   )

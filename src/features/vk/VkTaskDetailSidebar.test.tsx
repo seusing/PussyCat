@@ -1624,6 +1624,103 @@ describe('VkTaskDetailSidebar', () => {
       expect(note).toHaveTextContent('这一步没有产出可用结果')
       expect(within(note).queryByTestId('vk-failure-note')).not.toBeInTheDocument()
     })
+
+    describe('阶段', () => {
+      const metric = (stage: string, status: string, error?: string) => ({
+        stage, status, elapsed_s: 3, input_tokens: 0, output_tokens: 0, cached_tokens: 0, model_calls: 0,
+        ...(error === undefined ? {} : { error }),
+      })
+      const openSteps = async (job: VkJobView) => {
+        stubJob(job)
+        render(<VkTaskDetailSidebar jobId="job-fail" baseUrl={BASE} onClose={() => {}} />)
+        await userEvent.setup().click(await screen.findByTestId('vk-task-detail-task-row-source-0'))
+        return within(screen.getByRole('list', { name: '解析阶段' })).getAllByRole('listitem')
+      }
+
+      it('配图阶段显示为「配图」,排在整理知识笔记之前,跳过原因照常显示', async () => {
+        const steps = await openSteps(failedJob({
+          status: 'done',
+          progress: {
+            completed_stages: ['acquire', 'normalize', 'chapter', 'note'],
+            stage_metrics: [
+              metric('acquire', 'done'), metric('normalize', 'done'), metric('chapter', 'done'),
+              metric('note', 'done'), metric('illustrate', 'skipped', '没有需要看画面的关键点'),
+            ],
+          },
+        }))
+
+        expect(steps.map((item) => item.dataset.stage)).toEqual(['acquire', 'normalize', 'chapter', 'illustrate', 'note'])
+        const illustrate = steps.find((item) => item.dataset.stage === 'illustrate')!
+        expect(illustrate).toHaveTextContent('配图')
+        expect(illustrate).toHaveAttribute('data-stage-state', 'skipped')
+        expect(illustrate).toHaveTextContent('已跳过：没有需要看画面的关键点')
+      })
+
+      it('同名阶段有失败时,在「其中 N 次失败」后补上第一条失败的原因,原文放进 title', async () => {
+        const raw = 'storyline_reduce 两次输出均不可用：缺少 episodes'
+        const steps = await openSteps(failedJob({
+          status: 'done',
+          progress: {
+            completed_stages: ['storyline_reduce'],
+            stage_metrics: [
+              metric('storyline_reduce', 'done'), metric('storyline_reduce', 'failed', raw), metric('storyline_reduce', 'done'),
+            ],
+          },
+        }))
+
+        const reduce = steps.find((item) => item.dataset.stage === 'storyline_reduce')!
+        expect(reduce).toHaveTextContent('其中 1 次失败')
+        const reason = within(reduce).getByText('模型两次都没有按格式返回，这条故事线只保留了各集摘要，可以点「串联分析」重新生成')
+        expect(reason).toHaveAttribute('title', raw)
+        expect(within(reduce).queryByTestId('vk-failure-note')).not.toBeInTheDocument()
+      })
+
+      it('同名阶段的失败原文不在映射里时,走通用失败说明', async () => {
+        const steps = await openSteps(failedJob({
+          status: 'done',
+          progress: {
+            completed_stages: ['series_digest'],
+            stage_metrics: [metric('series_digest', 'done'), metric('series_digest', 'failed', RATE_LIMITED), metric('series_digest', 'done')],
+          },
+        }))
+
+        const digest = steps.find((item) => item.dataset.stage === 'series_digest')!
+        expect(digest).toHaveTextContent('其中 1 次失败')
+        expect(within(digest).getByTestId('vk-failure-note')).toHaveTextContent('模型服务限流了')
+      })
+
+      it('最后一次尝试失败的阶段同样走映射,原文放进 title,不再叠一个通用失败说明', async () => {
+        const raw = 'storyline_reduce 两次输出均不可用：缺少 episodes'
+        const steps = await openSteps(failedJob({
+          progress: {
+            completed_stages: [],
+            stage_metrics: [metric('storyline_reduce', 'done'), metric('storyline_reduce', 'done'), metric('storyline_reduce', 'failed', raw)],
+          },
+        }))
+
+        const reduce = steps.find((item) => item.dataset.stage === 'storyline_reduce')!
+        expect(reduce).toHaveAttribute('data-stage-state', 'failed')
+        const reason = within(reduce).getByText('模型两次都没有按格式返回，这条故事线只保留了各集摘要，可以点「串联分析」重新生成')
+        expect(reason).toHaveAttribute('title', raw)
+        expect(reduce).toHaveTextContent('其中 1 次失败')
+        expect(within(reduce).queryByTestId('vk-failure-note')).not.toBeInTheDocument()
+      })
+
+      it('最后一次失败认不出时走通用失败说明,第一次失败的原因另行附在「其中 N 次失败」后', async () => {
+        const raw = 'storyline_reduce 两次输出均不可用：缺少 episodes'
+        const steps = await openSteps(failedJob({
+          progress: {
+            completed_stages: [],
+            stage_metrics: [metric('storyline_reduce', 'failed', raw), metric('storyline_reduce', 'done'), metric('storyline_reduce', 'failed', RATE_LIMITED)],
+          },
+        }))
+
+        const reduce = steps.find((item) => item.dataset.stage === 'storyline_reduce')!
+        expect(reduce).toHaveTextContent('其中 2 次失败')
+        expect(within(reduce).getByTestId('vk-failure-note')).toHaveTextContent('模型服务限流了')
+        expect(within(reduce).getByText('模型两次都没有按格式返回，这条故事线只保留了各集摘要，可以点「串联分析」重新生成')).toHaveAttribute('title', raw)
+      })
+    })
   })
 
   it('stops an active task and exposes no retry or resubmit action', async () => {

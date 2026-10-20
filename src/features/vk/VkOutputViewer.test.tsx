@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
-import { fetchVkJob, fetchVkOutputText, type VkJobView } from '../../host/vkClient'
+import { fetchVkFigure, fetchVkJob, fetchVkOutputText, type VkJobView } from '../../host/vkClient'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
@@ -14,6 +14,7 @@ vi.mock('../../host/vkClient', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../host/vkClient')>()),
   fetchVkJob: vi.fn(),
   fetchVkOutputText: vi.fn(),
+  fetchVkFigure: vi.fn(),
 }))
 vi.mock('./termHints', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./termHints')>()),
@@ -529,4 +530,105 @@ it('故事线标签用自带的术语(最多标 5 个),卡片写出处视频,不
 
   await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
   expect(copyText).toHaveBeenLastCalledWith(tab.content)
+})
+
+describe('笔记配图', () => {
+  const FIGURE_A = 'aaaaaaaaaaaa'
+  const FIGURE_B = 'bbbbbbbbbbbb'
+  const figureNote = [
+    '# 装修笔记',
+    '',
+    '- 接缝要留 2mm',
+    `  ![接缝特写（01:23）](figures/${FIGURE_A}.jpg)`,
+    '- 阴角先找平',
+    `  ![阴角（04:05）](figures/${FIGURE_B}.jpg)`,
+  ].join('\n')
+  const JPEG_BASE64 = 'anBn'   // 'jpg' 的 base64
+  let objectUrls = 0
+
+  beforeEach(() => {
+    objectUrls = 0
+    Object.assign(URL, { createObjectURL: vi.fn(() => `blob:figure-${++objectUrls}`), revokeObjectURL: vi.fn() })
+    vi.mocked(fetchVkFigure).mockReset().mockImplementation(async () => new Blob(['jpg'], { type: 'image/jpeg' }))
+    vi.mocked(fetchVkOutputText).mockImplementation(async () => figureNote)
+  })
+  afterEach(() => {
+    cleanup()
+    Reflect.deleteProperty(URL, 'createObjectURL')
+    Reflect.deleteProperty(URL, 'revokeObjectURL')
+  })
+
+  const figureTabs: VkOutputTab[] = [{ id: 'job:a', jobId: 'run:a', label: '任务 1' }]
+
+  it('任务结果标签按当前任务取配图并显示', async () => {
+    render(<Harness items={figureTabs} />)
+    expect(await screen.findByAltText('接缝特写（01:23）')).toHaveAttribute('src', 'blob:figure-1')
+    expect(await screen.findByAltText('阴角（04:05）')).toBeInTheDocument()
+    expect(fetchVkFigure).toHaveBeenCalledWith('run:a', FIGURE_A, 'http://host')
+    expect(fetchVkFigure).toHaveBeenCalledWith('run:a', FIGURE_B, 'http://host')
+  })
+
+  it('故事线标签自带正文,不按任务取配图', async () => {
+    const tab: VkOutputTab = { id: 'storyline:sl:s1', jobId: 'run:a', label: '故事线 · 装修日记', content: figureNote }
+    render(<Harness items={[tab]} />)
+    expect(await screen.findByAltText('接缝特写（01:23）')).toHaveAttribute('src', `figures/${FIGURE_A}.jpg`)
+    expect(fetchVkFigure).not.toHaveBeenCalled()
+  })
+
+  it('下载时把配图内联成 data URI,某张取不到就保留原引用', async () => {
+    vi.mocked(fetchVkFigure).mockImplementation(async (_job, name) => {
+      if (name === FIGURE_B) throw new HostRequestError('配图读取失败', undefined, 404)
+      return new Blob(['jpg'], { type: 'image/jpeg' })
+    })
+    render(<Harness items={figureTabs} />)
+    await screen.findByAltText('接缝特写（01:23）')
+    await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
+    await waitFor(() => expect(saveTextFileAs).toHaveBeenCalled())
+    const [, content] = vi.mocked(saveTextFileAs).mock.calls.at(-1)!
+    expect(content).toContain(`![接缝特写（01:23）](data:image/jpeg;base64,${JPEG_BASE64})`)
+    expect(content).toContain(`![阴角（04:05）](figures/${FIGURE_B}.jpg)`)
+    expect(content).not.toContain(`figures/${FIGURE_A}.jpg`)
+  })
+
+  it('收进灵感库时同样内联配图', async () => {
+    render(<Harness items={figureTabs} />)
+    await screen.findByAltText('接缝特写（01:23）')
+    await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+    await waitFor(() => expect(loadInspirationLibrary().items).toHaveLength(1))
+    const { content } = loadInspirationLibrary().items[0]
+    expect(content).toContain(`![接缝特写（01:23）](data:image/jpeg;base64,${JPEG_BASE64})`)
+    expect(content).toContain(`![阴角（04:05）](data:image/jpeg;base64,${JPEG_BASE64})`)
+    expect(screen.getByTestId('vk-output-viewer-save-library')).toHaveAccessibleName('已收进灵感库')
+  })
+
+  it('灯箱打开时 Esc 只关灯箱,不关结果窗口', async () => {
+    render(<Harness items={figureTabs} />)
+    await userEvent.click(await screen.findByRole('button', { name: '查看大图：接缝特写（01:23）' }))
+    expect(screen.getByRole('dialog', { name: '接缝特写（01:23）' })).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: '接缝特写（01:23）' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('vk-output-viewer')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('vk-output-viewer')).not.toBeInTheDocument()
+  })
+
+  it('复制内容保持原文,不内联', async () => {
+    render(<Harness items={figureTabs} />)
+    await screen.findByAltText('接缝特写（01:23）')
+    vi.mocked(fetchVkFigure).mockClear()
+    await userEvent.click(screen.getByTestId('vk-output-viewer-copy'))
+    expect(copyText).toHaveBeenLastCalledWith(figureNote)
+    expect(fetchVkFigure).not.toHaveBeenCalled()
+  })
+
+  it('没有配图的笔记下载和收藏照旧,不发取图请求', async () => {
+    vi.mocked(fetchVkOutputText).mockImplementation(async () => '# 没有图\n\n正文')
+    render(<Harness items={figureTabs} />)
+    await screen.findByRole('heading', { name: '没有图' })
+    await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
+    await waitFor(() => expect(saveTextFileAs).toHaveBeenCalledWith('run:a.md', '# 没有图\n\n正文', expect.any(Object)))
+    expect(fetchVkFigure).not.toHaveBeenCalled()
+  })
 })

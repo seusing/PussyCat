@@ -1,7 +1,7 @@
 import { HostRequestError } from './errors'
 import {
   deleteVkJevConfig, enableVkJevConfig, fetchVkJevConfigs, fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
-  isVkEngineNotReady, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkOutputPath,
+  fetchVkFigure, isVkEngineNotReady, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkFigureUrl, vkOutputPath,
 } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
@@ -50,6 +50,26 @@ describe('vkClient', () => {
 
     await expect(fetchVkOutputText('notes/a.md', 'http://127.0.0.1:9999')).resolves.toBe(markdown)
     expect(impl).toHaveBeenCalledWith('http://127.0.0.1:9999/vk/v1/outputs/notes%2Fa.md')
+  })
+
+  it('builds the figure url under the job, keeping the colon of a run:<id> job id', () => {
+    expect(vkFigureUrl('run:abc123', '0123456789ab', 'http://127.0.0.1:9999'))
+      .toBe('http://127.0.0.1:9999/vk/v1/outputs/run:abc123/figure-0123456789ab')
+    expect(vkFigureUrl('job a/1', '0123456789ab', 'http://127.0.0.1:9999'))
+      .toBe('http://127.0.0.1:9999/vk/v1/outputs/job%20a%2F1/figure-0123456789ab')
+  })
+
+  it('fetches a figure as a blob, and maps a non-2xx answer to a HostRequestError with that status', async () => {
+    const jpeg = new Blob(['jpg'], { type: 'image/jpeg' })
+    const impl = vi.fn(async () => ({ ok: true, status: 200, blob: async () => jpeg }))
+    vi.stubGlobal('fetch', impl)
+    await expect(fetchVkFigure('run:r1', 'aaaaaaaaaaaa', 'http://127.0.0.1:9999')).resolves.toBe(jpeg)
+    expect(impl).toHaveBeenCalledWith('http://127.0.0.1:9999/vk/v1/outputs/run:r1/figure-aaaaaaaaaaaa')
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, blob: async () => jpeg })))
+    const error = await fetchVkFigure('run:r1', 'bbbbbbbbbbbb', 'http://127.0.0.1:9999').catch((err) => err)
+    expect(error).toBeInstanceOf(HostRequestError)
+    expect(error.status).toBe(404)
   })
 
   it('posts the batch id to start a storyline and returns the id and status', async () => {

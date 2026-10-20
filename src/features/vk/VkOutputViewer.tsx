@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useDragControls, useMotionValue } from 'motion/react'
 import { BookmarkPlus, Check, Copy, Download } from 'lucide-react'
-import { fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
+import { fetchVkFigure, fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { GlassSelect } from '../../components/GlassMenu'
@@ -39,6 +39,34 @@ function inlineFileName(label: string): string {
   return `${label.replace(/[\\/:*?"<>|]/g, '_')}.md`
 }
 
+const FIGURE_REFERENCE = /!\[([^\]]*)\]\(figures\/([0-9a-f]{12})\.jpg\)/g
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
+}
+
+/** 导出前把笔记里的配图引用换成 data URI,让文件自包含;某张图取不到就保留原引用,不拦保存。 */
+async function inlineFigures(content: string, jobId: string | undefined, baseUrl: string): Promise<string> {
+  if (!jobId) return content
+  const names = [...new Set([...content.matchAll(FIGURE_REFERENCE)].map((match) => match[2]))]
+  if (names.length === 0) return content
+  const dataUrls = new Map<string, string>()
+  await Promise.all(names.map(async (name) => {
+    try {
+      dataUrls.set(name, await blobToDataUrl(await fetchVkFigure(jobId, name, baseUrl)))
+    } catch { /* 保留原引用 */ }
+  }))
+  return content.replace(FIGURE_REFERENCE, (reference, alt: string, name: string) => {
+    const dataUrl = dataUrls.get(name)
+    return dataUrl ? `![${alt}](${dataUrl})` : reference
+  })
+}
+
 export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion, baseUrl, onClose, cache }: {
   tabs: VkOutputTab[]
   activeTabId: string
@@ -62,6 +90,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const outputDownloadController = useRef<AbortController | null>(null)
   const outputDownloadResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const interactionGeneration = useRef(0)
+  const librarySaving = useRef(false)
   const sectionRef = useRef<HTMLElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
@@ -86,6 +115,8 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
   const [loadedTerms, setLoadedTerms] = useState<{ key: string; value: VkTermHints } | null>(null)
   const fetchedTerms = termKey ? termCache.current.get(termKey) ?? (loadedTerms?.key === termKey ? loadedTerms.value : undefined) : undefined
   const termHints: VkTermHints = activeTab?.terms !== undefined ? { terms: activeTab.terms, note: null } : fetchedTerms ?? NO_TERMS
+  // 配图挂在产生笔记的任务下;故事线、观点对比标签自带正文,没有对应任务。
+  const figureJobId = activeTab && activeTab.content === undefined ? activeTab.jobId : undefined
   const dragControls = useDragControls()
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
   const [size, setSize] = useState(() => ({ width: Math.min(960, window.innerWidth - 24), height: Math.min(700, window.innerHeight - 24) }))
@@ -205,7 +236,9 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
     setOutputDownloadProgress(0)
     setActionError(null)
     try {
-      const saved = await saveTextFileAs(outputFileName(loaded.outputId), loaded.content, {
+      const content = await inlineFigures(loaded.content, figureJobId, baseUrl)
+      if (controller.signal.aborted) return
+      const saved = await saveTextFileAs(outputFileName(loaded.outputId), content, {
         signal: controller.signal,
         onProgress: (progress) => {
           if (outputDownloadController.current === controller) setOutputDownloadProgress(progress)
@@ -228,7 +261,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
     } finally {
       if (outputDownloadController.current === controller) outputDownloadController.current = null
     }
-  }, [loaded, resetOutputDownload])
+  }, [loaded, figureJobId, baseUrl, resetOutputDownload])
 
   const copyOutput = async () => {
     if (!loaded) return
@@ -243,18 +276,26 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
     }
   }
 
-  const saveToInspirationLibrary = () => {
-    if (!loaded) return
-    const saved = addInspirationItem({
-      title: activeTab?.libraryTitle || activeTab?.label || '视频解析结果',
-      content: loaded.content,
-      kind: 'video',
-      format: 'md',
-      folderId: null,
-      source: activeTab?.source,
-    })
-    if (saved) setLibrarySaved(true)
-    else setActionError({ text: '保存到灵感库失败' })
+  const saveToInspirationLibrary = async () => {
+    if (!loaded || librarySaving.current) return
+    librarySaving.current = true
+    const generation = interactionGeneration.current
+    try {
+      const content = await inlineFigures(loaded.content, figureJobId, baseUrl)
+      const saved = addInspirationItem({
+        title: activeTab?.libraryTitle || activeTab?.label || '视频解析结果',
+        content,
+        kind: 'video',
+        format: 'md',
+        folderId: null,
+        source: activeTab?.source,
+      })
+      if (generation !== interactionGeneration.current) return
+      if (saved) setLibrarySaved(true)
+      else setActionError({ text: '保存到灵感库失败' })
+    } finally {
+      librarySaving.current = false
+    }
   }
 
   return (
@@ -277,7 +318,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
           <button type="button" data-testid="vk-output-viewer-copy" aria-label={outputCopied ? '已复制' : '复制内容'} title={outputCopied ? '已复制' : '复制内容'} disabled={!loaded} onClick={() => { void copyOutput() }} className="vk-output-copy-button">
             <Copy size={14} aria-hidden="true" /><span>{outputCopied ? '已复制' : '复制内容'}</span>
           </button>
-          <button type="button" data-testid="vk-output-viewer-save-library" aria-label={librarySaved ? '已收进灵感库' : '收进灵感库'} title={librarySaved ? '已收进灵感库' : '收进灵感库'} disabled={!loaded} onClick={saveToInspirationLibrary} className="vk-output-library-button">
+          <button type="button" data-testid="vk-output-viewer-save-library" aria-label={librarySaved ? '已收进灵感库' : '收进灵感库'} title={librarySaved ? '已收进灵感库' : '收进灵感库'} disabled={!loaded} onClick={() => { void saveToInspirationLibrary() }} className="vk-output-library-button">
             <BookmarkPlus size={14} aria-hidden="true" /><span>{librarySaved ? '已收进' : '收进灵感库'}</span>
           </button>
           <motion.button
@@ -364,7 +405,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
             data-testid="vk-output-viewer-content" className="vk-output-viewer-content" aria-busy={!loaded && !error}>
             {actionError && <p role="alert" title={actionError.title}>{actionError.text}</p>}
             {error ? <div role="alert" title={error.title}>{error.text}<button type="button" onClick={() => setRetry((value) => value + 1)}>重试</button></div>
-              : loaded ? <TermHintMarkdown terms={termHints.terms} note={termHints.note}>{loaded.content}</TermHintMarkdown> : <p role="status">正在读取结果…</p>}
+              : loaded ? <TermHintMarkdown terms={termHints.terms} note={termHints.note} figureJobId={figureJobId} baseUrl={baseUrl}>{loaded.content}</TermHintMarkdown> : <p role="status">正在读取结果…</p>}
           </div>
         </div>
         <span className="vk-output-resize-hint" aria-hidden="true">◢</span>

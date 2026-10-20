@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveTextFileAs } from '../../lib/saveTextFile'
@@ -354,6 +354,29 @@ describe('灵感库', () => {
     await userEvent.click(screen.getByRole('button', { name: '导出文件' }))
 
     expect(saveTextFileAs).toHaveBeenCalledWith('导出笔记.md', '导出内容')
+  })
+
+  it('阅读视图渲染 GFM 表格和内联配图,不显示 YAML 头与 HTML 注释', async () => {
+    const content = [
+      '---', 'source_id: abc123', '---', '',
+      '# 装修笔记', '',
+      '- 接缝要留 2mm <!-- claim_id: c_01 -->',
+      '  ![接缝特写（01:23）](data:image/jpeg;base64,/9j/4AAQ)', '',
+      '| 观察什么 | 视频怎么看 |', '| --- | --- |', '| 报价单 | 先看有没有漏项 |',
+    ].join('\n')
+    const item = addInspirationItem({ title: '装修笔记', content, kind: 'video', format: 'md', folderId: null })!
+    render(<InspirationLibraryPanel onOpenSources={() => {}} />)
+    await userEvent.click(screen.getByTestId(`inspiration-item-${item.id}`))
+    await userEvent.click(screen.getByRole('button', { name: '阅读' }))
+
+    const preview = screen.getByTestId('inspiration-content-preview')
+    expect(preview).not.toHaveTextContent('source_id')
+    expect(preview).not.toHaveTextContent('claim_id')
+    expect(within(preview).getByRole('heading', { name: '装修笔记' })).toBeInTheDocument()
+    expect(within(preview).getByRole('table')).toBeInTheDocument()
+    expect(within(preview).getByRole('columnheader', { name: '视频怎么看' })).toBeInTheDocument()
+    expect(within(preview).getByRole('cell', { name: '先看有没有漏项' })).toBeInTheDocument()
+    expect(within(preview).getByAltText('接缝特写（01:23）')).toHaveAttribute('src', 'data:image/jpeg;base64,/9j/4AAQ')
   })
 
   it('粘贴公众号文章链接后抓取正文并以阅读模式打开', async () => {

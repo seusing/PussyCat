@@ -415,6 +415,9 @@ export interface VkStorylineTerm {
   video_title: string
 }
 
+/** 可执行清单的一条:看什么,以及看到之后视频的判断。 */
+export type VkActionItem = { watch: string; meaning: string }
+
 export interface VkStoryline {
   id: string
   title: string
@@ -423,6 +426,12 @@ export interface VkStoryline {
   callbacks: VkStorylineCallback[]
   key_points: string[]
   open_threads: string[]
+  /** 可执行清单:新版引擎是 {watch, meaning} 对象,旧结果文件里仍是字符串,更早的没有这个键。 */
+  action_items?: Array<string | VkActionItem>
+  /** 清单的写法:signals 是「观察什么 / 视频怎么看」两栏表,steps 是步骤;旧版引擎没有这个字段。 */
+  action_style?: 'signals' | 'steps'
+  /** 这条故事线笔记的生成结果;failed 时笔记只保留各集摘要,旧版引擎没有这个字段。 */
+  note_status?: 'done' | 'failed'
   /** 这条故事线的完整 Markdown 笔记,查看器直接渲染它。 */
   markdown: string
   markdown_path: string
@@ -454,7 +463,9 @@ export interface VkComparison {
   common_points: Array<{ text: string; job_ids: string[] }>
   differences: Array<{ aspect: string; positions: Array<{ job_id: string; view: string }> }>
   unique_points: Array<{ job_id: string; text: string }>
-  action_items: string[]
+  action_items: Array<string | VkActionItem>
+  /** 清单的写法:signals 是「观察什么 / 视频怎么看」两栏表,steps 是步骤;旧版引擎没有这个字段。 */
+  action_style?: 'signals' | 'steps'
   /** 这组对比的完整 Markdown 笔记,查看器直接渲染它。 */
   markdown: string
   markdown_path: string
@@ -668,6 +679,18 @@ export async function fetchVkOutputText(outputId: string, baseUrl = DEFAULT_BASE
   const response = await fetch(`${baseUrl}${vkOutputPath(outputId)}`)
   if (!response.ok) throw new HostRequestError('产物读取失败', undefined, response.status)
   return response.text()
+}
+
+/** 笔记配图的输出键是 figure-<文件内容哈希前 12 位>,挂在产生它的任务 id 下。 */
+export function vkFigureUrl(jobId: string, name: string, baseUrl = DEFAULT_BASE_URL): string {
+  return `${baseUrl}/vk/v1/outputs/${encodePathSegment(jobId)}/figure-${encodePathSegment(name)}`
+}
+
+// <img src> 不带 Origin,会被 Host 白名单拒绝,配图只能 fetch 成 blob 再显示。
+export async function fetchVkFigure(jobId: string, name: string, baseUrl = DEFAULT_BASE_URL): Promise<Blob> {
+  const response = await fetch(vkFigureUrl(jobId, name, baseUrl))
+  if (!response.ok) throw new HostRequestError('配图读取失败', undefined, response.status)
+  return response.blob()
 }
 
 // 产物下载:fetch(带 Origin,过 Host 白名单)→ blob → 对象 URL 新开页。

@@ -10,7 +10,7 @@ import {
   postVkJobAction,
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
-import { vkErrorText } from './vkErrors'
+import { vkErrorText, vkStageFailureNote } from './vkErrors'
 import { VkFailureNote, VkRawInfo } from './VkFailureNote'
 import { describeVkFailure } from './vkFailure'
 import { AppAlert } from '../../components/AppAlert'
@@ -123,6 +123,7 @@ const STAGE_LABELS: Record<string, string> = {
   summary_reduce: '分层汇总',
   claim: '提取关键信息',
   qc: '核对关键信息',
+  illustrate: '配图',
   note: '整理知识笔记',
   product: '生成解析结果',
   storyline_relate: 'Jev 判断关联',
@@ -231,6 +232,8 @@ type StageDisplay = {
   count: number
   /** 同名阶段里失败/隔离的次数。 */
   failedCount: number
+  /** 同名阶段里第一条失败记录的原始错误;没有或引擎没给时为 null。 */
+  firstFailureRaw: string | null
   /** 各次用时里有记录的部分之和;一次都没记录为 null。 */
   elapsedS: number | null
   /** 这一阶段最新一次模型调用答的模型(Jev 的调用也算);没有调用为 null。 */
@@ -257,6 +260,13 @@ function SkippedCodeReason({ raw }: { raw: string }) {
         : <>已跳过：这一步没有执行<VkRawInfo raw={raw} /></>}
     </div>
   )
+}
+
+/** 阶段失败原文的展示:认得出的翻成人话,原文放进 title;认不出的走通用失败说明。 */
+function StageFailureReason({ raw }: { raw: string }) {
+  const note = vkStageFailureNote(raw)
+  if (note) return <span className="vk-task-detail-step-reason" title={note.title}>{note.text}</span>
+  return <div className="vk-task-detail-step-reason"><VkFailureNote raw={raw} /></div>
 }
 
 /**
@@ -288,6 +298,9 @@ function stageDisplayEntries(job: VkJobView, explicitPhases?: readonly TaskPhase
   const quickRequested = job.auto_route?.processing_depth === 'quick' || job.request?.preset === 'quick-summary'
   const phases = explicitPhases ?? (!sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES)
   const phaseOrder = phases.flatMap((phase) => phase.stages)
+  // 配图在 note 之前运行。旧引擎没有这一阶段,放进进度分组会让分组永远完不成,所以只在显示顺序上排到 note 前。
+  const noteAt = phaseOrder.indexOf('note')
+  if (noteAt >= 0) phaseOrder.splice(noteAt, 0, 'illustrate')
   const orderedStages = [
     ...phaseOrder.filter((stage) => observed.has(stage)),
     ...[...observed].filter((stage) => !phaseOrder.includes(stage)),
@@ -331,6 +344,7 @@ function stageDisplayEntries(job: VkJobView, explicitPhases?: readonly TaskPhase
       state,
       count: Math.max(group.length, 1),
       failedCount: group.filter(isFailedMetric).length,
+      firstFailureRaw: group.find(isFailedMetric)?.error?.trim() || null,
       elapsedS: elapsed.length > 0 ? elapsed.reduce((sum, value) => sum + value, 0) : null,
       model: (attempt?.model_reported || attempt?.model_requested || '').trim() || null,
       failureReason,
@@ -528,10 +542,13 @@ function TaskProgressDetails({
                     </span>
                   )
                 : entry.failureRaw
-                  ? <div className="vk-task-detail-step-reason"><VkFailureNote raw={entry.failureRaw} /></div>
+                  ? <StageFailureReason raw={entry.failureRaw} />
                   : entry.failureReason && <span className="vk-task-detail-step-reason">{entry.failureReason}</span>}
               {entry.count > 1 && entry.failedCount > 0 && (
-                <span className="vk-task-detail-step-reason">其中 {entry.failedCount} 次失败</span>
+                <>
+                  <span className="vk-task-detail-step-reason">其中 {entry.failedCount} 次失败</span>
+                  {entry.firstFailureRaw && entry.firstFailureRaw !== entry.failureRaw && <StageFailureReason raw={entry.firstFailureRaw} />}
+                </>
               )}
             </li>
             )

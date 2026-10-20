@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { KNOWN_TERMS_KEY, addKnownTerm, loadKnownTerms } from '../../data/knownTerms'
 import { TermHint, TermHintMarkdown } from './TermHint'
@@ -219,5 +219,180 @@ describe('我已了解', () => {
     await userEvent.click(within(await screen.findByRole('dialog', { name: '术语：乙术语' })).getByRole('button', { name: '我已了解' }))
     expect(marked()).toEqual(['丙术语', '甲术语'])
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('TermHintMarkdown 语法', () => {
+  it('开头的 YAML 头只解析不渲染', () => {
+    const { container } = render(
+      <TermHintMarkdown terms={[]} note={null}>{'---\nsource_id: abc123\ntitle: 装修日记\n---\n\n# 正文标题\n\n第一段'}</TermHintMarkdown>,
+    )
+    expect(container).not.toHaveTextContent('source_id:')
+    expect(container.querySelector('hr')).toBeNull()
+    expect(screen.getByRole('heading', { name: '正文标题' })).toBeInTheDocument()
+    expect(screen.getByText('第一段')).toBeInTheDocument()
+  })
+
+  it('行尾的 HTML 注释不显示', () => {
+    const { container } = render(
+      <TermHintMarkdown terms={[]} note={null}>{'- 先量尺寸再下单 <!-- claim_id: c_01 -->'}</TermHintMarkdown>,
+    )
+    expect(container).toHaveTextContent('先量尺寸再下单')
+    expect(container).not.toHaveTextContent('claim_id')
+    expect(container).not.toHaveTextContent('<!--')
+  })
+
+  it('GFM 两栏表渲染成表格', () => {
+    render(
+      <TermHintMarkdown terms={[]} note={null}>{'| 观察什么 | 视频怎么看 |\n| --- | --- |\n| 报价单 | 先看有没有漏项 |'}</TermHintMarkdown>,
+    )
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '观察什么' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '视频怎么看' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '先看有没有漏项' })).toBeInTheDocument()
+  })
+
+  it('表格单元格里的术语照常挂卡片', async () => {
+    render(
+      <TermHintMarkdown terms={[hint]} note={null}>{'| 观察什么 | 视频怎么看 |\n| --- | --- |\n| 渐进式超负荷 | 每周加一点 |'}</TermHintMarkdown>,
+    )
+    const trigger = within(screen.getByRole('cell', { name: '渐进式超负荷' })).getByRole('button', { name: '渐进式超负荷' })
+    await userEvent.hover(trigger)
+    expect(await findCard()).toHaveTextContent('逐步增加训练负荷')
+  })
+
+  it('img 的 data:image 地址能显示,其他 data: 和 javascript: 仍被拦', () => {
+    const { container } = render(
+      <TermHintMarkdown terms={[]} note={null}>
+        {'![内联图](data:image/jpeg;base64,/9j/4AAQ+=)\n\n![脚本图](data:text/html;base64,PHNjcmlwdD4=)\n\n[点我](javascript:alert(1))'}
+      </TermHintMarkdown>,
+    )
+    expect(screen.getByAltText('内联图')).toHaveAttribute('src', 'data:image/jpeg;base64,/9j/4AAQ+=')
+    expect(screen.getByAltText('脚本图').getAttribute('src') ?? '').toBe('')
+    expect(screen.getByText('点我').closest('a')?.getAttribute('href') ?? '').toBe('')
+    expect(container.innerHTML).not.toContain('javascript:')
+  })
+
+  it('data:image 只对 img 的 src 放行,链接的 href 不行', () => {
+    render(<TermHintMarkdown terms={[]} note={null}>{'[点我](data:image/png;base64,AAAA)'}</TermHintMarkdown>)
+    expect(screen.getByText('点我').closest('a')?.getAttribute('href') ?? '').toBe('')
+  })
+})
+
+describe('TermHintMarkdown 配图', () => {
+  const NAME = '0123456789ab'
+  const ALT = '镜头里的接缝（01:23）'
+  const note = `- 关键点\n  ![${ALT}](figures/${NAME}.jpg)`
+  let objectUrls = 0
+  const createObjectURL = vi.fn(() => `blob:figure-${++objectUrls}`)
+  const revokeObjectURL = vi.fn()
+
+  function stubFigureFetch(ok = true) {
+    const fetchMock = vi.fn(async () => (ok ? new Response(new Blob(['jpg'], { type: 'image/jpeg' })) : new Response('missing', { status: 404 })))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  beforeEach(() => {
+    objectUrls = 0
+    createObjectURL.mockClear()
+    revokeObjectURL.mockClear()
+    Object.assign(URL, { createObjectURL, revokeObjectURL })
+  })
+  afterEach(() => {
+    cleanup()   // 卸载要在对象 URL 方法还在时发生
+    Reflect.deleteProperty(URL, 'createObjectURL')
+    Reflect.deleteProperty(URL, 'revokeObjectURL')
+  })
+
+  it('fetch 取回 blob,以对象 URL 显示并带图注', async () => {
+    const fetchMock = stubFigureFetch()
+    const { container } = render(<TermHintMarkdown terms={[]} note={null} figureJobId="run:r1" baseUrl="http://host">{note}</TermHintMarkdown>)
+    const image = await screen.findByAltText(ALT)
+    expect(image).toHaveAttribute('src', 'blob:figure-1')
+    expect(fetchMock).toHaveBeenCalledWith(`http://host/vk/v1/outputs/run:r1/figure-${NAME}`)
+    const figure = container.querySelector('span.vk-figure')!
+    expect(figure.querySelector('img')).toBe(image)
+    expect(figure.querySelector('.vk-figure-caption')).toHaveTextContent(ALT)
+  })
+
+  it('加载中先显示占位', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{note}</TermHintMarkdown>)
+    expect(await screen.findByText('配图加载中…')).toBeInTheDocument()
+  })
+
+  it('取图失败显示「配图加载失败」', async () => {
+    stubFigureFetch(false)
+    render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{note}</TermHintMarkdown>)
+    expect(await screen.findByText('配图加载失败')).toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(createObjectURL).not.toHaveBeenCalled()
+  })
+
+  it('卸载时释放对象 URL', async () => {
+    stubFigureFetch()
+    const { unmount } = render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{note}</TermHintMarkdown>)
+    await screen.findByAltText(ALT)
+    unmount()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:figure-1')
+  })
+
+  it('图片地址变化时释放旧的对象 URL 并取新图', async () => {
+    const fetchMock = stubFigureFetch()
+    const { rerender } = render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{note}</TermHintMarkdown>)
+    await screen.findByAltText(ALT)
+    rerender(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{'![另一张](figures/ffffffffffff.jpg)'}</TermHintMarkdown>)
+    expect(await screen.findByAltText('另一张')).toHaveAttribute('src', 'blob:figure-2')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:figure-1')
+    expect(fetchMock).toHaveBeenLastCalledWith('http://host/vk/v1/outputs/job-1/figure-ffffffffffff')
+  })
+
+  it('没有 figureJobId 时 figures/ 引用按普通图片渲染,不发请求', () => {
+    const fetchMock = stubFigureFetch()
+    render(<TermHintMarkdown terms={[]} note={null}>{note}</TermHintMarkdown>)
+    expect(screen.getByAltText(ALT)).toHaveAttribute('src', `figures/${NAME}.jpg`)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('不符合 figures/<12 位十六进制>.jpg 的图片照常渲染,不发请求', () => {
+    const fetchMock = stubFigureFetch()
+    render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1">{'![别的图](figures/xyz.jpg)\n\n![外链](https://example.com/a.png)'}</TermHintMarkdown>)
+    expect(screen.getByAltText('别的图')).toHaveAttribute('src', 'figures/xyz.jpg')
+    expect(screen.getByAltText('外链')).toHaveAttribute('src', 'https://example.com/a.png')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('点配图打开挂在 body 上的灯箱,Esc 或点击关闭,Esc 不会传给外层窗口', async () => {
+    stubFigureFetch()
+    const onClose = vi.fn()
+    render(
+      <Window onClose={onClose}>
+        <TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{note}</TermHintMarkdown>
+      </Window>,
+    )
+    const figure = await screen.findByRole('button', { name: `查看大图：${ALT}` })
+    await userEvent.click(figure)
+    const lightbox = screen.getByRole('dialog', { name: ALT })
+    expect(lightbox.parentElement).toBe(document.body)
+    expect(within(lightbox).getByRole('img')).toHaveAttribute('src', 'blob:figure-1')
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: ALT })).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(figure).toHaveFocus()
+
+    await userEvent.click(figure)
+    await userEvent.click(screen.getByRole('dialog', { name: ALT }))
+    expect(screen.queryByRole('dialog', { name: ALT })).not.toBeInTheDocument()
+  })
+
+  it('键盘 Enter 也能打开灯箱', async () => {
+    stubFigureFetch()
+    render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{note}</TermHintMarkdown>)
+    const figure = await screen.findByRole('button', { name: `查看大图：${ALT}` })
+    figure.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(screen.getByRole('dialog', { name: ALT })).toBeInTheDocument()
   })
 })
