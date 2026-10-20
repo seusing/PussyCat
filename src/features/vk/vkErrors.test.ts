@@ -1,5 +1,5 @@
 import { HostRequestError } from '../../host/errors'
-import { ENGINE_NOT_READY_TEXT, vkErrorNote, vkErrorText, vkStageFailureNote } from './vkErrors'
+import { ENGINE_NOT_READY_TEXT, SESSION_REACQUIRE_TEXT, vkErrorNote, vkErrorText, vkStageFailureNote } from './vkErrors'
 
 describe('视频解析错误文案', () => {
   test('引擎未就绪:统一成人话,宿主原文与 reasonCode 只进 title', () => {
@@ -9,6 +9,14 @@ describe('视频解析错误文案', () => {
       expect(note.text).not.toMatch(/video-knowledge|runtime|sidecar|not-/)
       expect(note.title).toBe(`video-knowledge runtime 未安装或未配置(${code})`)
     }
+  })
+
+  test('会话凭据没有保存副本(428):统一成人话,引擎原文与 reasonCode 只进 title', () => {
+    const engineText = '历史请求的来源含会话凭据,本机没有能解开的保存副本;请从采集结果/入口用新鲜链接重新提交'
+    const note = vkErrorNote(new HostRequestError(engineText, undefined, 428, 'session-reacquire-required'), '兜底')
+    expect(note.text).toBe(SESSION_REACQUIRE_TEXT)
+    expect(note.title).toContain(engineText)
+    expect(note.title).toContain('(session-reacquire-required)')
   })
 
   test('其它宿主错误:正文只有 summary,reasonCode 放进 title', () => {

@@ -39,6 +39,13 @@ function detailError(error: unknown): string {
   return vkErrorText(error, '任务详情获取失败')
 }
 
+/** 单条操作失败时提示的标题。 */
+const ACTION_FAILURE_TITLES: Record<'cancel' | 'retry' | 'resubmit', string> = {
+  cancel: '未能停止任务',
+  retry: '未能重试',
+  resubmit: '未能再次提交任务',
+}
+
 const BATCH_STATE_LABELS: Record<BatchState, string> = {
   queued: '排队中',
   running: '进行中',
@@ -655,6 +662,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const [providers, setProviders] = useState<VkProviderSettings | null>(null)
   const [resultState, setResultState] = useState<{ jobId: string; groups: VkTaskResultGroup[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 操作结果(重跑选中的失败清单,停止、重试、再次提交的失败)不放进 error:load() 读成功就清 error,
+  // 切到新任务和执行中的轮询都会把它冲掉。用户关掉或开始下一次操作才清。
+  const [actionNotice, setActionNotice] = useState<{ title: string; failures: string[] } | null>(null)
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | 'batch' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
   const [batchMembers, setBatchMembers] = useState<
@@ -936,6 +946,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     if (!jobId || !job) return
     setActionPending(action)
     setError(null)
+    setActionNotice(null)
     try {
       if (action === 'cancel') {
         await postVkJobAction(jobId, 'cancel', baseUrl)
@@ -955,7 +966,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
       }
       else await load()
     } catch (actionError) {
-      setError(detailError(actionError))
+      setActionNotice({ title: ACTION_FAILURE_TITLES[action], failures: [detailError(actionError)] })
     } finally {
       setActionPending(null)
     }
@@ -968,11 +979,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     setRerunMenuPinned(false)
     setActionPending('batch')
     setError(null)
+    setActionNotice(null)
     const failures: string[] = []
+    let attempted = 0
     let firstNewJobId: string | null = null
     for (const member of batchMembers) {
       if (!selection.has(member.job_id)) continue
       if (memberInFlight(member.state)) continue    // 排队或还在跑的没什么可重跑的
+      attempted += 1
       try {
         // 两条路都走 job action,**都会把 parent_job_id 指回被重跑的那条**:
         //   失败/中断 → retry(沿用请求,走缓存)
@@ -993,13 +1007,16 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
       }
     }
     setActionPending(null)
-    // 部分失败要说清是哪几条,否则用户只知道"没全跑起来"却不知道差在哪。
-    if (failures.length > 0) setError(`部分视频未能重跑\n${failures.join('\n')}`)
     if (firstNewJobId) {
       onJobChange?.(firstNewJobId)
       onJobRefresh?.()
     }
     else await load()
+    // 部分失败要说清是哪几条,否则用户只知道"没全跑起来"却不知道差在哪。
+    if (failures.length > 0) {
+      const title = failures.length === attempted ? '所选视频都未能重跑' : '部分视频未能重跑'
+      setActionNotice({ title, failures })
+    }
   }
 
   if (!jobId) {
@@ -1045,6 +1062,17 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
         </button>
       </header>
 
+      {actionNotice && (
+        <AppAlert
+          testId="vk-task-detail-action-notice"
+          tone="error"
+          className="vk-task-detail-action-notice"
+          title={actionNotice.title}
+          description={actionNotice.failures.join('\n')}
+          onClose={() => setActionNotice(null)}
+          closeLabel="关闭提示"
+        />
+      )}
       {error && <div className="vk-task-detail-error" role="alert">{error}</div>}
       {!job && !error && <div className="vk-task-detail-loading">正在读取任务详情…</div>}
 

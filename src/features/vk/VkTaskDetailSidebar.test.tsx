@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VkTaskDetailSidebar } from './VkTaskDetailSidebar'
+import { SESSION_REACQUIRE_TEXT } from './vkErrors'
 import type { VkJobView } from '../../host/vkClient'
 import { useAppStore } from '../../store/appStore'
 
@@ -74,6 +75,52 @@ function resultHistoryFixture(status: string) {
     submitted_at: '2026-09-03T00:06:00Z',
   })
   return fixture
+}
+
+type StubJob = { job_id: string } & Record<string, unknown>
+
+/**
+ * 同批两条失败的小任务;retry 的响应由调用方决定。siblings 从一开始就在批次里(例如还在跑的成员),
+ * rerunJobs 是重跑出来的新任务,第一次 retry 之后详情和列表才会返回它们。返回 fetch 的 mock,供用例统计请求次数。
+ */
+function stubFailedBatch(
+  retryResponse: (jobId: string) => Response,
+  { rerunJobs = [], siblings = [] }: { rerunJobs?: StubJob[]; siblings?: StubJob[] } = {},
+) {
+  const members = [
+    { job_id: 'q-1', source: 'https://example.com/one' },
+    { job_id: 'q-2', source: 'https://example.com/two' },
+  ]
+  const payload = (member: typeof members[number]) => ({
+    job_id: member.job_id, kind: 'run', status: 'failed',
+    submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+    parent_job_id: null, batch_id: 'batch-q', cache_bypass: false,
+    request: { source: member.source, preset: 'quick-summary' },
+  })
+  let retried = false
+  const jobs = (): StubJob[] => [...members.map(payload), ...siblings, ...(retried ? rerunJobs : [])]
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    const retryHit = url.match(/\/vk\/v1\/jobs\/([^/]+)\/retry$/)
+    if (retryHit) {
+      retried = true
+      return retryResponse(retryHit[1])
+    }
+    const hit = jobs().find((job) => url.endsWith(`/vk/v1/jobs/${job.job_id}`))
+    if (hit) return new Response(JSON.stringify(hit), { status: 200 })
+    if (url.endsWith('/vk/v1/jobs')) return new Response(JSON.stringify(jobs()), { status: 200 })
+    return new Response('{}', { status: 404 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+const SESSION_REACQUIRE_ENGINE_TEXT = '历史请求的来源含会话凭据,本机没有能解开的保存副本;请从采集结果/入口用新鲜链接重新提交'
+
+function sessionReacquireResponse() {
+  return new Response(JSON.stringify({
+    error: SESSION_REACQUIRE_ENGINE_TEXT, reasonCode: 'session-reacquire-required',
+  }), { status: 428, headers: { 'content-type': 'application/json' } })
 }
 
 vi.mock('thinking-orbs', () => ({
@@ -1331,6 +1378,192 @@ describe('VkTaskDetailSidebar', () => {
 
     await waitFor(() => expect(retried).toEqual(['s-2']))
     expect(retried).not.toContain('s-1')
+  })
+
+  it('选中的成员全部回 428:标题说都未能重跑,正文是人话,引擎原文不进正文', async () => {
+    const user = userEvent.setup()
+    stubFailedBatch(() => sessionReacquireResponse())
+
+    render(<VkTaskDetailSidebar jobId="q-1" baseUrl={BASE} onClose={() => {}} />)
+    await user.click(await screen.findByRole('button', { name: '重新提交全部任务' }))
+
+    const alert = await screen.findByTestId('vk-task-detail-action-notice')
+    expect(alert).toHaveTextContent('所选视频都未能重跑')
+    expect(alert).toHaveTextContent(`https://example.com/one：${SESSION_REACQUIRE_TEXT}`)
+    expect(alert).toHaveTextContent(`https://example.com/two：${SESSION_REACQUIRE_TEXT}`)
+    expect(alert).not.toHaveTextContent('部分视频未能重跑')
+    expect(alert).not.toHaveTextContent(SESSION_REACQUIRE_ENGINE_TEXT)
+  })
+
+  it('一条重跑成功、一条回 428:标题仍是部分视频未能重跑', async () => {
+    const user = userEvent.setup()
+    stubFailedBatch((jobId) => (
+      jobId === 'q-1'
+        ? new Response(JSON.stringify({ job_id: 'q-1-retry' }), { status: 200 })
+        : sessionReacquireResponse()
+    ))
+
+    render(<VkTaskDetailSidebar jobId="q-1" baseUrl={BASE} onClose={() => {}} />)
+    await user.click(await screen.findByRole('button', { name: '重新提交全部任务' }))
+
+    const alert = await screen.findByTestId('vk-task-detail-action-notice')
+    expect(alert).toHaveTextContent('部分视频未能重跑')
+    expect(alert).toHaveTextContent(`https://example.com/two：${SESSION_REACQUIRE_TEXT}`)
+    expect(alert).not.toHaveTextContent('https://example.com/one')
+    expect(alert).not.toHaveTextContent('所选视频都未能重跑')
+  })
+
+  it('重跑部分失败后侧栏切到新任务,提示仍在,点关闭才消失', async () => {
+    const user = userEvent.setup()
+    stubFailedBatch((jobId) => (
+      jobId === 'q-1'
+        ? new Response(JSON.stringify({ job_id: 'q-1-retry' }), { status: 200 })
+        : sessionReacquireResponse()
+    ), {
+      rerunJobs: [{
+        job_id: 'q-1-retry', kind: 'run', status: 'queued',
+        submitted_at: '2026-08-28T12:16:00+08:00', finished_at: null,
+        parent_job_id: 'q-1', batch_id: 'batch-q', cache_bypass: false,
+        request: { source: 'https://example.com/one', preset: 'quick-summary' },
+      }],
+    })
+    const onJobChange = vi.fn()
+    function ControlledSidebar() {
+      const [jobId, setJobId] = useState('q-1')
+      return <VkTaskDetailSidebar baseUrl={BASE} onClose={() => {}} jobId={jobId} onJobChange={(next) => {
+        onJobChange(next)
+        setJobId(next)
+      }} />
+    }
+
+    render(<ControlledSidebar />)
+    await user.click(await screen.findByRole('button', { name: '重新提交全部任务' }))
+    await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('q-1-retry'))
+    // 只有执行中的任务才有停止按钮;它出现时,新任务的 load() 已经读完。
+    await screen.findByRole('button', { name: '停止任务' })
+
+    const alert = screen.getByTestId('vk-task-detail-action-notice')
+    expect(alert).toHaveTextContent('部分视频未能重跑')
+    expect(alert).toHaveTextContent(`https://example.com/two：${SESSION_REACQUIRE_TEXT}`)
+    expect(alert).not.toHaveTextContent('https://example.com/one')
+
+    await user.click(within(alert).getByRole('button', { name: '关闭提示' }))
+    expect(screen.queryByTestId('vk-task-detail-action-notice')).not.toBeInTheDocument()
+  })
+
+  it('批次还有成员在跑时选中的都回 428:提示撑过轮询,不被 load() 清掉', async () => {
+    const user = userEvent.setup()
+    let poll: (() => Promise<void>) | undefined
+    vi.spyOn(window, 'setInterval').mockImplementation((callback: TimerHandler, delay?: number) => {
+      if (delay === 1500) poll = callback as () => Promise<void>
+      return 999_996 as never
+    })
+    const fetchMock = stubFailedBatch(() => sessionReacquireResponse(), {
+      siblings: [{
+        job_id: 'q-3', kind: 'run', status: 'running',
+        submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+        parent_job_id: null, batch_id: 'batch-q', cache_bypass: false,
+        request: { source: 'https://example.com/three', preset: 'quick-summary' },
+      }],
+    })
+    const detailRequests = () => fetchMock.mock.calls
+      .filter(([input]) => String(input).endsWith('/vk/v1/jobs/q-1')).length
+    const expectNotice = () => {
+      const alert = screen.getByTestId('vk-task-detail-action-notice')
+      expect(alert).toHaveTextContent('所选视频都未能重跑')
+      expect(alert).toHaveTextContent(`https://example.com/one：${SESSION_REACQUIRE_TEXT}`)
+      expect(alert).toHaveTextContent(`https://example.com/two：${SESSION_REACQUIRE_TEXT}`)
+    }
+
+    render(<VkTaskDetailSidebar jobId="q-1" baseUrl={BASE} onClose={() => {}} />)
+    // q-3 还在跑,批次未进入终态:默认只选失败的 q-1、q-2
+    await user.click(await screen.findByRole('button', { name: '重跑全部 2 个' }))
+    await screen.findByTestId('vk-task-detail-action-notice')
+    expectNotice()
+
+    await waitFor(() => expect(poll).toBeTypeOf('function'))
+    const requestsBeforePoll = detailRequests()
+    await act(async () => { await poll?.() })
+    expect(detailRequests()).toBeGreaterThan(requestsBeforePoll)
+    expectNotice()
+  })
+
+  it.each([
+    ['重试', 'q-1', '未能重试'],
+    ['再次提交任务', 'q-4', '未能再次提交任务'],
+  ])('批次在跑时单条「%s」回 428:提示撑过轮询,不被 load() 清掉', async (button, jobId, title) => {
+    const user = userEvent.setup()
+    let poll: (() => Promise<void>) | undefined
+    vi.spyOn(window, 'setInterval').mockImplementation((callback: TimerHandler, delay?: number) => {
+      if (delay === 1500) poll = callback as () => Promise<void>
+      return 999_995 as never
+    })
+    const sibling = (job_id: string, status: string, source: string) => ({
+      job_id, kind: 'run', status,
+      submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+      parent_job_id: null, batch_id: 'batch-q', cache_bypass: false,
+      request: { source, preset: 'quick-summary' },
+    })
+    // q-3 还在跑,批次没进终态,轮询一直开着。
+    const fetchMock = stubFailedBatch(() => sessionReacquireResponse(), {
+      siblings: [
+        sibling('q-3', 'running', 'https://example.com/three'),
+        sibling('q-4', 'interrupted', 'https://example.com/four'),
+      ],
+    })
+    const detailRequests = () => fetchMock.mock.calls
+      .filter(([input]) => String(input).endsWith(`/vk/v1/jobs/${jobId}`)).length
+
+    render(<VkTaskDetailSidebar jobId={jobId} baseUrl={BASE} onClose={() => {}} />)
+    await user.click(await screen.findByRole('button', { name: button }))
+
+    const alert = await screen.findByTestId('vk-task-detail-action-notice')
+    expect(alert).toHaveTextContent(title)
+    expect(alert).toHaveTextContent(SESSION_REACQUIRE_TEXT)
+    expect(alert).not.toHaveTextContent(SESSION_REACQUIRE_ENGINE_TEXT)
+
+    await waitFor(() => expect(poll).toBeTypeOf('function'))
+    const requestsBeforePoll = detailRequests()
+    await act(async () => { await poll?.() })
+    expect(detailRequests()).toBeGreaterThan(requestsBeforePoll)
+    expect(screen.getByTestId('vk-task-detail-action-notice')).toHaveTextContent(title)
+  })
+
+  it('停止执行中的任务失败:提示撑过轮询,不被 load() 清掉', async () => {
+    const user = userEvent.setup()
+    let poll: (() => Promise<void>) | undefined
+    vi.spyOn(window, 'setInterval').mockImplementation((callback: TimerHandler, delay?: number) => {
+      if (delay === 1500) poll = callback as () => Promise<void>
+      return 999_994 as never
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/live/cancel')) return new Response(JSON.stringify({
+        error: '解析引擎启动超时', reasonCode: 'spawn-timeout',
+      }), { status: 503, headers: { 'content-type': 'application/json' } })
+      if (url.endsWith('/vk/v1/jobs/live')) return new Response(JSON.stringify({
+        job_id: 'live', kind: 'run', status: 'running', submitted_at: '2026-08-07T10:00:00Z', finished_at: null,
+        parent_job_id: null, cache_bypass: false, request: { source: 'https://example.com/v', preset: 'quick-summary' },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const detailRequests = () => fetchMock.mock.calls
+      .filter(([input]) => String(input).endsWith('/vk/v1/jobs/live')).length
+
+    render(<VkTaskDetailSidebar jobId="live" baseUrl={BASE} onClose={() => {}} />)
+    await user.click(await screen.findByRole('button', { name: '停止任务' }))
+
+    const alert = await screen.findByTestId('vk-task-detail-action-notice')
+    expect(alert).toHaveTextContent('未能停止任务')
+    expect(alert).toHaveTextContent('解析引擎启动超时')
+
+    await waitFor(() => expect(poll).toBeTypeOf('function'))
+    const requestsBeforePoll = detailRequests()
+    await act(async () => { await poll?.() })
+    expect(detailRequests()).toBeGreaterThan(requestsBeforePoll)
+    expect(screen.getByTestId('vk-task-detail-action-notice')).toHaveTextContent('未能停止任务')
   })
 
   it('renders reached stage details and the configured model name', async () => {

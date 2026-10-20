@@ -84,6 +84,17 @@
   pointer-events: none;
 }
 
+/* 操作结果:嵌在标题栏下面,不是浮层;用户关掉或开始下一次操作才消失。 */
+.vk-task-detail-action-notice.app-alert {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  margin: 12px 12px 0;
+  padding: 10px 12px;
+}
+
+.vk-task-detail-action-notice .app-alert__description { white-space: pre-line; }
+
 .vk-task-detail-body {
   min-height: 0;
   min-width: 0;
