@@ -7,6 +7,7 @@ import {
   fetchVkJob,
   fetchVkJobs,
   fetchVkProviderSettings,
+  postVkBatchCancel,
   postVkJobAction,
 } from '../../host/vkClient'
 import type { VkJobView, VkProviderSettings, VkStageMetric } from '../../host/vkClient'
@@ -15,6 +16,7 @@ import { VkFailureNote, VkRawInfo } from './VkFailureNote'
 import { describeVkFailure } from './vkFailure'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
+import { ConfirmPopover } from '../../components/ConfirmPopover'
 import { useGlassMenuSurface } from '../../components/GlassMenu'
 import { copyText } from '../../lib/clipboard'
 import {
@@ -44,6 +46,14 @@ const ACTION_FAILURE_TITLES: Record<'cancel' | 'retry' | 'resubmit', string> = {
   cancel: '未能停止任务',
   retry: '未能重试',
   resubmit: '未能再次提交任务',
+}
+
+type ConfirmRequest = {
+  anchor: HTMLElement
+  title: string
+  body: string[]
+  confirmLabel: string
+  onConfirm: () => void
 }
 
 const BATCH_STATE_LABELS: Record<BatchState, string> = {
@@ -667,6 +677,8 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const [actionNotice, setActionNotice] = useState<{ title: string; failures: string[] } | null>(null)
   const [actionPending, setActionPending] = useState<'cancel' | 'retry' | 'resubmit' | 'batch' | null>(null)
   const [submitHovered, setSubmitHovered] = useState(false)
+  // 会再计费的重提先在触发按钮旁确认;确认后才真正发请求。
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [batchMembers, setBatchMembers] = useState<
     BatchMember[]
   >([])
@@ -683,6 +695,8 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     [jobId, job?.batch_id],
   )
   const batchSettledCount = batchMembers.filter((member) => !memberInFlight(member.state)).length
+  const isBatch = batchMembers.length > 1
+  const inFlightCount = batchMembers.length - batchSettledCount
   const currentSource = batchMembers.find((member) => member.job_id === jobId)?.source
     ?? sourceItems(job)[0]
     ?? ''
@@ -718,6 +732,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     setRerunMenuOpen(false)
     setRerunMenuPinned(false)
     rerunMenuPinnedRef.current = false
+    setConfirm(null)
   }, [jobId, batchStateSignature])
 
   useEffect(() => {
@@ -928,10 +943,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const partial = job?.status === 'partial'
   const failed = !!job && (FAILED_STATUSES.has(job.status) || (!active && !interrupted && !completedSuccessfully))
   const stopping = job?.status === 'cancel_requested'
+  const showStop = isBatch ? inFlightCount > 0 : active
+  const stopBusy = isBatch
+    ? batchMembers.every((member) => !memberInFlight(member.state) || member.status === 'cancel_requested')
+    : stopping
   const rerunning = active && !!job && (!!job.parent_job_id || isVkJobRerun(job.job_id))
   // 批次的顶部状态汇总全部成员,不看打开的这一条:批里第一个小任务跑完时整批还在跑,
-  // 顶部不能先说「已完成」。停止、重试、再次提交这几个按钮仍只作用于打开的这一条,
-  // 继续按它自己的状态显隐。
+  // 顶部不能先说「已完成」。停止按钮同理:批量任务停的是整批在跑的小任务,不要求打开的这一条
+  // 在跑,重提并入分体按钮;单视频任务的停止、重试、再次提交只作用于它自己,按它的状态显隐。
   const badge = batchMembers.length > 1
     ? batchBadge(batchMembers)
     : {
@@ -949,7 +968,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     setActionNotice(null)
     try {
       if (action === 'cancel') {
-        await postVkJobAction(jobId, 'cancel', baseUrl)
+        if (isBatch && job.batch_id) {
+          const { cancelled } = await postVkBatchCancel(job.batch_id, baseUrl)
+          if (cancelled.length === 0) {
+            setActionNotice({ title: '没有可以停止的小任务', failures: ['可能已经结束或刚重启过'] })
+          }
+        } else {
+          await postVkJobAction(jobId, 'cancel', baseUrl)
+        }
         await load()
         return
       }
@@ -1017,6 +1043,45 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
       const title = failures.length === attempted ? '所选视频都未能重跑' : '部分视频未能重跑'
       setActionNotice({ title, failures })
     }
+  }
+
+  /** 批量主按钮:所选里有已有结果的成员会走 refresh 再计费,先确认;只有失败或中断的直接提交。 */
+  const requestRerun = (anchor: HTMLElement) => {
+    if (rebillCount === 0) {
+      void rerunSelected(selection)
+      return
+    }
+    const picked = rerunable.filter((member) => selection.has(member.job_id))
+    const rebilled = picked.filter((member) => producedResult(member.state))
+    const resumeCount = picked.length - rebilled.length
+    setRerunMenuOpen(false)
+    setRerunMenuPinned(false)
+    rerunMenuPinnedRef.current = false
+    setConfirm({
+      anchor,
+      title: `重新提交 ${picked.length} 个小任务？`,
+      body: [
+        `${rebilled.length} 个已有结果，会重新解析并再计费：${rebilled.map((member) => `小任务${batchMembers.indexOf(member) + 1}`).join('、')}`,
+        ...(resumeCount > 0 ? [`${resumeCount} 个失败或中断的，会从中断处接着跑`] : []),
+      ],
+      confirmLabel: '确认重新提交',
+      onConfirm: () => { void rerunSelected(selection) },
+    })
+  }
+
+  /** 单视频「再次提交任务」:done 与 partial 走 refresh 会再计费,先确认;中断的走 retry,直接提交。 */
+  const requestResubmit = (anchor: HTMLElement) => {
+    if (!completedSuccessfully) {
+      void runAction('resubmit')
+      return
+    }
+    setConfirm({
+      anchor,
+      title: '再次提交这个任务？',
+      body: ['已有结果，会重新解析并再计费'],
+      confirmLabel: '确认再次提交',
+      onConfirm: () => { void runAction('resubmit') },
+    })
   }
 
   if (!jobId) {
@@ -1186,7 +1251,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
             {/* 整批重跑。放在最前:从批量行点进来的人,想要的多半是"这一批再来一次",
                 而不是只重跑落在眼前的这一条。条数写在按钮上,因为已完成的批量重跑会
                 再花一次额度——那是明知的取舍(整批失败时需要一键重来),但不能让人误点。 */}
-            {rerunable.length > 1 && (
+            {isBatch && rerunable.length >= 1 && (
               <div
                 className="vk-task-batch-rerun"
                 data-terminal-batch={batchTerminal || undefined}
@@ -1276,7 +1341,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     if (event.key === 'Escape') setRerunMenuOpen(false)
                     if (event.key === 'ArrowUp') { event.preventDefault(); openRerunMenu() }
                   }}
-                  onClick={() => { void rerunSelected(selection) }}
+                  onClick={(event) => requestRerun(event.currentTarget)}
                 >
                   <RefreshCw size={14} aria-hidden="true" />
                   <span>{actionPending === 'batch' ? '正在重跑…' : batchTerminal && rerunPicked === null ? '重新提交全部任务' : selectedLabel}</span>
@@ -1300,13 +1365,17 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                 </button>
               </div>
             )}
-            {active && (
-              <button type="button" className="vk-task-stop-button" disabled={stopping || actionPending !== null} onClick={() => { void runAction('cancel') }}>
+            {showStop && (
+              <button type="button" className="vk-task-stop-button" disabled={stopBusy || actionPending !== null} onClick={() => { void runAction('cancel') }}>
                 <Square size={13} fill="currentColor" aria-hidden="true" />
-                <span>{stopping || actionPending === 'cancel' ? '正在停止…' : '停止任务'}</span>
+                <span>
+                  {stopBusy || actionPending === 'cancel'
+                    ? '正在停止…'
+                    : isBatch ? `停止全部（${inFlightCount} 个进行中）` : '停止任务'}
+                </span>
               </button>
             )}
-            {failed && (
+            {!isBatch && failed && (
               <motion.button
                 type="button"
                 className="vk-task-retry-button"
@@ -1320,14 +1389,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                 <span>{actionPending === 'retry' ? '正在重试…' : '重试'}</span>
               </motion.button>
             )}
-            {(completedSuccessfully || interrupted) && (
+            {!isBatch && (completedSuccessfully || interrupted) && (
               <motion.button
                 type="button"
                 className="vk-task-submit-again-button"
                 disabled={actionPending !== null}
                 onMouseEnter={() => setSubmitHovered(true)}
                 onMouseLeave={() => setSubmitHovered(false)}
-                onClick={() => { void runAction('resubmit') }}
+                onClick={(event) => requestResubmit(event.currentTarget)}
                 whileHover={{ scale: 1.02 }}
               >
                 <span className="vk-task-action-icon">
@@ -1360,6 +1429,22 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
           </div>
         </div>
       )}
+      <AnimatePresence>
+        {confirm && (
+          <ConfirmPopover
+            key="confirm"
+            anchor={confirm.anchor}
+            title={confirm.title}
+            body={confirm.body}
+            confirmLabel={confirm.confirmLabel}
+            onCancel={() => setConfirm(null)}
+            onConfirm={() => {
+              setConfirm(null)
+              confirm.onConfirm()
+            }}
+          />
+        )}
+      </AnimatePresence>
     </section>
   )
 }

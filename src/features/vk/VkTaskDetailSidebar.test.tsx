@@ -914,6 +914,8 @@ describe('VkTaskDetailSidebar', () => {
       expect(option).toHaveAttribute('data-color', 'warning')
       expect(menu).toHaveTextContent('其中 1 个已有结果，重跑会再计费')
       await user.click(button)
+      expect(actions).toEqual([])
+      await user.click(await screen.findByRole('button', { name: '确认重新提交' }))
       await waitFor(() => expect(actions).toEqual(['refresh:m97-3', 'retry:m97-4']))
     })
   })
@@ -1144,6 +1146,10 @@ describe('VkTaskDetailSidebar', () => {
     expect(menu).toHaveTextContent('其中 1 个已有结果，重跑会再计费')  // 勾上已完成的会再花钱,得写明
 
     await user.click(await screen.findByRole('button', { name: /重跑全部 2 个/ }))
+    // 所选含已有结果的 r-1,会再计费,点确认才发请求
+    expect(retried).toEqual([])
+    expect(refreshed).toEqual([])
+    await user.click(await screen.findByRole('button', { name: '确认重新提交' }))
 
     // 逐个成员串行发请求，等循环跑完再断言
     await waitFor(() => expect(retried).toEqual(['r-2']))     // 失败的走 retry
@@ -1236,6 +1242,7 @@ describe('VkTaskDetailSidebar', () => {
 
     const button = await screen.findByRole('button', { name: '重新提交全部任务' })
     await user.click(button)
+    await user.click(await screen.findByRole('button', { name: '确认重新提交' }))
     await waitFor(() => expect(actions).toEqual(['refresh:mixed-done', 'retry:mixed-failed']))
   })
 
@@ -1439,8 +1446,8 @@ describe('VkTaskDetailSidebar', () => {
     render(<ControlledSidebar />)
     await user.click(await screen.findByRole('button', { name: '重新提交全部任务' }))
     await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('q-1-retry'))
-    // 只有执行中的任务才有停止按钮;它出现时,新任务的 load() 已经读完。
-    await screen.findByRole('button', { name: '停止任务' })
+    // 批里有成员在跑才有停止按钮;它出现时,新任务的 load() 已经读完。
+    await screen.findByRole('button', { name: '停止全部（1 个进行中）' })
 
     const alert = screen.getByTestId('vk-task-detail-action-notice')
     expect(alert).toHaveTextContent('部分视频未能重跑')
@@ -1489,32 +1496,23 @@ describe('VkTaskDetailSidebar', () => {
   })
 
   it.each([
-    ['重试', 'q-1', '未能重试'],
-    ['再次提交任务', 'q-4', '未能再次提交任务'],
-  ])('批次在跑时单条「%s」回 428:提示撑过轮询,不被 load() 清掉', async (button, jobId, title) => {
+    ['重试', 'failed', '未能重试'],
+    ['再次提交任务', 'interrupted', '未能再次提交任务'],
+  ])('单视频任务「%s」回 428:提示撑过重新读取,不被 load() 清掉', async (button, status, title) => {
     const user = userEvent.setup()
-    let poll: (() => Promise<void>) | undefined
-    vi.spyOn(window, 'setInterval').mockImplementation((callback: TimerHandler, delay?: number) => {
-      if (delay === 1500) poll = callback as () => Promise<void>
-      return 999_995 as never
-    })
-    const sibling = (job_id: string, status: string, source: string) => ({
-      job_id, kind: 'run', status,
-      submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
-      parent_job_id: null, batch_id: 'batch-q', cache_bypass: false,
-      request: { source, preset: 'quick-summary' },
-    })
-    // q-3 还在跑,批次没进终态,轮询一直开着。
-    const fetchMock = stubFailedBatch(() => sessionReacquireResponse(), {
-      siblings: [
-        sibling('q-3', 'running', 'https://example.com/three'),
-        sibling('q-4', 'interrupted', 'https://example.com/four'),
-      ],
-    })
-    const detailRequests = () => fetchMock.mock.calls
-      .filter(([input]) => String(input).endsWith(`/vk/v1/jobs/${jobId}`)).length
+    let source = 'https://example.com/one'
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/vk/v1/jobs/solo/retry')) return sessionReacquireResponse()
+      if (url.endsWith('/vk/v1/jobs/solo')) return new Response(JSON.stringify({
+        job_id: 'solo', kind: 'run', status, submitted_at: '2026-08-28T12:15:21+08:00', finished_at: null,
+        parent_job_id: null, cache_bypass: false, request: { source, preset: 'quick-summary' },
+      }), { status: 200 })
+      if (url.endsWith('/vk/v1/providers')) return new Response(JSON.stringify({ channels: [], roles: {} }), { status: 200 })
+      return new Response('{}', { status: 404 })
+    }))
 
-    render(<VkTaskDetailSidebar jobId={jobId} baseUrl={BASE} onClose={() => {}} />)
+    render(<VkTaskDetailSidebar jobId="solo" baseUrl={BASE} onClose={() => {}} />)
     await user.click(await screen.findByRole('button', { name: button }))
 
     const alert = await screen.findByTestId('vk-task-detail-action-notice')
@@ -1522,10 +1520,10 @@ describe('VkTaskDetailSidebar', () => {
     expect(alert).toHaveTextContent(SESSION_REACQUIRE_TEXT)
     expect(alert).not.toHaveTextContent(SESSION_REACQUIRE_ENGINE_TEXT)
 
-    await waitFor(() => expect(poll).toBeTypeOf('function'))
-    const requestsBeforePoll = detailRequests()
-    await act(async () => { await poll?.() })
-    expect(detailRequests()).toBeGreaterThan(requestsBeforePoll)
+    // 重新读取详情(load)读到新来源之后,提示仍在
+    source = 'https://example.com/reloaded'
+    await user.click(screen.getByRole('button', { name: '刷新任务详情' }))
+    await waitFor(() => expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('example.com/reloaded'))
     expect(screen.getByTestId('vk-task-detail-action-notice')).toHaveTextContent(title)
   })
 
@@ -2061,6 +2059,8 @@ describe('VkTaskDetailSidebar', () => {
     }))
     const { rerender } = render(<VkTaskDetailSidebar jobId="completed" baseUrl={BASE} onClose={() => {}} onJobChange={onJobChange} />)
     await user.click(await screen.findByRole('button', { name: '再次提交任务' }))
+    expect(posts).toEqual([])
+    await user.click(await screen.findByRole('button', { name: '确认再次提交' }))
     await waitFor(() => expect(onJobChange).toHaveBeenCalledWith('fresh-job'))
     expect(posts).toEqual([`${BASE}/vk/v1/jobs/completed/refresh`])
     expect(dispatched.mock.calls.map(([event]) => event as CustomEvent)
@@ -2714,5 +2714,329 @@ describe('批次顶部状态与排队显示', () => {
     await waitFor(() => expect(badge()).toHaveTextContent('已完成'))
     expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 2/2')
     expect(polls.size).toBe(0)
+  })
+})
+
+describe('批量任务的整批停止、重提入口与计费确认', () => {
+  type Member = { job_id: string; status: string }
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { 'content-type': 'application/json' },
+  })
+  const members = (...statuses: string[]): Member[] => statuses.map((status, index) => ({ job_id: `m-${index}`, status }))
+
+  /**
+   * members 是可变数组:改状态就等于引擎推进了一步,下一次请求读到新值。
+   * posts 记录每个 POST 的路径;batchCancel 决定整批停止的响应。
+   */
+  function stubBatchApi(
+    list: Member[],
+    { batchId = 'batch-x', batchCancel }: { batchId?: string | null; batchCancel?: () => Response | Promise<Response> } = {},
+  ) {
+    const posts: string[] = []
+    const detailGets: string[] = []
+    const settled = (status: string) => status !== 'queued' && status !== 'running' && status !== 'cancel_requested'
+    const view = (member: Member, index: number) => ({
+      job_id: member.job_id, kind: 'run', status: member.status, batch_id: batchId,
+      submitted_at: `2026-09-05T00:00:0${index}Z`,
+      finished_at: settled(member.status) ? `2026-09-05T00:01:0${index}Z` : null,
+      parent_job_id: null, cache_bypass: false,
+    })
+    const sourceOf = (member: Member) => `https://example.com/${member.job_id}`
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      if (init?.method === 'POST') {
+        posts.push(path)
+        if (/^\/vk\/v1\/batches\/[^/]+\/cancel$/.test(path)) return (await batchCancel?.()) ?? json({ cancelled: [] })
+        const action = path.match(/^\/vk\/v1\/jobs\/([^/]+)\/(cancel|retry|refresh)$/)
+        if (action) return json({ job_id: `${action[1]}-${action[2]}` })
+        return new Response('{}', { status: 404 })
+      }
+      if (path === '/vk/v1/providers') return json({ channels: [], roles: {} })
+      if (path === '/vk/v1/jobs') {
+        return json(list.map((member, index) => ({ ...view(member, index), source: sourceOf(member) })))
+      }
+      const index = list.findIndex((member) => path === `/vk/v1/jobs/${member.job_id}`)
+      if (index < 0) return new Response('{}', { status: 404 })
+      detailGets.push(list[index].job_id)
+      return json({ ...view(list[index], index), request: { source: sourceOf(list[index]), preset: 'quick-summary' } })
+    }))
+    return { posts, detailRequests: (jobId: string) => detailGets.filter((id) => id === jobId).length }
+  }
+
+  const stopButton = (count: number) => screen.findByRole('button', { name: `停止全部（${count} 个进行中）` })
+
+  describe('停止全部', () => {
+    it('打开的那条已中断、其余 3 条在跑:显示「停止全部（3 个进行中）」,点击走批次接口再刷新,而不是逐条停', async () => {
+      const user = userEvent.setup()
+      captureMemberPolling()
+      const list = members('interrupted', 'running', 'running', 'running')
+      const api = stubBatchApi(list, {
+        batchCancel: () => {
+          for (const member of list.slice(1)) member.status = 'cancelled'
+          return json({ cancelled: ['m-1', 'm-2', 'm-3'] })
+        },
+      })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      const stop = await stopButton(3)
+      expect(screen.queryByRole('button', { name: '停止任务' })).not.toBeInTheDocument()
+      const detailBefore = api.detailRequests('m-0')
+      await user.click(stop)
+
+      expect(api.posts).toEqual(['/vk/v1/batches/batch-x/cancel'])
+      await waitFor(() => expect(api.detailRequests('m-0')).toBeGreaterThan(detailBefore))
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^停止/ })).not.toBeInTheDocument())
+      expect(screen.queryByTestId('vk-task-detail-action-notice')).not.toBeInTheDocument()
+      expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 4/4')
+    })
+
+    it('引擎一条都没停到时提示「没有可以停止的小任务」', async () => {
+      const user = userEvent.setup()
+      captureMemberPolling()
+      stubBatchApi(members('interrupted', 'running', 'running'), { batchCancel: () => json({ cancelled: [] }) })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await user.click(await stopButton(2))
+
+      const alert = await screen.findByTestId('vk-task-detail-action-notice')
+      expect(alert).toHaveTextContent('没有可以停止的小任务')
+      expect(alert).toHaveTextContent('可能已经结束或刚重启过')
+    })
+
+    it('请求失败时提示「未能停止任务」并带上原因', async () => {
+      const user = userEvent.setup()
+      captureMemberPolling()
+      stubBatchApi(members('done', 'running', 'queued'), {
+        batchCancel: () => json({ error: '解析引擎启动超时', reasonCode: 'spawn-timeout' }, 503),
+      })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await user.click(await stopButton(2))
+
+      const alert = await screen.findByTestId('vk-task-detail-action-notice')
+      expect(alert).toHaveTextContent('未能停止任务')
+      expect(alert).toHaveTextContent('解析引擎启动超时')
+    })
+
+    it('停止请求进行中显示「正在停止…」并禁用,结束后回到计数文案', async () => {
+      const user = userEvent.setup()
+      captureMemberPolling()
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      stubBatchApi(members('done', 'running', 'running'), {
+        batchCancel: async () => {
+          await gate
+          return json({ cancelled: ['m-1'] })
+        },
+      })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await user.click(await stopButton(2))
+      expect(await screen.findByRole('button', { name: '正在停止…' })).toBeDisabled()
+      release()
+      await stopButton(2)
+    })
+
+    it('在跑的成员都已进入停止中时也显示「正在停止…」', async () => {
+      captureMemberPolling()
+      stubBatchApi(members('interrupted', 'cancel_requested', 'cancel_requested'))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      expect(await screen.findByRole('button', { name: '正在停止…' })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: /^停止全部/ })).not.toBeInTheDocument()
+    })
+
+    it('整批都已落定时没有停止按钮', async () => {
+      stubBatchApi(members('done', 'failed'))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await screen.findByRole('button', { name: '重新提交全部任务' })
+      expect(screen.queryByRole('button', { name: /^停止/ })).not.toBeInTheDocument()
+    })
+
+    it('单视频任务仍只停这一条:调用的是 job cancel,不是批次接口', async () => {
+      const user = userEvent.setup()
+      captureMemberPolling()
+      const api = stubBatchApi(members('running'), { batchId: null })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await user.click(await screen.findByRole('button', { name: '停止任务' }))
+
+      expect(api.posts).toEqual(['/vk/v1/jobs/m-0/cancel'])
+      expect(screen.queryByRole('button', { name: /^停止全部/ })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('重提入口并入分体按钮', () => {
+    it.each([
+      [['failed', 'done']],
+      [['interrupted', 'done']],
+      [['done', 'done']],
+    ])('批量任务 %j 不再有单独的「重试」和「再次提交任务」', async (statuses) => {
+      stubBatchApi(members(...statuses))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await screen.findByRole('button', { name: '重新提交全部任务' })
+      expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '再次提交任务' })).not.toBeInTheDocument()
+    })
+
+    it('只剩 1 个可重跑成员时也有分体按钮,点它只重跑那一条', async () => {
+      const user = userEvent.setup()
+      captureMemberPolling()
+      const api = stubBatchApi(members('failed', 'running', 'running'))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      const button = await screen.findByRole('button', { name: '重跑全部 1 个' })
+      expect(screen.getByRole('button', { name: '展开小任务选择' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+      await user.click(button)
+
+      await waitFor(() => expect(api.posts).toEqual(['/vk/v1/jobs/m-0/retry']))
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+
+    it('单视频任务的「重试」「再次提交任务」保持原样,没有分体按钮', async () => {
+      stubBatchApi(members('failed'), { batchId: null })
+      const { unmount } = render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+      expect(await screen.findByRole('button', { name: '重试' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '展开小任务选择' })).not.toBeInTheDocument()
+      unmount()
+
+      stubBatchApi(members('interrupted'), { batchId: null })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+      expect(await screen.findByRole('button', { name: '再次提交任务' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '展开小任务选择' })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('批量重跑的计费确认', () => {
+    const openConfirm = async (statuses: string[]) => {
+      const user = userEvent.setup()
+      const api = stubBatchApi(members(...statuses))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+      const trigger = await screen.findByRole('button', { name: '重新提交全部任务' })
+      await user.click(trigger)
+      return { user, api, trigger, dialog: await screen.findByRole('alertdialog') }
+    }
+
+    it('所选含已有结果的成员时先弹确认,列出这些小任务,确认后才发请求', async () => {
+      const { user, api, dialog } = await openConfirm(['done', 'done', 'failed'])
+
+      expect(dialog).toHaveAccessibleName('重新提交 3 个小任务？')
+      expect(dialog).toHaveTextContent('2 个已有结果，会重新解析并再计费：小任务1、小任务2')
+      expect(dialog).toHaveTextContent('1 个失败或中断的，会从中断处接着跑')
+      expect(dialog).toHaveAccessibleDescription(/再计费/)
+      expect(api.posts).toEqual([])
+      await waitFor(() => expect(within(dialog).getByRole('button', { name: '取消' })).toHaveFocus())
+
+      await user.click(within(dialog).getByRole('button', { name: '确认重新提交' }))
+
+      await waitFor(() => expect(api.posts).toEqual([
+        '/vk/v1/jobs/m-0/refresh', '/vk/v1/jobs/m-1/refresh', '/vk/v1/jobs/m-2/retry',
+      ]))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    })
+
+    it('确认里的编号和人数跟着勾选走,与侧栏的小任务编号一致', async () => {
+      const { user, api, trigger } = await openConfirm(['done', 'failed', 'done'])
+      await user.click(screen.getByRole('button', { name: '取消' }))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+
+      await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+      await user.click(within(await screen.findByRole('menu')).getByRole('menuitemcheckbox', { name: /小任务1/ }))
+      await user.click(await screen.findByRole('button', { name: '重跑选中 2 个' }))
+
+      const dialog = await screen.findByRole('alertdialog')
+      expect(dialog).toHaveAccessibleName('重新提交 2 个小任务？')
+      expect(dialog).toHaveTextContent('1 个已有结果，会重新解析并再计费：小任务3')
+      expect(dialog).toHaveTextContent('1 个失败或中断的，会从中断处接着跑')
+      expect(dialog).not.toHaveTextContent('小任务1')
+      expect(api.posts).toEqual([])
+      expect(trigger).toBeInTheDocument()
+    })
+
+    it('没有失败或中断的所选成员时省略第二行', async () => {
+      const { dialog } = await openConfirm(['done', 'done'])
+
+      expect(dialog).toHaveTextContent('2 个已有结果，会重新解析并再计费：小任务1、小任务2')
+      expect(dialog).not.toHaveTextContent('失败或中断')
+    })
+
+    it.each([
+      ['点「取消」', async (user: ReturnType<typeof userEvent.setup>) => { await user.click(screen.getByRole('button', { name: '取消' })) }],
+      ['按 Esc', async (user: ReturnType<typeof userEvent.setup>) => { await user.keyboard('{Escape}') }],
+      ['点外部', async (user: ReturnType<typeof userEvent.setup>) => { await user.click(document.body) }],
+    ])('%s:不发请求,气泡关闭,焦点回到触发按钮', async (_name, dismiss) => {
+      const { user, api, trigger } = await openConfirm(['done', 'failed'])
+
+      await dismiss(user)
+
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      await waitFor(() => expect(trigger).toHaveFocus())
+      expect(api.posts).toEqual([])
+    })
+
+    it('只选了失败或中断的成员时不弹确认,直接提交', async () => {
+      const user = userEvent.setup()
+      const api = stubBatchApi(members('failed', 'interrupted'))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await user.click(await screen.findByRole('button', { name: '重新提交全部任务' }))
+
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      await waitFor(() => expect(api.posts).toEqual(['/vk/v1/jobs/m-0/retry', '/vk/v1/jobs/m-1/retry']))
+    })
+  })
+
+  describe('单视频「再次提交任务」的计费确认', () => {
+    const openConfirm = async (status: string) => {
+      const user = userEvent.setup()
+      const api = stubBatchApi(members(status), { batchId: null })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+      const trigger = await screen.findByRole('button', { name: '再次提交任务' })
+      await user.click(trigger)
+      return { user, api, trigger }
+    }
+
+    it.each(['done', 'partial'])('%s 时先确认,确认后才走 refresh', async (status) => {
+      const { user, api } = await openConfirm(status)
+
+      const dialog = await screen.findByRole('alertdialog')
+      expect(dialog).toHaveAccessibleName('再次提交这个任务？')
+      expect(dialog).toHaveTextContent('已有结果，会重新解析并再计费')
+      expect(api.posts).toEqual([])
+      await waitFor(() => expect(within(dialog).getByRole('button', { name: '取消' })).toHaveFocus())
+
+      await user.click(within(dialog).getByRole('button', { name: '确认再次提交' }))
+
+      await waitFor(() => expect(api.posts).toEqual(['/vk/v1/jobs/m-0/refresh']))
+    })
+
+    it.each([
+      ['点「取消」', async (user: ReturnType<typeof userEvent.setup>) => { await user.click(screen.getByRole('button', { name: '取消' })) }],
+      ['按 Esc', async (user: ReturnType<typeof userEvent.setup>) => { await user.keyboard('{Escape}') }],
+      ['点外部', async (user: ReturnType<typeof userEvent.setup>) => { await user.click(document.body) }],
+    ])('%s:不发请求,焦点回到「再次提交任务」', async (_name, dismiss) => {
+      const { user, api, trigger } = await openConfirm('done')
+      await screen.findByRole('alertdialog')
+
+      await dismiss(user)
+
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      await waitFor(() => expect(trigger).toHaveFocus())
+      expect(api.posts).toEqual([])
+    })
+
+    it('已中断的走 retry,不会再计费,直接提交', async () => {
+      const user = userEvent.setup()
+      const api = stubBatchApi(members('interrupted'), { batchId: null })
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+
+      await user.click(await screen.findByRole('button', { name: '再次提交任务' }))
+
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      await waitFor(() => expect(api.posts).toEqual(['/vk/v1/jobs/m-0/retry']))
+    })
   })
 })

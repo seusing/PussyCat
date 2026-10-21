@@ -1,0 +1,63 @@
+/* 就地确认气泡:材质来自 glass-menu-effect,这里只管定位、版式和按钮。 */
+.confirm-popover {
+  position: fixed;
+  z-index: 70;
+  box-sizing: border-box;
+  width: 288px;
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  border-radius: 9px;
+  padding: 12px;
+}
+
+.confirm-popover-title {
+  margin: 0 0 6px;
+  color: var(--color-fg);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.confirm-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--color-fg-dim);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.confirm-popover-body p { margin: 0; }
+
+.confirm-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.confirm-popover-actions button {
+  min-height: 30px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: #20232a;
+  color: var(--color-fg);
+  padding: 0 12px;
+  font-size: 12px;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.confirm-popover-actions button:hover { background: #292d35; }
+.confirm-popover-actions button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.confirm-popover-actions .confirm-popover-confirm {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
+  background: color-mix(in srgb, var(--color-accent) 18%, #20232a);
+}
+
+.confirm-popover-actions .confirm-popover-confirm:hover {
+  background: color-mix(in srgb, var(--color-accent) 28%, #20232a);
+}

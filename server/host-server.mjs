@@ -42,6 +42,8 @@ const VK_ROUTES = [
   { method: 'POST', pattern: /^\/vk\/v1\/jev\/configs\/([^/]+)\/(enable|test)$/, target: (m) => `/api/jev/configs/${m[1]}/${m[2]}`, kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/jobs$/, target: () => '/api/jobs', kind: 'json', tap: 'submit' },
   { method: 'POST', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/(cancel|retry|refresh)$/, target: (m) => `/api/jobs/${m[1]}/${m[2]}`, kind: 'json' },
+  // 按批次整批停止:一次请求停掉批里所有进行中的小任务,不依赖详情页当前打开的是哪一条。
+  { method: 'POST', pattern: /^\/vk\/v1\/batches\/([^/]+)\/cancel$/, target: (m) => `/api/batches/${m[1]}/cancel`, kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/query$/, target: () => '/api/query', kind: 'json' },
   { method: 'POST', pattern: /^\/vk\/v1\/uploads$/, target: (_m, url) => `/api/uploads${url.search}`, kind: 'raw' },
   // 故事线串联(sidecar 新接口)。列表透传 ?batch_id=;不挂 tap,与 job shadow 无关。

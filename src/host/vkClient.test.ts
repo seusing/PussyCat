@@ -1,7 +1,7 @@
 import { HostRequestError } from './errors'
 import {
   deleteVkJevConfig, enableVkJevConfig, fetchVkJevConfigs, fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
-  fetchVkFigure, isVkEngineNotReady, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkFigureUrl, vkOutputPath,
+  fetchVkFigure, isVkEngineNotReady, postVkBatchCancel, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkFigureUrl, vkOutputPath,
 } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
@@ -70,6 +70,24 @@ describe('vkClient', () => {
     const error = await fetchVkFigure('run:r1', 'bbbbbbbbbbbb', 'http://127.0.0.1:9999').catch((err) => err)
     expect(error).toBeInstanceOf(HostRequestError)
     expect(error.status).toBe(404)
+  })
+
+  it('posts a batch cancel to the escaped batch path and returns the cancelled job ids', async () => {
+    const impl = stubFetch(200, { cancelled: ['j-1', 'j-2'] })
+    await expect(postVkBatchCancel('batch 1/a', 'http://127.0.0.1:9999')).resolves.toEqual({ cancelled: ['j-1', 'j-2'] })
+    expect(impl.mock.calls[0][0]).toBe('http://127.0.0.1:9999/vk/v1/batches/batch%201%2Fa/cancel')
+    expect(impl.mock.calls[0][1]?.method).toBe('POST')
+
+    stubFetch(200, { cancelled: [] })
+    await expect(postVkBatchCancel('batch-1', 'http://127.0.0.1:9999')).resolves.toEqual({ cancelled: [] })
+  })
+
+  it('maps a failed batch cancel to a HostRequestError carrying the status and reasonCode', async () => {
+    stubFetch(503, { error: '解析引擎启动超时', reasonCode: 'spawn-timeout' })
+    const error = await postVkBatchCancel('batch-1', 'http://127.0.0.1:9999').catch((err) => err)
+    expect(error).toBeInstanceOf(HostRequestError)
+    expect(error.status).toBe(503)
+    expect(error.reasonCode).toBe('spawn-timeout')
   })
 
   it('posts the batch id to start a storyline and returns the id and status', async () => {

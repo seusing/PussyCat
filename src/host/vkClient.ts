@@ -527,6 +527,18 @@ export async function postVkJobAction(
   return parseVkResponse(response, '任务操作失败')
 }
 
+/** 整批停止:引擎一次停掉批里所有进行中的小任务,返回实际被停的 job_id(没有可停的为空数组)。 */
+export async function postVkBatchCancel(
+  batchId: string,
+  baseUrl = DEFAULT_BASE_URL,
+): Promise<{ cancelled: string[] }> {
+  const response = await fetch(
+    `${baseUrl}/vk/v1/batches/${encodePathSegment(batchId)}/cancel`,
+    jsonInit({}),
+  )
+  return parseVkResponse(response, '任务操作失败')
+}
+
 export async function fetchVkDiagnostic(baseUrl = DEFAULT_BASE_URL): Promise<Record<string, unknown>> {
   const response = await fetch(`${baseUrl}/vk/v1/diagnostic`)
   return parseVkResponse(response, '诊断获取失败')

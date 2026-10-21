@@ -311,6 +311,29 @@ describe('/vk/v1 proxy', () => {
     expect(vkJobShadow.list()).toHaveLength(0)
   })
 
+  it('forwards the batch cancel route with the encoded batch id and leaves job shadow alone', async () => {
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    vkSidecar.respond('POST /api/batches/batch%201/cancel', { cancelled: ['j-1', 'j-2'] })
+
+    const response = await fetch(`${baseUrl}/vk/v1/batches/batch%201/cancel`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: '{}',
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ cancelled: ['j-1', 'j-2'] })
+    const forwarded = vkSidecar.requests.at(-1)
+    expect(forwarded.path).toBe('/api/batches/batch%201/cancel')
+    expect(forwarded.init.method).toBe('POST')
+    expect(vkJobShadow.list()).toHaveLength(0)
+
+    const wrongMethod = await fetch(`${baseUrl}/vk/v1/batches/batch-1/cancel`, { headers: { Origin: ORIGIN } })
+    expect(wrongMethod.status).toBe(404)
+    expect(vkSidecar.requests).toHaveLength(1)
+  })
+
   it('proxies Jev config CRUD and activation routes', async () => {
     const { baseUrl, vkSidecar } = await setup()
     const cases = [
