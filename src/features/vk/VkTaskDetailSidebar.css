@@ -440,6 +440,8 @@
   padding: 6px;
   transform-origin: bottom;
 }
+/* 进出由 motion 驱动,关掉 .glass-menu-effect 自带的 glass-menu-enter,免得它盖住 opacity / transform。 */
+.vk-task-batch-rerun-menu.glass-menu-effect { animation: none; }
 .vk-task-batch-rerun-menu button {
   display: flex;
   align-items: center;

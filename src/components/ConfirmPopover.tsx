@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'motion/react'
-import { positionMenu, useGlassMenuSurface } from './GlassMenu'
+import { glassPopMotion, positionMenu, useGlassMenuSurface } from './GlassMenu'
 import './ConfirmPopover.css'
 
 type Placement = ReturnType<typeof positionMenu> & { above: boolean }
@@ -100,10 +100,7 @@ export function ConfirmPopover({ anchor, title, body, confirmLabel, onConfirm, o
           visibility: 'visible', originY: placement.above ? 1 : 0,
         }
         : { top: 0, left: 0, visibility: 'hidden' }}
-      initial={{ opacity: 0.96, y: 5, scaleY: 0.96 }}
-      animate={{ opacity: 1, y: 0, scaleY: 1, pointerEvents: 'auto' }}
-      exit={{ opacity: 0.96, y: 5, scaleY: 0.96, pointerEvents: 'none' }}
-      transition={{ duration: reduceMotion ? 0 : 0.2 }}
+      {...glassPopMotion(reduceMotion)}
     >
       <div className="glass-menu-content">
         <h3 id={titleId} className="confirm-popover-title">{title}</h3>

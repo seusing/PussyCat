@@ -54,6 +54,22 @@ export function useGlassMenuSurface(ref: RefObject<HTMLElement | null>, active: 
 
 type MenuPosition = { top: number; left: number; width: number; maxHeight: number }
 
+/**
+ * 由 motion 驱动的上拉浮层(菜单、确认气泡)共用的进出动效:从触发按钮一侧淡入并展开,收起时反向。
+ * 两者交叉淡入淡出时参数一致才不会各演各的;缩减动效时不位移不缩放,时长归零。
+ * 这类浮层的 CSS 里要把 .glass-menu-effect 自带的 glass-menu-enter 关掉,否则它会盖住这里的 opacity / transform。
+ */
+export function glassPopMotion(reduceMotion: boolean | null) {
+  const hidden = reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scaleY: 0.94 }
+  const ease = [0.23, 1, 0.32, 1] as [number, number, number, number]
+  return {
+    initial: hidden,
+    animate: { opacity: 1, y: 0, scaleY: 1, pointerEvents: 'auto' as const },
+    exit: { ...hidden, pointerEvents: 'none' as const, transition: { duration: reduceMotion ? 0 : 0.15, ease } },
+    transition: { duration: reduceMotion ? 0 : 0.18, ease },
+  }
+}
+
 export function positionMenu(trigger: HTMLElement, menu: HTMLElement): MenuPosition {
   const gap = 6
   const margin = 8

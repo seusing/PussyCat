@@ -17,7 +17,7 @@ import { describeVkFailure } from './vkFailure'
 import { AppAlert } from '../../components/AppAlert'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { ConfirmPopover } from '../../components/ConfirmPopover'
-import { useGlassMenuSurface } from '../../components/GlassMenu'
+import { glassPopMotion, useGlassMenuSurface } from '../../components/GlassMenu'
 import { copyText } from '../../lib/clipboard'
 import {
   isVkJobRerun, markVkJobAsRerun, vkDurationLabel, vkElapsedLabel, vkTaskNumberFor, vkTaskNumberForBatch,
@@ -718,9 +718,18 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
   const rerunMenuRef = useRef<HTMLDivElement | null>(null)
   const rerunSurfaceRef = useRef<HTMLDivElement | null>(null)
   const rerunMenuCloseTimer = useRef<number | null>(null)
+  const rerunMenuHoverTimer = useRef<number | null>(null)
+  // 菜单节点还在树上(含收起动画期间)就保持玻璃材质,否则收起一开始材质先退回普通模糊,看着一跳。
+  const [rerunMenuMounted, setRerunMenuMounted] = useState(false)
   const [rerunMenuPosition, setRerunMenuPosition] = useState<{ left: number; bottom: number; width: number } | null>(null)
   const [rerunPicked, setRerunPicked] = useState<Set<string> | null>(null)
-  useGlassMenuSurface(rerunSurfaceRef, rerunMenuOpen)
+  // 确认气泡里的内容是按点击当时的勾选算的,气泡打开期间菜单整个锁住:所有打开入口和勾选都看这一个状态。
+  const confirmOpen = confirm !== null
+  const confirmOpenRef = useRef(false)
+  confirmOpenRef.current = confirmOpen
+  const skipFocusOpenRef = useRef(false)
+  const caretPressedInConfirmRef = useRef(false)
+  useGlassMenuSurface(rerunSurfaceRef, rerunMenuMounted)
   const batchStateSignature = useMemo(
     () => batchMembers.map((member) => `${member.job_id}:${member.state}`).join('|'),
     [batchMembers],
@@ -767,22 +776,46 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
     setRerunMenuPosition({ left, bottom, width })
   }, [])
 
+  const clearRerunMenuHover = useCallback(() => {
+    if (rerunMenuHoverTimer.current !== null) {
+      window.clearTimeout(rerunMenuHoverTimer.current)
+      rerunMenuHoverTimer.current = null
+    }
+  }, [])
+
   const openRerunMenu = useCallback(() => {
+    if (confirmOpenRef.current) return
     clearRerunMenuClose()
+    clearRerunMenuHover()
     updateRerunMenuPosition()
+    setRerunMenuMounted(true)
     setRerunMenuOpen(true)
-  }, [clearRerunMenuClose, updateRerunMenuPosition])
+  }, [clearRerunMenuClose, clearRerunMenuHover, updateRerunMenuPosition])
+
+  // 悬停打开先等一小会儿,鼠标只是划过按钮时不闪一下;菜单已经开着(含收起前的延迟里)就只取消收起。
+  const hoverOpenRerunMenu = () => {
+    clearRerunMenuClose()
+    if (rerunMenuOpen || confirmOpenRef.current || rerunMenuHoverTimer.current !== null) return
+    rerunMenuHoverTimer.current = window.setTimeout(() => {
+      rerunMenuHoverTimer.current = null
+      openRerunMenu()
+    }, 100)
+  }
 
   const scheduleRerunMenuClose = useCallback(() => {
+    clearRerunMenuHover()
     if (rerunMenuPinnedRef.current) return
     clearRerunMenuClose()
     rerunMenuCloseTimer.current = window.setTimeout(() => {
       setRerunMenuOpen(false)
       rerunMenuCloseTimer.current = null
     }, 160)
-  }, [clearRerunMenuClose])
+  }, [clearRerunMenuClose, clearRerunMenuHover])
 
-  useEffect(() => () => clearRerunMenuClose(), [clearRerunMenuClose])
+  useEffect(() => () => {
+    clearRerunMenuClose()
+    clearRerunMenuHover()
+  }, [clearRerunMenuClose, clearRerunMenuHover])
 
   useEffect(() => {
     if (!rerunMenuOpen) return undefined
@@ -1047,6 +1080,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
 
   /** 批量主按钮:所选里有已有结果的成员会走 refresh 再计费,先确认;只有失败或中断的直接提交。 */
   const requestRerun = (anchor: HTMLElement) => {
+    clearRerunMenuHover()
     if (rebillCount === 0) {
       void rerunSelected(selection)
       return
@@ -1067,6 +1101,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
       confirmLabel: '确认重新提交',
       onConfirm: () => { void rerunSelected(selection) },
     })
+  }
+
+  // 气泡关闭(取消、Esc、点外部、确认)时 ConfirmPopover 先把焦点还给主按钮;点在空白处的话,
+  // 浏览器会把焦点挪走,它再在下一拍补一次。补的那一次发生在气泡已经卸掉之后,不能当成用户聚焦
+  // 去弹菜单,所以让 onFocus 跳过一次。标记在那一拍之后清掉:焦点若去了别处,不会残留到下次真聚焦。
+  const closeConfirm = () => {
+    skipFocusOpenRef.current = true
+    window.setTimeout(() => { skipFocusOpenRef.current = false }, 0)
+    setConfirm(null)
   }
 
   /** 单视频「再次提交任务」:done 与 partial 走 refresh 会再计费,先确认;中断的走 retry,直接提交。 */
@@ -1256,11 +1299,11 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                 className="vk-task-batch-rerun"
                 data-terminal-batch={batchTerminal || undefined}
                 ref={rerunMenuRef}
-                onMouseEnter={openRerunMenu}
+                onMouseEnter={hoverOpenRerunMenu}
                 onMouseLeave={scheduleRerunMenuClose}
               >
                 {rerunMenuPosition && typeof document !== 'undefined' && createPortal(
-                  <AnimatePresence>
+                  <AnimatePresence onExitComplete={() => setRerunMenuMounted(false)}>
                   {rerunMenuOpen && <motion.div
                     ref={rerunSurfaceRef}
                     key="rerun-menu"
@@ -1269,10 +1312,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     style={{ ...rerunMenuPosition, originY: 1 }}
                     onMouseEnter={openRerunMenu}
                     onMouseLeave={scheduleRerunMenuClose}
-                    initial={{ opacity: 0.96, y: 5, scaleY: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scaleY: 1, pointerEvents: 'auto' }}
-                    exit={{ opacity: 0.96, y: 5, scaleY: 0.96, pointerEvents: 'none' }}
-                    transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                    {...glassPopMotion(reduceMotion)}
                   >
                     <div className="vk-task-batch-rerun-list scroll-fade">
                       {batchMembers.map((member, index) => {
@@ -1291,6 +1331,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                             disabled={disabled}
                             title={source}
                             onClick={() => {
+                              if (confirmOpenRef.current) return
                               const next = new Set(selection)
                               if (next.has(member.job_id)) next.delete(member.job_id)
                               else next.add(member.job_id)
@@ -1312,11 +1353,14 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                         type="button"
                         role="menuitem"
                         className="vk-task-batch-rerun-all"
-                        onClick={() => setRerunPicked(
-                          selectedCount === rerunable.length
-                            ? new Set(failedIds)
-                            : new Set(rerunable.map((member) => member.job_id)),
-                        )}
+                        onClick={() => {
+                          if (confirmOpenRef.current) return
+                          setRerunPicked(
+                            selectedCount === rerunable.length
+                              ? new Set(failedIds)
+                              : new Set(rerunable.map((member) => member.job_id)),
+                          )
+                        }}
                       >
                         <RefreshCw size={15} aria-hidden="true" />
                         <span>{selectedCount === rerunable.length ? '只选失败的' : '全选'}</span>
@@ -1336,7 +1380,13 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                   disabled={actionPending !== null || selectedCount === 0}
                   aria-haspopup="menu"
                   aria-expanded={rerunMenuOpen}
-                  onFocus={openRerunMenu}
+                  onFocus={() => {
+                    if (skipFocusOpenRef.current) {
+                      skipFocusOpenRef.current = false
+                      return
+                    }
+                    openRerunMenu()
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Escape') setRerunMenuOpen(false)
                     if (event.key === 'ArrowUp') { event.preventDefault(); openRerunMenu() }
@@ -1352,8 +1402,15 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                   aria-label={rerunMenuPinned ? '收起小任务选择' : '展开小任务选择'}
                   aria-haspopup="menu"
                   aria-expanded={rerunMenuOpen}
-                  disabled={actionPending !== null}
+                  disabled={actionPending !== null || confirmOpen}
+                  onPointerDown={() => { caretPressedInConfirmRef.current = confirmOpenRef.current }}
                   onClick={() => {
+                    // 确认期间按下小箭头:这一下落在气泡外面,会先把气泡收掉、小箭头随即恢复可点,
+                    // 随后的 click 不能再当成展开菜单。
+                    if (caretPressedInConfirmRef.current) {
+                      caretPressedInConfirmRef.current = false
+                      return
+                    }
                     const next = !rerunMenuPinned
                     rerunMenuPinnedRef.current = next
                     setRerunMenuPinned(next)
@@ -1437,9 +1494,9 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
             title={confirm.title}
             body={confirm.body}
             confirmLabel={confirm.confirmLabel}
-            onCancel={() => setConfirm(null)}
+            onCancel={closeConfirm}
             onConfirm={() => {
-              setConfirm(null)
+              closeConfirm()
               confirm.onConfirm()
             }}
           />

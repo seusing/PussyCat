@@ -10,6 +10,9 @@
   padding: 12px;
 }
 
+/* 进出由 motion 驱动,关掉 .glass-menu-effect 自带的 glass-menu-enter,免得它盖住 opacity / transform。 */
+.confirm-popover.glass-menu-effect { animation: none; }
+
 .confirm-popover-title {
   margin: 0 0 6px;
   color: var(--color-fg);

@@ -2896,6 +2896,34 @@ describe('批量任务的整批停止、重提入口与计费确认', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
 
+    it('悬停要停留一小会儿才弹出选择菜单,划过不闪;聚焦和上箭头立即弹出', async () => {
+      stubBatchApi(members('done', 'failed'))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+      const trigger = await screen.findByRole('button', { name: '重新提交全部任务' })
+      const container = trigger.closest('.vk-task-batch-rerun')!
+      const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+      fireEvent.mouseEnter(container)
+      await advance(60)
+      fireEvent.mouseLeave(container)
+      await advance(300)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+      fireEvent.mouseEnter(container)
+      await advance(99)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      await advance(1)
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      fireEvent.mouseLeave(container)
+      await advance(160)
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+      fireEvent.keyDown(trigger, { key: 'ArrowUp' })
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    })
+
     it('单视频任务的「重试」「再次提交任务」保持原样,没有分体按钮', async () => {
       stubBatchApi(members('failed'), { batchId: null })
       const { unmount } = render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
@@ -2975,6 +3003,109 @@ describe('批量任务的整批停止、重提入口与计费确认', () => {
       await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
       await waitFor(() => expect(trigger).toHaveFocus())
       expect(api.posts).toEqual([])
+    })
+
+    it('确认气泡打开期间,悬停、聚焦、按上箭头、点小箭头都弹不出选择菜单,也改不了勾选', async () => {
+      const { user, trigger } = await openConfirm(['done', 'done', 'failed'])
+      const caret = screen.getByRole('button', { name: '展开小任务选择' })
+      expect(caret).toBeDisabled()
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+
+      await user.unhover(trigger)
+      await user.hover(trigger)
+      act(() => { trigger.blur() })
+      act(() => { trigger.focus() })
+      fireEvent.keyDown(trigger, { key: 'ArrowUp' })
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 250)) })
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      expect(screen.queryByText('只选失败的')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).toHaveTextContent('重新提交全部任务')
+
+      // 按小箭头落在气泡外面,会顺带收掉气泡,但这一下不能同时把菜单拉出来
+      await user.click(caret)
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 250)) })
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      expect(screen.queryByText('只选失败的')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('钉住的菜单在点击主按钮进入确认时收起,确认期间小箭头不可点,取消后恢复', async () => {
+      const { user, trigger } = await openConfirm(['done', 'done'])
+      await user.click(screen.getByRole('button', { name: '取消' }))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+
+      const caret = screen.getByRole('button', { name: '展开小任务选择' })
+      await user.click(caret)
+      await screen.findByRole('menu')
+      expect(caret).toHaveAccessibleName('收起小任务选择')
+
+      await user.click(trigger)
+      await screen.findByRole('alertdialog')
+      expect(caret).toBeDisabled()
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+      expect(caret).toHaveAccessibleName('展开小任务选择')
+
+      await user.click(screen.getByRole('button', { name: '取消' }))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      expect(caret).toBeEnabled()
+      await user.click(caret)
+      expect(await screen.findByRole('menu')).toBeInTheDocument()
+    })
+
+    it('点击主按钮进入确认后菜单不再可交互,确认提交的仍是点击时所选的成员', async () => {
+      const user = userEvent.setup()
+      const api = stubBatchApi(members('done', 'done', 'failed'))
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+      const trigger = await screen.findByRole('button', { name: '重新提交全部任务' })
+      await user.click(screen.getByRole('button', { name: '展开小任务选择' }))
+      const menu = await screen.findByRole('menu')
+      const first = within(menu).getByRole('menuitemcheckbox', { name: /小任务1/ })
+      await user.click(first)
+      expect(first).toHaveAttribute('aria-checked', 'false')
+      const toggleAll = within(menu).getByRole('menuitem', { name: '全选' })
+
+      await user.click(await screen.findByRole('button', { name: '重跑选中 2 个' }))
+      // 菜单这时只剩收起动画里的残影:点它既不能改勾选,也不能改按钮上的选择摘要
+      expect(first).toBeInTheDocument()
+      fireEvent.click(first)
+      fireEvent.click(toggleAll)
+      expect(first).toHaveAttribute('aria-checked', 'false')
+      expect(trigger).toHaveTextContent('重跑选中 2 个')
+      const dialog = await screen.findByRole('alertdialog')
+      expect(dialog).toHaveAccessibleName('重新提交 2 个小任务？')
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+
+      await user.click(within(dialog).getByRole('button', { name: '确认重新提交' }))
+      await waitFor(() => expect(api.posts).toEqual(['/vk/v1/jobs/m-1/refresh', '/vk/v1/jobs/m-2/retry']))
+    })
+
+    it.each([
+      ['点「取消」', async (user: ReturnType<typeof userEvent.setup>) => { await user.click(screen.getByRole('button', { name: '取消' })) }],
+      ['按 Esc', async (user: ReturnType<typeof userEvent.setup>) => { await user.keyboard('{Escape}') }],
+      ['点外部', async (user: ReturnType<typeof userEvent.setup>) => { await user.click(document.body) }],
+    ])('%s:焦点回到主按钮但不自动弹菜单,之后悬停和再次聚焦都照常打开', async (_name, dismiss) => {
+      const { user, trigger } = await openConfirm(['done', 'failed'])
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+
+      await dismiss(user)
+
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      await waitFor(() => expect(trigger).toHaveFocus())
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 250)) })
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+      const container = trigger.closest('.vk-task-batch-rerun')!
+      fireEvent.mouseEnter(container)
+      expect(await screen.findByRole('menu')).toBeInTheDocument()
+      fireEvent.mouseLeave(container)
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+
+      act(() => { trigger.blur() })
+      act(() => { trigger.focus() })
+      expect(await screen.findByRole('menu')).toBeInTheDocument()
     })
 
     it('只选了失败或中断的成员时不弹确认,直接提交', async () => {
