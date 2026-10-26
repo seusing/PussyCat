@@ -18,7 +18,9 @@ import Markdown, { type Components, type ExtraProps } from 'react-markdown'
 import { positionMenu, useGlassMenuSurface } from '../../components/GlassMenu'
 import { addKnownTerm, loadKnownTerms, normalizeTerm } from '../../data/knownTerms'
 import { NOTE_REMARK_PLUGINS, noteUrlTransform } from '../../lib/noteMarkdown'
-import { FIGURE_SRC, NoteFigure } from './NoteFigure'
+import { CHART_SRC, MarketChart } from './MarketChart'
+import { NoteBlockquote, NoteParagraph } from './NoteEvidence'
+import { FIGURE_SRC, listNoteFigureNames, NoteFigure, NoteFigureGalleryContext } from './NoteFigure'
 import { rehypeTermHints, TERM_HINT_LIMIT, type VkTermHint } from './termHints'
 import './TermHint.css'
 
@@ -198,7 +200,7 @@ type TermHintContextValue = {
   terms: readonly VkTermHint[]
   note: string | null
   onKnown: (term: string) => void
-  /** 配图所在的任务;没有时笔记里的 figures/ 引用不解析,按普通图片渲染。 */
+  /** 配图和行情图所在的任务;没有时笔记里的 figures/、charts/ 引用不解析,按普通图片渲染。 */
   figure: { jobId: string; baseUrl?: string } | null
 }
 
@@ -215,19 +217,23 @@ function TermHintSpan({ node: _node, ...props }: ComponentProps<'span'> & ExtraP
   return <TermHint key={id} hint={hint} note={context.note} onKnown={context.onKnown}>{props.children}</TermHint>
 }
 
-// react-markdown 的 img 覆盖:figures/<name>.jpg 在有任务可查时走 NoteFigure,其余图片原样输出。
+// react-markdown 的 img 覆盖:figures/<name>.jpg 走 NoteFigure,charts/<name>.json 走 MarketChart(都要有任务可查),
+// 其余图片原样输出。
 function NoteImage({ node: _node, ...props }: ComponentProps<'img'> & ExtraProps) {
   const figure = useContext(TermHintContext)?.figure
-  const name = typeof props.src === 'string' ? FIGURE_SRC.exec(props.src)?.[1] : undefined
-  if (figure && name) return <NoteFigure jobId={figure.jobId} baseUrl={figure.baseUrl} name={name} alt={props.alt ?? ''} />
+  const src = typeof props.src === 'string' ? props.src : undefined
+  const figureName = src ? FIGURE_SRC.exec(src)?.[1] : undefined
+  const chartName = src ? CHART_SRC.exec(src)?.[1] : undefined
+  if (figure && figureName) return <NoteFigure jobId={figure.jobId} baseUrl={figure.baseUrl} name={figureName} alt={props.alt ?? ''} />
+  if (figure && chartName) return <MarketChart jobId={figure.jobId} baseUrl={figure.baseUrl} name={chartName} alt={props.alt ?? ''} />
   return <img {...props} />
 }
 
-const TERM_HINT_COMPONENTS: Components = { span: TermHintSpan, img: NoteImage }
+const TERM_HINT_COMPONENTS: Components = { span: TermHintSpan, img: NoteImage, blockquote: NoteBlockquote, p: NoteParagraph }
 
 /**
  * 渲染笔记 Markdown,并给 terms 里的术语(最多 TERM_HINT_LIMIT 个、已了解的除外)挂上悬停卡片。
- * 传 figureJobId 时,笔记里的 figures/ 配图按该任务取回显示。
+ * 传 figureJobId 时,笔记里的 figures/ 配图和 charts/ 行情图按该任务取回显示;同一篇笔记的配图在灯箱里连着翻页。
  */
 export function TermHintMarkdown({ children, terms, note, figureJobId, baseUrl }: {
   children: string
@@ -245,15 +251,18 @@ export function TermHintMarkdown({ children, terms, note, figureJobId, baseUrl }
     () => ({ terms, note, onKnown: markKnown, figure: figureJobId ? { jobId: figureJobId, baseUrl } : null }),
     [terms, note, markKnown, figureJobId, baseUrl],
   )
+  const gallery = useMemo(() => ({ names: listNoteFigureNames(children), urls: new Map() }), [children])
   return (
     <TermHintContext.Provider value={context}>
-      <Markdown
-        remarkPlugins={NOTE_REMARK_PLUGINS}
-        rehypePlugins={[[rehypeTermHints, { terms, known, limit: TERM_HINT_LIMIT }]]}
-        components={TERM_HINT_COMPONENTS}
-        skipHtml
-        urlTransform={noteUrlTransform}
-      >{children}</Markdown>
+      <NoteFigureGalleryContext.Provider value={gallery}>
+        <Markdown
+          remarkPlugins={NOTE_REMARK_PLUGINS}
+          rehypePlugins={[[rehypeTermHints, { terms, known, limit: TERM_HINT_LIMIT }]]}
+          components={TERM_HINT_COMPONENTS}
+          skipHtml
+          urlTransform={noteUrlTransform}
+        >{children}</Markdown>
+      </NoteFigureGalleryContext.Provider>
     </TermHintContext.Provider>
   )
 }

@@ -189,6 +189,41 @@ describe('/vk/v1 proxy', () => {
     expect(entry.displayStatus).toBe('done')
   })
 
+  it('proxies the chart route with the encoded job id, passing the JSON body through without touching job shadow', async () => {
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    const chart = { title: '贵州茅台 日K', bars: [{ time: '2026-04-01', open: 1, high: 2, low: 0.5, close: 1.5 }] }
+    vkSidecar.respond('GET /api/jobs/run:r1/charts/0123456789ab', chart)
+
+    const denied = await fetch(`${baseUrl}/vk/v1/jobs/run:r1/charts/0123456789ab`)
+    expect(denied.status).toBe(403)
+    expect(vkSidecar.requests).toHaveLength(0)
+
+    const response = await fetch(`${baseUrl}/vk/v1/jobs/run:r1/charts/0123456789ab`, { headers: { Origin: ORIGIN } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(chart)
+    const forwarded = vkSidecar.requests.at(-1)
+    expect(forwarded.path).toBe('/api/jobs/run:r1/charts/0123456789ab')
+    expect(forwarded.init.method ?? 'GET').toBe('GET')
+    expect(vkJobShadow.list()).toHaveLength(0)
+
+    vkSidecar.respond('GET /api/jobs/job%201/charts/ffffffffffff', chart)
+    const encoded = await fetch(`${baseUrl}/vk/v1/jobs/job%201/charts/ffffffffffff`, { headers: { Origin: ORIGIN } })
+    expect(encoded.status).toBe(200)
+    expect(vkSidecar.requests.at(-1).path).toBe('/api/jobs/job%201/charts/ffffffffffff')
+  })
+
+  it('chart route is GET only and does not open extra paths under a job', async () => {
+    const { baseUrl, vkSidecar } = await setup()
+    const post = await fetch(`${baseUrl}/vk/v1/jobs/job-1/charts/0123456789ab`, { method: 'POST', headers: jsonHeaders(), body: '{}' })
+    expect(post.status).toBe(404)
+    const nested = await fetch(`${baseUrl}/vk/v1/jobs/job-1/charts/a/b`, { headers: { Origin: ORIGIN } })
+    expect(nested.status).toBe(404)
+    const bare = await fetch(`${baseUrl}/vk/v1/jobs/job-1/charts`, { headers: { Origin: ORIGIN } })
+    expect(bare.status).toBe(404)
+    expect(vkSidecar.requests).toHaveLength(0)
+  })
+
   it('forwards binary uploads with the name query and content type, bypassing the JSON body limit', async () => {
     const { baseUrl, vkSidecar } = await setup()
     vkSidecar.respond('POST /api/uploads?name=a.srt', { upload_id: 'up_1', is_manifest: false, bytes: 5 }, { status: 201 })

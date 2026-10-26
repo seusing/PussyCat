@@ -2457,6 +2457,37 @@ describe('VkTaskDetailSidebar', () => {
       expect(details).toHaveTextContent('阶段 3 / 4')
     })
 
+    it('依据核对阶段显示为「依据核对」,排在配图之后、整理知识笔记之前,并标注答题的模型', async () => {
+      const { steps, step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'normalize', 'chapter', 'jev_terms', 'illustrate', 'evidence', 'note'],
+        stage_metrics: [
+          stageMetric('acquire', 'done', 2), stageMetric('normalize', 'done', 1),
+          stageMetric('chapter', 'done', 8), stageMetric('jev_terms', 'done', 0.6),
+          stageMetric('illustrate', 'done', 3), stageMetric('evidence', 'done', 5), stageMetric('note', 'done', 4),
+        ],
+        model_attempts: [modelAttempt('chapter'), modelAttempt('evidence'), jevAttempt('evidence')],
+      }))
+
+      expect([...steps.querySelectorAll<HTMLElement>('li.vk-task-detail-step')].map((item) => item.dataset.stage))
+        .toEqual(['acquire', 'normalize', 'chapter', 'jev_terms', 'illustrate', 'evidence', 'note'])
+      expect(step('evidence').querySelector('strong')).toHaveTextContent('依据核对 · jev-1.13.0')
+      expect(step('evidence')).toHaveAttribute('data-stage-state', 'completed')
+    })
+
+    it('依据核对被跳过时照常显示原因', async () => {
+      const { step } = await openJevJob(jevJob({
+        completed_stages: ['acquire', 'normalize', 'chapter', 'note'],
+        stage_metrics: [
+          stageMetric('acquire', 'done', 2), stageMetric('normalize', 'done', 1), stageMetric('chapter', 'done', 8),
+          stageMetric('evidence', 'skipped', 0.2, '没有可用的 Jev'), stageMetric('note', 'done', 4),
+        ],
+      }))
+
+      expect(step('evidence')).toHaveTextContent('依据核对')
+      expect(step('evidence')).toHaveAttribute('data-stage-state', 'skipped')
+      expect(step('evidence')).toHaveTextContent('已跳过：没有可用的 Jev')
+    })
+
     it('「模型配置」只列大模型渠道,不含 Jev', async () => {
       await openJevJob(jevJob({
         completed_stages: ['acquire', 'normalize', 'chapter', 'jev_terms', 'note', 'product'],

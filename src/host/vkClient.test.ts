@@ -1,7 +1,7 @@
 import { HostRequestError } from './errors'
 import {
   deleteVkJevConfig, enableVkJevConfig, fetchVkJevConfigs, fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
-  fetchVkFigure, isVkEngineNotReady, postVkBatchCancel, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkFigureUrl, vkOutputPath,
+  fetchVkChart, fetchVkFigure, isVkEngineNotReady, postVkBatchCancel, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkChartUrl, vkFigureUrl, vkOutputPath,
 } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
@@ -70,6 +70,34 @@ describe('vkClient', () => {
     const error = await fetchVkFigure('run:r1', 'bbbbbbbbbbbb', 'http://127.0.0.1:9999').catch((err) => err)
     expect(error).toBeInstanceOf(HostRequestError)
     expect(error.status).toBe(404)
+  })
+
+  it('builds the chart url under the job, keeping the colon of a run:<id> job id', () => {
+    expect(vkChartUrl('run:abc123', '0123456789ab', 'http://127.0.0.1:9999'))
+      .toBe('http://127.0.0.1:9999/vk/v1/jobs/run:abc123/charts/0123456789ab')
+    expect(vkChartUrl('job a/1', '0123456789ab', 'http://127.0.0.1:9999'))
+      .toBe('http://127.0.0.1:9999/vk/v1/jobs/job%20a%2F1/charts/0123456789ab')
+  })
+
+  it('fetches a chart as JSON, maps a non-2xx answer to a HostRequestError, and rejects a chart without bars', async () => {
+    const chart = {
+      title: '贵州茅台 日K', symbol: '600519', market: 'a', source: '东方财富', period: 'day',
+      bars: [{ time: '2026-04-01', open: 1, high: 2, low: 0.5, close: 1.5 }],
+      marker: { time: '2026-04-24', label: '视频发布' },
+      visible: { from: '2026-03-10', to: '2026-05-22' },
+      tradingview_url: 'https://www.tradingview.com/chart/?symbol=SSE:600519',
+    }
+    const impl = stubFetch(200, chart)
+    await expect(fetchVkChart('run:r1', '0123456789ab', 'http://127.0.0.1:9999')).resolves.toEqual(chart)
+    expect(impl).toHaveBeenCalledWith('http://127.0.0.1:9999/vk/v1/jobs/run:r1/charts/0123456789ab')
+
+    stubFetch(404, { error: '行情图不存在' })
+    const missing = await fetchVkChart('run:r1', 'bbbbbbbbbbbb', 'http://127.0.0.1:9999').catch((err) => err)
+    expect(missing).toBeInstanceOf(HostRequestError)
+    expect(missing.status).toBe(404)
+
+    stubFetch(200, { ...chart, bars: [] })
+    await expect(fetchVkChart('run:r1', 'cccccccccccc', 'http://127.0.0.1:9999')).rejects.toBeInstanceOf(HostRequestError)
   })
 
   it('posts a batch cancel to the escaped batch path and returns the cancelled job ids', async () => {

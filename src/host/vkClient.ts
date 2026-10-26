@@ -705,6 +705,30 @@ export async function fetchVkFigure(jobId: string, name: string, baseUrl = DEFAU
   return response.blob()
 }
 
+/** 笔记里行情图的 JSON(引擎 charts/<12 位十六进制>.json)。 */
+export interface VkChart {
+  title: string
+  symbol: string
+  market: string
+  source: string
+  period: string
+  bars: Array<{ time: string; open: number; high: number; low: number; close: number }>
+  marker: { time: string; label: string }
+  visible: { from: string; to: string }
+  tradingview_url?: string | null
+}
+
+/** 行情图的取回地址:挂在产生它的任务下,name 是文件内容哈希的前 12 位。 */
+export function vkChartUrl(jobId: string, name: string, baseUrl = DEFAULT_BASE_URL): string {
+  return `${baseUrl}/vk/v1/jobs/${encodePathSegment(jobId)}/charts/${encodePathSegment(name)}`
+}
+
+export async function fetchVkChart(jobId: string, name: string, baseUrl = DEFAULT_BASE_URL): Promise<VkChart> {
+  const chart = await parseVkResponse<VkChart>(await fetch(vkChartUrl(jobId, name, baseUrl)), '行情图读取失败')
+  if (!chart || !Array.isArray(chart.bars) || chart.bars.length === 0) throw new HostRequestError('行情图内容不完整')
+  return chart
+}
+
 // 产物下载:fetch(带 Origin,过 Host 白名单)→ blob → 对象 URL 新开页。
 // window.open 直链不带 fetch 语义,统一走这里。
 export async function downloadVkOutput(outputId: string, baseUrl = DEFAULT_BASE_URL): Promise<void> {

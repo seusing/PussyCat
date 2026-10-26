@@ -141,6 +141,7 @@ const STAGE_LABELS: Record<string, string> = {
   claim: '提取关键信息',
   qc: '核对关键信息',
   illustrate: '配图',
+  evidence: '依据核对',
   note: '整理知识笔记',
   product: '生成解析结果',
   storyline_relate: 'Jev 判断关联',
@@ -315,9 +316,9 @@ function stageDisplayEntries(job: VkJobView, explicitPhases?: readonly TaskPhase
   const quickRequested = job.auto_route?.processing_depth === 'quick' || job.request?.preset === 'quick-summary'
   const phases = explicitPhases ?? (!sawFullAnalysis && quickRequested ? QUICK_SUMMARY_PHASES : FULL_ANALYSIS_PHASES)
   const phaseOrder = phases.flatMap((phase) => phase.stages)
-  // 配图在 note 之前运行。旧引擎没有这一阶段,放进进度分组会让分组永远完不成,所以只在显示顺序上排到 note 前。
+  // 配图和依据核对在 note 之前依次运行。旧引擎没有这两个阶段,放进进度分组会让分组永远完不成,所以只在显示顺序上排到 note 前。
   const noteAt = phaseOrder.indexOf('note')
-  if (noteAt >= 0) phaseOrder.splice(noteAt, 0, 'illustrate')
+  if (noteAt >= 0) phaseOrder.splice(noteAt, 0, 'illustrate', 'evidence')
   const orderedStages = [
     ...phaseOrder.filter((stage) => observed.has(stage)),
     ...[...observed].filter((stage) => !phaseOrder.includes(stage)),

@@ -33,6 +33,8 @@ const VK_ROUTES = [
   { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)$/, target: (m) => `/api/jobs/${m[1]}`, tap: 'view' },
   { method: 'GET', pattern: /^\/vk\/v1\/outputs\/([^/]+)$/, target: (m) => `/api/outputs/${m[1]}` },
   { method: 'GET', pattern: /^\/vk\/v1\/outputs\/([^/]+)\/([^/]+)$/, target: (m) => `/api/outputs/${m[1]}/${m[2]}` },
+  // 笔记里的行情图 JSON(charts/<12 位十六进制>.json)。引擎只放行笔记引用到且文件存在的那些。
+  { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/charts\/([^/]+)$/, target: (m) => `/api/jobs/${m[1]}/charts/${m[2]}` },
   { method: 'GET', pattern: /^\/vk\/v1\/diagnostic$/, target: () => '/api/diagnostic' },
   { method: 'POST', pattern: /^\/vk\/v1\/preview$/, target: () => '/api/preview', kind: 'json' },
   { method: 'GET', pattern: /^\/vk\/v1\/jev\/configs$/, target: () => '/api/jev/configs' },

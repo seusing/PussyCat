@@ -383,8 +383,9 @@ describe('TermHintMarkdown 配图', () => {
     expect(figure).toHaveFocus()
 
     await userEvent.click(figure)
-    await userEvent.click(screen.getByRole('dialog', { name: ALT }))
-    expect(screen.queryByRole('dialog', { name: ALT })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('dialog', { name: ALT }).querySelector('.yarl__slide')!)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: ALT })).not.toBeInTheDocument())
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('键盘 Enter 也能打开灯箱', async () => {
@@ -394,5 +395,82 @@ describe('TermHintMarkdown 配图', () => {
     figure.focus()
     await userEvent.keyboard('{Enter}')
     expect(screen.getByRole('dialog', { name: ALT })).toBeInTheDocument()
+  })
+
+  describe('图集', () => {
+    const FIGURES = [
+      ['aaaaaaaaaaaa', '第一张（00:10）'],
+      ['bbbbbbbbbbbb', '第二张（00:20）'],
+      ['cccccccccccc', '第三张（00:30）'],
+    ] as const
+    const gallery = FIGURES.map(([name, alt]) => `- 关键点\n  ![${alt}](figures/${name}.jpg)`).join('\n')
+
+    async function renderGallery(onClose = vi.fn()) {
+      stubFigureFetch()
+      render(
+        <Window onClose={onClose}>
+          <TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{gallery}</TermHintMarkdown>
+        </Window>,
+      )
+      const thumbnails = await Promise.all(FIGURES.map(([, alt]) => screen.findByAltText(alt)))
+      return { onClose, thumbnails }
+    }
+    const currentSlide = () => {
+      const slide = screen.getByRole('dialog').querySelector('.yarl__slide_current')!
+      return slide.querySelector('img')!
+    }
+
+    it('配图显示为带图注的缩略图,不自动打开灯箱', async () => {
+      const { thumbnails } = await renderGallery()
+      expect(thumbnails).toHaveLength(3)
+      for (const [, alt] of FIGURES) expect(screen.getByRole('button', { name: `查看大图：${alt}` })).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /第.张/ })).not.toBeInTheDocument()
+    })
+
+    it('从点开的那张起翻页,同一篇笔记的配图左右连着翻,标题跟着当前这张', async () => {
+      const { thumbnails } = await renderGallery()
+      await userEvent.click(screen.getByRole('button', { name: `查看大图：${FIGURES[1][1]}` }))
+
+      const dialog = screen.getByRole('dialog', { name: FIGURES[1][1] })
+      expect(dialog.parentElement).toBe(document.body)
+      expect(currentSlide()).toHaveAttribute('src', thumbnails[1].getAttribute('src'))
+
+      await userEvent.click(within(dialog).getByRole('button', { name: '下一张' }))
+      await waitFor(() => expect(screen.getByRole('dialog', { name: FIGURES[2][1] })).toBeInTheDocument())
+      expect(currentSlide()).toHaveAttribute('src', thumbnails[2].getAttribute('src'))
+      expect(within(screen.getByRole('dialog')).getByRole('button', { name: '下一张' })).toBeDisabled()
+
+      await userEvent.keyboard('{ArrowLeft}{ArrowLeft}')
+      await waitFor(() => expect(screen.getByRole('dialog', { name: FIGURES[0][1] })).toBeInTheDocument())
+      expect(currentSlide()).toHaveAttribute('src', thumbnails[0].getAttribute('src'))
+      expect(within(screen.getByRole('dialog')).getByRole('button', { name: '上一张' })).toBeDisabled()
+    })
+
+    it('灯箱带缩放按钮,Esc 只关灯箱、不传给外层窗口,焦点回到点开的那张', async () => {
+      const { onClose } = await renderGallery()
+      const opener = screen.getByRole('button', { name: `查看大图：${FIGURES[2][1]}` })
+      await userEvent.click(opener)
+      const dialog = screen.getByRole('dialog', { name: FIGURES[2][1] })
+      expect(within(dialog).getByRole('button', { name: '放大' })).toBeInTheDocument()
+      expect(within(dialog).getByRole('button', { name: '缩小' })).toBeInTheDocument()
+
+      await userEvent.keyboard('{Escape}')
+      expect(screen.queryByRole('dialog', { name: FIGURES[2][1] })).not.toBeInTheDocument()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(opener).toHaveFocus()
+    })
+
+    it('还没取回的配图不进图集,只翻已经能看的', async () => {
+      const blob = new Blob(['jpg'], { type: 'image/jpeg' })
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => (
+        url.endsWith('figure-bbbbbbbbbbbb') ? new Promise<Response>(() => {}) : new Response(blob)
+      )))
+      render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{gallery}</TermHintMarkdown>)
+      await screen.findByAltText(FIGURES[0][1])
+      await screen.findByAltText(FIGURES[2][1])
+      await userEvent.click(screen.getByRole('button', { name: `查看大图：${FIGURES[0][1]}` }))
+      await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '下一张' }))
+      await waitFor(() => expect(screen.getByRole('dialog', { name: FIGURES[2][1] })).toBeInTheDocument())
+    })
   })
 })
