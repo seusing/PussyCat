@@ -705,6 +705,34 @@ export async function fetchVkFigure(jobId: string, name: string, baseUrl = DEFAU
   return response.blob()
 }
 
+/** 行情图可切换的 K 线周期,按从细到粗排。 */
+export type VkChartInterval = '15m' | '1h' | '4h' | 'day' | 'week' | 'month'
+
+/** 博主说到的一段时间;kind 区分已发生的行情和预测的行情。 */
+export interface VkChartBand {
+  from: string
+  to: string
+  label: string
+  kind: 'past' | 'forecast'
+}
+
+/** 博主说到的价位或价位区间;drawable 为 false 表示单位与本图不同,不能画在图上。 */
+export interface VkChartLevel {
+  low: number
+  high: number | null
+  label: string
+  drawable: boolean
+}
+
+/** 日、周、月的 time 是 YYYY-MM-DD,分钟级是把北京时间钟面当作 UTC 编码的整数秒。 */
+export interface VkChartBar {
+  time: string | number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
 /** 笔记里行情图的 JSON(引擎 charts/<12 位十六进制>.json)。 */
 export interface VkChart {
   title: string
@@ -712,10 +740,21 @@ export interface VkChart {
   market: string
   source: string
   period: string
-  bars: Array<{ time: string; open: number; high: number; low: number; close: number }>
+  bars: Array<VkChartBar & { time: string }>
   marker: { time: string; label: string }
   visible: { from: string; to: string }
   tradingview_url?: string | null
+  intervals?: VkChartInterval[]
+  bands?: VkChartBand[]
+  levels?: VkChartLevel[]
+}
+
+/** 同一张图换一个 K 线周期后的数据;first / last 是数据覆盖的起止(分钟级带时分)。 */
+export interface VkChartBars {
+  period: VkChartInterval
+  bars: VkChartBar[]
+  first: string
+  last: string
 }
 
 /** 行情图的取回地址:挂在产生它的任务下,name 是文件内容哈希的前 12 位。 */
@@ -727,6 +766,21 @@ export async function fetchVkChart(jobId: string, name: string, baseUrl = DEFAUL
   const chart = await parseVkResponse<VkChart>(await fetch(vkChartUrl(jobId, name, baseUrl)), '行情图读取失败')
   if (!chart || !Array.isArray(chart.bars) || chart.bars.length === 0) throw new HostRequestError('行情图内容不完整')
   return chart
+}
+
+export function vkChartBarsUrl(jobId: string, name: string, period: VkChartInterval, baseUrl = DEFAULT_BASE_URL): string {
+  return `${vkChartUrl(jobId, name, baseUrl)}/bars?period=${encodeURIComponent(period)}`
+}
+
+export async function fetchVkChartBars(
+  jobId: string,
+  name: string,
+  period: VkChartInterval,
+  baseUrl = DEFAULT_BASE_URL,
+): Promise<VkChartBars> {
+  const data = await parseVkResponse<VkChartBars>(await fetch(vkChartBarsUrl(jobId, name, period, baseUrl)), '行情数据读取失败')
+  if (!data || !Array.isArray(data.bars) || data.bars.length === 0) throw new HostRequestError('行情数据为空')
+  return data
 }
 
 // 产物下载:fetch(带 Origin,过 Host 白名单)→ blob → 对象 URL 新开页。

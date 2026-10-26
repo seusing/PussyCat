@@ -1,7 +1,7 @@
 import { HostRequestError } from './errors'
 import {
   deleteVkJevConfig, enableVkJevConfig, fetchVkJevConfigs, fetchVkJobs, fetchVkOutputText, fetchVkStoryline, fetchVkStorylines,
-  fetchVkChart, fetchVkFigure, isVkEngineNotReady, postVkBatchCancel, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkChartUrl, vkFigureUrl, vkOutputPath,
+  fetchVkChart, fetchVkChartBars, fetchVkFigure, isVkEngineNotReady, postVkBatchCancel, postVkJob, postVkStoryline, saveVkJevConfigItem, testVkJevConfig, vkChartBarsUrl, vkChartUrl, vkFigureUrl, vkOutputPath,
 } from './vkClient'
 
 function stubFetch(status: number, body: unknown) {
@@ -98,6 +98,40 @@ describe('vkClient', () => {
 
     stubFetch(200, { ...chart, bars: [] })
     await expect(fetchVkChart('run:r1', 'cccccccccccc', 'http://127.0.0.1:9999')).rejects.toBeInstanceOf(HostRequestError)
+  })
+
+  it('builds the chart bars url under the chart with the period query', () => {
+    expect(vkChartBarsUrl('run:abc123', '0123456789ab', '1h', 'http://127.0.0.1:9999'))
+      .toBe('http://127.0.0.1:9999/vk/v1/jobs/run:abc123/charts/0123456789ab/bars?period=1h')
+    expect(vkChartBarsUrl('job a/1', '0123456789ab', 'day', 'http://127.0.0.1:9999'))
+      .toBe('http://127.0.0.1:9999/vk/v1/jobs/job%20a%2F1/charts/0123456789ab/bars?period=day')
+  })
+
+  it('fetches chart bars for a period, surfaces the engine error text, and rejects an empty answer', async () => {
+    const answer = {
+      period: '1h',
+      bars: [{ time: 1790000000, open: 1, high: 2, low: 0.5, close: 1.5 }],
+      first: '2026-09-03 10:30',
+      last: '2026-10-26 15:00',
+    }
+    const impl = stubFetch(200, answer)
+    await expect(fetchVkChartBars('run:r1', '0123456789ab', '1h', 'http://127.0.0.1:9999')).resolves.toEqual(answer)
+    expect(impl).toHaveBeenCalledWith('http://127.0.0.1:9999/vk/v1/jobs/run:r1/charts/0123456789ab/bars?period=1h')
+
+    stubFetch(502, { error: '东方财富暂时取不到数据' })
+    const failed = await fetchVkChartBars('run:r1', '0123456789ab', '15m', 'http://127.0.0.1:9999').catch((err) => err)
+    expect(failed).toBeInstanceOf(HostRequestError)
+    expect(failed.status).toBe(502)
+    expect(failed.summary).toBe('东方财富暂时取不到数据')
+
+    stubFetch(400, null)
+    const fallback = await fetchVkChartBars('run:r1', '0123456789ab', '4h', 'http://127.0.0.1:9999').catch((err) => err)
+    expect(fallback.summary).toBe('行情数据读取失败')
+
+    stubFetch(200, { ...answer, bars: [] })
+    const empty = await fetchVkChartBars('run:r1', '0123456789ab', '1h', 'http://127.0.0.1:9999').catch((err) => err)
+    expect(empty).toBeInstanceOf(HostRequestError)
+    expect(empty.summary).toBe('行情数据为空')
   })
 
   it('posts a batch cancel to the escaped batch path and returns the cancelled job ids', async () => {

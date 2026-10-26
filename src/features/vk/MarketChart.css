@@ -22,3 +22,21 @@
 }
 .vk-chart-footer a { color: var(--color-accent); }
 .vk-chart:is(.is-loading, .is-failed) { padding: 8px 12px; color: var(--color-fg-dim); font-size: 12px; }
+.vk-chart-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 4px 10px 0; }
+.vk-chart-periods { display: inline-flex; gap: 2px; }
+.vk-chart-periods button {
+  min-width: 36px;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-fg-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.vk-chart-periods button:hover:not(:disabled) { color: var(--color-fg); }
+.vk-chart-periods button.is-active { border-color: var(--color-accent); color: var(--color-accent); }
+.vk-chart-periods button:disabled { opacity: .4; cursor: not-allowed; }
+.vk-chart-status { color: var(--color-fg-dim); font-size: 12px; line-height: 1.5; }
+.vk-chart-status.is-error { color: var(--color-danger); }

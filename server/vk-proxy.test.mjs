@@ -213,6 +213,37 @@ describe('/vk/v1 proxy', () => {
     expect(vkSidecar.requests.at(-1).path).toBe('/api/jobs/job%201/charts/ffffffffffff')
   })
 
+  it('proxies the chart bars route with the encoded job id and the period query untouched, without touching job shadow', async () => {
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    const bars = { period: '1h', bars: [{ time: 1790000000, open: 1, high: 2, low: 0.5, close: 1.5 }], first: '2026-09-03 10:30', last: '2026-10-26 15:00' }
+    vkSidecar.respond('GET /api/jobs/run:r1/charts/0123456789ab/bars?period=1h', bars)
+
+    const denied = await fetch(`${baseUrl}/vk/v1/jobs/run:r1/charts/0123456789ab/bars?period=1h`)
+    expect(denied.status).toBe(403)
+    expect(vkSidecar.requests).toHaveLength(0)
+
+    const response = await fetch(`${baseUrl}/vk/v1/jobs/run:r1/charts/0123456789ab/bars?period=1h`, { headers: { Origin: ORIGIN } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(bars)
+    const forwarded = vkSidecar.requests.at(-1)
+    expect(forwarded.path).toBe('/api/jobs/run:r1/charts/0123456789ab/bars?period=1h')
+    expect(forwarded.init.method ?? 'GET').toBe('GET')
+    expect(vkJobShadow.list()).toHaveLength(0)
+
+    vkSidecar.respond('GET /api/jobs/job%201/charts/ffffffffffff/bars?period=4h&x=1', bars)
+    const encoded = await fetch(`${baseUrl}/vk/v1/jobs/job%201/charts/ffffffffffff/bars?period=4h&x=1`, { headers: { Origin: ORIGIN } })
+    expect(encoded.status).toBe(200)
+    expect(vkSidecar.requests.at(-1).path).toBe('/api/jobs/job%201/charts/ffffffffffff/bars?period=4h&x=1')
+  })
+
+  it('chart bars route is GET only', async () => {
+    const { baseUrl, vkSidecar } = await setup()
+    const post = await fetch(`${baseUrl}/vk/v1/jobs/job-1/charts/0123456789ab/bars?period=1h`, { method: 'POST', headers: jsonHeaders(), body: '{}' })
+    expect(post.status).toBe(404)
+    expect(vkSidecar.requests).toHaveLength(0)
+  })
+
   it('chart route is GET only and does not open extra paths under a job', async () => {
     const { baseUrl, vkSidecar } = await setup()
     const post = await fetch(`${baseUrl}/vk/v1/jobs/job-1/charts/0123456789ab`, { method: 'POST', headers: jsonHeaders(), body: '{}' })

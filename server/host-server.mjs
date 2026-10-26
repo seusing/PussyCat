@@ -35,6 +35,8 @@ const VK_ROUTES = [
   { method: 'GET', pattern: /^\/vk\/v1\/outputs\/([^/]+)\/([^/]+)$/, target: (m) => `/api/outputs/${m[1]}/${m[2]}` },
   // 笔记里的行情图 JSON(charts/<12 位十六进制>.json)。引擎只放行笔记引用到且文件存在的那些。
   { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/charts\/([^/]+)$/, target: (m) => `/api/jobs/${m[1]}/charts/${m[2]}` },
+  // 同一张图换 K 线周期取数。透传 ?period=,周期是否在图的 intervals 里由引擎判断。
+  { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/charts\/([^/]+)\/bars$/, target: (m, url) => `/api/jobs/${m[1]}/charts/${m[2]}/bars${url.search}` },
   { method: 'GET', pattern: /^\/vk\/v1\/diagnostic$/, target: () => '/api/diagnostic' },
   { method: 'POST', pattern: /^\/vk\/v1\/preview$/, target: () => '/api/preview', kind: 'json' },
   { method: 'GET', pattern: /^\/vk\/v1\/jev\/configs$/, target: () => '/api/jev/configs' },
