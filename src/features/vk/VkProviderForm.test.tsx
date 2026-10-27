@@ -82,6 +82,10 @@ async function chooseGlass(trigger: HTMLElement, name: string | RegExp) {
   await userEvent.click(screen.getByRole('option', { name }))
 }
 
+// 路线字段里按优先级排列的标签,每项是「序号 名称」
+const routeTags = (role = 'basic') => Array.from(screen.getByTestId(`vk-role-${role}`).querySelectorAll('.glass-multi-tag'))
+  .map((tag) => `${tag.querySelector('.glass-multi-check')?.textContent} ${tag.querySelector('.glass-multi-tag-label')?.textContent}`)
+
 function ccCandidate(over: Record<string, unknown> = {}) {
   return {
     ref: 'codex:242d3850', name: 'hhcoding sol', app_type: 'codex',
@@ -1105,13 +1109,13 @@ test('两个角色的复合开关独立，关闭与重开保留完整顺序', as
   const deep = screen.getByTestId('vk-role-composite-deep_analysis')
   expect(basic).toBeChecked()
   expect(deep).not.toBeChecked()
-  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+  expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用'])
 
   await user.click(basic)
   expect(deep).not.toBeChecked()
   expect(screen.getByTestId('vk-role-basic')).toHaveAttribute('data-value', 'cheap')
   await user.click(basic)
-  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+  expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用'])
 
   await waitFor(() => expect(calls.filter((call) => call.key === 'POST /vk/v1/providers')).toHaveLength(2))
   const posts = calls.filter((call) => call.key === 'POST /vk/v1/providers')
@@ -1252,7 +1256,7 @@ test('复合通道按用户选择顺序保存,取消后重选会追加到末尾'
   render(<VkProviderForm baseUrl={BASE} />)
 
   const trigger = await screen.findByTestId('vk-role-basic')
-  expect(trigger).toHaveTextContent('已选 3 个')
+  expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用 A', '3 备用 B'])
   await user.click(trigger)
   await user.click(screen.getByRole('option', { name: /备用 A/ }))
   await user.click(screen.getByRole('option', { name: /备用 A/ }))
@@ -1262,6 +1266,7 @@ test('复合通道按用户选择顺序保存,取消后重选会追加到末尾'
     role_fallbacks: Record<string, string[]>
   }
   expect(body.role_fallbacks.basic).toEqual(['backup-b', 'backup-a'])
+  expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用 B', '3 备用 A'])
   expect(screen.getByTestId('vk-role-routing-note')).toHaveTextContent('仅超时、429 或上游 5xx')
 })
 
@@ -1279,8 +1284,55 @@ test('复合选择不会重复添加主通道或已选通道，并立即提交',
   await user.click(await screen.findByTestId('vk-role-composite-basic'))
   await user.click(screen.getByTestId('vk-role-basic'))
   await user.click(screen.getByRole('option', { name: /备用/ }))
-  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+  expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用'])
   await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+})
+
+test('复合下拉每项第二行写「模型 ID · 上游主机名」,地址不是合法 URL 时原样显示', async () => {
+  stubRoutes({ 'GET /vk/v1/providers': { body: settings({
+    channels: [
+      channel(),
+      channel({ id: 'odd', name: '怪地址', base_url: 'not a url', model_id: 'odd-model' }),
+      channel({ id: 'port', name: '带端口', base_url: 'http://127.0.0.1:8080/v1', model_id: 'local-model' }),
+    ],
+    role_assignments: { basic: 'cheap' },
+    role_composite_enabled: { basic: true, deep_analysis: false },
+  }) } })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  await user.click(await screen.findByTestId('vk-role-basic'))
+
+  const description = (name: RegExp) => screen.getByRole('option', { name }).querySelector('.glass-multi-option-desc')
+  expect(description(/GPT 5.6 Luna/)).toHaveTextContent('gpt-5.6-luna · api.example.com')
+  expect(description(/怪地址/)).toHaveTextContent('odd-model · not a url')
+  expect(description(/带端口/)).toHaveTextContent('local-model · 127.0.0.1:8080')
+})
+
+test('点标签上的 × 移除备用并立即提交,其余序号顺延', async () => {
+  const { calls } = stubRoutes({
+    'GET /vk/v1/providers': { body: settings({
+      channels: [
+        channel(),
+        channel({ id: 'backup-a', name: '备用 A', base_url: 'https://a.example/v1' }),
+        channel({ id: 'backup-b', name: '备用 B', base_url: 'https://b.example/v1' }),
+      ],
+      role_assignments: { basic: 'cheap' },
+      role_fallbacks: { basic: ['backup-a', 'backup-b'] },
+      role_composite_enabled: { basic: true, deep_analysis: false },
+      role_routes: { basic: ['cheap', 'backup-a', 'backup-b'] },
+    }) },
+    'POST /vk/v1/providers': { body: SAVE_OK },
+  })
+  const user = userEvent.setup()
+  render(<VkProviderForm baseUrl={BASE} />)
+  await screen.findByTestId('vk-role-basic')
+
+  await user.click(screen.getByRole('button', { name: '移除 备用 A' }))
+
+  await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/providers')).toBe(true))
+  const body = calls.find((call) => call.key === 'POST /vk/v1/providers')!.body as { role_fallbacks: Record<string, string[]> }
+  expect(body.role_fallbacks.basic).toEqual(['backup-b'])
+  await waitFor(() => expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用 B']))
 })
 
 test('「备用通道」开关旁说明切换时机', async () => {
@@ -1355,7 +1407,8 @@ describe('只有一个通道的提示', () => {
     })
     render(<VkProviderForm baseUrl={BASE} />)
 
-    expect(await screen.findByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+    await screen.findByTestId('vk-role-basic')
+    expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用'])
     expect(screen.queryByTestId('vk-role-hint-basic')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('vk-role-composite-basic'))
     expect(await screen.findByTestId('vk-role-hint-basic')).toHaveTextContent(OTHER_CONFIG_HINT)
@@ -1397,7 +1450,8 @@ test('已有备用通道时不显示缺失备用警告', async () => {
   }) } })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  expect(await screen.findByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+  await screen.findByTestId('vk-role-basic')
+  expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用'])
   expect(screen.queryByText('未设置备用上游；当前通道超时后任务会失败。请添加一个 Base URL 不同的备用配置。')).not.toBeInTheDocument()
 })
 
@@ -1416,7 +1470,7 @@ test('同一上游的主备只提醒不替用户改配置', async () => {
   render(<VkProviderForm baseUrl={BASE} />)
 
   expect(await screen.findByTestId('vk-role-warning-basic')).toHaveTextContent('同一服务')
-  expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+  expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用'])
   await user.click(screen.getByTestId('vk-role-composite-basic'))
   expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
 })
@@ -2184,6 +2238,9 @@ test('连续保存错误叠加且只关闭选中的错误', async () => {
     const errors = screen.getAllByTestId('vk-provider-error')
     expect(errors).toHaveLength(2)
     expect(errors[1]).toBe(firstError)
+    // 默认收起,较早的那条被盖住够不到;展开后才能关闭它
+    expect(within(firstError).queryByRole('button', { name: '关闭通知' })).not.toBeInTheDocument()
+    act(() => { screen.getByRole('button', { name: '全部 2 条' }).click() })
     act(() => { within(firstError).getByRole('button', { name: '关闭通知' }).click() })
     expect(screen.getByTestId('vk-provider-error')).toBe(errors[0])
     act(() => vi.advanceTimersByTime(1999))
@@ -2527,7 +2584,7 @@ describe('模型配置列表顶部的共用 key 横幅', () => {
       render(<VkProviderForm baseUrl={BASE} />)
 
       await screen.findByTestId('vk-shared-key-banner')
-      expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个')
+      expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 GPT 5.6 Sol'])
       expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
     })
 
@@ -2725,7 +2782,7 @@ describe('备用通道的同服务警告', () => {
     render(<VkProviderForm baseUrl={BASE} />)
 
     await userEvent.click(await screen.findByTestId('vk-role-composite-basic'))
-    await waitFor(() => expect(screen.getByTestId('vk-role-basic')).toHaveTextContent('已选 2 个'))
+    await waitFor(() => expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 GPT 5.6 Sol']))
 
     expect(screen.queryByTestId('vk-role-warning-basic')).not.toBeInTheDocument()
     expect(screen.queryByText(SAME_HOST_WARNING)).not.toBeInTheDocument()

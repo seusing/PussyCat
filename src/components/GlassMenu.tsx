@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent,
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -19,6 +20,7 @@ export interface GlassOption {
   label: string
   disabled?: boolean
   group?: string
+  description?: string
 }
 
 const HYALITE_OPTIONS = {
@@ -91,6 +93,7 @@ function usePortalMenu(
   triggerRef: RefObject<HTMLElement | null>,
   menuRef: RefObject<HTMLDivElement | null>,
   close: () => void,
+  layoutKey?: string,
 ): MenuPosition | null {
   const [position, setPosition] = useState<MenuPosition | null>(null)
   useLayoutEffect(() => {
@@ -99,7 +102,7 @@ function usePortalMenu(
       return
     }
     setPosition(positionMenu(triggerRef.current, menuRef.current))
-  }, [open, triggerRef, menuRef])
+  }, [open, triggerRef, menuRef, layoutKey])
   useEffect(() => {
     if (!open) return
     const onPointerDown = (event: PointerEvent) => {
@@ -167,65 +170,127 @@ export interface GlassMultiSelectProps {
   placeholder?: string
 }
 
-export function GlassMultiSelect({ value, onChange, options, disabled, className = '', style, id, placeholder = '— 还没指定 —', ...aria }: GlassMultiSelectProps) {
+const MULTI_MAX_TAGS = 3
+
+function filterOptions(options: readonly GlassOption[], query: string): readonly GlassOption[] {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return options
+  return options.filter((option) => (
+    option.label.toLocaleLowerCase().includes(needle) || (option.description?.toLocaleLowerCase().includes(needle) ?? false)
+  ))
+}
+
+// 多选:已选项按优先级(选择顺序)显示成带序号的标签,输入框按名称或说明过滤下拉。
+// 焦点始终留在输入框里,当前项用 aria-activedescendant 指示。
+export function GlassMultiSelect({ value, onChange, options, disabled, className = '', style, id, placeholder = '— 还没指定 —', 'data-testid': testId, ...aria }: GlassMultiSelectProps) {
   const listboxId = useId()
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const fieldRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionRefs = useRef(new Map<number, HTMLButtonElement>())
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
-  const close = () => setOpen(false)
-  const position = usePortalMenu(open, triggerRef, menuRef, close)
-  useGlassMenuSurface(menuRef, open)
+  const filtered = filterOptions(options, query)
   const selected = new Set(value)
+  const close = () => { setOpen(false); setQuery('') }
+  const position = usePortalMenu(open, fieldRef, menuRef, close, `${filtered.length}:${value.length}`)
+  useGlassMenuSurface(menuRef, open)
   useEffect(() => {
-    if (!open) return
-    const selectedIndex = options.findIndex((option) => selected.has(option.value) && !option.disabled)
-    const target = selectedIndex >= 0 ? selectedIndex : nextEnabled(options, -1, 1)
-    focusIndex(target)
-  // Only initialize on the closed -> open edge. Toggling must keep the current option focused.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
-  const toggle = (index: number) => {
-    const option = options[index]
+    if (open) optionRefs.current.get(activeIndex)?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, activeIndex])
+
+  const labelOf = (itemValue: string) => options.find((option) => option.value === itemValue)?.label ?? itemValue
+  const shown = value.slice(0, MULTI_MAX_TAGS)
+  const folded = value.slice(MULTI_MAX_TAGS)
+
+  const openMenu = () => {
+    const selectedIndex = filtered.findIndex((option) => selected.has(option.value) && !option.disabled)
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : nextEnabled(filtered, -1, 1))
+    setOpen(true)
+  }
+  const toggle = (option: GlassOption | undefined) => {
     if (!option || option.disabled) return
     onChange(selected.has(option.value) ? value.filter((item) => item !== option.value) : [...value, option.value])
   }
-  const focusIndex = (index: number) => {
-    setActiveIndex(index)
-    requestAnimationFrame(() => optionRefs.current.get(index)?.focus({ preventScroll: true }))
+  const remove = (itemValue: string) => {
+    onChange(value.filter((item) => item !== itemValue))
+    inputRef.current?.focus()
   }
-  const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === 'Escape' && open) { event.preventDefault(); close(); return }
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', ' '].includes(event.key)) return
-    event.preventDefault()
-    if (!open) { setOpen(true); focusIndex(event.key === 'End' || event.key === 'ArrowUp' ? enabledIndexes(options).at(-1) ?? -1 : enabledIndexes(options)[0] ?? -1); return }
+  const onFieldClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (disabled) return
+    inputRef.current?.focus()
+    if (event.target === inputRef.current) { if (!open) openMenu(); return }
+    if (open) close(); else openMenu()
   }
-  const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    let next = activeIndex
-    if (event.key === 'ArrowDown') next = nextEnabled(options, activeIndex, 1)
-    else if (event.key === 'ArrowUp') next = nextEnabled(options, activeIndex, -1)
-    else if (event.key === 'Home') next = enabledIndexes(options)[0] ?? -1
-    else if (event.key === 'End') next = enabledIndexes(options).at(-1) ?? -1
-    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(activeIndex); return }
-    else if (event.key === 'Escape') { event.preventDefault(); close(); triggerRef.current?.focus(); return }
-    else if (event.key === 'Tab') { close(); return }
-    else return
-    event.preventDefault(); focusIndex(next)
+  const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return
+    const { key } = event
+    if (key === 'Escape') {
+      if (open) { event.preventDefault(); event.stopPropagation(); close() }
+    } else if (key === 'Tab') {
+      close()
+    } else if (key === 'Backspace') {
+      if (query === '' && value.length) { event.preventDefault(); onChange(value.slice(0, -1)) }
+    } else if (key === 'ArrowDown' || key === 'ArrowUp') {
+      event.preventDefault()
+      if (open) setActiveIndex(nextEnabled(filtered, activeIndex, key === 'ArrowDown' ? 1 : -1))
+      else openMenu()
+    } else if (key === 'Enter' || (key === ' ' && query === '')) {
+      // 空格只在没有过滤词时当作切换;有过滤词时是名称里的空格
+      event.preventDefault()
+      if (open) toggle(filtered[activeIndex]); else openMenu()
+    } else if (open && key === 'Home') {
+      event.preventDefault(); setActiveIndex(enabledIndexes(filtered)[0] ?? -1)
+    } else if (open && key === 'End') {
+      event.preventDefault(); setActiveIndex(enabledIndexes(filtered).at(-1) ?? -1)
+    }
   }
+
   return <>
-    <button {...aria} ref={triggerRef} id={id} type="button" role="combobox" aria-controls={listboxId} aria-expanded={open} aria-haspopup="listbox" disabled={disabled} className={`glass-select-trigger ${className}`.trim()} style={style} onClick={() => setOpen((current) => !current)} onKeyDown={onTriggerKeyDown}>
-      <span className="glass-menu-content glass-select-value">{value.length ? `已选 ${value.length} 个` : placeholder}</span>
-      <ChevronDown className="glass-menu-content glass-select-chevron" size={15} aria-hidden="true" />
-    </button>
-    {open && createPortal(<div ref={menuRef} id={listboxId} role="listbox" aria-label={aria['aria-label']} aria-multiselectable="true" className="glass-menu-surface" style={menuStyle(position)} onKeyDown={onMenuKeyDown}>
-      <div className="glass-menu-content">{options.map((option, index) => {
-        const selectedIndex = value.indexOf(option.value)
-        return <button key={option.value} ref={(element) => { if (element) optionRefs.current.set(index, element); else optionRefs.current.delete(index) }} type="button" role="option" aria-selected={selected.has(option.value)} disabled={option.disabled} tabIndex={index === activeIndex ? 0 : -1} className="glass-menu-option glass-multi-option" onMouseMove={() => !option.disabled && setActiveIndex(index)} onClick={() => toggle(index)}>
-          <span className="glass-multi-check" data-priority={selectedIndex >= 0 ? selectedIndex + 1 : undefined} aria-label={selectedIndex >= 0 ? `优先级 ${selectedIndex + 1}` : '未选择'}>{selectedIndex >= 0 ? selectedIndex + 1 : ''}</span>
-          <span>{option.label}{option.disabled ? '（已停用）' : ''}</span>
-        </button>
-      })}</div>
+    <div ref={fieldRef} id={id} data-testid={testId} data-open={open} data-disabled={disabled || undefined} className={`glass-multi-field ${className}`.trim()} style={style} onClick={onFieldClick}>
+      {shown.map((itemValue, index) => <span key={itemValue} className="glass-multi-tag">
+        <span className="glass-multi-check" data-priority={index + 1} title={`优先级 ${index + 1}`}>{index + 1}</span>
+        <span className="glass-multi-tag-label">{labelOf(itemValue)}</span>
+        <button type="button" className="glass-multi-tag-remove" aria-label={`移除 ${labelOf(itemValue)}`} disabled={disabled} onClick={(event) => { event.stopPropagation(); remove(itemValue) }}>×</button>
+      </span>)}
+      {folded.length > 0 && <span className="glass-multi-more" title={folded.map(labelOf).join('、')}>+{folded.length}</span>}
+      <input
+        {...aria}
+        ref={inputRef}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-controls={listboxId}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-activedescendant={open && filtered[activeIndex] ? `${listboxId}-${activeIndex}` : undefined}
+        disabled={disabled}
+        className="glass-multi-input"
+        placeholder={value.length ? undefined : placeholder}
+        value={query}
+        onChange={(event) => {
+          setQuery(event.target.value)
+          setActiveIndex(nextEnabled(filterOptions(options, event.target.value), -1, 1))
+          setOpen(true)
+        }}
+        onKeyDown={onInputKeyDown}
+      />
+      <ChevronDown className="glass-select-chevron" size={15} aria-hidden="true" />
+    </div>
+    {open && createPortal(<div ref={menuRef} id={listboxId} role="listbox" aria-label={aria['aria-label']} aria-multiselectable="true" className="glass-menu-surface" style={menuStyle(position)} onMouseDown={(event) => event.preventDefault()}>
+      <div className="glass-menu-content">
+        {filtered.length === 0 && <div className="glass-menu-empty">没有匹配的配置</div>}
+        {filtered.map((option, index) => {
+          const priority = value.indexOf(option.value) + 1
+          return <button key={option.value} id={`${listboxId}-${index}`} ref={(element) => { if (element) optionRefs.current.set(index, element); else optionRefs.current.delete(index) }} type="button" role="option" aria-selected={priority > 0} disabled={option.disabled} tabIndex={-1} data-active={index === activeIndex || undefined} className="glass-menu-option glass-multi-option" onMouseMove={() => !option.disabled && setActiveIndex(index)} onClick={() => toggle(option)}>
+            <span className="glass-multi-option-text">
+              <span className="glass-multi-option-label">{option.label}{option.disabled ? '（已停用）' : ''}</span>
+              {option.description && <span className="glass-multi-option-desc">{option.description}</span>}
+            </span>
+            {priority > 0 && <span className="glass-multi-check" data-priority={priority} title={`优先级 ${priority}`}>{priority}</span>}
+          </button>
+        })}
+      </div>
     </div>, document.body)}
   </>
 }

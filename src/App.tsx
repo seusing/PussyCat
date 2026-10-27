@@ -23,7 +23,8 @@ import {
 import type { CommandManifest } from './data/types'
 import type { HostBridge } from './host/types'
 import { HostRequestError } from './host/errors'
-import { fetchOpencliRelease, type OpencliRelease } from './host/opencliRelease'
+import { fetchOpencliRelease } from './host/opencliRelease'
+import { OpencliReleaseStatus, type ReleaseState } from './components/OpencliReleaseStatus'
 import { isRunnable } from './data/policy'
 import { isAcknowledged } from './data/preferences'
 import { visibleCommands } from './data/supportedSites'
@@ -36,6 +37,8 @@ const LOGIN_CHECK_CONCURRENCY = 3
 // 延迟保证退回去的站点不会被同一轮立刻捞起来重发。
 const LOGIN_CHECK_MAX_REQUEUE = 3
 const LOGIN_CHECK_REQUEUE_DELAY_MS = 400
+// 检查更新的进度条至少显示这么久,否则快速返回时用户看不出点击生效。
+const MIN_RELEASE_CHECK_MS = 600
 
 export function normalizeHostError(e: unknown, context: 'start' | 'cancel'): { summary: string; detail?: string } {
   const fallback = context === 'cancel' ? '取消请求失败' : '任务启动失败'
@@ -231,19 +234,25 @@ export default function App({
   }, [])
 
   // 检查更新只在连着 Host 时有意义;失败保留上次结果,界面只提示「检查失败」。
+  // 结果(含失败)至少等到发起后 MIN_RELEASE_CHECK_MS 才落地,免得进度反馈一闪而过。
   const checkRelease = () => {
     if (mode !== 'connected') return
     const gen = ++releaseGen.current
     setRelease((r) => ({ state: 'checking', data: r.data }))
-    fetchOpencliRelease(baseUrl)
-      .then((data) => {
-        if (gen === releaseGen.current) setRelease({ state: 'idle', data })
-      })
-      .catch((err) => {
-        if (gen === releaseGen.current) {
-          setRelease((r) => ({ ...r, state: 'error', error: err instanceof Error ? err.message : String(err) }))
-        }
-      })
+    const outcome = fetchOpencliRelease(baseUrl).then(
+      (data) => ({ data }) as const,
+      (err: unknown) => ({ err }) as const,
+    )
+    const minimum = new Promise<void>((resolve) => { setTimeout(resolve, MIN_RELEASE_CHECK_MS) })
+    void Promise.all([outcome, minimum]).then(([result]) => {
+      if (gen !== releaseGen.current) return
+      if ('data' in result) {
+        setRelease({ state: 'idle', data: result.data })
+      } else {
+        const { err } = result
+        setRelease((r) => ({ ...r, state: 'error', error: err instanceof Error ? err.message : String(err) }))
+      }
+    })
   }
   // 每次打开 app 查一次;checkRelease 每次渲染重建,但只在 mode / baseUrl 变化时需要重查
   useEffect(() => { checkRelease() }, [mode, baseUrl])
@@ -417,8 +426,6 @@ export default function App({
   )
 }
 
-type ReleaseState = { state: 'idle' | 'checking' | 'error'; data?: OpencliRelease; error?: string }
-
 function CatalogHeaderActions({ refresh, release, showRelease, onCheck }: {
   refresh: { generatedAt?: number; degraded?: string }
   release: ReleaseState
@@ -441,29 +448,7 @@ function CatalogHeaderActions({ refresh, release, showRelease, onCheck }: {
       {refresh.degraded && (
         <span data-testid="refresh-degraded" title={refresh.degraded} style={{ color: 'var(--color-warning)' }}>已降级：本地快照</span>
       )}
-      {showRelease && release.state === 'error' && (
-        <span data-testid="opencli-release" title={release.error} style={{ color: 'var(--color-danger)' }}>检查失败</span>
-      )}
-      {showRelease && release.state !== 'error' && release.data && (
-        <span data-testid="opencli-release">
-          {release.data.updateAvailable
-            ? (
-              <a href={release.data.releaseUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)' }}
-                title={`当前 ${release.data.current}，新版 OpenCLI 会随爪爪新版本提供`}>
-                OpenCLI {release.data.latest} 可用
-              </a>
-            )
-            : `OpenCLI ${release.data.current} · 已是最新`}
-        </span>
-      )}
-      {showRelease && (
-        <button data-testid="check-updates" disabled={release.state === 'checking'} onClick={onCheck}
-          className="rounded-lg px-2 py-1 disabled:opacity-50"
-          style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-          title="检查 OpenCLI 有没有新版本">
-          {release.state === 'checking' ? '检查中…' : '检查更新'}
-        </button>
-      )}
+      {showRelease && <OpencliReleaseStatus release={release} onCheck={onCheck} />}
     </div>
   )
 }

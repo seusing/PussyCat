@@ -38,7 +38,8 @@
   transition: transform 160ms ease;
 }
 
-.glass-select-trigger[aria-expanded="true"] .glass-select-chevron {
+.glass-select-trigger[aria-expanded="true"] .glass-select-chevron,
+.glass-multi-field[data-open="true"] .glass-select-chevron {
   transform: rotate(180deg);
 }
 
@@ -123,28 +124,155 @@
   opacity: 0.42;
 }
 
+/* 序号圆标:选择顺序即优先级,第 1 个是主通道 */
 .glass-multi-check {
   display: inline-flex;
   width: 1.25rem;
   height: 1.25rem;
   align-items: center;
   justify-content: center;
-  border: 1px solid currentColor;
-  border-radius: 4px;
+  border-radius: 50%;
+  background: var(--color-accent, #8fb2ff);
+  color: var(--color-on-accent, #111318);
   font-size: 0.7rem;
+  font-weight: 600;
   line-height: 1;
   flex: 0 0 auto;
 }
 
 .glass-multi-option {
-  justify-content: flex-start;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
-.glass-menu-option[aria-selected='true'] .glass-multi-check {
+.glass-multi-option[data-active='true'] {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.glass-multi-option-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.glass-multi-option-label {
+  overflow-wrap: anywhere;
+}
+
+.glass-multi-option-desc {
+  color: var(--color-fg-dim, #a8abb2);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+/* 多选字段:已选项显示成带序号的标签,和输入框、箭头同在一个描边容器里 */
+.glass-multi-field {
+  display: flex;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 36px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-line, rgba(255, 255, 255, 0.16));
+  border-radius: 8px;
+  background: var(--color-canvas, #17191d);
+  color: var(--color-fg, #f5f5f5);
+  padding: 4px 10px;
+  cursor: text;
+}
+
+.glass-multi-field:focus-within {
   border-color: var(--color-accent, #8fb2ff);
-  background: var(--color-accent, #8fb2ff);
-  color: var(--color-on-accent, #111318);
+}
+
+.glass-multi-field[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.glass-multi-tag {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--glass-edge, rgba(255, 255, 255, 0.14));
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: var(--glass-highlight, none);
+  padding: 2px 4px 2px 3px;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
+.glass-multi-tag .glass-multi-check {
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.65rem;
+}
+
+.glass-multi-tag-label {
+  min-width: 0;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glass-multi-tag-remove {
+  display: inline-grid;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-fg-dim, #a8abb2);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.glass-multi-tag-remove:hover,
+.glass-multi-tag-remove:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--color-fg, #f5f5f5);
+}
+
+.glass-multi-tag-remove:disabled {
+  cursor: not-allowed;
+}
+
+.glass-multi-more {
+  color: var(--color-fg-dim, #a8abb2);
+  font-size: 0.75rem;
+}
+
+.glass-multi-input {
+  flex: 1 1 3rem;
+  min-width: 3rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 2px 0;
+  font: inherit;
+}
+
+/* 全局 input:focus-visible 会给输入框自己画一圈 outline;聚焦由整个字段的描边表达 */
+.glass-multi-input:focus-visible {
+  outline: none;
+}
+
+.glass-multi-input::placeholder {
+  color: var(--color-fg-dim, #a8abb2);
+}
+
+.glass-multi-input:disabled {
+  cursor: not-allowed;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -8,6 +8,17 @@
   pointer-events: none;
 }
 
+.app-notification-stack__cards {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
 .app-notification-stack__card {
   display: flex;
   justify-content: flex-end;
@@ -17,7 +28,63 @@
   pointer-events: none;
 }
 
+/* 收起时第 2 张起叠在第 1 张后面,只露出向下错开的卡边 */
+.app-notification-stack__card[data-covered='true'] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+}
+
+/* 每一层比前一层两侧各收 6px(合计窄 12px) */
+.app-notification-stack__card[data-covered='true'][data-layer='1'] > * {
+  clip-path: inset(0 6px 0 6px round 0 0 8px 8px);
+}
+
+.app-notification-stack__card[data-covered='true'][data-layer='2'] > * {
+  clip-path: inset(0 12px 0 12px round 0 0 8px 8px);
+}
+
 .app-notification-stack .app-alert {
   max-height: 100%;
   overflow: auto;
+}
+
+.app-notification-stack__toggle-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.app-notification-stack__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  background: var(--glass-menu-fill);
+  color: var(--color-fg);
+  box-shadow: var(--glass-highlight), var(--glass-menu-shadow);
+  padding: 4px 10px 4px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  backdrop-filter: var(--glass-blur);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color 120ms ease;
+}
+
+.app-notification-stack__toggle:hover,
+.app-notification-stack__toggle:focus-visible {
+  background: color-mix(in srgb, var(--glass-menu-fill) 84%, white);
+  outline: none;
+}
+
+.app-notification-stack__toggle:focus-visible {
+  border-color: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-notification-stack__toggle {
+    transition: none;
+  }
 }

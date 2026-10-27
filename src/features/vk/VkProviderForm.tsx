@@ -224,6 +224,13 @@ function routeHasDuplicateHost(route: string[], drafts: Draft[]): boolean {
   return hosts.length !== new Set(hosts).size
 }
 
+// 路线下拉里每个配置的一行说明:模型 ID · 上游主机名(地址不是合法 URL 时原样显示)
+function channelDescription(draft: Draft): string {
+  let host = draft.base_url
+  try { host = new URL(draft.base_url).host } catch { /* 显示原字符串 */ }
+  return [draft.model_id, host].filter(Boolean).join(' · ')
+}
+
 function routeSharesKey(route: string[], loaded: VkProviderSettings): boolean {
   return loaded.channels.some((channel) => route.includes(channel.id)
     && sharedKeyPeers(channel, loaded.channels).some((other) => route.includes(other)))
@@ -1588,7 +1595,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   value={route}
                   disabled={saving}
                   onChange={(value) => applyRoute(role, value)}
-                  options={drafts.map((draft) => ({ value: draft.id, label: draft.name, disabled: !draft.enabled }))}
+                  options={drafts.map((draft) => ({ value: draft.id, label: draft.name, disabled: !draft.enabled, description: channelDescription(draft) }))}
                 /> : <GlassSelect
                   data-testid={`vk-role-${role}`}
                   aria-label={`${settings.role_labels[role]}主模型`}
