@@ -20,10 +20,15 @@
 .vk-source-badge.is-consistent { --vk-badge-color: var(--color-success); }
 .vk-source-badge.is-conflict { --vk-badge-color: var(--color-warning); }
 .vk-source-badge.is-missing { --vk-badge-color: var(--color-fg-dim); }
+.vk-source-badge.is-hit { --vk-badge-color: var(--color-success); }
+.vk-source-badge.is-miss { --vk-badge-color: var(--color-danger); }
+.vk-source-badge.is-pending { --vk-badge-color: var(--color-accent); }
+.vk-source-badge.is-neutral { --vk-badge-color: var(--color-fg-dim); }
 .vk-source-list { margin: 4px 0 0; padding: 0; list-style: none; }
 .vk-source-list li { margin: 2px 0; }
 .vk-source-list a { color: var(--color-accent); }
 .vk-source-meta { margin-left: 8px; color: var(--color-fg-dim); }
+.vk-forecast-body { margin-top: 4px; }
 .vk-opinion-tag {
   display: inline-block;
   margin: .25em 0;

@@ -6,14 +6,27 @@ type HastElement = NonNullable<ExtraProps['node']>
 type HastNode = HastElement['children'][number]
 
 const SOURCE_CHECK_PREFIX = '来源核对 ·'
+const FORECAST_PREFIX = '预测核验 ·'
 const OPINION_LINE = '博主观点'
 
 /** 核对结论到徽标色调:一致绿、有出入橙、未找到出处灰。 */
 const VERDICT_TONES = { 一致: 'consistent', 有出入: 'conflict', 未找到出处: 'missing' } as const
 type Verdict = keyof typeof VERDICT_TONES
 
+/** 预测核验状态到徽标色调:应验绿、未应验红、尚未到期蓝、其余灰。 */
+const FORECAST_TONES = {
+  应验: 'hit',
+  未应验: 'miss',
+  尚未到期: 'pending',
+  不明显: 'neutral',
+  未给期限: 'neutral',
+  暂不核验: 'neutral',
+} as const
+type ForecastStatus = keyof typeof FORECAST_TONES
+
 type CheckedSource = { title: string; url: string | null; meta: string }
 type SourceCheck = { verdict: Verdict; sources: CheckedSource[] }
+type Forecast = { status: ForecastStatus; body: string }
 
 function textOf(node: HastNode): string {
   if (node.type === 'text') return node.value
@@ -22,6 +35,7 @@ function textOf(node: HastNode): string {
 }
 
 const isVerdict = (value: string): value is Verdict => Object.hasOwn(VERDICT_TONES, value)
+const isForecastStatus = (value: string): value is ForecastStatus => Object.hasOwn(FORECAST_TONES, value)
 
 /**
  * 解析段落 `来源核对 · 一致：[标题](url) · 媒体 · 日期；[标题](url) · 媒体 · 日期`。
@@ -54,12 +68,29 @@ function parseSourceCheck(paragraph: HastElement): SourceCheck | null {
   return { verdict, sources }
 }
 
-/** 引擎在关键点下面写的两种行:来源核对(一行)和「博主观点」(单独一行,也可能紧跟在核对行后面)。 */
-function evidenceOf(paragraph: HastElement): { check: SourceCheck | null; opinion: boolean } | null {
+/**
+ * 解析段落 `预测核验 · 状态：正文`。只认段首;状态取第一个全角冒号之前,之后全部是正文。
+ * 不是预测核验段、没有冒号、或状态不在六种之内时返回 null,由调用方按普通段落渲染。
+ */
+function parseForecast(paragraph: HastElement): Forecast | null {
+  const text = textOf(paragraph).trim()
+  if (!text.startsWith(FORECAST_PREFIX)) return null
+  const rest = text.slice(FORECAST_PREFIX.length)
+  const colon = rest.indexOf('：')
+  if (colon < 0) return null
+  const status = rest.slice(0, colon).trim()
+  return isForecastStatus(status) ? { status, body: rest.slice(colon + 1).trim() } : null
+}
+
+/** 引擎在关键点下面写的三种行:来源核对(一行)、预测核验(一段)和「博主观点」(单独一行,也可能紧跟在核对行后面)。 */
+function evidenceOf(
+  paragraph: HastElement,
+): { check: SourceCheck | null; forecast: Forecast | null; opinion: boolean } | null {
   const lines = textOf(paragraph).split('\n').map((line) => line.trim()).filter(Boolean)
   const check = parseSourceCheck(paragraph)
+  const forecast = parseForecast(paragraph)
   const opinion = lines.includes(OPINION_LINE)
-  return check || (opinion && lines.length === 1) ? { check, opinion } : null
+  return check || forecast || (opinion && lines.length === 1) ? { check, forecast, opinion } : null
 }
 
 function SourceCheckCard({ check }: { check: SourceCheck }) {
@@ -88,24 +119,37 @@ function SourceCheckCard({ check }: { check: SourceCheck }) {
   )
 }
 
+function ForecastCard({ forecast }: { forecast: Forecast }) {
+  return (
+    <div className="vk-source-check" role="note" aria-label="预测核验">
+      <div className="vk-source-check-head">
+        <span>预测核验</span>
+        <span className={`vk-source-badge is-${FORECAST_TONES[forecast.status]}`}>{forecast.status}</span>
+      </div>
+      {forecast.body && <div className="vk-forecast-body">{forecast.body}</div>}
+    </div>
+  )
+}
+
 function OpinionTag() {
   return <span className="vk-opinion-tag">{OPINION_LINE}</span>
 }
 
-/** react-markdown 的 p 覆盖:来源核对行渲染成卡片、「博主观点」行渲染成标签,其余段落原样输出。 */
+/** react-markdown 的 p 覆盖:来源核对行和预测核验段渲染成卡片、「博主观点」行渲染成标签,其余段落原样输出。 */
 export function NoteParagraph({ node, children, ...props }: ComponentProps<'p'> & ExtraProps) {
   const evidence = node ? evidenceOf(node) : null
   if (!evidence) return <p {...props}>{children}</p>
   return (
     <>
       {evidence.check && <SourceCheckCard check={evidence.check} />}
+      {evidence.forecast && <ForecastCard forecast={evidence.forecast} />}
       {evidence.opinion && <OpinionTag />}
     </>
   )
 }
 
 /**
- * react-markdown 的 blockquote 覆盖:引用里只有来源核对行和「博主观点」行时去掉引用外壳
+ * react-markdown 的 blockquote 覆盖:引用里只有来源核对行、预测核验段和「博主观点」行时去掉引用外壳
  * (卡片和标签自己有样式);和原话引用混在一起时保留引用,卡片留在里面。
  */
 export function NoteBlockquote({ node, children, ...props }: ComponentProps<'blockquote'> & ExtraProps) {

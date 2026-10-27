@@ -100,3 +100,79 @@ describe('博主观点标签', () => {
     expect(container.querySelector('.vk-opinion-tag')).toBeNull()
   })
 })
+
+describe('预测核验卡片', () => {
+  const forecastCard = () => screen.getByRole('note', { name: '预测核验' })
+  const BODY = '看涨（由原话推断），期限至 2027-01-28。至今 -2.6%（平常波动的 0.3 倍，不明显）；期间最高 +14.5%（2026-08-25），最低 -3.2%（2026-10-26）。'
+
+  it.each([
+    ['应验', 'is-hit'],
+    ['未应验', 'is-miss'],
+    ['尚未到期', 'is-pending'],
+    ['不明显', 'is-neutral'],
+    ['未给期限', 'is-neutral'],
+    ['暂不核验', 'is-neutral'],
+  ])('%s:卡片头部是「预测核验」加徽标(%s),正文逐字出现', (status, tone) => {
+    const { container } = renderNote(`- 关键点\n  >\n  > 预测核验 · ${status}：${BODY}`)
+    expect(within(forecastCard()).getByText(status)).toHaveClass('vk-source-badge', tone)
+    expect(within(forecastCard()).getByText('预测核验')).toBeInTheDocument()
+    expect(within(forecastCard()).getByText(BODY)).toBeInTheDocument()
+    expect(container.querySelector('blockquote')).toBeNull()
+  })
+
+  it('速览笔记:关键点、图和卡片各归各位,没有多余的引用外壳', () => {
+    const { container } = renderNote([
+      '- 关键点文字',
+      '  ![图注](charts/abcdef012345.json)',
+      '  >',
+      `  > 预测核验 · 尚未到期：${BODY}`,
+    ].join('\n'))
+    const item = container.querySelector('li')!
+    expect(item).toHaveTextContent('关键点文字')
+    expect(item.querySelector('img')).toHaveAttribute('alt', '图注')
+    expect(within(item).getByRole('note', { name: '预测核验' })).toBeInTheDocument()
+    expect(forecastCard().parentElement).toBe(item)
+    expect(within(forecastCard()).getByText('尚未到期')).toHaveClass('is-pending')
+    expect(item.querySelector('blockquote')).toBeNull()
+  })
+
+  it('证据笔记:原话引用保留,卡片在引用里面', () => {
+    const { container } = renderNote([
+      '- 关键点文字 `[01:23]` <!-- claim_id: c1 -->',
+      '  > “原话”',
+      '  ![图注](charts/abcdef012345.json)',
+      '  >',
+      `  > 预测核验 · 未应验：${BODY}`,
+    ].join('\n'))
+    const quote = container.querySelector('blockquote')!
+    expect(quote).toHaveTextContent('“原话”')
+    expect(quote.querySelector('img')).toHaveAttribute('alt', '图注')
+    expect(within(quote).getByRole('note', { name: '预测核验' })).toBeInTheDocument()
+    expect(within(quote).getByText('未应验')).toHaveClass('is-miss')
+    expect(within(quote).getByText(BODY)).toBeInTheDocument()
+  })
+
+  it('和来源核对行在同一个引用块里时,两张卡片都在', () => {
+    const { container } = renderNote([
+      '> 来源核对 · 一致：[标题](https://example.com/a) · 媒体 · 2026-04-24',
+      '>',
+      `> 预测核验 · 应验：${BODY}`,
+    ].join('\n'))
+    expect(within(card()).getByText('一致')).toHaveClass('is-consistent')
+    expect(within(forecastCard()).getByText('应验')).toHaveClass('is-hit')
+    expect(container.querySelector('blockquote')).toBeNull()
+  })
+
+  it('状态不在六种之内、没有全角冒号、或「预测核验」不在段首时,按普通引用输出', () => {
+    const { container } = renderNote([
+      '> 预测核验 · 待定：看涨',
+      '> 预测核验 · 应验:看涨',
+      '> 预测核验 · 应验',
+      '> 预测核验：应验：看涨',
+      '> 这条提到预测核验 · 应验：看涨',
+    ].join('\n\n'))
+    expect(screen.queryByRole('note', { name: '预测核验' })).not.toBeInTheDocument()
+    expect(container.querySelectorAll('blockquote')).toHaveLength(5)
+    expect(container.querySelector('.vk-source-badge')).toBeNull()
+  })
+})
