@@ -44,8 +44,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 顶栏上的版本文字:一行可点的按钮,点开是面板 */
+.opencli-release-trigger {
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  padding: 2px 6px;
+  color: inherit;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background-color 120ms ease;
+}
+
+.opencli-release-trigger:hover,
+.opencli-release-trigger[aria-expanded='true'] {
+  background: rgb(255 255 255 / 6%);
+}
+
+.opencli-release-trigger[data-tone='accent'] { color: var(--color-accent); }
+.opencli-release-trigger[data-tone='danger'] { color: var(--color-danger); }
+
 .opencli-release-update {
-  margin-left: 8px;
   border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
   border-radius: 8px;
   padding: 2px 8px;
@@ -58,20 +78,7 @@
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 
-.opencli-release-link {
-  color: var(--color-fg-dim);
-  font-size: 11px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
-.opencli-release-link:hover:not(:disabled) {
-  color: var(--color-fg);
-}
-
-.opencli-release-update:disabled,
-.opencli-release-link:disabled {
+.opencli-release-update:disabled {
   cursor: default;
   opacity: 0.6;
 }
@@ -115,7 +122,6 @@
 
 .opencli-release-warning > .opencli-release-update {
   grid-column: 1;
-  margin-left: 0;
   justify-self: start;
 }
 
@@ -135,11 +141,6 @@
 .opencli-release-warning__close:focus-visible {
   background: rgb(255 255 255 / 6%);
   color: var(--color-fg);
-}
-
-.opencli-release-note {
-  font-size: 11px;
-  opacity: 0.8;
 }
 
 @keyframes opencli-release-flow {

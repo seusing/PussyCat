@@ -231,7 +231,7 @@ describe('检查更新', () => {
     const current = over.current ?? '1.8.6'
     return {
       checkedAt: Date.now(), current, latest: '1.8.6', updateAvailable: false,
-      releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.6', active: current, bundled: current, ...over,
+      releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.6', active: current, bundled: current, activeInstalledAt: null, ...over,
     }
   }
   const okResponse = (body: OpencliRelease) => Promise.resolve({ ok: true, status: 200, json: async () => body } as Response)
@@ -252,6 +252,11 @@ describe('检查更新', () => {
   // 假时钟下推进时间并冲刷随后的 promise;最短显示时间(600ms)靠它走完。
   const elapse = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
   const progressbar = () => screen.queryByRole('progressbar', { name: '正在检查 OpenCLI 新版本' })
+  // 点开顶栏的版本文字拿到小面板(关闭中的旧面板可能还在退场,取最后一个)。
+  const openPanel = () => {
+    fireEvent.click(screen.getByTestId('opencli-release'))
+    return screen.getAllByRole('dialog', { name: 'OpenCLI 版本' }).at(-1)!
+  }
 
   // shouldAdvanceTime 让 findBy / waitFor 在假时钟下照常轮询;要精确卡 600ms 边界的用例改用纯假时钟。
   beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }) })
@@ -265,27 +270,40 @@ describe('检查更新', () => {
     renderConnected()
     await elapse(MIN_CHECK_MS)
 
-    expect(await screen.findByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.6 · 已是最新')
+    expect((await screen.findByTestId('opencli-release')).textContent).toBe('OpenCLI 1.8.6 · 已是最新')
     expect(requests()).toBe(1)
-    expect(screen.getByTestId('check-updates')).toHaveTextContent('检查更新')
-    expect(screen.getByTestId('check-updates')).toHaveAttribute('title', '检查 OpenCLI 有没有新版本')
-    expect(screen.getByTestId('check-updates')).toBeEnabled()
     expect(progressbar()).not.toBeInTheDocument()
+    // 顶栏只有这一行;检查更新在点开的面板里
+    expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('opencli-release-checked-at')).not.toBeInTheDocument()
+    const check = within(openPanel()).getByTestId('check-updates')
+    expect(check).toHaveTextContent('检查更新')
+    expect(check).toHaveAttribute('title', '检查 OpenCLI 有没有新版本')
+    expect(check).toBeEnabled()
   })
 
-  test('有新版 → 链接指向发布页,旁边是「更新到 x」按钮', async () => {
+  test('生效的是应用内装的版本:顶栏那一行后面带「MM-DD HH:mm 更新」', async () => {
+    const installedAt = new Date(2026, 9, 28, 11, 24).getTime()
+    stubReleaseApi(() => okResponse(releaseOf({ current: '2.0.2', latest: '2.0.2', active: '2.0.2', bundled: '1.8.8', activeInstalledAt: installedAt })))
+    renderConnected()
+    await elapse(MIN_CHECK_MS)
+
+    expect((await screen.findByTestId('opencli-release')).textContent).toBe('OpenCLI 2.0.2 · 已是最新 · 10-28 11:24 更新')
+  })
+
+  test('有新版 → 顶栏是「OpenCLI x 可用」触发按钮和「更新到 x」按钮,发布说明链接在面板里', async () => {
     const releaseUrl = 'https://github.com/jackwener/opencli/releases/tag/v1.8.8'
     stubReleaseApi(() => okResponse(releaseOf({ latest: '1.8.8', updateAvailable: true, releaseUrl })))
     renderConnected()
     await elapse(MIN_CHECK_MS)
 
-    const link = await screen.findByRole('link', { name: 'OpenCLI 1.8.8 可用' })
+    expect(await screen.findByRole('button', { name: 'OpenCLI 1.8.8 可用' })).toBe(screen.getByTestId('opencli-release'))
+    expect(screen.getByRole('button', { name: '更新到 1.8.8' })).toBeEnabled()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    const link = within(openPanel()).getByRole('link', { name: '查看 1.8.8 发布说明' })
     expect(link).toHaveAttribute('href', releaseUrl)
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-    expect(link).toHaveAttribute('title', '当前 1.8.6')
-    expect(screen.getByRole('button', { name: '更新到 1.8.8' })).toBeEnabled()
-    expect(screen.getByTestId('check-updates')).toBeInTheDocument()
   })
 
   test('已是最新且内置版本就是生效版本时,没有更新和恢复内置按钮', async () => {
@@ -295,7 +313,9 @@ describe('检查更新', () => {
 
     await screen.findByText('OpenCLI 1.8.6 · 已是最新')
     expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('rollback-opencli')).not.toBeInTheDocument()
+    const dialog = openPanel()
+    expect(within(dialog).queryByTestId('rollback-opencli')).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link')).not.toBeInTheDocument()
   })
 
   test('检查中:版本文字和按钮换成进度条(不定进度,不带 aria-valuenow),返回后恢复', async () => {
@@ -306,21 +326,19 @@ describe('检查更新', () => {
     await elapse(MIN_CHECK_MS)
     await screen.findByText('OpenCLI 1.8.6 · 已是最新')
 
-    fireEvent.click(screen.getByTestId('check-updates'))
+    fireEvent.click(within(openPanel()).getByTestId('check-updates'))
     expect(requests()).toBe(2)
     const bar = progressbar()
     expect(bar).toBeInTheDocument()
     expect(bar).not.toHaveAttribute('aria-valuenow')
     expect(screen.getByText('正在检查 OpenCLI 新版本…')).toBeInTheDocument()
-    expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
     expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
 
     await act(async () => { finish({ ok: true, status: 200, json: async () => releaseOf({ latest: '1.8.8', updateAvailable: true }) } as Response) })
     await elapse(MIN_CHECK_MS)
-    expect(await screen.findByRole('link', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
     expect(progressbar()).not.toBeInTheDocument()
-    expect(screen.getByTestId('check-updates')).toHaveTextContent('检查更新')
-    expect(screen.getByTestId('check-updates')).toBeEnabled()
+    expect(within(openPanel()).getByTestId('check-updates')).toBeEnabled()
   })
 
   test('结果早于 600ms 返回:进度至少保持到 600ms 才落地', async () => {
@@ -365,11 +383,12 @@ describe('检查更新', () => {
     await elapse(1)
     const status = screen.getByTestId('opencli-release')
     expect(progressbar()).not.toBeInTheDocument()
-    expect(status).toHaveTextContent('检查失败')
+    expect(status.textContent).toBe('检查失败')
     expect(status).toHaveAttribute('title', '连不上 npm registry：connect ETIMEDOUT')
-    expect(screen.getByTestId('check-updates')).toBeEnabled()
+    const check = within(openPanel()).getByTestId('check-updates')
+    expect(check).toBeEnabled()
 
-    fireEvent.click(screen.getByTestId('check-updates'))
+    fireEvent.click(check)
     await elapse(MIN_CHECK_MS)
     expect(screen.getByText('OpenCLI 1.8.6 · 已是最新')).toBeInTheDocument()
     expect(screen.queryByText('检查失败')).not.toBeInTheDocument()
@@ -383,6 +402,7 @@ describe('检查更新', () => {
     renderConnected()
     await elapse(MIN_CHECK_MS)
 
+    openPanel()
     expect(screen.getByTestId('opencli-release-checked-at')).toHaveTextContent('刚刚检查')
     await elapse(30_000)
     expect(screen.getByTestId('opencli-release-checked-at')).toHaveTextContent('刚刚检查')
@@ -402,91 +422,100 @@ describe('检查更新', () => {
     const { rerender } = render(<App catalogSource={catalogSource} mode="connected" baseUrl={BASE} />)
     rerender(<App catalogSource={catalogSource} mode="connected" baseUrl={OTHER_BASE} />)
     await elapse(MIN_CHECK_MS)
-    expect(await screen.findByRole('link', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
 
     await act(async () => { finishOld({ ok: true, status: 200, json: async () => releaseOf({ latest: '1.8.6' }) } as Response) })
     await elapse(MIN_CHECK_MS)
-    expect(screen.getByRole('link', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
     expect(screen.queryByText('OpenCLI 1.8.6 · 已是最新')).not.toBeInTheDocument()
   })
 
   describe('焦点归还', () => {
     const userWithClock = () => userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-    const readyButton = async () => {
+    const readyTrigger = async () => {
       renderConnected()
       await elapse(MIN_CHECK_MS)
-      return screen.findByTestId('check-updates')
+      return screen.findByTestId('opencli-release')
     }
 
-    test('键盘回车发起检查:进度出现时焦点离开,结果落地后按钮重新获得焦点', async () => {
+    test('键盘回车打开面板、回车发起检查:进度出现时焦点离开,结果落地后触发按钮重新获得焦点', async () => {
       stubReleaseApi(() => okResponse(releaseOf()), () => okResponse(releaseOf({ latest: '1.8.8', updateAvailable: true })))
       const user = userWithClock()
-      const button = await readyButton()
-      act(() => button.focus())
+      const trigger = await readyTrigger()
+      act(() => trigger.focus())
+
+      await user.keyboard('{Enter}')
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      expect(within(screen.getByRole('dialog', { name: 'OpenCLI 版本' })).getByTestId('check-updates')).toHaveFocus()
 
       await user.keyboard('{Enter}')
       expect(progressbar()).toBeInTheDocument()
       expect(document.body).toHaveFocus()
 
       await elapse(MIN_CHECK_MS)
-      expect(await screen.findByRole('link', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
-      expect(screen.getByTestId('check-updates')).toHaveFocus()
+      expect(await screen.findByRole('button', { name: 'OpenCLI 1.8.8 可用' })).toHaveFocus()
     })
 
-    test('鼠标点击发起检查:结果落地后按钮重新获得焦点', async () => {
+    test('鼠标点开面板再点「检查更新」:结果落地后触发按钮重新获得焦点', async () => {
       stubReleaseApi(() => okResponse(releaseOf()), () => okResponse(releaseOf()))
       const user = userWithClock()
 
-      await user.click(await readyButton())
+      await user.click(await readyTrigger())
+      await user.click(within(screen.getByRole('dialog', { name: 'OpenCLI 版本' })).getByTestId('check-updates'))
       expect(progressbar()).toBeInTheDocument()
       expect(document.body).toHaveFocus()
 
       await elapse(MIN_CHECK_MS)
       expect(progressbar()).not.toBeInTheDocument()
-      expect(screen.getByTestId('check-updates')).toHaveFocus()
+      expect(screen.getByTestId('opencli-release')).toHaveFocus()
     })
 
-    test('检查失败同样把焦点还给按钮', async () => {
+    test('检查失败同样把焦点还给触发按钮', async () => {
       stubReleaseApi(() => okResponse(releaseOf()), () => failResponse(502, '连不上 npm registry'))
       const user = userWithClock()
 
-      await user.click(await readyButton())
+      await user.click(await readyTrigger())
+      await user.click(within(screen.getByRole('dialog', { name: 'OpenCLI 版本' })).getByTestId('check-updates'))
       await elapse(MIN_CHECK_MS)
 
       expect(screen.getByTestId('opencli-release')).toHaveTextContent('检查失败')
-      expect(screen.getByTestId('check-updates')).toHaveFocus()
+      expect(screen.getByTestId('opencli-release')).toHaveFocus()
     })
 
     test('页面启动时的自动检查不抢焦点', async () => {
       stubReleaseApi(() => okResponse(releaseOf()))
-      const button = await readyButton()
+      const trigger = await readyTrigger()
 
-      expect(button).not.toHaveFocus()
+      expect(trigger).not.toHaveFocus()
       expect(document.body).toHaveFocus()
     })
 
-    test('发起时焦点不在按钮上:检查结束后不去抢', async () => {
-      stubReleaseApi(() => okResponse(releaseOf()), () => okResponse(releaseOf()))
-      const button = await readyButton()
+    test('点开面板又关掉(没发起检查):检查之外的状态变化不去抢焦点', async () => {
+      stubReleaseApi(() => okResponse(releaseOf()))
+      const user = userWithClock()
+      const trigger = await readyTrigger()
 
-      fireEvent.click(button)
+      await user.click(trigger)
+      await user.keyboard('{Escape}')
+      expect(trigger).toHaveFocus()
+      act(() => trigger.blur())
       await elapse(MIN_CHECK_MS)
 
-      expect(screen.getByTestId('check-updates')).not.toHaveFocus()
       expect(document.body).toHaveFocus()
     })
 
-    test('检查期间用户把焦点移到别处:不拉回按钮', async () => {
+    test('检查期间用户把焦点移到别处:不拉回触发按钮', async () => {
       stubReleaseApi(() => okResponse(releaseOf()), () => okResponse(releaseOf()))
       const user = userWithClock()
       const other = document.createElement('input')
       document.body.appendChild(other)
       try {
-        await user.click(await readyButton())
+        await user.click(await readyTrigger())
+        await user.click(within(screen.getByRole('dialog', { name: 'OpenCLI 版本' })).getByTestId('check-updates'))
         act(() => other.focus())
 
         await elapse(MIN_CHECK_MS)
-        expect(screen.getByTestId('check-updates')).toBeInTheDocument()
+        expect(screen.getByTestId('opencli-release')).toBeInTheDocument()
         expect(other).toHaveFocus()
       } finally {
         other.remove()
@@ -515,7 +544,8 @@ describe('检查更新', () => {
       return (key: string) => counts[key] ?? 0
     }
     const AVAILABLE = { latest: '1.8.8', updateAvailable: true }
-    const UPDATED = { current: '1.8.8', latest: '1.8.8', active: '1.8.8', bundled: '1.8.6' }
+    const INSTALLED_AT = new Date(2026, 9, 28, 11, 24).getTime()
+    const UPDATED = { current: '1.8.8', latest: '1.8.8', active: '1.8.8', bundled: '1.8.6', activeInstalledAt: INSTALLED_AT }
     const idle = reply(200, { job: null })   // 启动时那次查询:Host 里没有进行中的任务
     const succeededJob = jobOf({ state: 'succeeded', stage: 'done', percent: 100 })
     const goTo = (activeModule: 'commands' | 'login') => act(() => useAppStore.setState({ activeModule }))
@@ -541,8 +571,9 @@ describe('检查更新', () => {
       expect(count('GET /opencli/release')).toBe(2)
       await elapse(MIN_CHECK_MS)
 
-      expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
-      expect(screen.getByRole('button', { name: '恢复内置版本' })).toHaveTextContent('恢复内置 1.8.6')
+      expect(screen.getByTestId('opencli-release').textContent).toBe('OpenCLI 1.8.8 · 已是最新 · 10-28 11:24 更新')
+      expect(within(openPanel()).getByRole('button', { name: '恢复内置版本' })).toBeInTheDocument()
+      expect(openPanel()).toHaveTextContent('内置版本 1.8.6')
       expect(screen.queryByTestId('opencli-update-progress')).not.toBeInTheDocument()
     })
 
@@ -627,7 +658,25 @@ describe('检查更新', () => {
         return load
       }
 
-      test('更新成功 3 秒后目录再拉一次,顶栏命令数换成新目录的数量', async () => {
+      // 命令数在面板里:打开读一下再收起。
+      const catalogCount = () => {
+        const text = within(openPanel()).getByTestId('opencli-panel-catalog').textContent
+        fireEvent.click(screen.getByTestId('opencli-release'))
+        return text
+      }
+
+      test('连着宿主时命令数不在顶栏而在面板里;「已降级」提示仍留在顶栏', async () => {
+        stubHost({ 'GET /opencli/release': [reply(200, releaseOf())] })
+        const source = sourceOf([async () => ({ snapshot: SNAP({ commands: cmdsOf(5) }), degraded: 'Host 不可达' })])
+        render(<App catalogSource={source} mode="connected" baseUrl={BASE} />)
+        await elapse(MIN_CHECK_MS)
+
+        expect(await screen.findByTestId('refresh-degraded')).toHaveTextContent('已降级：本地快照')
+        expect(screen.queryByTestId('catalog-meta')).not.toBeInTheDocument()
+        expect(catalogCount()).toBe('命令目录 5 条')
+      })
+
+      test('更新成功 3 秒后目录再拉一次,面板里的命令数换成新目录的数量', async () => {
         stubHost({
           'GET /opencli/release': [reply(200, releaseOf(AVAILABLE)), reply(200, releaseOf(UPDATED))],
           'POST /opencli/update': [reply(202, { job: jobOf() })],
@@ -635,7 +684,7 @@ describe('检查更新', () => {
         })
         const load = catalogOf(1, 3)
         await elapse(MIN_CHECK_MS)
-        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('1 条')
+        expect(catalogCount()).toBe('命令目录 1 条')
         expect(load).toHaveBeenCalledTimes(1)
 
         fireEvent.click(await screen.findByTestId('update-opencli'))
@@ -644,9 +693,10 @@ describe('检查更新', () => {
         await elapse(2900)
         expect(load).toHaveBeenCalledTimes(1)
         await elapse(100)
+        await elapse(MIN_CHECK_MS)
 
         expect(load).toHaveBeenCalledTimes(2)
-        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('3 条')
+        expect(catalogCount()).toBe('命令目录 3 条')
       })
 
       test('恢复内置成功后目录同样重拉', async () => {
@@ -656,13 +706,13 @@ describe('检查更新', () => {
         })
         const load = catalogOf(3, 1)
         await elapse(MIN_CHECK_MS)
-        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('3 条')
+        expect(catalogCount()).toBe('命令目录 3 条')
 
-        fireEvent.click(await screen.findByTestId('rollback-opencli'))
+        fireEvent.click(within(openPanel()).getByTestId('rollback-opencli'))
         await elapse(MIN_CHECK_MS)
 
         expect(load).toHaveBeenCalledTimes(2)
-        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('1 条')
+        expect(catalogCount()).toBe('命令目录 1 条')
       })
 
       test('更新失败或取消时目录不重拉', async () => {
@@ -680,7 +730,95 @@ describe('检查更新', () => {
         await elapse(5000)
 
         expect(load).toHaveBeenCalledTimes(1)
-        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('1 条')
+        expect(catalogCount()).toBe('命令目录 1 条')
+      })
+    })
+
+    describe('恢复内置进行中', () => {
+      const userWithClock = () => userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const pendingRollback = () => {
+        let finish!: (response: Response) => void
+        const responder: Responder = () => new Promise<Response>((resolve) => { finish = resolve })
+        return { responder, finish: (response: Response) => act(async () => { finish(response) }) }
+      }
+      const clickRollback = async (user: ReturnType<typeof userWithClock>) => {
+        await user.click(await screen.findByTestId('opencli-release'))
+        await user.click(within(screen.getByRole('dialog', { name: 'OpenCLI 版本' })).getByRole('button', { name: '恢复内置版本' }))
+        await elapse(0)
+      }
+
+      test('顶栏显示恢复进度;成功后接上检查进度,最终显示内置版本,焦点回到触发按钮', async () => {
+        const rollback = pendingRollback()
+        const count = stubHost({
+          'GET /opencli/release': [reply(200, releaseOf(UPDATED)), reply(200, releaseOf())],
+          'POST /opencli/rollback': [rollback.responder],
+        })
+        const user = userWithClock()
+        renderConnected()
+        await elapse(MIN_CHECK_MS)
+        await clickRollback(user)
+
+        expect(screen.getByTestId('opencli-rollback-progress')).toHaveTextContent('正在恢复内置 OpenCLI 1.8.6…')
+        expect(screen.getByRole('progressbar', { name: '正在恢复内置 OpenCLI' })).toBeInTheDocument()
+        expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
+        expect(count('GET /opencli/release')).toBe(1)
+        expect(document.body).toHaveFocus()
+
+        await rollback.finish({ ok: true, status: 200, json: async () => ({ active: null }) } as Response)
+        expect(count('GET /opencli/release')).toBe(2)
+        expect(screen.queryByTestId('opencli-rollback-progress')).not.toBeInTheDocument()
+        expect(progressbar()).toBeInTheDocument()   // 紧接着是"正在检查 OpenCLI 新版本…"
+        expect(document.body).toHaveFocus()
+
+        await elapse(MIN_CHECK_MS)
+        expect(progressbar()).not.toBeInTheDocument()
+        expect(screen.getByTestId('opencli-release').textContent).toBe('OpenCLI 1.8.6 · 已是最新')
+        expect(screen.getByTestId('opencli-release')).toHaveFocus()
+      })
+
+      test('失败时恢复原样、出红字错误、不重查,焦点回到触发按钮', async () => {
+        const rollback = pendingRollback()
+        const count = stubHost({
+          'GET /opencli/release': [reply(200, releaseOf(UPDATED))],
+          'POST /opencli/rollback': [rollback.responder],
+        })
+        const user = userWithClock()
+        renderConnected()
+        await elapse(MIN_CHECK_MS)
+        await clickRollback(user)
+        expect(screen.getByTestId('opencli-rollback-progress')).toBeInTheDocument()
+
+        await rollback.finish({ ok: false, status: 409, json: async () => ({ error: '有命令正在运行，等它结束再恢复' }) } as Response)
+
+        expect(screen.queryByTestId('opencli-rollback-progress')).not.toBeInTheDocument()
+        expect(screen.getByRole('alert')).toHaveTextContent('有命令正在运行，等它结束再恢复')
+        expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
+        expect(count('GET /opencli/release')).toBe(1)
+        expect(screen.getByTestId('opencli-release')).toHaveFocus()
+      })
+
+      test('恢复期间用户把焦点移到别处:不拉回触发按钮', async () => {
+        const rollback = pendingRollback()
+        stubHost({
+          'GET /opencli/release': [reply(200, releaseOf(UPDATED)), reply(200, releaseOf())],
+          'POST /opencli/rollback': [rollback.responder],
+        })
+        const user = userWithClock()
+        const other = document.createElement('input')
+        document.body.appendChild(other)
+        try {
+          renderConnected()
+          await elapse(MIN_CHECK_MS)
+          await clickRollback(user)
+          act(() => other.focus())
+
+          await rollback.finish({ ok: true, status: 200, json: async () => ({ active: null }) } as Response)
+          await elapse(MIN_CHECK_MS)
+          expect(screen.getByTestId('opencli-release')).toBeInTheDocument()
+          expect(other).toHaveFocus()
+        } finally {
+          other.remove()
+        }
       })
     })
 
@@ -693,13 +831,13 @@ describe('检查更新', () => {
       await elapse(MIN_CHECK_MS)
       expect(await screen.findByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
 
-      fireEvent.click(screen.getByRole('button', { name: '恢复内置版本' }))
+      fireEvent.click(within(openPanel()).getByRole('button', { name: '恢复内置版本' }))
       await elapse(MIN_CHECK_MS)
 
       expect(count('POST /opencli/rollback')).toBe(1)
       expect(count('GET /opencli/release')).toBe(2)
-      expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.6 · 已是最新')
-      expect(screen.queryByTestId('rollback-opencli')).not.toBeInTheDocument()
+      expect(screen.getByTestId('opencli-release').textContent).toBe('OpenCLI 1.8.6 · 已是最新')
+      expect(within(openPanel()).queryByTestId('rollback-opencli')).not.toBeInTheDocument()
     })
   })
 
@@ -707,7 +845,8 @@ describe('检查更新', () => {
     const requests = stubReleaseApi(() => okResponse(releaseOf()))
     render(<App catalogSource={sourceOf([async () => ({ snapshot: SNAP() })])} />)
 
-    await screen.findByTestId('catalog-meta')
+    // 演示模式没有版本区,命令数照旧在顶栏
+    expect(await screen.findByTestId('catalog-meta')).toHaveTextContent('1 条')
     expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
     expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
     expect(progressbar()).not.toBeInTheDocument()

@@ -50,7 +50,22 @@ describe('opencli runtime', () => {
     expect(runtime.entry()).toBe(entry)
     expect(runtime.version()).toBe('2.0.2')
     expect(runtime.bundledVersion()).toBe('1.8.8')
-    expect(runtime.active()).toEqual({ version: '2.0.2', entry })
+    expect(runtime.active()).toEqual({ version: '2.0.2', entry, installedAt: expect.any(Number) })
+  })
+
+  it('active() 带上 active.json 里的 installedAt;不是有限数字就当 null,不影响有效性', () => {
+    const { runtime, dataRoot } = setup()
+    const entry = fakePackage(join(dataRoot, 'opencli', 'versions', '2.0.2'), '2.0.2')
+    const write = (installedAt) => writeFileSync(join(dataRoot, 'opencli', 'active.json'), JSON.stringify({ version: '2.0.2', entry, installedAt }))
+
+    write(1_761_600_000_000)
+    expect(runtime.active()).toEqual({ version: '2.0.2', entry, installedAt: 1_761_600_000_000 })
+    for (const bad of [undefined, null, '1761600000000', 'x', {}]) {
+      write(bad)
+      expect(runtime.active()).toEqual({ version: '2.0.2', entry, installedAt: null })
+      expect(runtime.version()).toBe('2.0.2')
+      expect(runtime.entry()).toBe(entry)
+    }
   })
 
   it('active.json 记录 version、entry、installedAt,且是原子写入(不留临时文件)', () => {

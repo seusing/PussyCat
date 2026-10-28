@@ -36,10 +36,10 @@ export function createOpencliRuntime({ bundledEntry, dataRoot }) {
   // 每次现读:文件只有几十字节,且 activate 用 rename 原子替换,读到的不会是半截。
   const readActive = () => {
     try {
-      const { version, entry } = JSON.parse(stripBom(readFileSync(activeFile, 'utf8')))
+      const { version, entry, installedAt } = JSON.parse(stripBom(readFileSync(activeFile, 'utf8')))
       if (typeof version !== 'string' || typeof entry !== 'string') return undefined
       if (!ENTRY_PATTERN.test(entry) || !existsSync(entry)) return undefined
-      return { version, entry }
+      return { version, entry, installedAt: Number.isFinite(installedAt) ? installedAt : null }
     } catch {
       return undefined
     }
@@ -52,7 +52,7 @@ export function createOpencliRuntime({ bundledEntry, dataRoot }) {
     /** 生效版本号。 */
     version: () => readActive()?.version ?? (bundledVersionMemo ??= packageVersion(bundledEntry)),
     bundledVersion: () => (bundledVersionMemo ??= packageVersion(bundledEntry)),
-    /** 更新装下的版本;没有(正在用内置版本)时是 null。 */
+    /** 更新装下的版本(含装上的时刻,读不到时是 null);没有(正在用内置版本)时整个是 null。 */
     active: () => readActive() ?? null,
     activate(version, entry) {
       if (!ENTRY_PATTERN.test(entry)) throw new Error(`Unexpected OpenCLI entry: ${entry}`)

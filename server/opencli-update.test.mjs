@@ -537,7 +537,7 @@ describe('切换', () => {
     writeFileSync(previous, '')
     ctx.runtime.activate('2.0.1', previous)
     await run(ctx)
-    expect(ctx.runtime.active()).toEqual({ version: '2.0.1', entry: previous })
+    expect(ctx.runtime.active()).toEqual({ version: '2.0.1', entry: previous, installedAt: expect.any(Number) })
   })
 
   it('有命令在运行时,等它们结束再切换', async () => {

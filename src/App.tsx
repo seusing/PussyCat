@@ -447,13 +447,13 @@ function CatalogHeaderActions({ refresh, release, showRelease, onCheck, update }
           Host 未连接：命令均不可执行
         </span>
       )}
-      {refresh.generatedAt !== undefined && (
+      {refresh.generatedAt !== undefined && !showRelease && (
         <span data-testid="catalog-meta">{count} 条</span>
       )}
       {refresh.degraded && (
         <span data-testid="refresh-degraded" title={refresh.degraded} style={{ color: 'var(--color-warning)' }}>已降级：本地快照</span>
       )}
-      {showRelease && <OpencliReleaseStatus release={release} onCheck={onCheck} update={update} />}
+      {showRelease && <OpencliReleaseStatus release={release} onCheck={onCheck} update={update} commandCount={refresh.generatedAt !== undefined ? count : undefined} />}
     </div>
   )
 }

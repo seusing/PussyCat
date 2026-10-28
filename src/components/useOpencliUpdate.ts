@@ -18,6 +18,7 @@ export function useOpencliUpdate(baseUrl: string | undefined, onSettled: () => v
   const [job, setJob] = useState<OpencliUpdateJob | null>(null)
   const [cardOpen, setCardOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [rollingBack, setRollingBack] = useState(false)
   const [notice, setNotice] = useState<string>()
   const [extensionWarning, setExtensionWarning] = useState<ExtensionWarning | null>(null)
   const onSettledRef = useRef(onSettled)
@@ -79,10 +80,17 @@ export function useOpencliUpdate(baseUrl: string | undefined, onSettled: () => v
     setJob(next)
     setCardOpen(true)
   })
+  // 退回内置版本要重启守护进程、刷新目录,要好几秒:rollingBack 让顶栏有进度反馈。
+  // 成功时 onSettled 在同一拍里让顶栏接上"检查中",中间不会闪回旧文字。
   const rollback = () => guarded(async () => {
-    await rollbackOpencliRelease(baseUrl)
-    setExtensionWarning(null)   // 提醒针对被换掉的那个版本,回到内置版本后就过时了
-    onSettledRef.current()
+    setRollingBack(true)
+    try {
+      await rollbackOpencliRelease(baseUrl)
+      setExtensionWarning(null)   // 提醒针对被换掉的那个版本,回到内置版本后就过时了
+      onSettledRef.current()
+    } finally {
+      setRollingBack(false)
+    }
   })
   // 由宿主在 Chrome 里打开写死的商店页;没成功的原因走顶栏的错误提示。
   const openExtensionStore = () => guarded(async () => {
@@ -102,6 +110,7 @@ export function useOpencliUpdate(baseUrl: string | undefined, onSettled: () => v
     card,
     updating: card !== null && card.state !== 'failed',
     busy,
+    rollingBack,
     notice,
     extensionWarning,
     start, rollback, openExtensionStore, cancel, dismissCard, dismissWarning, clearNotice,

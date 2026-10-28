@@ -12,7 +12,7 @@ vi.mock('motion/react', async (importOriginal) => ({
 const BASE = 'http://127.0.0.1:43117'
 const release: OpencliRelease = {
   checkedAt: Date.now(), current: '1.8.6', latest: '1.8.8', updateAvailable: true,
-  releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.8', active: '1.8.6', bundled: '1.8.6',
+  releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.8', active: '1.8.6', bundled: '1.8.6', activeInstalledAt: null,
 }
 const jobOf = (over: Partial<OpencliUpdateJob> = {}): OpencliUpdateJob => ({
   id: 'job-1', version: '1.8.8', state: 'running', stage: 'install', receivedBytes: 0, totalBytes: 13_000_000, percent: 70,

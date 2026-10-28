@@ -13,6 +13,8 @@ export type OpencliRelease = {
   active: string
   /** 安装包内置的版本;active 与它不同说明已经应用内更新过。 */
   bundled: string
+  /** 生效版本是应用内更新装下的:装上的时刻(毫秒时间戳);用内置版本时是 null。 */
+  activeInstalledAt: number | null
 }
 
 export type OpencliUpdateStage = 'resolve' | 'download' | 'install' | 'native' | 'prune' | 'verify' | 'switch' | 'done'

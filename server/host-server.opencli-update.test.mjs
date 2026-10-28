@@ -115,7 +115,7 @@ describe('/opencli/release 带生效版本与内置版本', () => {
     const opencliRelease = vi.fn(async () => release)
     const { baseUrl } = await setup({ opencliRelease })
     const res = await get(baseUrl, '/opencli/release')
-    await expect(res.json()).resolves.toEqual({ ...release, active: '1.8.8', bundled: '1.8.8' })
+    await expect(res.json()).resolves.toEqual({ ...release, active: '1.8.8', bundled: '1.8.8', activeInstalledAt: null })
     expect(opencliRelease).toHaveBeenCalledWith({ currentVersion: '1.8.8' })
   })
 
@@ -125,7 +125,39 @@ describe('/opencli/release 带生效版本与内置版本', () => {
     const res = await get(baseUrl, '/opencli/release')
 
     expect(opencliRelease).toHaveBeenCalledWith({ currentVersion: '2.0.2' })
-    await expect(res.json()).resolves.toMatchObject({ current: '2.0.2', active: '2.0.2', bundled: '1.8.8' })
+    const body = await res.json()
+    expect(body).toMatchObject({ current: '2.0.2', active: '2.0.2', bundled: '1.8.8' })
+  })
+
+  it('用的是应用内更新装下的版本:activeInstalledAt 是装上的时刻', async () => {
+    const opencliRelease = vi.fn(async ({ currentVersion }) => ({ ...release, current: currentVersion, updateAvailable: false }))
+    const opencliRuntime = fakeRuntime({ active: '2.0.2' })
+    const { baseUrl } = await setup({ opencliRelease, opencliRuntime })
+    const body = await (await get(baseUrl, '/opencli/release')).json()
+
+    expect(opencliRuntime.active().installedAt).toEqual(expect.any(Number))
+    expect(body.activeInstalledAt).toBe(opencliRuntime.active().installedAt)
+  })
+
+  it('用内置版本:activeInstalledAt 是 null', async () => {
+    const opencliRelease = vi.fn(async ({ currentVersion }) => ({ ...release, current: currentVersion }))
+    const { baseUrl } = await setup({ opencliRelease, opencliRuntime: fakeRuntime() })
+    const body = await (await get(baseUrl, '/opencli/release')).json()
+
+    expect(body).toMatchObject({ active: '1.8.8', bundled: '1.8.8' })
+    expect(body.activeInstalledAt).toBeNull()
+  })
+
+  it('active.json 里的 installedAt 不是数字:当作 null,版本照常生效', async () => {
+    const opencliRelease = vi.fn(async ({ currentVersion }) => ({ ...release, current: currentVersion }))
+    const opencliRuntime = fakeRuntime({ active: '2.0.2' })
+    const activeFile = join(opencliRuntime.root, 'active.json')
+    const entry = opencliRuntime.active().entry
+    writeFileSync(activeFile, JSON.stringify({ version: '2.0.2', entry, installedAt: 'yesterday' }))
+    const { baseUrl } = await setup({ opencliRelease, opencliRuntime })
+    const body = await (await get(baseUrl, '/opencli/release')).json()
+
+    expect(body).toMatchObject({ active: '2.0.2', activeInstalledAt: null })
   })
 })
 

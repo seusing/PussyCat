@@ -10,7 +10,7 @@ type Placement = ReturnType<typeof positionMenu> & { above: boolean }
  * 关闭后把焦点还给触发按钮。点在页面空白处时,浏览器处理完这次点击会把焦点移到 body,
  * 所以下一拍再补一次;点到别的可聚焦元素则让它保留焦点。
  */
-function restoreFocus(anchor: HTMLElement) {
+export function restoreFocus(anchor: HTMLElement) {
   anchor.focus({ preventScroll: true })
   window.setTimeout(() => {
     const active = document.activeElement

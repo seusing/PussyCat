@@ -406,7 +406,13 @@ export function createHostServer({
         try {
           const active = opencliRuntime?.version() ?? activePolicy().opencliVersion
           const release = await opencliRelease({ currentVersion: active })
-          writeJson(response, 200, { ...release, active, bundled: opencliRuntime?.bundledVersion() ?? active })
+          writeJson(response, 200, {
+            ...release,
+            active,
+            bundled: opencliRuntime?.bundledVersion() ?? active,
+            // 用内置版本时是 null:内置版本是随安装包来的,不存在"在爪爪里装上"的时间。
+            activeInstalledAt: opencliRuntime?.active()?.installedAt ?? null,
+          })
         } catch (error) {
           writeJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
         }

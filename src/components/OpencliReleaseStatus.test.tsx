@@ -10,7 +10,7 @@ const reply = (status: number, body: unknown): Responder => () => Promise.resolv
 
 const releaseOf = (over: Partial<OpencliRelease> = {}): OpencliRelease => ({
   checkedAt: Date.now(), current: '1.8.6', latest: '1.8.8', updateAvailable: true,
-  releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.8', active: '1.8.6', bundled: '1.8.6', ...over,
+  releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.8', active: '1.8.6', bundled: '1.8.6', activeInstalledAt: null, ...over,
 })
 const jobOf = (over: Partial<OpencliUpdateJob> = {}): OpencliUpdateJob => ({
   id: 'job-1', version: '1.8.8', state: 'running', stage: 'resolve', receivedBytes: 0, totalBytes: null, percent: 0,
@@ -37,14 +37,20 @@ function stubHost(routes: Record<string, Responder[]>) {
 }
 
 // 更新状态在 App 层持有,这里用一个最小的宿主组件代替 App。
-function Harness({ release, onCheck, enabled }: { release: ReleaseState; onCheck: () => void; enabled: boolean }) {
+function Harness({ release, onCheck, enabled, commandCount }: { release: ReleaseState; onCheck: () => void; enabled: boolean; commandCount?: number }) {
   const update = useOpencliUpdate(BASE, onCheck, enabled)
-  return <OpencliReleaseStatus release={release} onCheck={onCheck} update={update} />
+  return <OpencliReleaseStatus release={release} onCheck={onCheck} update={update} commandCount={commandCount} />
 }
-const renderStatus = (data: OpencliRelease = releaseOf(), enabled = true) => {
+const renderRelease = (release: ReleaseState, { enabled = true, commandCount }: { enabled?: boolean; commandCount?: number } = {}) => {
   const onCheck = vi.fn()
-  const view = render(<Harness release={{ state: 'idle', data }} onCheck={onCheck} enabled={enabled} />)
+  const view = render(<Harness release={release} onCheck={onCheck} enabled={enabled} commandCount={commandCount} />)
   return { onCheck, ...view }
+}
+const renderStatus = (data: OpencliRelease = releaseOf(), enabled = true) => renderRelease({ state: 'idle', data }, { enabled })
+// 点开顶栏的版本文字,拿到小面板。
+const openPanel = () => {
+  fireEvent.click(screen.getByTestId('opencli-release'))
+  return screen.getByRole('dialog', { name: 'OpenCLI 版本' })
 }
 
 // 轮询次数:GET /opencli/update 的第 1 次是挂载时的查询,其余才是轮询。
@@ -66,6 +72,12 @@ const cardGone = async () => {
   }
   expect(screen.queryByTestId('opencli-update-card')).not.toBeInTheDocument()
 }
+const panelGone = async () => {
+  for (let i = 0; i < 40 && screen.queryByTestId('opencli-release-panel'); i += 1) {
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 50) }) })
+  }
+  expect(screen.queryByTestId('opencli-release-panel')).not.toBeInTheDocument()
+}
 const startUpdate = async (data?: OpencliRelease) => {
   const view = renderStatus(data)
   fireEvent.click(screen.getByTestId('update-opencli'))
@@ -78,48 +90,244 @@ const startUpdate = async (data?: OpencliRelease) => {
 beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] }) })
 afterEach(() => { vi.useRealTimers() })
 
-describe('按钮', () => {
-  test('有新版:版本链接旁出现「更新到 x」,检查更新保留', () => {
-    renderStatus()
-
-    expect(screen.getByRole('link', { name: 'OpenCLI 1.8.8 可用' })).toHaveAttribute('href', 'https://github.com/jackwener/opencli/releases/tag/v1.8.8')
-    expect(screen.getByRole('button', { name: '更新到 1.8.8' })).toBeEnabled()
-    expect(screen.getByTestId('check-updates')).toBeInTheDocument()
-    expect(screen.queryByTestId('rollback-opencli')).not.toBeInTheDocument()
-  })
-
-  test('已是最新且生效版本就是内置版本:没有更新和恢复内置按钮', () => {
+describe('顶栏版本文字', () => {
+  test('已是最新:一行可点的按钮,没有链接、检查更新、恢复内置、已检查', () => {
     renderStatus(releaseOf({ latest: '1.8.6', updateAvailable: false }))
 
-    expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.6 · 已是最新')
+    const trigger = screen.getByRole('button', { name: 'OpenCLI 1.8.6 · 已是最新' })
+    expect(trigger).toBe(screen.getByTestId('opencli-release'))
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
     expect(screen.queryByTestId('rollback-opencli')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('opencli-release-checked-at')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
-  test('active 与 bundled 不同:出现「恢复内置」,点了调 rollback,成功后重新检查', async () => {
+  test.each([
+    [new Date(2026, 9, 28, 11, 24), 'OpenCLI 2.0.2 · 已是最新 · 10-28 11:24 更新'],
+    [new Date(2026, 0, 5, 3, 7), 'OpenCLI 2.0.2 · 已是最新 · 01-05 03:07 更新'],
+  ])('生效的是应用内装的版本:后面带本地时间的「MM-DD HH:mm 更新」(%s)', (installedAt, text) => {
+    renderStatus(releaseOf({
+      current: '2.0.2', latest: '2.0.2', updateAvailable: false, active: '2.0.2', bundled: '1.8.8', activeInstalledAt: installedAt.getTime(),
+    }))
+
+    expect(screen.getByTestId('opencli-release').textContent).toBe(text)
+  })
+
+  test('用内置版本(没有更新时间):不带时间', () => {
+    renderStatus(releaseOf({ latest: '1.8.6', updateAvailable: false, activeInstalledAt: null }))
+
+    expect(screen.getByTestId('opencli-release').textContent).toBe('OpenCLI 1.8.6 · 已是最新')
+  })
+
+  test('有新版:「OpenCLI x 可用」是触发按钮而不是链接,旁边是「更新到 x」', () => {
+    renderStatus(releaseOf({ activeInstalledAt: 1_761_600_000_000 }))
+
+    const trigger = screen.getByRole('button', { name: 'OpenCLI 1.8.8 可用' })
+    expect(trigger).toBe(screen.getByTestId('opencli-release'))
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(screen.getByRole('button', { name: '更新到 1.8.8' })).toBeEnabled()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
+  })
+
+  test('检查失败:触发按钮写「OpenCLI x · 检查失败」,原因在 title,没有更新按钮', () => {
+    renderRelease({ state: 'error', data: releaseOf(), error: '连不上 npm registry：connect ETIMEDOUT' })
+
+    const trigger = screen.getByRole('button', { name: 'OpenCLI 1.8.6 · 检查失败' })
+    expect(trigger).toBe(screen.getByTestId('opencli-release'))
+    expect(trigger).toHaveAttribute('title', '连不上 npm registry：connect ETIMEDOUT')
+    expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
+  })
+
+  test('第一次检查就失败(还没有版本信息):只写「检查失败」', () => {
+    renderRelease({ state: 'error', error: '连不上 npm registry' })
+
+    expect(screen.getByTestId('opencli-release').textContent).toBe('检查失败')
+  })
+})
+
+describe('版本面板', () => {
+  test('点触发按钮打开、再点收起;打开时 aria-expanded 为真', async () => {
+    renderStatus(releaseOf({ latest: '1.8.6', updateAvailable: false }))
+    const trigger = screen.getByTestId('opencli-release')
+
+    const dialog = openPanel()
+    expect(dialog).toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await panelGone()
+  })
+
+  test('已是最新:只有「刚刚检查」+「检查更新」一行,没有内置版本、发布说明、命令目录', () => {
+    renderStatus(releaseOf({ latest: '1.8.6', updateAvailable: false }))
+    const dialog = openPanel()
+
+    expect(within(dialog).getByTestId('opencli-release-checked-at')).toHaveTextContent('刚刚检查')
+    expect(within(dialog).getByRole('button', { name: '检查更新' })).toBeEnabled()
+    expect(within(dialog).queryByTestId('rollback-opencli')).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link')).not.toBeInTheDocument()
+    expect(within(dialog).queryByTestId('opencli-panel-catalog')).not.toBeInTheDocument()
+  })
+
+  test('检查过一阵子:写成「HH:mm 已检查」', () => {
+    const checkedAt = new Date(2026, 9, 28, 9, 5).getTime()
+    renderStatus(releaseOf({ checkedAt, latest: '1.8.6', updateAvailable: false }))
+
+    expect(within(openPanel()).getByTestId('opencli-release-checked-at')).toHaveTextContent('09:05 已检查')
+  })
+
+  test('有新版:面板里有「查看 x 发布说明」链接指向发布页', () => {
+    renderStatus()
+    const link = within(openPanel()).getByRole('link', { name: '查看 1.8.8 发布说明' })
+
+    expect(link).toHaveAttribute('href', 'https://github.com/jackwener/opencli/releases/tag/v1.8.8')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  test('给了命令数:面板里显示「命令目录 N 条」', () => {
+    renderRelease({ state: 'idle', data: releaseOf({ updateAvailable: false }) }, { commandCount: 117 })
+
+    expect(within(openPanel()).getByTestId('opencli-panel-catalog')).toHaveTextContent('命令目录 117 条')
+  })
+
+  test('检查失败:检查那一行写原因,仍可重试;没有发布说明', () => {
+    renderRelease({ state: 'error', data: releaseOf(), error: '连不上 npm registry：connect ETIMEDOUT' })
+    const dialog = openPanel()
+
+    expect(within(dialog).getByTestId('opencli-release-checked-at')).toHaveTextContent('连不上 npm registry：connect ETIMEDOUT')
+    expect(within(dialog).getByRole('button', { name: '检查更新' })).toBeEnabled()
+    expect(within(dialog).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  test('点「检查更新」:面板关闭,走原来的检查,并清掉顶栏上的错误提示', async () => {
+    stubHost({ 'POST /opencli/update': [reply(409, { error: '有命令正在运行，等它结束再更新' })] })
+    const { onCheck } = renderStatus()
+    fireEvent.click(screen.getByTestId('update-opencli'))
+    await elapse(0)
+    expect(screen.getByRole('alert')).toHaveTextContent('有命令正在运行，等它结束再更新')
+
+    fireEvent.click(within(openPanel()).getByRole('button', { name: '检查更新' }))
+
+    expect(onCheck).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await panelGone()
+  })
+
+  test('active 与 bundled 不同:面板里多一行「内置版本 x」+「恢复内置」,点了调 rollback、面板关闭,成功后重新检查', async () => {
     const host = stubHost({ 'POST /opencli/rollback': [reply(200, { active: null })] })
     const { onCheck } = renderStatus(releaseOf({ current: '1.8.8', latest: '1.8.8', updateAvailable: false, active: '1.8.8', bundled: '1.8.6' }))
 
     expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
-    const button = screen.getByRole('button', { name: '恢复内置版本' })
-    expect(button).toHaveTextContent('恢复内置 1.8.6')
+    const dialog = openPanel()
+    expect(dialog).toHaveTextContent('内置版本 1.8.6')
+    const button = within(dialog).getByRole('button', { name: '恢复内置版本' })
+    expect(button).toHaveTextContent('恢复内置')
     fireEvent.click(button)
     await elapse(0)
 
     expect(host.count('POST /opencli/rollback')).toBe(1)
     expect(onCheck).toHaveBeenCalledTimes(1)
+    await panelGone()
   })
 
-  test('恢复内置失败:顶栏旁显示 Host 给的原因,不重新检查', async () => {
+  test('恢复内置失败:顶栏旁显示 Host 给的原因,不重新检查,重新打开面板仍可再试', async () => {
     stubHost({ 'POST /opencli/rollback': [reply(409, { error: '有命令正在运行，等它结束再恢复' })] })
     const { onCheck } = renderStatus(releaseOf({ updateAvailable: false, latest: '1.8.8', current: '1.8.8', active: '1.8.8', bundled: '1.8.6' }))
 
-    fireEvent.click(screen.getByTestId('rollback-opencli'))
+    fireEvent.click(within(openPanel()).getByTestId('rollback-opencli'))
     await elapse(0)
 
     expect(screen.getByRole('alert')).toHaveTextContent('有命令正在运行，等它结束再恢复')
     expect(onCheck).not.toHaveBeenCalled()
-    expect(screen.getByTestId('rollback-opencli')).toBeEnabled()
+    await panelGone()
+    expect(within(openPanel()).getByTestId('rollback-opencli')).toBeEnabled()
+  })
+
+  test('面板开着时开始更新:触发按钮换成进度行,面板跟着收起,更新失败回到触发按钮时面板仍是关的', async () => {
+    stubHost({
+      'POST /opencli/update': [reply(202, { job: jobOf() })],
+      'GET /opencli/update': [idle, running({ state: 'failed', error: { summary: '依赖安装失败' } })],
+    })
+    renderStatus()
+    openPanel()
+    fireEvent.click(screen.getByTestId('update-opencli'))
+    await elapse(0)
+
+    expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
+    await panelGone()
+
+    await poll()
+    const trigger = screen.getByTestId('opencli-release')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('opencli-release-panel')).not.toBeInTheDocument()
+  })
+})
+
+describe('恢复内置进行中', () => {
+  const rolledBack = () => releaseOf({ current: '1.8.8', latest: '1.8.8', updateAvailable: false, active: '1.8.8', bundled: '1.8.6' })
+  const okRollback = { ok: true, status: 200, json: async () => ({ active: null }) } as Response
+  // 宿主重启守护进程要好几秒:这里让 rollback 请求一直挂着,由用例决定何时结束。
+  const pendingRollback = () => {
+    let finish!: (response: Response) => void
+    const responder: Responder = () => new Promise<Response>((resolve) => { finish = resolve })
+    return { responder, finish: (response: Response) => act(async () => { finish(response) }) }
+  }
+  const startRollback = async () => {
+    fireEvent.click(within(openPanel()).getByTestId('rollback-opencli'))
+    await elapse(0)
+  }
+
+  test('在途时顶栏换成不定进度行,触发按钮和面板收起;成功后重新检查并回到触发按钮', async () => {
+    const rollback = pendingRollback()
+    const host = stubHost({ 'POST /opencli/rollback': [rollback.responder] })
+    const { onCheck } = renderStatus(rolledBack())
+    await startRollback()
+
+    expect(host.count('POST /opencli/rollback')).toBe(1)
+    expect(screen.getByTestId('opencli-rollback-progress')).toHaveTextContent('正在恢复内置 OpenCLI 1.8.6…')
+    const bar = screen.getByRole('progressbar', { name: '正在恢复内置 OpenCLI' })
+    expect(bar).not.toHaveAttribute('aria-valuenow')
+    expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
+    await panelGone()
+    expect(onCheck).not.toHaveBeenCalled()
+
+    await rollback.finish(okRollback)
+    expect(onCheck).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('opencli-rollback-progress')).not.toBeInTheDocument()
+    expect(screen.getByTestId('opencli-release')).toBeInTheDocument()
+  })
+
+  test('失败时恢复原样并出红字错误', async () => {
+    const rollback = pendingRollback()
+    stubHost({ 'POST /opencli/rollback': [rollback.responder] })
+    const { onCheck } = renderStatus(rolledBack())
+    await startRollback()
+    expect(screen.getByTestId('opencli-rollback-progress')).toBeInTheDocument()
+
+    await rollback.finish({ ok: false, status: 409, json: async () => ({ error: '有命令正在运行，等它结束再恢复' }) } as Response)
+
+    expect(screen.queryByTestId('opencli-rollback-progress')).not.toBeInTheDocument()
+    expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('有命令正在运行，等它结束再恢复')
+    expect(alert).toHaveClass('opencli-release-error')
+    expect(onCheck).not.toHaveBeenCalled()
+  })
+
+  test('在途时更新按钮也被进度行替换,不会同时再发起别的操作', async () => {
+    const rollback = pendingRollback()
+    stubHost({ 'POST /opencli/rollback': [rollback.responder] })
+    renderStatus(releaseOf({ active: '1.8.7', bundled: '1.8.6' }))
+    await startRollback()
+
+    expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
+    await rollback.finish(okRollback)
   })
 })
 
@@ -132,7 +340,7 @@ describe('更新进度', () => {
     expect(host.lastBody('POST /opencli/update')).toEqual({ version: '1.8.8' })
     expect(screen.getByTestId('opencli-update-progress')).toHaveTextContent('更新 OpenCLI 1.8.8 · 0%')
     expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('check-updates')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
     expect(card()).not.toHaveAttribute('role')
     expect(card()).not.toHaveAttribute('aria-live')
     expect(announce()).toHaveAttribute('role', 'status')
@@ -234,7 +442,7 @@ describe('更新进度', () => {
     expect(screen.getByTestId('update-opencli')).toBeEnabled()
     expect(polls(host)).toBe(0)
 
-    fireEvent.click(screen.getByTestId('check-updates'))
+    fireEvent.click(within(openPanel()).getByTestId('check-updates'))
     expect(onCheck).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -358,7 +566,7 @@ describe('失败', () => {
     expect(announce()).toHaveTextContent(/^依赖安装失败$/)
     expect(screen.getByTestId('opencli-update-card-progress')).toHaveAttribute('data-open', 'false')
     expect(screen.queryByTestId('opencli-update-progress')).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'OpenCLI 1.8.8 可用' })).toBeInTheDocument()
     expect(screen.getByTestId('update-opencli')).toBeEnabled()
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument()
@@ -470,12 +678,13 @@ describe('成功', () => {
     expect(screen.getByTestId('opencli-extension-warning')).toBeInTheDocument()
     expect(onCheck).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByTestId('rollback-opencli'))
+    fireEvent.click(within(openPanel()).getByTestId('rollback-opencli'))
     await elapse(0)
     expect(screen.getByRole('alert')).toHaveTextContent('有命令正在运行')
     expect(screen.getByTestId('opencli-extension-warning')).toBeInTheDocument()
+    await panelGone()
 
-    fireEvent.click(screen.getByTestId('rollback-opencli'))
+    fireEvent.click(within(openPanel()).getByTestId('rollback-opencli'))
     await elapse(0)
     expect(screen.queryByTestId('opencli-extension-warning')).not.toBeInTheDocument()
     expect(onCheck).toHaveBeenCalledTimes(2)

@@ -1233,7 +1233,7 @@ describe('/opencli/release', () => {
 
     expect(res.status).toBe(200)
     // 没接 runtime 时,生效版本和内置版本都取自生效 policy
-    await expect(res.json()).resolves.toEqual({ ...release, active: policy.opencliVersion, bundled: policy.opencliVersion })
+    await expect(res.json()).resolves.toEqual({ ...release, active: policy.opencliVersion, bundled: policy.opencliVersion, activeInstalledAt: null })
     expect(opencliRelease).toHaveBeenCalledTimes(1)
     expect(opencliRelease).toHaveBeenCalledWith({ currentVersion: policy.opencliVersion })
   })

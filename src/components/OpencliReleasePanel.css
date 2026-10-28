@@ -1,0 +1,66 @@
+/* 顶栏 OpenCLI 版本区点开的小面板:材质来自 glass-menu-effect,这里只管定位、版式和按钮。 */
+.opencli-panel {
+  position: fixed;
+  z-index: 70;
+  box-sizing: border-box;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  border-radius: 9px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* 进出由 motion 驱动,关掉 .glass-menu-effect 自带的 glass-menu-enter,免得它盖住 opacity / transform。 */
+.opencli-panel.glass-menu-effect { animation: none; }
+
+.opencli-panel-row {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-fg-dim);
+  line-height: 1.5;
+}
+
+.opencli-panel-row + .opencli-panel-row { border-top: 1px solid var(--glass-divider); }
+
+.opencli-panel-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.opencli-panel-row > a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.opencli-panel-row > button {
+  min-height: 26px;
+  flex: none;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: #20232a;
+  color: var(--color-fg);
+  padding: 0 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.opencli-panel-row > button:hover:not(:disabled) { background: #292d35; }
+.opencli-panel-row > button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.opencli-panel-row > button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opencli-panel-row > button { transition: none; }
+}
