@@ -43,6 +43,7 @@ const REAL_SAMPLES: Array<[string, string, VkFailureKind]> = [
 
 // 引擎源码里的固定文案(acquisition/coordinator.py、models/gateway.py)。
 const XHS_LOGIN_REQUIRED = 'media_acquisition_failed: 小红书需要登录才能读取这条笔记：请打开已登录小红书的 Chrome（爪爪浏览器扩展需已连接）后重试'
+const XHS_NOT_A_NOTE = 'media_acquisition_failed: 不是小红书笔记链接：这个链接里没有笔记（比如作者主页），请换成笔记的链接'
 const EMPTY_NO_TOKENS = '模型在 2.0 分钟后返回了空内容（阶段 chapter，角色 basic，路由 channel-a:default，模型 gpt-5.6-luna，接口 /v1/responses，已尝试 1 次；同角色未配置备用通道；不会跨角色自动切换）'
 const EMPTY_AFTER_REASONING = '模型在 3.5 分钟后没有返回可见内容（已消耗 4096 个输出 token）（阶段 note，角色 deep_analysis，路由 channel-b:default，模型 gpt-6-sol，接口 /v1/responses，已尝试 1 次；将继续尝试同角色的备用通道）。当前推理强度为 high，基础处理类步骤（章节划分、快速理解等）建议在「模型配置」里调低到 medium'
 
@@ -57,6 +58,21 @@ describe('describeVkFailure 归类', () => {
     expect(failure.headline).toBe('需要登录小红书才能读取这条笔记')
     expect(failure.advice).toBe('打开已登录小红书的 Chrome（扩展需已连接）后重试')
     expect(failure.action).toBeUndefined()
+  })
+
+  it('小红书作者主页等不是笔记的链接:归为无效来源,不再误报成需要登录', () => {
+    for (const raw of [XHS_NOT_A_NOTE, '不是小红书笔记链接：这个链接里没有笔记（比如作者主页），请换成笔记的链接']) {
+      expect(describeVkFailure(raw)).toEqual({
+        kind: 'bad-source',
+        headline: '这不是小红书笔记链接',
+        advice: '作者主页等页面不能解析，请换成笔记的链接',
+      })
+    }
+  })
+
+  it('需要登录与普通无效来源的映射不受影响', () => {
+    expect(describeVkFailure(XHS_LOGIN_REQUIRED).kind).toBe('login-required')
+    expect(describeVkFailure(NOT_A_LINK)).toMatchObject({ kind: 'bad-source', headline: '这一行不是有效的视频链接或文件' })
   })
 
   it.each([

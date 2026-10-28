@@ -38,6 +38,13 @@ function withFallbackAdvice(raw: string, failure: Omit<VkFailure, 'action'>): Vk
 }
 
 export function describeVkFailure(raw: string): VkFailure {
+  if (/不是小红书笔记链接/.test(raw)) {
+    return {
+      kind: 'bad-source',
+      headline: '这不是小红书笔记链接',
+      advice: '作者主页等页面不能解析，请换成笔记的链接',
+    }
+  }
   if (/需要登录才能读取/.test(raw)) {
     return {
       kind: 'login-required',

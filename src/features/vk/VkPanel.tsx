@@ -645,7 +645,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
   const sourceList = useMemo(() => sourceLines(source), [source])
   const sourceCount = sourceList.length
-  const [pasteNotice, setPasteNotice] = useState<{ sources: number; dropped: number } | null>(null)
+  const [pasteNotice, setPasteNotice] = useState<{ sources: number; dropped: number; profiles: number } | null>(null)
   const sourceFileInputRef = useRef<HTMLInputElement>(null)
   const hasManualOverrides = preset !== 'quick-summary'
     || contentType !== ''
@@ -696,7 +696,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       'end',
     )
     setSource(field.value)
-    setPasteNotice({ sources: cleaned.sources.length, dropped: cleaned.dropped })
+    setPasteNotice({ sources: cleaned.sources.length, dropped: cleaned.dropped, profiles: cleaned.profiles })
   }
 
   const importSourceFile = async (file: File | undefined) => {
@@ -1537,7 +1537,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           </BorderGlow>
           {pasteNotice && (
             <p data-testid="vk-paste-notice" role="status" className="vk-paste-notice">
-              {`已自动提取 ${pasteNotice.sources} 个链接${pasteNotice.dropped > 0 ? `，忽略 ${pasteNotice.dropped} 行无关内容` : ''}`}
+              {[
+                `已自动提取 ${pasteNotice.sources} 个链接`,
+                ...(pasteNotice.dropped > 0 ? [`忽略 ${pasteNotice.dropped} 行无关内容`] : []),
+                ...(pasteNotice.profiles > 0 ? [`去掉 ${pasteNotice.profiles} 条小红书作者主页链接（不是笔记）`] : []),
+              ].join('，')}
             </p>
           )}
         </div>

@@ -8,6 +8,18 @@ const VERBATIM_LINE = /^(?:upload:|[A-Za-z]:[\\/]|\\\\|\/)/
 const LINK_PATTERN = /https?:\/\/[^\s‘-”…　-〿＀-￯]+/gi
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}>'"]+$/
 
+// 小红书作者主页:/user/profile/<作者ID>,后面再跟一段笔记 ID 的才是笔记。
+const XHS_PROFILE_PATH = /^\/user\/profile\/[^/]+\/?$/i
+
+function isXhsAuthorProfile(link: string): boolean {
+  try {
+    const { hostname, pathname } = new URL(link)
+    return (hostname === 'xiaohongshu.com' || hostname.endsWith('.xiaohongshu.com')) && XHS_PROFILE_PATH.test(pathname)
+  } catch {
+    return false
+  }
+}
+
 export function extractSources(text: string): { sources: string[]; dropped: number } {
   const sources = new Set<string>()
   let dropped = 0
@@ -28,12 +40,18 @@ export function extractSources(text: string): { sources: string[]; dropped: numb
   return { sources: [...sources], dropped }
 }
 
-/** 粘贴文本里除了来源还有别的内容时,返回清理后的结果;没有可用来源,或文本本来就干净,返回 null。 */
-export function cleanPastedSources(text: string): { sources: string[]; dropped: number } | null {
-  const result = extractSources(text)
-  if (result.sources.length === 0) return null
-  const kept = new Set(result.sources)
-  const alreadyClean = result.dropped === 0
+/**
+ * 粘贴文本里除了来源还有别的内容时,返回清理后的结果;没有可用来源,或文本本来就干净,返回 null。
+ * 小红书搜索结果会在每条笔记链接旁带一条作者主页链接,那不是笔记,粘贴时去掉并计入 profiles;
+ * 提交时的 extractSources 不做这个判断,手动输入的主页链接照旧提交,由引擎给出明确的错误。
+ */
+export function cleanPastedSources(text: string): { sources: string[]; dropped: number; profiles: number } | null {
+  const extracted = extractSources(text)
+  const sources = extracted.sources.filter((source) => !isXhsAuthorProfile(source))
+  if (sources.length === 0) return null
+  const profiles = extracted.sources.length - sources.length
+  const kept = new Set(extracted.sources)
+  const alreadyClean = extracted.dropped === 0 && profiles === 0
     && text.split(/\r?\n/).every((line) => !line.trim() || kept.has(line.trim()))
-  return alreadyClean ? null : result
+  return alreadyClean ? null : { sources, dropped: extracted.dropped, profiles }
 }

@@ -747,6 +747,47 @@ describe('VkPanel', () => {
       expect(screen.getByTestId('vk-paste-notice')).toHaveTextContent(/^已自动提取 1 个链接$/)
     })
 
+    describe('Xiaohongshu author pages in a search-result paste', () => {
+      const NOTES = Array.from({ length: 13 }, (_, index) => `https://www.xiaohongshu.com/explore/6a6a${String(index).padStart(20, '0')}?xsec_token=SAMPLE&xsec_source=pc_search`)
+      const AUTHORS = NOTES.map((_, index) => `https://www.xiaohongshu.com/user/profile/63b9${String(index).padStart(20, '0')}?channel_type=web_search_result_notes&parent_page_channel_type=web_profile_board&xsec_token=SAMPLE`)
+      const ALTERNATING = NOTES.flatMap((note, index) => [note, AUTHORS[index]]).join('\n')
+
+      it('keeps only the notes of notes alternating with author pages and says how many pages it removed', async () => {
+        stubIdleRoutes()
+        await renderPanel()
+
+        expect(pasteInto(sourceField(), ALTERNATING)).toBe(false)
+
+        expect(sourceField().value).toBe(NOTES.join('\n'))
+        expect(screen.getByTestId('vk-paste-notice')).toHaveTextContent(/^已自动提取 13 个链接，去掉 13 条小红书作者主页链接（不是笔记）$/)
+        expect(screen.getByTestId('video-source-card-xiaohongshu')).toHaveAttribute('data-count', '13')
+      })
+
+      it('reports ignored lines first and removed author pages after them, leaving out whichever is zero', async () => {
+        stubIdleRoutes()
+        await renderPanel()
+
+        pasteInto(sourceField(), `发布者\n${NOTES[0]}\n${AUTHORS[0]}\n备注`)
+        expect(screen.getByTestId('vk-paste-notice')).toHaveTextContent(/^已自动提取 1 个链接，忽略 2 行无关内容，去掉 1 条小红书作者主页链接（不是笔记）$/)
+
+        pasteInto(sourceField(), `${NOTES[1]}\n${AUTHORS[1]}`)
+        expect(screen.getByTestId('vk-paste-notice')).toHaveTextContent(/^已自动提取 1 个链接，去掉 1 条小红书作者主页链接（不是笔记）$/)
+
+        pasteInto(sourceField(), WECHAT_PASTE)
+        expect(screen.getByTestId('vk-paste-notice')).toHaveTextContent(/^已自动提取 2 个链接，忽略 4 行无关内容$/)
+      })
+
+      it('still submits an author page typed by hand, so the engine reports the error', async () => {
+        stubIdleRoutes()
+        await renderPanel()
+
+        fireEvent.change(sourceField(), { target: { value: AUTHORS[0] } })
+
+        expect(sourceField().value).toBe(AUTHORS[0])
+        expect(screen.getByTestId('video-source-card-xiaohongshu')).toHaveAttribute('data-count', '1')
+      })
+    })
+
     it('inserts at the caret on its own lines without leaving blank lines', async () => {
       stubIdleRoutes()
       await renderPanel()
