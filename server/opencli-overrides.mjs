@@ -1,6 +1,6 @@
 // 把爪爪的原生命令(opencli-overrides/xiaohongshu/)套进 OpenCLI 包:拷适配器文件,并改写 cli-manifest.json。
 // 构建宿主 runtime 和运行时更新 OpenCLI 共用这一份逻辑,幂等。
-import { cpSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const FILES = [
@@ -105,7 +105,7 @@ export function applyOpencliOverrides({ packageRoot, sourceDir }) {
   const destination = join(packageRoot, 'clis/xiaohongshu')
   mkdirSync(destination, { recursive: true })
   for (const name of FILES) {
-    cpSync(join(sourceDir, name), join(destination, name))
+    copyFileSync(join(sourceDir, name), join(destination, name))
   }
 
   const manifestPath = join(packageRoot, 'cli-manifest.json')

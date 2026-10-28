@@ -16,6 +16,8 @@ const TARBALL_URL = `${MIRROR}/@jackwener/opencli/-/opencli-${VERSION}.tgz`
 const CHUNKS = [Buffer.from('aaaa'), Buffer.from('bbbb'), Buffer.from('cccc')]
 const TARBALL = Buffer.concat(CHUNKS)
 const integrityOf = (bytes) => `sha512-${createHash('sha512').update(bytes).digest('base64')}`
+const OVERRIDES_DIR = resolve('opencli-overrides/xiaohongshu')
+const OVERRIDE_FILES = readdirSync(OVERRIDES_DIR).filter((name) => name.endsWith('.js') && !name.includes('.test.'))
 const REVIEWED_RETAINED = [...REVIEWED_RECORDS.keys()].filter((key) => RETAINED_SITE_KEYS.includes(key.split('/')[0]))
 
 const dirs = []
@@ -43,6 +45,8 @@ function writePackage(dir, { version = VERSION, extraSites = ['hupu', 'mercury']
     mkdirSync(join(root, 'clis', site), { recursive: true })
     writeFileSync(join(root, 'clis', site, 'hot.js'), '')
   }
+  // 上游包里小红书适配器目录本来就有与原生命令同名的文件,套补丁时要覆盖它们。
+  for (const name of OVERRIDE_FILES) writeFileSync(join(root, 'clis', 'xiaohongshu', name), 'upstream content')
   mkdirSync(join(root, 'clis', '_shared'), { recursive: true })
   writeFileSync(join(root, 'clis', '_shared', 'util.js'), '')
   return root
@@ -64,7 +68,7 @@ function chunkedBody(chunks, gates = []) {
 }
 
 function setup(options = {}) {
-  const base = mkdtempSync(join(tmpdir(), 'opencli-update-'))
+  const base = mkdtempSync(join(tmpdir(), '爪爪-update-'))
   dirs.push(base)
   const bundledRoot = writePackage(join(base, 'bundled'), { version: '1.8.8' })
   const runtime = createOpencliRuntime({ bundledEntry: join(bundledRoot, 'dist', 'src', 'main.js'), dataRoot: join(base, 'data') })
@@ -139,7 +143,7 @@ function setup(options = {}) {
     runNpm,
     runCli,
     findNpmCli: options.findNpmCli ?? (() => 'C:\\node\\node_modules\\npm\\bin\\npm-cli.js'),
-    overridesDir: resolve('opencli-overrides/xiaohongshu'),
+    overridesDir: OVERRIDES_DIR,
     drainTimeoutMs: options.drainTimeoutMs ?? 300,
     ...options.updateOptions,
   })
@@ -247,7 +251,9 @@ describe('更新成功', () => {
     const xiaohongshu = manifest.filter((entry) => entry.site === 'xiaohongshu').map((entry) => entry.name)
     expect(xiaohongshu).toEqual(expect.arrayContaining(['collections', 'search', 'user-posts', 'note', 'comments', 'saved']))
     expect(manifest.find((entry) => entry.name === 'search').args.map((arg) => arg.name)).toEqual(['query', 'limit', 'sort', 'time', 'type'])
-    expect(existsSync(join(installedRoot(ctx.root), 'clis', 'xiaohongshu', 'search.js'))).toBe(true)
+    for (const name of OVERRIDE_FILES) {
+      expect(readFileSync(join(installedRoot(ctx.root), 'clis', 'xiaohongshu', name), 'utf8'), name).toBe(readFileSync(join(OVERRIDES_DIR, name), 'utf8'))
+    }
   })
 
   it('只留保留清单里的站点:manifest 条目和 clis/<站点>/ 一起裁,_shared 之类非站点目录保留', async () => {
