@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { isCompleteRecord } from './policy-types.mjs'
-import { BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
+import { ACKNOWLEDGEMENT_WAIVED, BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
 import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewCarryHash, reviewShapeHash } from './policy-fingerprint.mjs'
 
 export class RequestPolicyError extends Error {
@@ -107,8 +107,12 @@ function reviewStillHolds(record, command, shape, version, baselineVersion) {
   return version !== baselineVersion() && record.reviewedCarry === reviewCarryHash(command)
 }
 
-// `baselineVersion` 同样只给测试注入:生产调用取打包快照的版本。
-export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS, baselineVersion = reviewBaselineVersion } = {}) {
+// `baselineVersion`、`waived` 同样只给测试注入:生产调用取打包快照的版本和 ACKNOWLEDGEMENT_WAIVED。
+export function buildPolicyDecisions(snapshot, {
+  records = REVIEWED_RECORDS,
+  baselineVersion = reviewBaselineVersion,
+  waived = ACKNOWLEDGEMENT_WAIVED,
+} = {}) {
   const version = snapshot.opencliVersion
   return snapshot.commands.map((command) => {
     const commandKey = command.command
@@ -171,6 +175,15 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS, bas
     // 8. 显式输入:表单已明示读取对象,选择即授权。**必须早于第 9 步**,
     //    否则 mercury(explicit-local-input + personal)会被挂上多余弹窗。
     if (sameSet(m.authorities, ['explicit-local-input'])) {
+      return { ...base, state: 'ready', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
+    }
+
+    // 8.5 免确认的显式成员(四条 whoami,见 policy-metadata.mjs 的 ACKNOWLEDGEMENT_WAIVED):
+    //    只读当前登录账号是谁,用户决定登录检查不再逐站确认。**必须在前 7 步之后**——
+    //    deny、tier、审定完整性与过期、unknown、阈值都先过,免确认绕不过它们;
+    //    也**必须早于第 9 步**,否则 browser-profile / personal / persistent-session 会把它们挂上弹窗。
+    //    判决形状与第 8、10 步的 ready 完全一致(fingerprint 照常计算),前端无需任何特例。
+    if (waived.has(commandKey)) {
       return { ...base, state: 'ready', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
     }
 

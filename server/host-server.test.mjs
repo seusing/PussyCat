@@ -732,6 +732,30 @@ describe('/start 状态码表逐格(HTTP 层)', () => {
     expect(await res.json()).toEqual({ runId: 'r-ready-1' })
   })
 
+  // 四条 whoami 免确认(ACKNOWLEDGEMENT_WAIVED):不带 acknowledgement 也受理;同一批试点里的 feed 仍要确认。
+  // 浏览器预检注入假实现,绝不碰本机真实的 daemon。
+  it('202:whoami 免确认,不带 acknowledgement 也受理', async () => {
+    const browserBridgeRepair = vi.fn(async () => ({ steps: [], alreadyOk: true }))
+    const { baseUrl } = await setup({ policy: realPolicy, browserBridgeRepair })
+    for (const commandKey of ['xiaohongshu/whoami', 'bilibili/whoami', 'twitter/whoami', 'youtube/whoami']) {
+      const res = await post(baseUrl, '/start', {
+        runId: `r-whoami-${commandKey.split('/')[0]}`, commandKey, argv: [...commandKey.split('/'), '-f', 'json'],
+      })
+      expect(res.status, commandKey).toBe(202)
+    }
+  })
+
+  it('428:同为试点的 xiaohongshu/feed 不带 acknowledgement 仍要确认', async () => {
+    const browserBridgeRepair = vi.fn(async () => ({ steps: [], alreadyOk: true }))
+    const { baseUrl } = await setup({ policy: realPolicy, browserBridgeRepair })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-feed-1', commandKey: 'xiaohongshu/feed', argv: ['xiaohongshu', 'feed', '-f', 'json'],
+    })
+    expect(res.status).toBe(428)
+    expect((await res.json()).reasonCode).toBe('acknowledgement-required')
+    expect(browserBridgeRepair).not.toHaveBeenCalled()
+  })
+
   it('428:需确认却未带 acknowledgement', async () => {
     const { baseUrl } = await setup({ policy: realPolicy })
     const res = await post(baseUrl, '/start', {

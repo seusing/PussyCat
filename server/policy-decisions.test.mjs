@@ -134,13 +134,27 @@ describe('browser-cookie-read-pilot', () => {
     'youtube/whoami', 'youtube/subscriptions',
   ]
 
+  // 四条 whoami 自 2026-10-28 起免确认(ACKNOWLEDGEMENT_WAIVED),其余十一条仍需确认。
+  const WHOAMI = ['xiaohongshu/whoami', 'bilibili/whoami', 'twitter/whoami', 'youtube/whoami']
+  const NEEDS_ACK = PILOT.filter((key) => !WHOAMI.includes(key))
+
   // 逐条一个用例(不塞进单个 for 循环):循环里第一条 expect 失败即抛,后面的命令根本不会被执行,
   // 于是「某条命令判决错了」与「测试压根没跑到它」在输出上长得一模一样。
-  it.each(PILOT)('%s 进 tier-evaluation 且拿到 acknowledgement-required + fingerprint', (key) => {
+  it.each(NEEDS_ACK)('%s 进 tier-evaluation 且拿到 acknowledgement-required + fingerprint', (key) => {
     const d = decisions.get(key)
     expect(d, `${key} 不在判决表里`).toBeDefined()
     expect(d.decisionSource).toBe('tier-evaluation')
     expect(d.state).toBe('acknowledgement-required')
+    expect(typeof d.fingerprint).toBe('string')
+    expect(d.metadata.executionPath).toBe('browser-bridge')
+    expect(d.metadata.credentialFlow).toBe('consume')
+  })
+
+  it.each(WHOAMI)('%s 进 tier-evaluation 且免确认(ready),metadata 与 fingerprint 照常下发', (key) => {
+    const d = decisions.get(key)
+    expect(d, `${key} 不在判决表里`).toBeDefined()
+    expect(d.decisionSource).toBe('tier-evaluation')
+    expect(d.state).toBe('ready')
     expect(typeof d.fingerprint).toBe('string')
     expect(d.metadata.executionPath).toBe('browser-bridge')
     expect(d.metadata.credentialFlow).toBe('consume')

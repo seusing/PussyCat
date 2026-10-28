@@ -319,3 +319,15 @@ export const BROWSER_COOKIE_READ_PILOT = new Set([
   'twitter/whoami', 'twitter/timeline',
   'youtube/whoami', 'youtube/subscriptions',
 ])
+
+/**
+ * 免确认的显式成员集:四条 whoami(xiaohongshu / bilibili / twitter / youtube)。
+ *
+ * 它们只读「当前浏览器登录的是谁」。2026-10-28 用户决定登录检查不再逐站确认,
+ * 所以 policy.mjs 在通过前 7 步(deny、tier、审定完整性、审定未过期、unknown、阈值)之后直接判 ready。
+ * 免确认只改最后的「要不要弹窗」,上面各条记录里的 authorities / exposure / residues
+ * (持久会话标签、站点遥测)照旧如实记录,不因此改写。
+ */
+export const ACKNOWLEDGEMENT_WAIVED = new Set([
+  'xiaohongshu/whoami', 'bilibili/whoami', 'twitter/whoami', 'youtube/whoami',
+])

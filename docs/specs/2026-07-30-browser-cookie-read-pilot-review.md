@@ -322,6 +322,8 @@ legacy 基线重合度（实测）：八条**均不在** `server/policy-legacy-b
 
 六轴无一处 `unknown`；无一处「证明不了」。八条的 `authorities` 完全同值；差异只落在 `exposure`（`bilibili/hot`）与 `residues`（四条 whoami）两列。
 
+> **2026-10-28 注记：四条 whoami 免确认。** 表中四条 `whoami` 的「算法出口」自此由「第 9 步 → ack」改为「第 8.5 步 → ready」。理由：它们只读当前浏览器登录的是谁，用户决定登录检查不再逐站确认。实现是 `server/policy-metadata.mjs` 的显式集合 `ACKNOWLEDGEMENT_WAIVED`，由 `server/policy.mjs` 在前 7 步（显式 deny、tier、审定完整性、审定是否过期、unknown、阈值）都通过之后、第 9 步之前判 `ready`；免确认绕不过这些步骤，其余十一条试点命令仍是 ack。上表与各节记录的 `authorities` / `exposure` / `residues`（含 `persistent-session` 持久会话标签与站点遥测）**不变**，照旧如实下发给前端；变的只是最后「要不要弹确认」这一步。
+
 ---
 
 ## 4. 运行时间契约审计
