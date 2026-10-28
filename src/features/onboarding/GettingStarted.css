@@ -91,6 +91,7 @@
 .getting-started-offline summary { width: fit-content; cursor: pointer; color: var(--color-accent); }
 .getting-started-offline ol { margin: 6px 0 0; padding-left: 18px; list-style: decimal; line-height: 1.8; }
 .getting-started-offline li { overflow-wrap: anywhere; }
+.getting-started-offline p { margin: 6px 0 0; line-height: 1.8; }
 .getting-started-offline a { color: var(--color-accent); text-decoration: underline; }
 .getting-started-offline code {
   border-radius: 4px;

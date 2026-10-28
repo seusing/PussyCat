@@ -1,4 +1,5 @@
 import type { CommandManifest } from './types'
+import { PRODUCT_SITE_KEYS } from '../shared/opencli-sites.mjs'
 
 export type SupportedSite = {
   id: string
@@ -13,7 +14,7 @@ export type SupportedSite = {
 export const SUPPORTED_SITES: SupportedSite[] = [
   {
     id: 'wechat',
-    keys: ['wechat-channels', 'weixin'],
+    keys: PRODUCT_SITE_KEYS.wechat,
     label: '微信',
     eyebrow: 'WeChat',
     logo: '/site-logos/wechat.svg',
@@ -22,7 +23,7 @@ export const SUPPORTED_SITES: SupportedSite[] = [
   },
   {
     id: 'x',
-    keys: ['twitter'],
+    keys: PRODUCT_SITE_KEYS.x,
     label: 'X',
     eyebrow: 'X / Twitter',
     logo: '/site-logos/x.svg',
@@ -31,7 +32,7 @@ export const SUPPORTED_SITES: SupportedSite[] = [
   },
   {
     id: 'xiaohongshu',
-    keys: ['xiaohongshu'],
+    keys: PRODUCT_SITE_KEYS.xiaohongshu,
     label: '小红书',
     eyebrow: 'Xiaohongshu',
     logo: '/site-logos/xiaohongshu.svg',
@@ -40,7 +41,7 @@ export const SUPPORTED_SITES: SupportedSite[] = [
   },
   {
     id: 'youtube',
-    keys: ['youtube'],
+    keys: PRODUCT_SITE_KEYS.youtube,
     label: 'YouTube',
     eyebrow: 'YouTube',
     logo: '/site-logos/youtube.svg',
@@ -49,7 +50,7 @@ export const SUPPORTED_SITES: SupportedSite[] = [
   },
   {
     id: 'bilibili',
-    keys: ['bilibili'],
+    keys: PRODUCT_SITE_KEYS.bilibili,
     label: 'B站',
     eyebrow: 'Bilibili',
     logo: '/site-logos/bilibili.svg',

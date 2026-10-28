@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { reviewShapeHash } from './policy-fingerprint.mjs'
+import { reviewCarryHash, reviewShapeHash } from './policy-fingerprint.mjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -29,6 +29,19 @@ const shapeOf = (key) => {
   const shape = reviewShapeHash(command, current.opencliVersion)
   shapeMemo.set(key, shape)
   return shape
+}
+
+// 审定基准版本 = 打包快照的 OpenCLI 版本。换了版本后,参数没变的命令凭 reviewedCarry 沿用审定。
+export const reviewBaselineVersion = () => snapshot().opencliVersion
+
+const carryMemo = new Map()
+const carryOf = (key) => {
+  if (carryMemo.has(key)) return carryMemo.get(key)
+  const command = snapshot().commands.find((c) => c.command === key)
+  if (!command) throw new Error(`审定记录指向 catalog 里不存在的命令: ${key}`)
+  const carry = reviewCarryHash(command)
+  carryMemo.set(key, carry)
+  return carry
 }
 
 // reviewedAgainst 用 **getter** 而非立即求值:算它要读快照,而读盘必须惰性(见上)。
@@ -284,6 +297,11 @@ export const REVIEWED_RECORDS = new Map([
     },
   }],
 ])
+
+// reviewedCarry 同样惰性 + memo:基准快照里该命令的沿用比对哈希。
+for (const [key, record] of REVIEWED_RECORDS) {
+  Object.defineProperty(record, 'reviewedCarry', { get: () => carryOf(key), enumerable: true })
+}
 
 /**
  * browser-cookie-read-pilot 的**显式成员集**(spec 试点口径)。

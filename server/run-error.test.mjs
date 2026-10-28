@@ -170,3 +170,72 @@ describe('describeRunError', () => {
     expect(describeExit(stderr, 1).summary).toBe(GENERIC)
   })
 })
+
+// OpenCLI 2.0:失败信封在 stdout,警告日志在 stderr。
+const shell = (error) => JSON.stringify({ ok: false, error })
+const WARNING_STDERR = '\n  Extension update available: v1.0.24 → v1.0.26\n  Download: https://github.com/jackwener/opencli/releases\n'
+
+function describeShell(error, exitCode, stderr = WARNING_STDERR) {
+  return describeRunError({
+    summary: `OpenCLI exited with code ${exitCode}`,
+    detail: stderr.trim(),
+    stdout: shell(error),
+    stderr,
+    exitCode,
+  })
+}
+
+describe('describeRunError —— 2.0 的 stdout 失败信封', () => {
+  it.each([
+    ['BROWSER_CONNECT', BROWSER],
+    ['TIMEOUT', TIMEOUT],
+    ['LOGIN_WALL', VERIFY],
+    ['SECURITY_BLOCK', VERIFY],
+    ['NO_DATA', GENERIC],
+  ])('错误码 %s', (code, expected) => {
+    expect(describeShell({ code, message: 'm', exitCode: 1 }, 1).summary).toBe(expected)
+  })
+
+  it('AUTH_REQUIRED:hint 里的登录域名进 summary', () => {
+    const error = {
+      code: 'AUTH_REQUIRED',
+      message: 'Not logged in to www.xiaohongshu.com',
+      hint: 'Please open Chrome or Chromium and log in to https://www.xiaohongshu.com',
+      exitCode: 77,
+    }
+    expect(describeShell(error, 77).summary).toBe('需要先登录 www.xiaohongshu.com：在 Chrome 里登录后重试')
+  })
+
+  it('AUTH_REQUIRED 没有域名时说「该网站」', () => {
+    expect(describeShell({ code: 'AUTH_REQUIRED', message: 'login needed' }, 77).summary)
+      .toBe('需要先登录该网站：在 Chrome 里登录后重试')
+  })
+
+  it('英文原文(code、message、hint)进 detail,stderr 的警告也保留', () => {
+    const { detail } = describeShell({ code: 'NO_DATA', message: 'no rows', hint: 'try later', exitCode: 1 }, 1)
+    expect(detail.split('\n').slice(0, 3)).toEqual(['OpenCLI exited with code 1', 'NO_DATA: no rows', 'try later'])
+    expect(detail).toContain('Extension update available')
+  })
+
+  it('code 不在表里时按 message 文案认(浏览器桥原始报错)', () => {
+    expect(describeShell({ code: 'UNKNOWN', message: 'Extension not connected. Please install the Browser Bridge extension.' }, 1).summary).toBe(BROWSER)
+    expect(describeShell({ code: 'UNKNOWN', message: 'Browser click command timed out after 30s' }, 1).summary).toBe(TIMEOUT)
+  })
+
+  it('stdout 信封优先于 stderr 的 1.8.8 信封', () => {
+    expect(describeShell({ code: 'TIMEOUT', message: 'm' }, 1, STDERR.authRequired).summary).toBe(TIMEOUT)
+  })
+
+  it('stdout 信封认不出时,再看 stderr 的 1.8.8 信封,最后看退出码', () => {
+    expect(describeShell({ code: 'NO_DATA', message: 'x' }, 1, STDERR.timeout).summary).toBe(TIMEOUT)
+    expect(describeShell({ code: 'NO_DATA', message: 'x' }, 69).summary).toBe(BROWSER)
+  })
+
+  it('stdout 不是失败信封(成功外壳、行数据、非 JSON)时不影响 1.8.8 的判断', () => {
+    for (const stdout of ['{"ok":true,"data":[]}', '{"ok":false,"error":"row text"}', '[1,2]', 'not json', '']) {
+      const result = describeRunError({ summary: 's', stdout, stderr: STDERR.timeout, exitCode: 75 })
+      expect(result.summary, stdout).toBe(TIMEOUT)
+      expect(result.detail, stdout).toBe('s')
+    }
+  })
+})

@@ -2,10 +2,11 @@ import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import { stripBom, mergeManifestFields } from '../src/shared/normalize.mjs'
+import { stripBom, readListOutput, commandsFromList } from '../src/shared/normalize.mjs'
 import { assertCatalogCommands } from '../src/shared/catalogSchema.mjs'
 import { buildExecutionPolicy } from './policy.mjs'
 import { POLICY_SCHEMA_VERSION, canonicalJson } from './policy-fingerprint.mjs'
+import { currentEntry } from './opencli-entry.mjs'
 
 export class CatalogServiceError extends Error {
   constructor(statusCode, message, detail) {
@@ -16,6 +17,7 @@ export class CatalogServiceError extends Error {
   }
 }
 
+// opencliEntry 可以是路径或 getter(见 opencli-entry.mjs 的 currentEntry)。
 // 现场重生成 catalog:spawn opencli list(P0-B 同款安全姿势)→ manifest merge → schema 校验
 // → buildExecutionPolicy → 算 revision → 全部成功后单引用原子替换
 // {snapshot, policy, revision, generatedAt};任一失败旧值不动。
@@ -35,10 +37,10 @@ export function createCatalogService({
   let failActive         // 在途 runList 的 fail 引用,close() 时主动 reject(fakeChild kill 不会自动 emit close)
   let closed = false
 
-  const runList = () => new Promise((resolvePromise, rejectPromise) => {
+  const runList = (entry, extraArgs = []) => new Promise((resolvePromise, rejectPromise) => {
     let child
     try {
-      child = spawnImpl(process.execPath, [opencliEntry, 'list', '-f', 'json'], {
+      child = spawnImpl(process.execPath, [entry, 'list', '-f', 'json', ...extraArgs], {
         shell: false,
         windowsHide: true,
       })
@@ -122,21 +124,23 @@ export function createCatalogService({
 
   const doRefresh = async () => {
     if (closed) throw new CatalogServiceError(500, 'Catalog service is closed')
+    // 一次刷新内所有分页用同一个入口;刷新途中换了 OpenCLI 版本,结果作废重来(见下方提交前的比对)。
+    const entry = currentEntry(opencliEntry)
     let manifestPath
     try {
       manifestPath = resolveManifest()   // fail-fast:缺 manifest 立即报,不必等 opencli list 跑满 15s(复审 F5)
     } catch (error) {
       throw new CatalogServiceError(500, 'Failed to resolve cli-manifest.json', error instanceof Error ? error.message : String(error))
     }
-    const listRaw = await runList()
-    if (closed) throw new CatalogServiceError(500, 'Catalog service is closed')
-    let list
+    let listOutput
     try {
-      list = JSON.parse(stripBom(listRaw))
-    } catch {
-      throw new CatalogServiceError(500, 'opencli list output is not valid JSON')
+      listOutput = await readListOutput((extraArgs) => runList(entry, extraArgs))
+    } catch (error) {
+      if (error instanceof CatalogServiceError) throw error
+      throw new CatalogServiceError(500, error instanceof Error ? error.message : String(error))
     }
-    if (!Array.isArray(list)) throw new CatalogServiceError(500, 'opencli list output is not an array')
+    if (closed) throw new CatalogServiceError(500, 'Catalog service is closed')
+    const listRaw = listOutput.raw
     let manifestRaw
     let manifest
     try {
@@ -145,12 +149,13 @@ export function createCatalogService({
     } catch (error) {
       throw new CatalogServiceError(500, 'Failed to read cli-manifest.json', error instanceof Error ? error.message : String(error))
     }
-    const commands = mergeManifestFields(list, manifest)
+    const commands = commandsFromList(listOutput, manifest)
     try {
       assertCatalogCommands(commands)
     } catch (e) {
       throw new CatalogServiceError(500, e instanceof Error ? e.message : 'Catalog schema invalid')
     }
+    if (currentEntry(opencliEntry) !== entry) return doRefresh()
     const snapshot = {
       schemaVersion: 1,
       generatedAt: now(),

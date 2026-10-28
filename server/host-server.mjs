@@ -20,6 +20,7 @@ import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from
 import { WechatArticleError, fetchWechatArticle, requestArticleImage } from './wechat-article.mjs'
 import { createRadarService, diagnosticOf, reasonOf } from './radar.mjs'
 import { checkOpencliRelease } from './opencli-release.mjs'
+import { OpencliUpdateError, createOpencliUpdate } from './opencli-update.mjs'
 import { InspirationStoreError } from './inspiration-store.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
@@ -84,6 +85,22 @@ async function readRawBody(request, maxBytes) {
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
+}
+
+const ACTIVE_JOB_STATUSES = new Set(['queued', 'running', 'cancel_requested'])
+
+// 切换 OpenCLI 后要让引擎下次拉起时换新入口,但视频任务(几分钟、含计费的模型调用)进行中不能停:
+// 停了会被引擎重启时标成 interrupted。忙时不停,它继续用手里的旧入口(旧版本目录仍在磁盘上)。
+async function stopVideoEngineWhenIdle(vkSidecar) {
+  if (!vkSidecar) return
+  if (vkSidecar.health().status === 'ok') {
+    const response = await vkSidecar.fetchApi('/api/jobs')
+    if (!response.ok) throw new Error(`引擎任务列表返回 HTTP ${response.status}`)
+    const jobs = await response.json()
+    if (!Array.isArray(jobs)) throw new Error('引擎任务列表不是数组')
+    if (jobs.some((job) => ACTIVE_JOB_STATUSES.has(job?.status))) return
+  }
+  await vkSidecar.stop()
 }
 
 function safeParseJson(buffer) {
@@ -217,6 +234,10 @@ export function createHostServer({
   vkRuntime = null,
   radarService = createRadarService(),
   opencliRelease = checkOpencliRelease,
+  // 生效的 OpenCLI(内置或应用内更新装下的);有它才有 /opencli/update 与 /opencli/rollback。
+  // opencliUpdateOptions 是测试注入点(假 registry、假 npm、假校验)。
+  opencliRuntime = null,
+  opencliUpdateOptions = {},
   inspirationStore = null,
   wechatArticle = { fetchWechatArticle, requestArticleImage },
 } = {}) {
@@ -229,6 +250,21 @@ export function createHostServer({
     emitEvent: (type, event) => broker.publish(type, event),
     ...runManagerOptions,
   })
+  const opencliUpdate = opencliRuntime
+    ? createOpencliUpdate({
+      runtime: opencliRuntime,
+      catalogService,
+      hasActiveRuns: () => runManager.active.size > 0,
+      restartDaemon: () => runOpenCli(['daemon', 'restart'], { opencliEntry }),
+      stopVideoEngine: () => stopVideoEngineWhenIdle(vkSidecar),
+      readExtensionVersion: async (opencliVersion) => (await browserBridgeHealth({ opencliVersion })).extensionVersion,
+      ...opencliUpdateOptions,
+    })
+    : null
+  const requireOpencliUpdate = () => {
+    if (!opencliUpdate) throw new OpencliUpdateError(503, 'OpenCLI 更新未接线')
+    return opencliUpdate
+  }
   const probeBrowserBridge = () => browserBridgeHealth({
     opencliVersion: activePolicy().opencliVersion,
     resolveDefaultContextId: () => findDefaultContextId({ runOpenCli, opencliEntry }),
@@ -364,13 +400,35 @@ export function createHostServer({
         return
       }
 
-      // OpenCLI 新版提示:只查 npm 上的最新版本,不升级。上游不可达是 502,不是 Host 自己的错。
+      // OpenCLI 新版提示:只查 npm 上的最新版本。上游不可达是 502,不是 Host 自己的错。
+      // active 是当前生效的版本(= current),bundled 是随爪爪内置的版本。
       if (url.pathname === '/opencli/release' && request.method === 'GET') {
         try {
-          writeJson(response, 200, await opencliRelease({ currentVersion: activePolicy().opencliVersion }))
+          const active = opencliRuntime?.version() ?? activePolicy().opencliVersion
+          const release = await opencliRelease({ currentVersion: active })
+          writeJson(response, 200, { ...release, active, bundled: opencliRuntime?.bundledVersion() ?? active })
         } catch (error) {
           writeJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
         }
+        return
+      }
+
+      // 应用内更新 OpenCLI:POST 开始(202),GET 读进度,cancel 取消;rollback 退回内置版本。
+      if (url.pathname === '/opencli/update' && request.method === 'GET') {
+        writeJson(response, 200, { job: requireOpencliUpdate().current() })
+        return
+      }
+      if (url.pathname === '/opencli/update' && request.method === 'POST') {
+        const body = await readJson(request, maxBodyBytes)
+        writeJson(response, 202, { job: requireOpencliUpdate().start(body?.version) })
+        return
+      }
+      if (url.pathname === '/opencli/update/cancel' && request.method === 'POST') {
+        writeJson(response, 200, { job: await requireOpencliUpdate().cancel() })
+        return
+      }
+      if (url.pathname === '/opencli/rollback' && request.method === 'POST') {
+        writeJson(response, 200, await requireOpencliUpdate().rollback())
         return
       }
 
@@ -658,8 +716,11 @@ export function createHostServer({
         const currentPolicy = activePolicy()
         const command = validateStartRequest(body, currentPolicy)
         const decision = currentPolicy.decisionByKey?.get(command.commandKey)
+        // 切换 OpenCLI 期间不接新命令;准备浏览器桥要等一会儿,所以起子进程前再看一次。
+        opencliUpdate?.assertNotSwitching()
         if (decision?.metadata?.executionPath === 'browser-bridge') {
           await ensureBrowserBridge()
+          opencliUpdate?.assertNotSwitching()
         }
         const result = runManager.start(command)
         writeJson(response, 202, result)
@@ -685,6 +746,7 @@ export function createHostServer({
           || error instanceof VkCapabilityPackError
           || error instanceof WechatArticleError
           || error instanceof InspirationStoreError
+          || error instanceof OpencliUpdateError
           ? error.statusCode
           : 500
       )
@@ -714,6 +776,7 @@ export function createHostServer({
       })
     },
     async close() {
+      opencliUpdate?.close()
       catalogService?.close()
       runManager.close()
       await vkSidecar?.stop()

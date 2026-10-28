@@ -253,3 +253,78 @@ describe('RunManager', () => {
     expect(caught.message).toBe('Duplicate runId: run-a')
   })
 })
+
+describe('RunManager —— OpenCLI 2.0 输出', () => {
+  function finishWith({ stdout = '', stderr = '', exitCode = 0 }) {
+    const { child, events, manager } = setup()
+    manager.start(request)
+    if (stdout) child.stdout.write(stdout)
+    if (stderr) child.stderr.write(stderr)
+    child.emit('close', exitCode, null)
+    return events.at(-1).event
+  }
+
+  it('成功外壳 {ok:true,data:[…]} 取 data 当结果行', () => {
+    const done = finishWith({ stdout: '{"ok":true,"data":[{"rank":1,"title":"A"},{"rank":2,"title":"B"}]}\n' })
+    expect(done).toMatchObject({ outcome: 'success', result: [{ rank: 1, title: 'A' }, { rank: 2, title: 'B' }] })
+  })
+
+  it('成功外壳里的 data 是单个对象时也走原有归一化', () => {
+    expect(finishWith({ stdout: '{"ok":true,"data":{"name":"x"}}' }).result).toEqual([{ name: 'x' }])
+    expect(finishWith({ stdout: '{"ok":true,"data":[]}' }).result).toEqual([])
+    expect(finishWith({ stdout: '{"ok":true}' }).result).toEqual([])
+  })
+
+  it('stderr 上的警告不影响成功', () => {
+    const done = finishWith({ stdout: '{"ok":true,"data":[{"a":1}]}', stderr: 'Extension update available: v1.0.24 → v1.0.26\n' })
+    expect(done.outcome).toBe('success')
+  })
+
+  it('1.8.8 的数组输出照旧', () => {
+    expect(finishWith({ stdout: '[{"rank":1}]' }).result).toEqual([{ rank: 1 }])
+  })
+
+  it('失败外壳:按 stdout 里的 code 归类,hint 里的登录域名进 summary,英文原文进 detail', () => {
+    const stdout = JSON.stringify({
+      ok: false,
+      error: {
+        code: 'AUTH_REQUIRED',
+        message: 'Not logged in to www.xiaohongshu.com',
+        exitCode: 77,
+        hint: 'Please open Chrome or Chromium and log in to https://www.xiaohongshu.com',
+      },
+    })
+    const done = finishWith({ stdout, stderr: 'Extension update available\n', exitCode: 77 })
+    expect(done.outcome).toBe('error')
+    expect(done.exitCode).toBe(77)
+    expect(done.error.summary).toBe('需要先登录 www.xiaohongshu.com：在 Chrome 里登录后重试')
+    expect(done.error.detail).toContain('AUTH_REQUIRED: Not logged in to www.xiaohongshu.com')
+  })
+
+  it('失败外壳出现在退出码 0 的 stdout 上:按失败处理,不当成结果行', () => {
+    const done = finishWith({ stdout: '{"ok":false,"error":{"code":"TIMEOUT","message":"timed out"}}', exitCode: 0 })
+    expect(done.outcome).toBe('error')
+    expect(done.error.summary).toBe('执行超时：网络较慢或页面卡住，稍后重试')
+    expect(done.error.detail).toContain('OpenCLI reported a failure')
+  })
+
+  it('1.8.8 的行数据里带 ok:false 和字符串 error 不会被当成失败外壳', () => {
+    const done = finishWith({ stdout: '{"ok":false,"error":"row text"}' })
+    expect(done).toMatchObject({ outcome: 'success', result: [{ ok: false, error: 'row text' }] })
+  })
+
+  it('入口是 getter 时每次起子进程现取', () => {
+    let entry = 'C:\fixture\v1\dist\src\main.js'
+    const calls = []
+    const manager = new RunManager({
+      opencliEntry: () => entry,
+      nodePath: 'C:\fixture\node.exe',
+      spawnImpl: (...args) => { calls.push(args); return new FakeChild() },
+      emitEvent: () => {},
+    })
+    manager.start({ ...request, runId: 'run-a' })
+    entry = 'C:\fixture\v2\dist\src\main.js'
+    manager.start({ ...request, runId: 'run-b' })
+    expect(calls.map((call) => call[1][0])).toEqual(['C:\fixture\v1\dist\src\main.js', 'C:\fixture\v2\dist\src\main.js'])
+  })
+})

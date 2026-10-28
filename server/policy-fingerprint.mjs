@@ -51,15 +51,11 @@ function argProjection(arg) {
   }
 }
 
-/**
- * 审定形状哈希：它变了说明**人工审定该重做**（不只是让用户再确认一次）。
- * 含 opencliVersion——实现变了而 manifest 没变时旧审定必须失效
- * （`paperreview/review` 就是活例:返回体带 token 这件事根本不在 manifest 里）。
- */
-export function reviewShapeHash(command, opencliVersion) {
+// 命令的**参数形状**投影:审定针对的就是这些。不含 opencliVersion 与 columns,
+// 两个哈希(reviewShapeHash / reviewCarryHash)共用它,字段增删只有一处。
+function shapeProjection(command) {
   const args = command.args ?? []
-  return createHash('sha256').update(canonicalJson({
-    opencliVersion,
+  return {
     commandKey: command.command,
     access: command.access ?? null,
     strategy: command.strategy ?? null,
@@ -75,8 +71,29 @@ export function reviewShapeHash(command, opencliVersion) {
     positionalArgs: args.filter((a) => a.positional).map(argProjection),
     flagArgs: args.filter((a) => !a.positional).map(argProjection)
       .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+  }
+}
+
+/**
+ * 审定形状哈希：它变了说明**人工审定该重做**（不只是让用户再确认一次）。
+ * 含 opencliVersion——实现变了而 manifest 没变时旧审定必须失效
+ * （`paperreview/review` 就是活例:返回体带 token 这件事根本不在 manifest 里）。
+ */
+export function reviewShapeHash(command, opencliVersion) {
+  return createHash('sha256').update(canonicalJson({
+    opencliVersion,
+    ...shapeProjection(command),
     columns: command.columns ?? null,           // 只作审定漂移信号
   })).digest('hex')
+}
+
+/**
+ * 沿用比对哈希：换了 OpenCLI 版本后,参数形状没变就沿用基准版本的审定。
+ * 与 reviewShapeHash 同一份投影,但**不含 opencliVersion 和 columns**——
+ * columns 只是输出列,不算参数。access/domain/modulePath 等仍在投影里,变了就是 review-stale。
+ */
+export function reviewCarryHash(command) {
+  return createHash('sha256').update(canonicalJson(shapeProjection(command))).digest('hex')
 }
 
 // spec §3.1 把 authorities/effects/residues 定义为**集合**,§4.3 第 8 步明写「按值比较,

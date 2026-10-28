@@ -225,6 +225,9 @@ describe('扩展步骤的操作', () => {
     expect(offline).toHaveTextContent('chrome://extensions')
     expect(offline).toHaveTextContent('开发者模式')
     expect(offline).toHaveTextContent('加载已解压的扩展程序')
+    expect(within(offline).getByTestId('gs-offline-note')).toHaveTextContent(
+      '这样装的扩展不会自动更新，每出新版都要重复这几步；能打开商店时，请用上面的「安装扩展」。',
+    )
   })
 
   test('多个 profile 需要指定:不给安装扩展,提示去连接状态里选', async () => {

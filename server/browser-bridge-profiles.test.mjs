@@ -118,3 +118,58 @@ describe('列出与选择', () => {
     })).resolves.toBeUndefined()
   })
 })
+
+// OpenCLI 2.0 的 `profile list` 输出 JSON 外壳。
+const JSON_LIST = JSON.stringify({
+  ok: true,
+  data: {
+    daemonRunning: true,
+    daemonStale: false,
+    profiles: [
+      { contextId: 'ctx-aaa', alias: 'work', default: true, connected: true, extensionVersion: '1.0.24' },
+      { contextId: 'ctx-bbb', alias: null, default: false, connected: true },
+      { contextId: 'ctx-ccc', alias: 'home', default: false, connected: true, extensionVersion: '1.0.26' },
+      { contextId: 'ctx-old', alias: 'gone', default: false, connected: false, extensionVersion: '1.0.20' },
+    ],
+  },
+})
+
+describe('2.0 的 JSON 外壳', () => {
+  test('只取已连接的 profile,字段映射到现有结构', async () => {
+    await expect(listBrowserProfiles({ runOpenCli: ok(JSON_LIST), opencliEntry: '/entry.js' })).resolves.toEqual({
+      ok: true,
+      profiles: [
+        { name: 'work', isDefault: true, extensionVersion: '1.0.24' },
+        { name: 'ctx-bbb', isDefault: false },
+        { name: 'home', isDefault: false, extensionVersion: '1.0.26' },
+      ],
+    })
+  })
+
+  test('stderr 上的警告不进 stdout,JSON 前后的空白不影响解析', async () => {
+    await expect(listBrowserProfiles({ runOpenCli: ok(`\n${JSON_LIST}\n`), opencliEntry: '/entry.js' }))
+      .resolves.toMatchObject({ ok: true, profiles: [{ name: 'work' }, { name: 'ctx-bbb' }, { name: 'home' }] })
+  })
+
+  test('daemon 没跑、没有 profile:空清单,不是失败', async () => {
+    const empty = JSON.stringify({ ok: true, data: { daemonRunning: false, daemonStale: false, profiles: [] } })
+    await expect(listBrowserProfiles({ runOpenCli: ok(empty), opencliEntry: '/entry.js' }))
+      .resolves.toEqual({ ok: true, profiles: [] })
+  })
+
+  test('默认 profile 的 contextId 同样能从 JSON 里取', async () => {
+    await expect(findDefaultContextId({ runOpenCli: ok(JSON_LIST), opencliEntry: '/entry.js' })).resolves.toBe('ctx-aaa')
+  })
+
+  test('profile use:退出码 0 即成功,不看输出', async () => {
+    const runOpenCli = vi.fn(async (argv) => (argv[1] === 'list'
+      ? { code: 0, failed: false, stdout: JSON_LIST }
+      : { code: 0, failed: false, stdout: '{"ok":true,"data":{"defaultContextId":"ctx-ccc"}}' }))
+    await expect(useBrowserProfile({ name: 'home', runOpenCli, opencliEntry: '/entry.js' })).resolves.toEqual({ ok: true })
+    expect(runOpenCli).toHaveBeenLastCalledWith(['profile', 'use', 'home'], expect.any(Object))
+  })
+
+  test('不是 JSON 外壳的输出仍走 1.8.8 的文本解析', async () => {
+    await expect(findDefaultContextId({ runOpenCli: ok(LIST), opencliEntry: '/entry.js' })).resolves.toBe('ctx-aaa')
+  })
+})

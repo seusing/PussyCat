@@ -1,3 +1,12 @@
+/* 顶栏这一块的外壳:更新进度卡片和扩展提示以它为锚点。 */
+.opencli-release {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .opencli-release-checking {
   display: flex;
   min-width: 0;
@@ -24,13 +33,113 @@
   animation: opencli-release-flow 1.1s ease-in-out infinite alternate;
 }
 
+/* 更新进度:同一条进度条换成确定进度,填充宽度即百分比 */
+.opencli-release-bar__fill--determinate {
+  width: 0;
+  animation: none;
+  transition: width 300ms ease-out;
+}
+
+.opencli-release-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.opencli-release-update {
+  margin-left: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
+  border-radius: 8px;
+  padding: 2px 8px;
+  color: var(--color-accent);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.opencli-release-update:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.opencli-release-link {
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.opencli-release-link:hover:not(:disabled) {
+  color: var(--color-fg);
+}
+
+.opencli-release-update:disabled,
+.opencli-release-link:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.opencli-release-error {
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--color-danger);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 更新成功但浏览器扩展版本偏旧时,在顶栏下方留一条可关闭的提示:说明在左上,关闭在右上,操作按钮在说明下面 */
+.opencli-release-warning {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 12px);
+  right: 0;
+  display: grid;
+  box-sizing: border-box;
+  width: 400px;
+  max-width: calc(100vw - 24px);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--glass-menu-fill);
+  box-shadow: var(--glass-highlight), var(--glass-menu-shadow);
+  padding: 8px 6px 8px 10px;
+  backdrop-filter: var(--glass-blur);
+  color: var(--color-fg);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+.opencli-release-warning > span {
+  min-width: 0;
+}
+
+.opencli-release-warning > .opencli-release-update {
+  grid-column: 1;
+  margin-left: 0;
+  justify-self: start;
+}
+
+.opencli-release-warning__close {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  grid-column: 2;
+  grid-row: 1;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--color-fg-dim);
+  cursor: pointer;
+}
+
+.opencli-release-warning__close:hover,
+.opencli-release-warning__close:focus-visible {
+  background: rgb(255 255 255 / 6%);
+  color: var(--color-fg);
+}
+
 .opencli-release-note {
   font-size: 11px;
   opacity: 0.8;
-}
-
-a + .opencli-release-note {
-  margin-left: 6px;
 }
 
 @keyframes opencli-release-flow {
@@ -42,5 +151,9 @@ a + .opencli-release-note {
   .opencli-release-bar__fill {
     animation: none;
     transform: translateX(75%);
+  }
+
+  .opencli-release-bar__fill--determinate {
+    transform: none;
   }
 }

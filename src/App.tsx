@@ -25,6 +25,7 @@ import type { HostBridge } from './host/types'
 import { HostRequestError } from './host/errors'
 import { fetchOpencliRelease } from './host/opencliRelease'
 import { OpencliReleaseStatus, type ReleaseState } from './components/OpencliReleaseStatus'
+import { useOpencliUpdate, type OpencliUpdate } from './components/useOpencliUpdate'
 import { isRunnable } from './data/policy'
 import { isAcknowledged } from './data/preferences'
 import { visibleCommands } from './data/supportedSites'
@@ -256,6 +257,9 @@ export default function App({
   }
   // 每次打开 app 查一次;checkRelease 每次渲染重建,但只在 mode / baseUrl 变化时需要重查
   useEffect(() => { checkRelease() }, [mode, baseUrl])
+  // 应用内更新放在 App 层:切到别的模块再回来,进度和成功后的重查都不中断。
+  // 更新成功或恢复内置后,OpenCLI 的命令目录和执行许可都跟着变,版本和目录一起重拉。
+  const opencliUpdate = useOpencliUpdate(baseUrl, () => { checkRelease(); fetchCatalog() }, mode === 'connected')
 
   // 409(fingerprint-stale)/428(acknowledgement-required) 是"需要重新确认",不是普通失败——
   // 不把服务端原始错误甩给用户(Task 8 铁律),而是重拉目录、作废本地陈旧确认、重新弹确认框。
@@ -412,7 +416,7 @@ export default function App({
         catalogError={catalogError}
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
         headerActions={activeModule === 'commands'
-          ? <CatalogHeaderActions refresh={refresh} release={release} showRelease={mode === 'connected'} onCheck={checkRelease} />
+          ? <CatalogHeaderActions refresh={refresh} release={release} showRelease={mode === 'connected'} onCheck={checkRelease} update={opencliUpdate} />
           : undefined}
         baseUrl={baseUrl}
       />
@@ -426,11 +430,12 @@ export default function App({
   )
 }
 
-function CatalogHeaderActions({ refresh, release, showRelease, onCheck }: {
+function CatalogHeaderActions({ refresh, release, showRelease, onCheck, update }: {
   refresh: { generatedAt?: number; degraded?: string }
   release: ReleaseState
   showRelease: boolean
   onCheck: () => void
+  update: OpencliUpdate
 }) {
   const commands = useAppStore((s) => s.commands)
   const count = visibleCommands(commands).length
@@ -448,7 +453,7 @@ function CatalogHeaderActions({ refresh, release, showRelease, onCheck }: {
       {refresh.degraded && (
         <span data-testid="refresh-degraded" title={refresh.degraded} style={{ color: 'var(--color-warning)' }}>已降级：本地快照</span>
       )}
-      {showRelease && <OpencliReleaseStatus release={release} onCheck={onCheck} />}
+      {showRelease && <OpencliReleaseStatus release={release} onCheck={onCheck} update={update} />}
     </div>
   )
 }

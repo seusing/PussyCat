@@ -6,6 +6,10 @@
 //       `  <contextId>[ <别名>][ default] — connected[ v<扩展版本>| version unknown]`
 //     所以这里只解析"已连接"这一种行,别的输出(daemon 没跑、没有 profile 等)一律解析成空清单。
 //
+// OpenCLI 2.0 的 `profile list` 输出 JSON 外壳:
+//   {"ok":true,"data":{"profiles":[{"contextId","alias","default","connected","extensionVersion"}]}}
+// 先按 JSON 解析,不是 JSON 再走上面的文本行。
+//
 // 对前端暴露的 `name` 是别名,没起过别名的退回 contextId —— 两者 `profile use` 都认。
 // 前端只能从当前清单里选:提交的名字不在清单里,不会交给子进程。
 
@@ -39,9 +43,30 @@ export function parseProfileList(stdout) {
   return profiles
 }
 
+/** 2.0 的 JSON 外壳:返回已连接 profile 清单;不是这种输出就是 undefined。 */
+function parseProfileListJson(stdout) {
+  let parsed
+  try {
+    parsed = JSON.parse(String(stdout ?? '').trim())
+  } catch {
+    return undefined
+  }
+  if (!parsed || typeof parsed !== 'object' || parsed.ok !== true) return undefined
+  const profiles = Array.isArray(parsed.data?.profiles) ? parsed.data.profiles : []
+  return profiles
+    .filter((profile) => profile?.connected === true && typeof profile.contextId === 'string')
+    .map((profile) => ({
+      contextId: profile.contextId,
+      ...(typeof profile.alias === 'string' && profile.alias ? { alias: profile.alias } : {}),
+      isDefault: profile.default === true,
+      ...(typeof profile.extensionVersion === 'string' && profile.extensionVersion ? { extensionVersion: profile.extensionVersion } : {}),
+    }))
+}
+
 async function readConnectedProfiles({ runOpenCli, opencliEntry }) {
   const result = await runOpenCli(['profile', 'list'], { opencliEntry, timeoutMs: PROFILE_USE_TIMEOUT_MS })
-  return result.failed ? undefined : parseProfileList(result.stdout)
+  if (result.failed) return undefined
+  return parseProfileListJson(result.stdout) ?? parseProfileList(result.stdout)
 }
 
 /** 列出已连接的 profile。失败(子进程没跑成)如实返回 ok:false,不伪造空清单。 */

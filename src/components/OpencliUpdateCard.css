@@ -1,0 +1,150 @@
+/* 锚定在 .opencli-release(顶栏这一块)的右下,向下展开。 */
+.opencli-update-card {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 12px);
+  right: 0;
+  display: flex;
+  box-sizing: border-box;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  background: var(--glass-menu-fill);
+  box-shadow: var(--glass-highlight), var(--glass-menu-shadow);
+  padding: 10px 6px 10px 10px;
+  backdrop-filter: var(--glass-blur);
+  color: var(--color-fg);
+  text-align: left;
+  transform-origin: top right;
+  transition: border-color 160ms ease;
+}
+
+.opencli-update-card[data-state='failed'] {
+  border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
+}
+
+.opencli-update-card__icon {
+  position: relative;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
+  color: var(--color-fg-dim);
+}
+
+.opencli-update-card__badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-success);
+  color: var(--color-panel);
+}
+
+.opencli-update-card__text {
+  min-width: 0;
+  flex: 1;
+}
+
+.opencli-update-card__title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opencli-update-card__meta {
+  overflow: hidden;
+  color: var(--color-fg-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opencli-update-card[data-state='failed'] .opencli-update-card__status {
+  color: var(--color-danger);
+}
+
+.opencli-update-card__progress {
+  overflow: hidden;
+}
+
+.opencli-update-card__bar {
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 8%);
+}
+
+.opencli-update-card__fill {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-fg);
+  transform-origin: left;
+  transition: transform 300ms ease-out;
+}
+
+/* 流光:填充换成一条在亮色里滑动的暗带 */
+.opencli-update-card__fill[data-shimmer='true'] {
+  background: linear-gradient(90deg, var(--color-fg) 0%, color-mix(in srgb, var(--color-fg) 55%, transparent) 50%, var(--color-fg) 100%);
+  background-size: 200% 100%;
+  animation: opencli-update-shimmer 1.4s linear infinite;
+}
+
+.opencli-update-card__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.opencli-update-card__actions button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--color-fg-dim);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.opencli-update-card__actions button:hover,
+.opencli-update-card__actions button:focus-visible {
+  background: rgb(255 255 255 / 6%);
+  color: var(--color-fg);
+}
+
+@keyframes opencli-update-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opencli-update-card,
+  .opencli-update-card__actions button {
+    transition: none;
+  }
+
+  .opencli-update-card__fill[data-shimmer='true'] {
+    background: var(--color-fg);
+    animation: none;
+  }
+}

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { isCompleteRecord } from './policy-types.mjs'
-import { BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS } from './policy-metadata.mjs'
-import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewShapeHash } from './policy-fingerprint.mjs'
+import { BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
+import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewCarryHash, reviewShapeHash } from './policy-fingerprint.mjs'
 
 export class RequestPolicyError extends Error {
   constructor(statusCode, message, detail) {
@@ -101,7 +101,14 @@ function sameSet(a, b) {
 // 于是第 6 步的两个 unknown 出口、第 7 步的 tier-threshold 出口(及其内部五个子条件)
 // 在真实数据下**一条都走不到**。不开缝的话这几个分支交付即死代码,
 // 而且变异②(删 residues 检查)根本无从验证——删了也没有任何用例会红。
-export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = {}) {
+// 审定是否仍针对当前命令:同版本要求完整形状一致;换了版本,参数形状(沿用比对哈希)没变就沿用。
+function reviewStillHolds(record, command, shape, version, baselineVersion) {
+  if (record.reviewedAgainst === shape) return true
+  return version !== baselineVersion() && record.reviewedCarry === reviewCarryHash(command)
+}
+
+// `baselineVersion` 同样只给测试注入:生产调用取打包快照的版本。
+export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS, baselineVersion = reviewBaselineVersion } = {}) {
   const version = snapshot.opencliVersion
   return snapshot.commands.map((command) => {
     const commandKey = command.command
@@ -129,7 +136,7 @@ export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS } = 
     }
 
     // 5. 审定是否针对当前形状
-    if (record.reviewedAgainst !== shape) {
+    if (!reviewStillHolds(record, command, shape, version, baselineVersion)) {
       return { ...base, state: 'unknown', decisionSource: 'unclassified', reasonCode: 'review-stale' }
     }
 

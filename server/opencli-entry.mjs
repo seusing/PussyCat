@@ -23,3 +23,8 @@ export function resolveManifestPath(entry, { existsImpl = existsSync } = {}) {
   }
   return manifestPath
 }
+
+// 入口可以直接给路径,也可以给 getter:更新 OpenCLI 之后,每次起子进程都要取当时生效的那个。
+export function currentEntry(opencliEntry) {
+  return typeof opencliEntry === 'function' ? opencliEntry() : opencliEntry
+}

@@ -195,3 +195,104 @@ describe('CatalogService', () => {
     await expect(service.refresh()).rejects.toMatchObject({ statusCode: 502 })
   })
 })
+
+// OpenCLI 2.0:list 是分页的 {ok,data} 外壳,条目只有 command/description/access,参数回 manifest 取。
+describe('CatalogService —— OpenCLI 2.0 输出', () => {
+  const page = (commands, nextOffset) => JSON.stringify({ ok: true, data: { commands, total: 4, nextOffset } })
+  const MANIFEST_2 = JSON.stringify([
+    { site: 'a', name: 'ok', description: 'manifest desc', access: 'read', strategy: 'public', browser: false, type: 'js', modulePath: 'a/ok.js',
+      args: [{ name: 'limit', type: 'int', default: 20 }], columns: ['x'] },
+    { site: 'b', name: 'two', description: 'two', access: 'read', args: [{ name: 'q', type: 'str', positional: true, required: true }] },
+    { site: 'c', name: 'not-listed', description: 'cannot load', access: 'read', args: [] },
+  ])
+
+  // 每个子进程按其 argv 自动喂一页输出并关闭。
+  function pagedSetup(pages, overrides = {}) {
+    const spawnCalls = []
+    const service = createCatalogService({
+      opencliEntry: 'C:/fixture/dist/src/main.js',
+      resolveManifest: () => 'C:/fixture/cli-manifest.json',
+      spawnImpl: (cmd, argv) => {
+        spawnCalls.push(argv)
+        const child = fakeChild()
+        const key = argv.includes('--offset') ? argv[argv.indexOf('--offset') + 1] : '0'
+        setImmediate(() => {
+          child.stdout.emit('data', Buffer.from(pages[key]))
+          child.emit('close', 0)
+        })
+        return child
+      },
+      readFileImpl: (path) => (String(path).includes('package.json') ? '{"version":"2.0.2"}' : MANIFEST_2),
+      ...overrides,
+    })
+    return { service, spawnCalls }
+  }
+
+  it('翻页取全,条目从 manifest 构造并按 1.8.8 口径规整参数', async () => {
+    const { service, spawnCalls } = pagedSetup({
+      0: page([{ command: 'a ok', description: 'list desc', access: 'read' }, { command: 'browser open', description: 'x', access: 'read' }], 2),
+      2: page([{ command: 'b two', description: 'two', access: 'read' }], null),
+    })
+    const snapshot = await service.refresh()
+
+    expect(spawnCalls).toEqual([
+      ['C:/fixture/dist/src/main.js', 'list', '-f', 'json'],
+      ['C:/fixture/dist/src/main.js', 'list', '-f', 'json', '--limit', '100', '--offset', '2'],
+    ])
+    expect(snapshot.opencliVersion).toBe('2.0.2')
+    // 内置命令组(browser open)和 list 里没出现的 manifest 条目都不进目录
+    expect(snapshot.commands.map((command) => command.command)).toEqual(['a/ok', 'b/two'])
+    expect(snapshot.commands[0]).toMatchObject({
+      site: 'a', name: 'ok', aliases: [], description: 'list desc', modulePath: 'a/ok.js', columns: ['x'],
+      args: [{ name: 'limit', type: 'int', default: 20, choices: [], valueRequired: false, positional: false, required: false }],
+    })
+    expect(snapshot.commands[1].args[0]).toMatchObject({ positional: true, required: true, default: null, choices: [] })
+    expect(snapshot.listSha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(service.current().policy.decisionByKey.get('a/ok')).toBeDefined()
+  })
+
+  it('某一页失败 → 整次刷新失败,旧值不动', async () => {
+    const { service } = pagedSetup({
+      0: page([{ command: 'a ok', access: 'read' }], 1),
+      1: '{not json',
+    })
+    await expect(service.refresh()).rejects.toMatchObject({ statusCode: 500, message: 'opencli list output is not valid JSON' })
+    expect(service.current()).toBeUndefined()
+  })
+
+  it('入口是 getter:每次刷新取当时的入口', async () => {
+    let entry = 'C:/v1/dist/src/main.js'
+    const { service, spawnCalls } = pagedSetup({ 0: page([{ command: 'a ok', access: 'read' }], null) }, { opencliEntry: () => entry })
+    await service.refresh()
+    entry = 'C:/v2/dist/src/main.js'
+    await service.refresh()
+    expect(spawnCalls.map((argv) => argv[0])).toEqual(['C:/v1/dist/src/main.js', 'C:/v2/dist/src/main.js'])
+  })
+
+  it('刷新途中换了入口:这一轮作废,按新入口重来后再生效', async () => {
+    let entry = 'C:/v1/dist/src/main.js'
+    const spawned = []
+    const service = createCatalogService({
+      opencliEntry: () => entry,
+      resolveManifest: () => 'C:/fixture/cli-manifest.json',
+      spawnImpl: (_cmd, argv) => {
+        spawned.push(argv[0])
+        const child = fakeChild()
+        const first = spawned.length === 1
+        setImmediate(() => {
+          if (first) entry = 'C:/v2/dist/src/main.js'      // 第一轮的 list 还没返回时,入口被切走
+          child.stdout.emit('data', Buffer.from(first ? LIST : JSON.stringify([
+            { command: 'a/ok', site: 'a', name: 'ok', description: 'from v2', access: 'read', strategy: 'public', browser: false, args: [] },
+          ])))
+          child.emit('close', 0)
+        })
+        return child
+      },
+      readFileImpl: (path) => (String(path).includes('package.json') ? '{"version":"9.9.9"}' : MANIFEST),
+    })
+    const snapshot = await service.refresh()
+    expect(spawned).toEqual(['C:/v1/dist/src/main.js', 'C:/v2/dist/src/main.js'])
+    expect(snapshot.commands[0].description).toBe('from v2')
+    expect(service.current().snapshot).toBe(snapshot)
+  })
+})

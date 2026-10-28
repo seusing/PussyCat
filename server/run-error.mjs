@@ -10,6 +10,10 @@
 //                        CliError,会落成 `code: UNKNOWN` + 原始 message,只能按文案认
 //  · clis/** 各适配器    AuthRequiredError(AUTH_REQUIRED,help 里带 https://<域名>)、
 //                        SECURITY_BLOCK(小红书风控)、LoginWallError(LOGIN_WALL)
+//
+// OpenCLI 2.0 把失败信封改写到 stdout:{"ok":false,"error":{"code","message","exitCode","hint"}}
+// (错误码沿用 1.8.8),警告和日志留在 stderr。归类先看 stdout 信封,再看 stderr 的 1.8.8 YAML
+// 信封,最后看退出码。
 
 const STDERR_TAIL_CHARS = 8000
 
@@ -39,21 +43,50 @@ const KIND_BY_TEXT = [
 // 站点命令的退出码(errors.js EXIT_CODES),stderr 读不出信封时的最后依据。
 const KIND_BY_EXIT_CODE = { 69: 'browser', 75: 'timeout', 77: 'login' }
 
+/**
+ * 已解析的 JSON 若是 2.0 失败信封({ok:false,error:{…}}),返回其 error 字段,否则 undefined。
+ * 成功外壳、1.8.8 的行数据(error 是字符串)都不算。
+ * @returns {{ code?: string, message?: string, hint?: string } | undefined}
+ */
+export function failureOf(parsed) {
+  const error = parsed && typeof parsed === 'object' && parsed.ok === false ? parsed.error : undefined
+  if (!error || typeof error !== 'object') return undefined
+  const text = (value) => (typeof value === 'string' ? value : undefined)
+  return { code: text(error.code), message: text(error.message), hint: text(error.hint) }
+}
+
+/** stdout 原文里的 2.0 失败信封;不是 JSON 或不是这种形状就是 undefined。 */
+export function readStdoutError(stdout) {
+  const text = String(stdout ?? '').replace(/^\uFEFF/, '').trim()
+  if (!text.startsWith('{')) return undefined
+  try {
+    return failureOf(JSON.parse(text))
+  } catch {
+    return undefined
+  }
+}
+
 function envelopeCode(stderr) {
   return /^ {2}code: *['"]?([A-Z][A-Z0-9_]*)['"]?\s*$/m.exec(stderr)?.[1]
 }
 
-// AuthRequiredError 的 help 恒为 `Please open Chrome or Chromium and log in to https://<域名>`。
-function loginDomain(stderr) {
-  return /log in to https?:\/\/([A-Za-z0-9.-]+)/i.exec(stderr)?.[1]
+// AuthRequiredError 的 help(2.0 里叫 hint)恒为 `Please open Chrome or Chromium and log in to https://<域名>`。
+function loginDomain(...texts) {
+  for (const text of texts) {
+    const domain = /log in to https?:\/\/([A-Za-z0-9.-]+)/i.exec(text ?? '')?.[1]
+    if (domain) return domain
+  }
+  return undefined
 }
 
-function classify({ stderr, exitCode, timedOut }) {
+function classify({ stdoutError, stderr, exitCode, timedOut }) {
   if (timedOut) return 'timeout'
-  const code = envelopeCode(stderr)
-  if (code && KIND_BY_CODE[code]) return KIND_BY_CODE[code]
+  for (const code of [stdoutError?.code, envelopeCode(stderr)]) {
+    if (code && KIND_BY_CODE[code]) return KIND_BY_CODE[code]
+  }
+  const text = [stdoutError?.message, stdoutError?.hint, stderr].filter(Boolean).join('\n')
   for (const [kind, pattern] of KIND_BY_TEXT) {
-    if (pattern.test(stderr)) return kind
+    if (pattern.test(text)) return kind
   }
   return KIND_BY_EXIT_CODE[exitCode]
 }
@@ -63,18 +96,23 @@ function classify({ stderr, exitCode, timedOut }) {
  * @param {string} input.summary 原始英文摘要,进 detail
  * @param {string} [input.detail] 附加细节(异常信息、stderr 尾部),进 detail
  * @param {string} [input.stderr] 完整 stderr,用来归类
+ * @param {string} [input.stdout] 完整 stdout,2.0 的失败信封在这里
  * @param {number} [input.exitCode]
  * @param {boolean} [input.timedOut] 宿主自己的超时终止
  * @returns {{ summary: string, detail: string }}
  */
-export function describeRunError({ summary, detail, stderr = '', exitCode, timedOut = false }) {
+export function describeRunError({ summary, detail, stderr = '', stdout = '', exitCode, timedOut = false }) {
   const tail = stderr.slice(-STDERR_TAIL_CHARS)
-  const kind = classify({ stderr: tail, exitCode, timedOut })
+  const stdoutError = readStdoutError(stdout)
+  const kind = classify({ stdoutError, stderr: tail, exitCode, timedOut })
   const text = {
     browser: BROWSER_NOT_CONNECTED,
-    login: needsLogin(loginDomain(tail)),
+    login: needsLogin(loginDomain(stdoutError?.hint, stdoutError?.message, tail)),
     timeout: TIMED_OUT,
     verify: NEEDS_VERIFICATION,
   }[kind] ?? GENERIC_FAILURE
-  return { summary: text, detail: [summary, detail].filter(Boolean).join('\n') }
+  const original = stdoutError
+    ? [[stdoutError.code, stdoutError.message].filter(Boolean).join(': '), stdoutError.hint].filter(Boolean).join('\n')
+    : undefined
+  return { summary: text, detail: [summary, original, detail].filter(Boolean).join('\n') }
 }

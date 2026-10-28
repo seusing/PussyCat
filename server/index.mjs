@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createHostServer } from './host-server.mjs'
 import { resolveOpenCliEntry, resolveManifestPath } from './opencli-entry.mjs'
+import { createOpencliRuntime } from './opencli-runtime.mjs'
 import { loadExecutionPolicy } from './policy.mjs'
 import { createCatalogService } from './catalog-service.mjs'
 import { VkSidecarManager } from './vk-sidecar.mjs'
@@ -82,16 +83,28 @@ if (process.env.OPENCLI_HOST_PARENT_WATCH === '1') {
 try {
   const policy = loadExecutionPolicy(catalogPath)
   const initialSnapshot = JSON.parse(readFileSync(catalogPath, 'utf8').replace(/^\uFEFF/, ''))
-  const opencliEntry = resolveOpenCliEntry()
+  // 数据根:装机版是爪爪数据目录(OPENCLI_HOST_VK_HOME);开发直连没有这个变量时落在系统临时目录下的固定位置。
+  const vkHome = process.env.OPENCLI_HOST_VK_HOME
+  // 生效的 OpenCLI 可以被应用内更新换掉,所以入口一律传 getter,每次起子进程时现取。
+  const opencliRuntime = createOpencliRuntime({
+    bundledEntry: resolveOpenCliEntry(),
+    dataRoot: vkHome ?? resolve(tmpdir(), 'pussycat-dev-opencli'),
+  })
+  const opencliEntry = () => opencliRuntime.entry()
   const catalogService = createCatalogService({
     opencliEntry,
-    resolveManifest: () => resolveManifestPath(opencliEntry),
+    resolveManifest: () => resolveManifestPath(opencliRuntime.entry()),
     initialSnapshot,
   })
+  // 打包快照是内置版本的目录;启动时生效的是更新装下的版本,就在后台按它的目录重算策略。
+  if (opencliRuntime.active()) {
+    catalogService.refresh().catch((error) => {
+      console.warn(`[opencli-host] catalog refresh for OpenCLI ${opencliRuntime.version()} failed: ${error instanceof Error ? error.message : error}`)
+    })
+  }
   // video-knowledge sidecar(vk-shell-v1 契约):未配置时照常启动,/vk/v1/*
   // 返回类型化诊断;配置后首个请求按需拉起。v2 阶段3:HOME 指数据根,
   // python 优先 env、否则 spawn 时读 active.json(装完免重启)。
-  const vkHome = process.env.OPENCLI_HOST_VK_HOME
   const vkRuntime = new VkRuntimeManager({
     home: vkHome,
     bundleDir: process.env.OPENCLI_HOST_VK_BUNDLE_DIR,
@@ -109,7 +122,8 @@ try {
       ...process.env,
       VK_OPENCLI_BROWSER_BRIDGE: '1',
       VK_OPENCLI_NODE_PATH: process.execPath,
-      VK_OPENCLI_ENTRY: opencliEntry,
+      // getter:sidecar 每次 spawn 展开 baseEnv 时现取,更新 OpenCLI 后重新拉起的引擎拿到新入口。
+      get VK_OPENCLI_ENTRY() { return opencliRuntime.entry() },
     },
   })
   const vkStateDir = process.env.OPENCLI_HOST_VK_STATE_DIR
@@ -128,6 +142,7 @@ try {
   })
   app = createHostServer({
     opencliEntry,
+    opencliRuntime,
     policy,
     catalogService,
     allowedOrigins,
@@ -150,7 +165,7 @@ try {
     opencliHostReady: true,
     port: actualPort,
     pid: process.pid,
-    opencliVersion: policy.opencliVersion,
+    opencliVersion: opencliRuntime.version(),
     policyCommands: policy.allowedCommands.size,
     // 通道 2 的**事实**(监听已注册),不是"我们设过环境变量"的意图。
     // dist-host/ 是 gitignore 的构建产物,版本会漂移——supervisor 不能拿自己设的环境变量当证据。
@@ -159,7 +174,7 @@ try {
 
   const printableAddress = typeof address === 'object' && address ? `${address.address}:${address.port}` : `${host}:${port}`
   console.log(`[opencli-host] listening on http://${printableAddress}`)
-  console.log(`[opencli-host] OpenCLI ${policy.opencliVersion}: ${opencliEntry}`)
+  console.log(`[opencli-host] OpenCLI ${opencliRuntime.version()}: ${opencliRuntime.entry()}`)
   console.log(`[opencli-host] policy: ${policy.description} (${policy.allowedCommands.size} commands)`)
   console.log(`[opencli-host] parent-watch(stdin EOF): ${parentWatch ? 'on' : 'off'}`)
 } catch (error) {

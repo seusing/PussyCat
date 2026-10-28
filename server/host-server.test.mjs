@@ -1232,7 +1232,8 @@ describe('/opencli/release', () => {
     const res = await fetch(`${baseUrl}/opencli/release`, { headers: { Origin: origin } })
 
     expect(res.status).toBe(200)
-    await expect(res.json()).resolves.toEqual(release)
+    // 没接 runtime 时,生效版本和内置版本都取自生效 policy
+    await expect(res.json()).resolves.toEqual({ ...release, active: policy.opencliVersion, bundled: policy.opencliVersion })
     expect(opencliRelease).toHaveBeenCalledTimes(1)
     expect(opencliRelease).toHaveBeenCalledWith({ currentVersion: policy.opencliVersion })
   })

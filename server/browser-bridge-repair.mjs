@@ -23,6 +23,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join, win32 as win32Path } from 'node:path'
+import { currentEntry } from './opencli-entry.mjs'
 
 const DAEMON_RESTART_TIMEOUT_MS = 20_000
 const PROFILE_USE_TIMEOUT_MS = 10_000
@@ -104,7 +105,7 @@ export function runOpenCli(argv, {
   return new Promise((resolve) => {
     let child
     try {
-      child = spawnImpl(nodePath, [opencliEntry, ...argv], {
+      child = spawnImpl(nodePath, [currentEntry(opencliEntry), ...argv], {
         shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       })
     } catch (error) {

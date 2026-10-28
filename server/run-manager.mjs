@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
-import { describeRunError } from './run-error.mjs'
+import { describeRunError, failureOf } from './run-error.mjs'
+import { currentEntry } from './opencli-entry.mjs'
 
 export class RunManagerError extends Error {
   constructor(statusCode, message) {
@@ -40,10 +41,16 @@ function createLineCollector(onLine) {
   }
 }
 
+// 2.0 的失败信封出现在退出码 0 的 stdout 上时,按失败处理,不当成结果行。
+class ReportedFailure extends Error {}
+
 function normalizeJsonResult(text) {
   const trimmed = text.replace(/^\uFEFF/, '').trim()
   if (!trimmed) return []
-  const parsed = JSON.parse(trimmed)
+  let parsed = JSON.parse(trimmed)
+  if (failureOf(parsed)) throw new ReportedFailure('OpenCLI reported a failure')
+  // OpenCLI 2.0 把成功结果包成 {ok:true,data};1.8.8 直接输出数据。
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.ok === true) parsed = parsed.data ?? []
   if (Array.isArray(parsed)) {
     return parsed.map((value) => (
       value && typeof value === 'object' && !Array.isArray(value) ? value : { value }
@@ -58,7 +65,7 @@ function errorDetail(stderr) {
 }
 
 function runError(record, { summary, detail, exitCode, timedOut }) {
-  return describeRunError({ summary, detail, stderr: record.stderr, exitCode, timedOut })
+  return describeRunError({ summary, detail, stderr: record.stderr, stdout: record.stdout, exitCode, timedOut })
 }
 
 export class RunManager {
@@ -132,7 +139,7 @@ export class RunManager {
       // 只改这一个子进程的环境,不动全局 process.env(Python 引擎等不受影响)。
       child = this.spawnImpl(
         this.nodePath,
-        [this.opencliEntry, ...request.argv],
+        [currentEntry(this.opencliEntry), ...request.argv],
         { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CI: '1' } },
       )
       record.child = child
@@ -330,8 +337,8 @@ export class RunManager {
         ...base,
         outcome: 'error',
         error: runError(record, {
-          summary: 'OpenCLI returned invalid JSON',
-          detail: error instanceof Error ? error.message : String(error),
+          summary: error instanceof ReportedFailure ? error.message : 'OpenCLI returned invalid JSON',
+          detail: error instanceof ReportedFailure ? undefined : error instanceof Error ? error.message : String(error),
         }),
       })
     }

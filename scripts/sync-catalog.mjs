@@ -4,20 +4,24 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { stripBom, mergeManifestFields } from '../src/shared/normalize.mjs'
+import { stripBom, readListOutput, commandsFromList } from '../src/shared/normalize.mjs'
 
 const packageRoot = resolve('node_modules/@jackwener/opencli')
 const manifestPath = join(packageRoot, 'cli-manifest.json')
 const opencliEntry = join(packageRoot, 'dist/src/main.js')
 
 // Use the package's local Node entry so catalog generation does not depend on
-// a separately installed global OpenCLI binary.
-const listRaw = stripBom(execFileSync(process.execPath, [opencliEntry, 'list', '-f', 'json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }))
-const list = JSON.parse(listRaw)
+// a separately installed global OpenCLI binary. 1.8.8 与 2.0 的 list 输出都认。
+const listOutput = await readListOutput(async (extraArgs) => stripBom(execFileSync(
+  process.execPath,
+  [opencliEntry, 'list', '-f', 'json', ...extraArgs],
+  { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+)))
+const listRaw = listOutput.raw
 const manifestRaw = readFileSync(manifestPath, 'utf8')
 const manifest = JSON.parse(stripBom(manifestRaw))
 
-const commands = mergeManifestFields(list, manifest)
+const commands = commandsFromList(listOutput, manifest)
 const snapshot = {
   schemaVersion: 1,
   generatedAt: Date.now(),

@@ -269,6 +269,7 @@ export function GettingStarted({ baseUrl }: { baseUrl?: string }) {
                 <li>解压后，在 Chrome 地址栏打开 <code>chrome://extensions</code>，打开右上角的「开发者模式」</li>
                 <li>点击「加载已解压的扩展程序」，选择解压后的文件夹</li>
               </ol>
+              <p data-testid="gs-offline-note">这样装的扩展不会自动更新，每出新版都要重复这几步；能打开商店时，请用上面的「安装扩展」。</p>
             </details>
           )}
         </Step>

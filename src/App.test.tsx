@@ -8,7 +8,7 @@ import { liveCatalogSource, type CatalogSource } from './host'
 import { createNodeBridgeHost, type EventSourceLike } from './host/nodeBridgeHost'
 import { normalizeHostError } from './App'
 import { HostRequestError } from './host/errors'
-import type { OpencliRelease } from './host/opencliRelease'
+import type { OpencliRelease, OpencliUpdateJob } from './host/opencliRelease'
 import type { PolicyDecision } from './data/policy'
 import { renderWithHost } from './testing/renderWithHost'
 
@@ -227,10 +227,13 @@ describe('检查更新', () => {
   const OTHER_BASE = 'http://127.0.0.1:43118'
   const RELEASE_ENDPOINT = `${BASE}/opencli/release`
   const MIN_CHECK_MS = 600
-  const releaseOf = (over: Partial<OpencliRelease> = {}): OpencliRelease => ({
-    checkedAt: Date.now(), current: '1.8.6', latest: '1.8.6', updateAvailable: false,
-    releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.6', ...over,
-  })
+  const releaseOf = (over: Partial<OpencliRelease> = {}): OpencliRelease => {
+    const current = over.current ?? '1.8.6'
+    return {
+      checkedAt: Date.now(), current, latest: '1.8.6', updateAvailable: false,
+      releaseUrl: 'https://github.com/jackwener/opencli/releases/tag/v1.8.6', active: current, bundled: current, ...over,
+    }
+  }
   const okResponse = (body: OpencliRelease) => Promise.resolve({ ok: true, status: 200, json: async () => body } as Response)
   const failResponse = (status: number, error: string) => Promise.resolve({ ok: false, status, json: async () => ({ error }) } as Response)
 
@@ -253,6 +256,9 @@ describe('检查更新', () => {
   // shouldAdvanceTime 让 findBy / waitFor 在假时钟下照常轮询;要精确卡 600ms 边界的用例改用纯假时钟。
   beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }) })
   afterEach(() => { vi.useRealTimers() })
+  // useFakeTimers() 在已经是假时钟时不会重装时钟,beforeEach 里 shouldAdvanceTime 的那个会一直生效;
+  // 要精确卡边界必须先还原再装一个不随真实时间走的。
+  const useExactFakeClock = () => { vi.useRealTimers(); vi.useFakeTimers() }
 
   test('启动后自动检查:已是最新', async () => {
     const requests = stubReleaseApi(() => okResponse(releaseOf()))
@@ -267,7 +273,7 @@ describe('检查更新', () => {
     expect(progressbar()).not.toBeInTheDocument()
   })
 
-  test('有新版 → 链接指向发布页,旁边直接写明随下一版爪爪提供', async () => {
+  test('有新版 → 链接指向发布页,旁边是「更新到 x」按钮', async () => {
     const releaseUrl = 'https://github.com/jackwener/opencli/releases/tag/v1.8.8'
     stubReleaseApi(() => okResponse(releaseOf({ latest: '1.8.8', updateAvailable: true, releaseUrl })))
     renderConnected()
@@ -277,17 +283,19 @@ describe('检查更新', () => {
     expect(link).toHaveAttribute('href', releaseUrl)
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-    expect(link).toHaveAttribute('title', '当前 1.8.6，新版 OpenCLI 会随爪爪新版本提供')
-    expect(screen.getByTestId('opencli-release')).toHaveTextContent('随下一版爪爪提供')
+    expect(link).toHaveAttribute('title', '当前 1.8.6')
+    expect(screen.getByRole('button', { name: '更新到 1.8.8' })).toBeEnabled()
+    expect(screen.getByTestId('check-updates')).toBeInTheDocument()
   })
 
-  test('没有新版时不出现「随下一版爪爪提供」', async () => {
+  test('已是最新且内置版本就是生效版本时,没有更新和恢复内置按钮', async () => {
     stubReleaseApi(() => okResponse(releaseOf()))
     renderConnected()
     await elapse(MIN_CHECK_MS)
 
     await screen.findByText('OpenCLI 1.8.6 · 已是最新')
-    expect(screen.queryByText('随下一版爪爪提供')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('rollback-opencli')).not.toBeInTheDocument()
   })
 
   test('检查中:版本文字和按钮换成进度条(不定进度,不带 aria-valuenow),返回后恢复', async () => {
@@ -316,7 +324,7 @@ describe('检查更新', () => {
   })
 
   test('结果早于 600ms 返回:进度至少保持到 600ms 才落地', async () => {
-    vi.useFakeTimers()   // 纯假时钟,精确卡边界
+    useExactFakeClock()   // 纯假时钟,精确卡边界
     stubReleaseApi(() => okResponse(releaseOf()))
     renderConnected()
 
@@ -331,7 +339,7 @@ describe('检查更新', () => {
   })
 
   test('晚于 600ms 返回:返回即落地,不再额外等待', async () => {
-    vi.useFakeTimers()
+    useExactFakeClock()
     let finish!: (value: Response) => void
     stubReleaseApi(() => new Promise<Response>((resolve) => { finish = resolve }))
     renderConnected()
@@ -344,7 +352,7 @@ describe('检查更新', () => {
   })
 
   test('失败同样至少显示 600ms 进度;「检查失败」原因在 title,再点一次成功后恢复', async () => {
-    vi.useFakeTimers()
+    useExactFakeClock()
     const requests = stubReleaseApi(
       () => failResponse(502, '连不上 npm registry：connect ETIMEDOUT'),
       () => okResponse(releaseOf()),
@@ -369,7 +377,7 @@ describe('检查更新', () => {
   })
 
   test('检查完显示「刚刚检查」,过一分钟后变成「HH:mm 已检查」', async () => {
-    vi.useFakeTimers()
+    useExactFakeClock()
     vi.setSystemTime(new Date(2026, 9, 27, 9, 5, 0))
     stubReleaseApi(() => okResponse(releaseOf({ checkedAt: Date.now() })))
     renderConnected()
@@ -486,6 +494,215 @@ describe('检查更新', () => {
     })
   })
 
+  // 更新按钮、进度卡片、取消/失败/成功的细节在 OpencliReleaseStatus.test.tsx;这里只验证与 App 的联动:
+  // 更新状态由 App 持有,切走命令页不中断;操作结束后由 App 重新检查,顶栏随新结果刷新。
+  describe('应用内更新联动', () => {
+    type Responder = () => Promise<Response>
+    const reply = (status: number, body: unknown): Responder => () => Promise.resolve({ ok: status < 400, status, json: async () => body } as Response)
+    const jobOf = (over: Partial<OpencliUpdateJob> = {}): OpencliUpdateJob => ({
+      id: 'job-1', version: '1.8.8', state: 'running', stage: 'resolve', receivedBytes: 0, totalBytes: null, percent: 0,
+      warnings: [], startedAt: 1, finishedAt: null, ...over,
+    })
+    // 按「METHOD /path」分派;同一路由的应答依次取用、用完停在最后一个;没登记的请求永不 settle。
+    function stubHost(routes: Record<string, Responder[]>) {
+      const counts: Record<string, number> = {}
+      vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+        const key = `${init?.method ?? 'GET'} ${url.slice(BASE.length)}`
+        const queue = routes[key]
+        counts[key] = (counts[key] ?? 0) + 1
+        return queue ? queue[Math.min(counts[key] - 1, queue.length - 1)]() : new Promise<Response>(() => {})
+      }))
+      return (key: string) => counts[key] ?? 0
+    }
+    const AVAILABLE = { latest: '1.8.8', updateAvailable: true }
+    const UPDATED = { current: '1.8.8', latest: '1.8.8', active: '1.8.8', bundled: '1.8.6' }
+    const idle = reply(200, { job: null })   // 启动时那次查询:Host 里没有进行中的任务
+    const succeededJob = jobOf({ state: 'succeeded', stage: 'done', percent: 100 })
+    const goTo = (activeModule: 'commands' | 'login') => act(() => useAppStore.setState({ activeModule }))
+
+    test('更新成功 3 秒后重新检查,顶栏显示新版本已是最新并可恢复内置', async () => {
+      const count = stubHost({
+        'GET /opencli/release': [reply(200, releaseOf(AVAILABLE)), reply(200, releaseOf(UPDATED))],
+        'POST /opencli/update': [reply(202, { job: jobOf() })],
+        'GET /opencli/update': [idle, reply(200, { job: succeededJob })],
+      })
+      renderConnected()
+      await elapse(MIN_CHECK_MS)
+      fireEvent.click(await screen.findByRole('button', { name: '更新到 1.8.8' }))
+      await elapse(0)
+      expect(screen.getByTestId('opencli-update-progress')).toHaveTextContent('更新 OpenCLI 1.8.8')
+      expect(count('POST /opencli/update')).toBe(1)
+
+      await elapse(300)
+      expect(screen.getByTestId('opencli-update-card')).toHaveAttribute('data-state', 'succeeded')
+      await elapse(2900)
+      expect(count('GET /opencli/release')).toBe(1)
+      await elapse(100)
+      expect(count('GET /opencli/release')).toBe(2)
+      await elapse(MIN_CHECK_MS)
+
+      expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
+      expect(screen.getByRole('button', { name: '恢复内置版本' })).toHaveTextContent('恢复内置 1.8.6')
+      expect(screen.queryByTestId('opencli-update-progress')).not.toBeInTheDocument()
+    })
+
+    test('更新中切到别的模块再回来:轮询不中断,卡片和进度还在', async () => {
+      const running = (percent: number) => reply(200, { job: jobOf({ stage: 'download', percent, totalBytes: 13_000_000 }) })
+      const count = stubHost({
+        'GET /opencli/release': [reply(200, releaseOf(AVAILABLE))],
+        'POST /opencli/update': [reply(202, { job: jobOf() })],
+        'GET /opencli/update': [idle, running(30), running(50), running(80)],
+      })
+      renderConnected()
+      await elapse(MIN_CHECK_MS)
+      fireEvent.click(await screen.findByTestId('update-opencli'))
+      await elapse(0)
+      await elapse(300)
+      expect(screen.getByTestId('opencli-update-card-meta')).toHaveTextContent('下载中 30%')
+
+      await goTo('login')
+      expect(screen.queryByTestId('opencli-update-card')).not.toBeInTheDocument()
+      await elapse(300)
+      expect(count('GET /opencli/update')).toBe(3)
+
+      await goTo('commands')
+      expect(screen.getByTestId('opencli-update-progress')).toHaveTextContent('更新 OpenCLI 1.8.8 · 50%')
+      expect(screen.getByTestId('opencli-update-card-meta')).toHaveTextContent('12.4 MB · 下载中 50%')
+      await elapse(300)
+      expect(screen.getByTestId('opencli-update-card-meta')).toHaveTextContent('下载中 80%')
+    })
+
+    test('更新在别的模块页时完成:照常重查,回来看到的是新版本,不再提供「更新到 x」', async () => {
+      const count = stubHost({
+        'GET /opencli/release': [reply(200, releaseOf(AVAILABLE)), reply(200, releaseOf(UPDATED))],
+        'POST /opencli/update': [reply(202, { job: jobOf() })],
+        'GET /opencli/update': [idle, reply(200, { job: succeededJob })],
+      })
+      renderConnected()
+      await elapse(MIN_CHECK_MS)
+      fireEvent.click(await screen.findByTestId('update-opencli'))
+      await elapse(0)
+
+      await goTo('login')
+      await elapse(300)
+      await elapse(3000)
+      expect(count('GET /opencli/release')).toBe(2)
+      await elapse(MIN_CHECK_MS)
+
+      await goTo('commands')
+      expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
+      expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('opencli-update-card')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('opencli-update-progress')).not.toBeInTheDocument()
+    })
+
+    test('启动时 Host 里有进行中的任务(窗口刷新):接上卡片并继续轮询', async () => {
+      const running = (percent: number) => reply(200, { job: jobOf({ stage: 'download', percent, totalBytes: 13_000_000 }) })
+      const count = stubHost({
+        'GET /opencli/release': [reply(200, releaseOf(AVAILABLE))],
+        'GET /opencli/update': [running(40), running(65)],
+      })
+      renderConnected()
+      await elapse(0)
+
+      expect(screen.getByTestId('opencli-update-card-meta')).toHaveTextContent('12.4 MB · 下载中 40%')
+      expect(screen.getByTestId('opencli-update-progress')).toHaveTextContent('更新 OpenCLI 1.8.8 · 40%')
+      expect(count('POST /opencli/update')).toBe(0)
+      await elapse(300)
+      expect(screen.getByTestId('opencli-update-card-meta')).toHaveTextContent('下载中 65%')
+    })
+
+    describe('命令目录随 OpenCLI 切换重拉', () => {
+      const cmdsOf = (count: number): CommandManifest[] => Array.from({ length: count }, (_, i) => (
+        { command: `a/c${i}`, site: 'a', name: `c${i}`, description: '', access: 'read', browser: false, args: [] }
+      ))
+      // 第 1 次加载返回 before 条命令,之后返回 after 条
+      const catalogOf = (before: number, after: number) => {
+        const source = sourceOf([
+          async () => ({ snapshot: SNAP({ commands: cmdsOf(before) }) }),
+          async () => ({ snapshot: SNAP({ commands: cmdsOf(after) }) }),
+        ])
+        const load = vi.spyOn(source, 'load')
+        render(<App catalogSource={source} mode="connected" baseUrl={BASE} />)
+        return load
+      }
+
+      test('更新成功 3 秒后目录再拉一次,顶栏命令数换成新目录的数量', async () => {
+        stubHost({
+          'GET /opencli/release': [reply(200, releaseOf(AVAILABLE)), reply(200, releaseOf(UPDATED))],
+          'POST /opencli/update': [reply(202, { job: jobOf() })],
+          'GET /opencli/update': [idle, reply(200, { job: succeededJob })],
+        })
+        const load = catalogOf(1, 3)
+        await elapse(MIN_CHECK_MS)
+        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('1 条')
+        expect(load).toHaveBeenCalledTimes(1)
+
+        fireEvent.click(await screen.findByTestId('update-opencli'))
+        await elapse(0)
+        await elapse(300)
+        await elapse(2900)
+        expect(load).toHaveBeenCalledTimes(1)
+        await elapse(100)
+
+        expect(load).toHaveBeenCalledTimes(2)
+        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('3 条')
+      })
+
+      test('恢复内置成功后目录同样重拉', async () => {
+        stubHost({
+          'GET /opencli/release': [reply(200, releaseOf(UPDATED)), reply(200, releaseOf())],
+          'POST /opencli/rollback': [reply(200, { active: null })],
+        })
+        const load = catalogOf(3, 1)
+        await elapse(MIN_CHECK_MS)
+        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('3 条')
+
+        fireEvent.click(await screen.findByTestId('rollback-opencli'))
+        await elapse(MIN_CHECK_MS)
+
+        expect(load).toHaveBeenCalledTimes(2)
+        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('1 条')
+      })
+
+      test('更新失败或取消时目录不重拉', async () => {
+        stubHost({
+          'GET /opencli/release': [reply(200, releaseOf(AVAILABLE))],
+          'POST /opencli/update': [reply(202, { job: jobOf() })],
+          'GET /opencli/update': [idle, reply(200, { job: jobOf({ state: 'failed', error: { summary: '依赖安装失败' } }) })],
+        })
+        const load = catalogOf(1, 3)
+        await elapse(MIN_CHECK_MS)
+
+        fireEvent.click(await screen.findByTestId('update-opencli'))
+        await elapse(0)
+        await elapse(300)
+        await elapse(5000)
+
+        expect(load).toHaveBeenCalledTimes(1)
+        expect(screen.getByTestId('catalog-meta')).toHaveTextContent('1 条')
+      })
+    })
+
+    test('恢复内置成功后重新检查,顶栏换成内置版本', async () => {
+      const count = stubHost({
+        'GET /opencli/release': [reply(200, releaseOf(UPDATED)), reply(200, releaseOf())],
+        'POST /opencli/rollback': [reply(200, { active: null })],
+      })
+      renderConnected()
+      await elapse(MIN_CHECK_MS)
+      expect(await screen.findByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.8 · 已是最新')
+
+      fireEvent.click(screen.getByRole('button', { name: '恢复内置版本' }))
+      await elapse(MIN_CHECK_MS)
+
+      expect(count('POST /opencli/rollback')).toBe(1)
+      expect(count('GET /opencli/release')).toBe(2)
+      expect(screen.getByTestId('opencli-release')).toHaveTextContent('OpenCLI 1.8.6 · 已是最新')
+      expect(screen.queryByTestId('rollback-opencli')).not.toBeInTheDocument()
+    })
+  })
+
   test('demo 模式不显示检查更新,也不请求 Host', async () => {
     const requests = stubReleaseApi(() => okResponse(releaseOf()))
     render(<App catalogSource={sourceOf([async () => ({ snapshot: SNAP() })])} />)
@@ -495,6 +712,9 @@ describe('检查更新', () => {
     expect(screen.queryByTestId('opencli-release')).not.toBeInTheDocument()
     expect(progressbar()).not.toBeInTheDocument()
     expect(requests()).toBe(0)
+    expect(screen.queryByTestId('update-opencli')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('rollback-opencli')).not.toBeInTheDocument()
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/opencli/'))).toHaveLength(0)
   })
 })
 

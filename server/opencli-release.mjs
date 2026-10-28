@@ -2,8 +2,8 @@
 // 换版本会让全部命令失效,新版 OpenCLI 随新版爪爪一起提供。
 
 // npmjs 在国内直连时快时慢,npmmirror 是它的国内镜像;两个并发请求,取先成功的那个。
-const REGISTRIES = ['https://registry.npmjs.org', 'https://registry.npmmirror.com']
-const PACKAGE_PATH = '@jackwener/opencli/latest'
+export const REGISTRIES = ['https://registry.npmjs.org', 'https://registry.npmmirror.com']
+const PACKAGE_NAME = '@jackwener/opencli'
 const RELEASE_URL_PREFIX = 'https://github.com/jackwener/opencli/releases/tag/v'
 const SEMVER = /^\d+\.\d+\.\d+$/
 
@@ -18,18 +18,22 @@ function isNewer(latest, current) {
 }
 
 // undici 把真正的原因放在 error.cause.code(ECONNREFUSED 等);超时来自 AbortSignal.timeout。
-function describeNetworkError(error, timeoutMs) {
+export function describeNetworkError(error, timeoutMs) {
   if (!(error instanceof Error)) return String(error)
   if (error.name === 'TimeoutError') return `请求超时（${timeoutMs / 1000} 秒）`
   const code = error.cause?.code
   return typeof code === 'string' ? `${error.message}（${code}）` : error.message
 }
 
-async function fetchLatestVersion(registry, fetchImpl, timeoutMs) {
+// 取某个 registry 上 OpenCLI 指定版本(或 latest)的元数据 JSON;响应体不是 JSON 时返回 undefined,由调用方报缺字段。
+export async function fetchPackageMetadata(registry, tag, { fetchImpl, timeoutMs, signal }) {
   const { host } = new URL(registry)
+  const timeout = AbortSignal.timeout(timeoutMs)
   let response
   try {
-    response = await fetchImpl(`${registry}/${PACKAGE_PATH}`, { signal: AbortSignal.timeout(timeoutMs) })
+    response = await fetchImpl(`${registry}/${PACKAGE_NAME}/${tag}`, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    })
   } catch (error) {
     throw new Error(`连不上 ${host}：${describeNetworkError(error, timeoutMs)}`)
   }
@@ -40,6 +44,12 @@ async function fetchLatestVersion(registry, fetchImpl, timeoutMs) {
   } catch {
     body = undefined
   }
+  return body
+}
+
+async function fetchLatestVersion(registry, fetchImpl, timeoutMs) {
+  const { host } = new URL(registry)
+  const body = await fetchPackageMetadata(registry, 'latest', { fetchImpl, timeoutMs })
   if (typeof body?.version !== 'string') throw new Error(`${host} 的响应里没有版本号`)
   return body.version
 }
