@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 /**
  * 「确认并检查全部」的确认框。和单个命令的 AcknowledgeDialog 一样**不是安全授权**(I-P5),
  * 只是让用户一次看清要用自己的 Chrome 去查哪些站点;各站点的确认仍按各自 decision 的
- * fingerprint 逐条写入偏好(与 App.tsx 的 executeSelected 持久化逻辑一致)。
+ * fingerprint 逐条写入偏好。
  */
 export function ConfirmAllDialog({ sites, onConfirm, onCancel }: {
   sites: string[]

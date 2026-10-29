@@ -364,6 +364,10 @@ export function createHostServer({
         try {
           if (url.searchParams.get('refresh') === '1' || !catalogService.current()) {
             await catalogService.refresh()
+          } else {
+            // 启动时按生效版本的后台刷新可能还在路上,此刻 current() 还是打包快照(旧版本的目录和判决):
+            // 先等它结束,免得前端拿旧判决去跑命令。
+            await catalogService.settled()
           }
           const current = catalogService.current()
           writeJson(response, 200, {

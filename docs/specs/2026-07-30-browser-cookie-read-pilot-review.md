@@ -322,7 +322,7 @@ legacy 基线重合度（实测）：八条**均不在** `server/policy-legacy-b
 
 六轴无一处 `unknown`；无一处「证明不了」。八条的 `authorities` 完全同值；差异只落在 `exposure`（`bilibili/hot`）与 `residues`（四条 whoami）两列。
 
-> **2026-10-28 注记：四条 whoami 免确认。** 表中四条 `whoami` 的「算法出口」自此由「第 9 步 → ack」改为「第 8.5 步 → ready」。理由：它们只读当前浏览器登录的是谁，用户决定登录检查不再逐站确认。实现是 `server/policy-metadata.mjs` 的显式集合 `ACKNOWLEDGEMENT_WAIVED`，由 `server/policy.mjs` 在前 7 步（显式 deny、tier、审定完整性、审定是否过期、unknown、阈值）都通过之后、第 9 步之前判 `ready`；免确认绕不过这些步骤，其余十一条试点命令仍是 ack。上表与各节记录的 `authorities` / `exposure` / `residues`（含 `persistent-session` 持久会话标签与站点遥测）**不变**，照旧如实下发给前端；变的只是最后「要不要弹确认」这一步。
+> **2026-10-29 注记：审定命令运行前不再确认。** 用户决定取消运行前确认，表里「算法出口」一列的「第 9 步 → ack」与「第 10 步 → ready」自此都落为 `ready`：`server/policy.mjs` 里通过前 7 步（显式 deny、tier、审定完整性、审定是否过期、unknown、阈值）的命令一律判 `ready`，第 9 步（需确认的四种情形）已删除；任何一步没通过的仍是 denied / unknown，取消确认不会放行它们。上表与各节记录的 `authorities` / `exposure` / `residues`（含 `persistent-session` 持久会话标签与站点遥测）**不变**，照旧如实下发给前端，`fingerprint` 也照常计算；变的只是不再有「要不要弹确认」这一步。协议里的 `acknowledgement-required` 状态与 `/start` 的 428 / 409 分支保留，只是现行策略不再产生它。
 
 ---
 

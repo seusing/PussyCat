@@ -472,6 +472,7 @@ describe('GET /catalog + 动态 policy', () => {
       snapshot,
       refresh: async () => { state = { snapshot, policy }; return snapshot },
       current: () => state,
+      settled: async () => state,
       close: () => {},
     }
   }
@@ -580,6 +581,7 @@ describe('/catalog/effective', () => {
     let refreshCalls = 0
     const service = {
       current: () => state,
+      settled: async () => state,
       refresh: async () => { refreshCalls += 1; return snapshot },
       close: () => {},
     }
@@ -714,14 +716,23 @@ describe('/catalog/effective', () => {
 describe('/start 状态码表逐格(HTTP 层)', () => {
   const realPolicy = loadExecutionPolicy(resolve('public/catalog.snapshot.json'))
 
-  // 先钉住前提:四个格子各自可达。少了这条,快照一漂移就分不清是「分派错了」
+  // 先钉住前提:各个格子各自可达。少了这条,快照一漂移就分不清是「分派错了」
   // 还是「这条命令压根不是那个状态」——两者的红长得一样,但修法完全不同。
-  it('夹具前提:注入的是真判决,四种 state 各有一条命令承载', () => {
+  // 2026-10-29 起现行策略不再产生 acknowledgement-required(协议仍定义它),
+  // 428/409 两格改用手工构造的判决表(ackPolicy)。
+  it('夹具前提:注入的是真判决,ready / denied / unknown 各有一条命令承载,且没有需确认的', () => {
     expect(realPolicy.decisionByKey.get('trae-cn/setup').state).toBe('ready')
-    expect(realPolicy.decisionByKey.get('antigravity/recent-paths').state).toBe('acknowledgement-required')
+    expect(realPolicy.decisionByKey.get('antigravity/recent-paths').state).toBe('ready')
     expect(realPolicy.decisionByKey.get('paperreview/review').state).toBe('denied')
     expect(realPolicy.decisionByKey.get('trae-solo/state-get').state).toBe('unknown')
+    expect([...realPolicy.decisionByKey.values()].some((d) => d.state === 'acknowledgement-required')).toBe(false)
   })
+
+  const ackPolicy = {
+    opencliVersion: '9.9.9',
+    description: 'hand-built policy with an acknowledgement-required decision',
+    decisionByKey: new Map([['x/ack', { commandKey: 'x/ack', state: 'acknowledgement-required', fingerprint: 'fp-1' }]]),
+  }
 
   it('202:ready 的命令直接受理', async () => {
     const { baseUrl } = await setup({ policy: realPolicy })
@@ -732,50 +743,60 @@ describe('/start 状态码表逐格(HTTP 层)', () => {
     expect(await res.json()).toEqual({ runId: 'r-ready-1' })
   })
 
-  // 四条 whoami 免确认(ACKNOWLEDGEMENT_WAIVED):不带 acknowledgement 也受理;同一批试点里的 feed 仍要确认。
+  // 2026-10-29 起运行前不再确认:全部十八条审定命令不带 acknowledgement 也受理。
   // 浏览器预检注入假实现,绝不碰本机真实的 daemon。
-  it('202:whoami 免确认,不带 acknowledgement 也受理', async () => {
+  it('202:全部十八条审定命令不带 acknowledgement 也受理', async () => {
     const browserBridgeRepair = vi.fn(async () => ({ steps: [], alreadyOk: true }))
-    const { baseUrl } = await setup({ policy: realPolicy, browserBridgeRepair })
-    for (const commandKey of ['xiaohongshu/whoami', 'bilibili/whoami', 'twitter/whoami', 'youtube/whoami']) {
+    const { baseUrl } = await setup({
+      policy: realPolicy,
+      browserBridgeRepair,
+      runManagerOptions: { spawnImpl: () => new FakeChild(), commandTimeoutMs: 60_000, maxConcurrentRuns: 50 },
+    })
+    expect(realPolicy.allowedCommands.size).toBe(18)
+    let index = 0
+    for (const commandKey of realPolicy.allowedCommands) {
+      index += 1
       const res = await post(baseUrl, '/start', {
-        runId: `r-whoami-${commandKey.split('/')[0]}`, commandKey, argv: [...commandKey.split('/'), '-f', 'json'],
+        runId: `r-noack-${index}`, commandKey, argv: [...commandKey.split('/'), '-f', 'json'],
       })
       expect(res.status, commandKey).toBe(202)
     }
   })
 
-  it('428:同为试点的 xiaohongshu/feed 不带 acknowledgement 仍要确认', async () => {
-    const browserBridgeRepair = vi.fn(async () => ({ steps: [], alreadyOk: true }))
-    const { baseUrl } = await setup({ policy: realPolicy, browserBridgeRepair })
-    const res = await post(baseUrl, '/start', {
-      runId: 'r-feed-1', commandKey: 'xiaohongshu/feed', argv: ['xiaohongshu', 'feed', '-f', 'json'],
-    })
-    expect(res.status).toBe(428)
-    expect((await res.json()).reasonCode).toBe('acknowledgement-required')
-    expect(browserBridgeRepair).not.toHaveBeenCalled()
-  })
-
-  it('428:需确认却未带 acknowledgement', async () => {
+  it('202:带了 acknowledgement 的 ready 命令照常受理(多余的确认被忽略)', async () => {
     const { baseUrl } = await setup({ policy: realPolicy })
     const res = await post(baseUrl, '/start', {
-      runId: 'r-ack-1', commandKey: 'antigravity/recent-paths',
-      argv: ['antigravity', 'recent-paths', '-f', 'json'],
+      runId: 'r-ready-ack-1', commandKey: 'antigravity/recent-paths', argv: ['antigravity', 'recent-paths', '-f', 'json'],
+      acknowledgement: { fingerprint: 'anything' },
     })
+    expect(res.status).toBe(202)
+  })
+
+  it('428:协议仍定义的需确认状态,未带 acknowledgement', async () => {
+    const { baseUrl } = await setup({ policy: ackPolicy })
+    const res = await post(baseUrl, '/start', { runId: 'r-ack-1', commandKey: 'x/ack', argv: ['x', 'ack', '-f', 'json'] })
     expect(res.status).toBe(428)
     expect((await res.json()).reasonCode).toBe('acknowledgement-required')
   })
 
   it('409:fingerprint 陈旧', async () => {
-    const { baseUrl } = await setup({ policy: realPolicy })
+    const { baseUrl } = await setup({ policy: ackPolicy })
     const res = await post(baseUrl, '/start', {
-      runId: 'r-stale-1', commandKey: 'antigravity/recent-paths',
-      argv: ['antigravity', 'recent-paths', '-f', 'json'],
+      runId: 'r-stale-1', commandKey: 'x/ack', argv: ['x', 'ack', '-f', 'json'],
       acknowledgement: { fingerprint: 'stale' },
     })
     expect(res.status).toBe(409)
     // 409 与 RunManager 的「runId 重复」撞码 —— 只断状态码分不开,必须断 reasonCode。
     expect((await res.json()).reasonCode).toBe('fingerprint-stale')
+  })
+
+  it('202:fingerprint 匹配的需确认命令受理', async () => {
+    const { baseUrl } = await setup({ policy: ackPolicy })
+    const res = await post(baseUrl, '/start', {
+      runId: 'r-ack-ok-1', commandKey: 'x/ack', argv: ['x', 'ack', '-f', 'json'],
+      acknowledgement: { fingerprint: 'fp-1' },
+    })
+    expect(res.status).toBe(202)
   })
 
   it('403(denied):显式 deny', async () => {
@@ -796,6 +817,20 @@ describe('/start 状态码表逐格(HTTP 层)', () => {
     })
     expect(res.status).toBe(403)
     expect((await res.json()).reasonCode).toBe('metadata-missing')
+  })
+
+  it('403:没有审定的写命令(xiaohongshu/download、不在目录里的 xiaohongshu/comment)取消确认后仍被拒', async () => {
+    const { baseUrl } = await setup({ policy: realPolicy })
+    const download = await post(baseUrl, '/start', {
+      runId: 'r-download-1', commandKey: 'xiaohongshu/download', argv: ['xiaohongshu', 'download', 'n1', '-f', 'json'],
+    })
+    expect(download.status).toBe(403)
+    expect((await download.json()).reasonCode).toBe('no-tier')
+    const comment = await post(baseUrl, '/start', {
+      runId: 'r-comment-1', commandKey: 'xiaohongshu/comment', argv: ['xiaohongshu', 'comment', 'n1', '-f', 'json'],
+    })
+    expect(comment.status).toBe(403)
+    expect((await comment.json()).reasonCode).toBe('no-decision')
   })
 
   it('400:结构非法,不被判决分派吞掉', async () => {
@@ -822,7 +857,7 @@ describe('/start 状态码表逐格(HTTP 层)', () => {
   it('denied/unknown 的判决根本没有 fingerprint 字段 —— 无从匹配,这才是结构性保证', () => {
     expect(realPolicy.decisionByKey.get('paperreview/review').fingerprint).toBeUndefined()
     expect(realPolicy.decisionByKey.get('trae-solo/state-get').fingerprint).toBeUndefined()
-    // 对照:需确认的那条才有,证明上面两个 undefined 不是「本来就没人有」。
+    // 对照:放行的那条才有,证明上面两个 undefined 不是「本来就没人有」。
     expect(typeof borrowedFingerprint()).toBe('string')
   })
 
@@ -858,7 +893,7 @@ describe('/catalog/effective → /start 往返(两端点判决同源)', () => {
   )
 
   // /catalog/effective 不挂 catalogService 就是 404,而既有那个合成小目录里
-  // 根本没有 antigravity/recent-paths,造不出 acknowledgement-required。
+  // 根本没有 antigravity/recent-paths。
   // 故装一个「真快照 + 由它派生的 policy」的 service:两端点读同一个 state 单引用,
   // 正是本用例要守住的那件事。
   const sameSourceService = () => {
@@ -868,25 +903,21 @@ describe('/catalog/effective → /start 往返(两端点判决同源)', () => {
       revision: 'rev-t6-roundtrip',
       generatedAt: 1,
     }
-    return { refresh: async () => realSnapshot, current: () => state, close: () => {} }
+    return { refresh: async () => realSnapshot, current: () => state, settled: async () => state, close: () => {} }
   }
 
-  it('envelope 下发的 fingerprint 原样回传 → 202', async () => {
+  it('envelope 下发 ready 判决(带 fingerprint),/start 不带 acknowledgement 也 202', async () => {
     const { baseUrl } = await setup({ catalogService: sameSourceService() })
     const body = await (await fetch(`${baseUrl}/catalog/effective`, { headers: { Origin: origin } })).json()
     const decision = body.policy.decisions.find((d) => d.commandKey === 'antigravity/recent-paths')
 
-    // 前提:envelope 真的下发了一条需确认判决且带 fingerprint。
-    // 少了这两句,哪天它变成 ready,下面的 202 会**平凡满足**,这条用例就与确认协议无关了。
-    expect(decision.state).toBe('acknowledgement-required')
+    // 前提:envelope 下发的是 ready,fingerprint 照常下发。
+    expect(decision.state).toBe('ready')
     expect(typeof decision.fingerprint).toBe('string')
 
     const res = await post(baseUrl, '/start', {
       runId: 'r-roundtrip-1', commandKey: 'antigravity/recent-paths',
       argv: ['antigravity', 'recent-paths', '-f', 'json'],
-      // **原样回传,未在测试里重算。** 自己算就成了「拿被测对象的输出对照它自己」——
-      // reviewShapeHash/decisionFingerprint 一起漂,照样绿。
-      acknowledgement: { fingerprint: decision.fingerprint },
     })
     expect(res.status).toBe(202)
   })
@@ -898,10 +929,9 @@ describe('/catalog/effective → /start 往返(两端点判决同源)', () => {
 // 把 HTTP 侧那行删掉全仓照样绿。
 describe('/start 试点 argv 白名单(HTTP 层)', () => {
   const realPolicy = loadExecutionPolicy(resolve('public/catalog.snapshot.json'))
-  const pilotAck = () => realPolicy.decisionByKey.get('xiaohongshu/feed').fingerprint
 
-  it('夹具前提:xiaohongshu/feed 是需确认的试点命令且挂了 argv 约束', () => {
-    expect(realPolicy.decisionByKey.get('xiaohongshu/feed').state).toBe('acknowledgement-required')
+  it('夹具前提:xiaohongshu/feed 是 ready 的试点命令且挂了 argv 约束', () => {
+    expect(realPolicy.decisionByKey.get('xiaohongshu/feed').state).toBe('ready')
     expect(realPolicy.argvConstraintByKey.has('xiaohongshu/feed')).toBe(true)
   })
 
@@ -910,7 +940,6 @@ describe('/start 试点 argv 白名单(HTTP 层)', () => {
     const res = await post(baseUrl, '/start', {
       runId: 'r-trace-1', commandKey: 'xiaohongshu/feed',
       argv: ['xiaohongshu', 'feed', '--trace', 'on', '-f', 'json'],
-      acknowledgement: { fingerprint: pilotAck() },
     })
     expect(res.status).toBe(400)
     expect((await res.json()).reasonCode).toBe('argv-not-allowed')
@@ -921,7 +950,6 @@ describe('/start 试点 argv 白名单(HTTP 层)', () => {
     const res = await post(baseUrl, '/start', {
       runId: 'r-session-1', commandKey: 'xiaohongshu/feed',
       argv: ['xiaohongshu', 'feed', '--site-session', 'persistent', '-f', 'json'],
-      acknowledgement: { fingerprint: pilotAck() },
     })
     expect(res.status).toBe(400)
     expect((await res.json()).reasonCode).toBe('argv-not-allowed')
@@ -932,7 +960,6 @@ describe('/start 试点 argv 白名单(HTTP 层)', () => {
     const res = await post(baseUrl, '/start', {
       runId: 'r-limit-1', commandKey: 'xiaohongshu/feed',
       argv: ['xiaohongshu', 'feed', '--limit', '20', '-f', 'json'],
-      acknowledgement: { fingerprint: pilotAck() },
     })
     expect(res.status).toBe(202)
   })
@@ -949,7 +976,6 @@ describe('/start BrowserBridge preflight', () => {
     runId,
     commandKey,
     argv: [...commandKey.split('/'), '-f', 'json'],
-    acknowledgement: { fingerprint: realPolicy.decisionByKey.get(commandKey).fingerprint },
   })
 
   it('扩展断开时先走修复阶梯并拉起浏览器，再受理登录检查', async () => {
@@ -1278,5 +1304,91 @@ describe('/opencli/release', () => {
 
     expect(res.status).toBe(403)
     expect(opencliRelease).not.toHaveBeenCalled()
+  })
+})
+
+// 装机版生效的是应用内更新的版本时,宿主启动用打包快照作 initialSnapshot,再按生效版本后台刷新;
+// 刷新完成前 /catalog/effective 不能把打包快照的目录和判决当作当前目录下发
+// (前端拿旧 fingerprint 去跑命令,宿主 409,前端再弹一次确认框)。
+describe('/catalog/effective 等在途刷新(启动竞态)', () => {
+  const command = (name) => ({
+    command: `a/${name}`, site: 'a', name, description: '', access: 'read', strategy: 'public', browser: false, args: [],
+  })
+  const seed = {
+    schemaVersion: 1, generatedAt: 1, opencliVersion: '1.8.8', source: 'bundled',
+    listSha256: 'list', manifestSha256: 'manifest', commands: [command('old')],
+  }
+
+  // 刷新里的 `opencli list` 子进程由测试手动结束。
+  function pendingRefreshService() {
+    const children = []
+    const service = createCatalogService({
+      opencliEntry: 'C:/fixture/dist/src/main.js',
+      resolveManifest: () => 'C:/fixture/cli-manifest.json',
+      initialSnapshot: seed,
+      spawnImpl: () => {
+        const child = new EventEmitter()
+        child.stdout = new EventEmitter()
+        child.stderr = new EventEmitter()
+        child.kill = () => true
+        children.push(child)
+        return child
+      },
+      readFileImpl: (path) => (String(path).includes('package.json') ? '{"version":"2.0.2"}' : '[{"site":"a","name":"new","type":"js"}]'),
+    })
+    return { service, children }
+  }
+  const finish = (child) => {
+    child.stdout.emit('data', Buffer.from(JSON.stringify([command('new')])))
+    child.emit('close', 0)
+  }
+  const getEffective = (baseUrl) => fetch(`${baseUrl}/catalog/effective`, { headers: { Origin: origin } })
+  const delay = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
+
+  it('在途刷新期间请求:等刷新落地,返回新版本的目录与判决', async () => {
+    const { service, children } = pendingRefreshService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const refreshing = service.refresh()
+    await vi.waitFor(() => expect(children).toHaveLength(1))
+
+    let settled = false
+    const response = getEffective(baseUrl).then((res) => { settled = true; return res })
+    await delay(50)
+    expect(settled).toBe(false)                           // 刷新没完,不放行打包快照
+
+    finish(children[0])
+    await refreshing
+    const body = await (await response).json()
+    expect(body.snapshot.opencliVersion).toBe('2.0.2')
+    expect(body.snapshot.commands.map((c) => c.command)).toEqual(['a/new'])
+    expect(body.policy.decisions.map((d) => d.commandKey)).toEqual(['a/new'])
+    expect(body.revision).toBe(service.current().revision)
+  })
+
+  it('在途刷新失败:返回刷新前的状态,不报错', async () => {
+    const { service, children } = pendingRefreshService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const refreshing = service.refresh().catch(() => {})
+    await vi.waitFor(() => expect(children).toHaveLength(1))
+
+    const response = getEffective(baseUrl)
+    children[0].stderr.emit('data', Buffer.from('boom'))
+    children[0].emit('close', 3)
+    await refreshing
+
+    const res = await response
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.snapshot.opencliVersion).toBe('1.8.8')
+    expect(body.snapshot.commands.map((c) => c.command)).toEqual(['a/old'])
+  })
+
+  it('没有在途刷新:立即返回,不等也不触发刷新', async () => {
+    const { service, children } = pendingRefreshService()
+    const { baseUrl } = await setup({ catalogService: service })
+    const res = await getEffective(baseUrl)
+    expect(res.status).toBe(200)
+    expect((await res.json()).snapshot.opencliVersion).toBe('1.8.8')
+    expect(children).toHaveLength(0)
   })
 })

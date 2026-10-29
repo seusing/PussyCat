@@ -296,3 +296,48 @@ describe('CatalogService —— OpenCLI 2.0 输出', () => {
     expect(service.current().snapshot).toBe(snapshot)
   })
 })
+
+describe('CatalogService.settled', () => {
+  const seed = {
+    schemaVersion: 1,
+    generatedAt: 1,
+    opencliVersion: '1.0.0',
+    source: 'bundled',
+    listSha256: 'list',
+    manifestSha256: 'manifest',
+    commands: JSON.parse(LIST),
+  }
+
+  it('没有在途刷新:直接返回当前状态,不 spawn', async () => {
+    const { service, spawnCalls } = setup({ initialSnapshot: seed })
+    const state = await service.settled()
+    expect(state).toBe(service.current())
+    expect(state.snapshot).toBe(seed)
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  it('在途刷新期间:等它落地,返回的是刷新后的状态', async () => {
+    const { service, children } = setup({ initialSnapshot: seed })
+    const refreshing = service.refresh()
+    let done = false
+    const waiting = service.settled().then((state) => { done = true; return state })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20))
+    expect(done).toBe(false)                              // 刷新没完,不放行
+    emitSuccess(children[0])
+    const state = await waiting
+    await refreshing
+    expect(state.snapshot.opencliVersion).toBe('9.9.9')   // 不是打包快照的 1.0.0
+    expect(state).toBe(service.current())
+  })
+
+  it('在途刷新失败:不抛,返回刷新前的状态', async () => {
+    const { service, children } = setup({ initialSnapshot: seed })
+    const before = service.current()
+    const refreshing = service.refresh().catch((error) => error)
+    const waiting = service.settled()
+    children[0].stderr.emit('data', Buffer.from('boom'))
+    children[0].emit('close', 3)
+    await expect(waiting).resolves.toBe(before)
+    expect(await refreshing).toBeInstanceOf(CatalogServiceError)
+  })
+})

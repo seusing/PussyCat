@@ -244,25 +244,33 @@ it('buildExecutionPolicy: commands 非数组 → throw', () => {
 })
 
 describe('确认校验与状态码', () => {
-  const req = (over = {}) => ({
-    runId: 'run-1', commandKey: 'antigravity/recent-paths',
-    argv: ['antigravity', 'recent-paths', '-f', 'json'], ...over,
-  })
+  // 2026-10-29 起现行策略不再产生 acknowledgement-required,但协议仍定义这个状态
+  // (428/409 分支保留),所以用手工构造的判决表守住它。
+  const ackPolicy = {
+    decisionByKey: new Map([['x/ack', { commandKey: 'x/ack', state: 'acknowledgement-required', fingerprint: 'fp-1' }]]),
+  }
+  const req = (over = {}) => ({ runId: 'run-1', commandKey: 'x/ack', argv: ['x', 'ack', '-f', 'json'], ...over })
 
   it('需确认但未带 acknowledgement → 428', () => {
-    try { validateStartRequest(req(), policy); throw new Error('应当抛出') }
+    try { validateStartRequest(req(), ackPolicy); throw new Error('应当抛出') }
     catch (e) { expect(e.statusCode).toBe(428); expect(e.reasonCode).toBe('acknowledgement-required') }
   })
 
   it('fingerprint 不匹配 → 409', () => {
-    try { validateStartRequest(req({ acknowledgement: { fingerprint: 'stale' } }), policy); throw new Error('应当抛出') }
-    catch (e) { expect(e.statusCode).toBe(409) }
+    try { validateStartRequest(req({ acknowledgement: { fingerprint: 'stale' } }), ackPolicy); throw new Error('应当抛出') }
+    catch (e) { expect(e.statusCode).toBe(409); expect(e.reasonCode).toBe('fingerprint-stale') }
   })
 
   it('fingerprint 匹配 → 放行', () => {
-    const fp = policy.decisionByKey.get('antigravity/recent-paths').fingerprint
-    expect(validateStartRequest(req({ acknowledgement: { fingerprint: fp } }), policy).commandKey)
-      .toBe('antigravity/recent-paths')
+    expect(validateStartRequest(req({ acknowledgement: { fingerprint: 'fp-1' } }), ackPolicy).commandKey).toBe('x/ack')
+  })
+
+  it('现行策略下全部十八条审定命令不带 acknowledgement 也放行', () => {
+    expect(policy.allowedCommands.size).toBe(18)
+    for (const key of policy.allowedCommands) {
+      const request = { runId: 'r', commandKey: key, argv: [...key.split('/'), '-f', 'json'] }
+      expect(validateStartRequest(request, policy).commandKey, key).toBe(key)
+    }
   })
 
   it('ready 的命令不需要 acknowledgement', () => {

@@ -29,13 +29,9 @@ beforeEach(() => {
   })
 })
 
-// 所有手动提交都先弹「是否确认提交？」,点运行后要再点「确认提交」才真正发起。
-const confirmSubmit = async () => { await userEvent.click(await screen.findByTestId('ack-confirm')) }
-
 test('端到端：运行一条 mock 命令走到成功终态并出表格', async () => {
   render(<App />)
   await userEvent.click(screen.getByTestId('run-button'))
-  await confirmSubmit()
   await waitFor(() => expect(screen.getByTestId('run-state')).toHaveTextContent('已完成'), { timeout: 2000 })
   await userEvent.click(screen.getByText('表格结果'))
   expect(screen.getByTestId('results-table')).toBeInTheDocument()
@@ -50,7 +46,6 @@ test('运行中显示取消执行按钮', async () => {
   }
   render(<App host={runningHost} />)
   await userEvent.click(screen.getByTestId('run-button'))
-  await confirmSubmit()
   await waitFor(() => expect(screen.getByTestId('cancel-button')).toBeInTheDocument())
 })
 
@@ -84,7 +79,6 @@ test('startCommand rejection → 已失败 + 错误摘要', async () => {
   }
   render(<App host={rejectingHost} />)
   await userEvent.click(screen.getByTestId('run-button'))
-  await confirmSubmit()
   await waitFor(() => expect(screen.getByTestId('run-state')).toHaveTextContent('失败'))
   expect(screen.getByText(/host 启动失败/)).toBeInTheDocument()
 })
@@ -99,7 +93,6 @@ test('cancelCommand rejection → 已失败 + 错误摘要', async () => {
   }
   render(<App host={rejectingCancelHost} />)
   await userEvent.click(screen.getByTestId('run-button'))
-  await confirmSubmit()
   await waitFor(() => expect(screen.getByTestId('cancel-button')).toBeInTheDocument())
   await userEvent.click(screen.getByTestId('cancel-button'))
   await waitFor(() => expect(screen.getByTestId('run-state')).toHaveTextContent('失败'))
@@ -361,7 +354,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     expect(onRerun).toHaveBeenCalledOnce()
   })
 
-  test('结果面板「再次执行」同样先弹确认框,确认后才提交', async () => {
+  test('结果面板「再次执行」直接提交,不弹确认框', async () => {
     const startCommand = vi.fn((req: { runId: string }) => Promise.resolve({ runId: req.runId }))
     const host: HostBridge = {
       startCommand, cancelCommand: () => Promise.resolve(), onOutput: () => () => {}, onDone: () => () => {},
@@ -374,10 +367,8 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     })
     render(<App host={host} mode="connected" />)
     await userEvent.click(screen.getByTestId('rerun-button'))
-    expect(await screen.findByTestId('acknowledge-dialog')).toHaveTextContent('是否确认提交？')
-    expect(startCommand).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByTestId('ack-confirm'))
     expect(startCommand).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
   })
 
   test('error.detail 展开/收起', async () => {

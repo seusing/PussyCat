@@ -290,12 +290,9 @@ export default function App({
     useAppStore.getState().finishRun({ runId, at: Date.now(), outcome: 'error', error: normalizeHostError(err, 'start') })
   }
 
-  // opts.confirmed=false（默认）:所有手动发起的提交都先弹确认框。
-  // opts.confirmed=true:用户已在确认框点了「确认提交」,直接执行。
-  // acknowledgement-required 命令的偏好持久化在 confirmed=true 路径里统一处理——
-  // 登录体检队列靠 isAcknowledged 判断能否后台跑 whoami,这个语义不能丢(I-P5)。
-  const executeSelected = (opts: { confirmed?: boolean } = {}): boolean => {
-    const { confirmed = false } = opts
+  // 点「运行任务」、Ctrl+Enter、重跑都直接执行,不再弹确认框。判决若仍是 acknowledgement-required,
+  // 把 fingerprint 随请求发出,Host 据此放行;不再持久化确认。
+  const executeSelected = (): boolean => {
     const s = useAppStore.getState()
     if (s.catalogStatus !== 'ready') return false
     if (s.currentRun && !isTerminal(s.currentRun.state)) return false   // 键盘路径绕过按钮 disabled,权威兜底
@@ -306,19 +303,10 @@ export default function App({
 
     const cmd = s.selected
 
-    if (!confirmed) {
-      // 所有手动提交都经过确认框,包括已确认过的命令
-      s.requestAcknowledgement(cmd, decision!)
-      return false
-    }
-
     let acknowledgement: { fingerprint: string } | undefined
     if (decision!.state === 'acknowledgement-required') {
       const fp = decision!.fingerprint
       if (!fp) return false   // fingerprint 缺失的 ack-required 判决理论上到不了这里;防御性早退
-      // 持久化确认(登录体检队列靠 isAcknowledged 判断能否后台跑 whoami)。
-      // 持久化失败(返回 false)时不做二次提示,直接继续提交。
-      s.acknowledgeCommand(cmd.command, fp, Date.now())
       acknowledgement = { fingerprint: fp }
     }
 
@@ -424,7 +412,7 @@ export default function App({
       <AcknowledgeDialog
         pending={pendingAcknowledgement}
         onCancel={() => useAppStore.getState().dismissAcknowledgement()}
-        onConfirmed={() => { useAppStore.getState().dismissAcknowledgement(); executeSelected({ confirmed: true }) }}
+        onConfirmed={() => { useAppStore.getState().dismissAcknowledgement(); executeSelected() }}
       />
     </div>
   )

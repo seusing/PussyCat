@@ -194,6 +194,12 @@ export function createCatalogService({
       return inflight
     },
     current() { return state },
+    // 等在途刷新结束(失败不抛,沿用刷新前的状态)再返回 current():
+    // 启动时按生效版本的后台刷新还没跑完,此刻的 state 还是打包快照,不能当作当前目录下发。
+    async settled() {
+      if (inflight) await inflight.catch(() => {})
+      return state
+    },
     close() {
       closed = true
       activeChild?.kill('SIGKILL')

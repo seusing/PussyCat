@@ -6,10 +6,9 @@ import type { PolicyDecision } from '../../data/policy'
 export type PendingAcknowledgement = { command: CommandManifest; decision: PolicyDecision }
 
 /**
- * 提交确认框。**不是安全授权**（I-P5）——真正的执行边界是 Host 对 denied/unknown 的拒绝；
- * 这里只防止用户误点。所有手动提交（包括已确认的命令）都先经过这里。
- * acknowledgement-required 命令的 fingerprint 持久化和请求封装由 App.tsx 的
- * executeSelected({ confirmed: true }) 统一处理。
+ * 提交确认框。**不是安全授权**（I-P5）——真正的执行边界是 Host 对 denied/unknown 的拒绝。
+ * 运行命令不再经过这里;只有 Host 要求重新确认(409/428 之后)或登录页点到待确认的站点时才弹出,
+ * 确认后由 App.tsx 的 executeSelected 直接执行,fingerprint 随请求发出。
  */
 export function AcknowledgeDialog({ pending, onConfirmed, onCancel }: {
   pending: PendingAcknowledgement | undefined

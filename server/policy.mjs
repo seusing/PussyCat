@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { isCompleteRecord } from './policy-types.mjs'
-import { ACKNOWLEDGEMENT_WAIVED, BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
+import { BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
 import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewCarryHash, reviewShapeHash } from './policy-fingerprint.mjs'
 
 export class RequestPolicyError extends Error {
@@ -37,7 +37,7 @@ export const COMMAND_POLICY_OVERRIDES = {
  *
  * `local-direct` 见 spec §4.1.1;`browser-cookie-read-pilot` 见
  * docs/specs/2026-07-30-browser-cookie-read-pilot-review.md §6.2。后者相对前者有两处
- * **有意放宽**,各自的代价由确认协议(第 9 步)承担:
+ * **有意放宽**(2026-10-29 起不再要求运行前确认,放宽的内容靠 metadata 如实下发):
  *   · credentialFlow 从 none 放到允许 consume —— 消费浏览器登录态正是该 tier 的存在理由;
  *   · residues 从 [] 放到允许 persistent-session —— 四条 whoami 的 siteSession:'persistent'
  *     是上游 _shared/site-auth.js:59 写死的,绕不过。
@@ -80,21 +80,6 @@ function withinTier(tier, m) {
   return true
 }
 
-/**
- * 集合恰好相等(按值,非引用/非顺序、**非重数**)——第 8 步的判据。
- * 用 Set 归一化再比:spec §4.3 第 8 步说的是「authorities 集合恰好等于 {explicit-local-input}」,
- * 集合语义下 `['x','x']` 与 `['x']` 相等。旧实现先比 length,等价于**多重集**相等,
- * 于是 `['explicit-local-input','explicit-local-input']` 会掉到第 9 步多挂一次弹窗——
- * 方向是 fail-safe,但与 §4.3 字面不符。
- */
-function sameSet(a, b) {
-  const left = new Set(a)
-  const right = new Set(b)
-  if (left.size !== right.size) return false
-  for (const item of left) if (!right.has(item)) return false
-  return true
-}
-
 // `records` 是**只给测试用的注入缝**,生产调用不传第二参。
 // 为什么必须开这道缝:真实的三条人工记录全部落在 local-direct 允许集**内部**
 // (exposure ∈ {public,personal}、effects/residues 皆 []、credentialFlow=none),
@@ -107,12 +92,8 @@ function reviewStillHolds(record, command, shape, version, baselineVersion) {
   return version !== baselineVersion() && record.reviewedCarry === reviewCarryHash(command)
 }
 
-// `baselineVersion`、`waived` 同样只给测试注入:生产调用取打包快照的版本和 ACKNOWLEDGEMENT_WAIVED。
-export function buildPolicyDecisions(snapshot, {
-  records = REVIEWED_RECORDS,
-  baselineVersion = reviewBaselineVersion,
-  waived = ACKNOWLEDGEMENT_WAIVED,
-} = {}) {
+// `baselineVersion` 同样只给测试注入:生产调用取打包快照的版本。
+export function buildPolicyDecisions(snapshot, { records = REVIEWED_RECORDS, baselineVersion = reviewBaselineVersion } = {}) {
   const version = snapshot.opencliVersion
   return snapshot.commands.map((command) => {
     const commandKey = command.command
@@ -172,41 +153,9 @@ export function buildPolicyDecisions(snapshot, {
       matchedDenyRule: null,
     })
 
-    // 8. 显式输入:表单已明示读取对象,选择即授权。**必须早于第 9 步**,
-    //    否则 mercury(explicit-local-input + personal)会被挂上多余弹窗。
-    if (sameSet(m.authorities, ['explicit-local-input'])) {
-      return { ...base, state: 'ready', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
-    }
-
-    // 8.5 免确认的显式成员(四条 whoami,见 policy-metadata.mjs 的 ACKNOWLEDGEMENT_WAIVED):
-    //    只读当前登录账号是谁,用户决定登录检查不再逐站确认。**必须在前 7 步之后**——
-    //    deny、tier、审定完整性与过期、unknown、阈值都先过,免确认绕不过它们;
-    //    也**必须早于第 9 步**,否则 browser-profile / personal / persistent-session 会把它们挂上弹窗。
-    //    判决形状与第 8、10 步的 ready 完全一致(fingerprint 照常计算),前端无需任何特例。
-    if (waived.has(commandKey)) {
-      return { ...base, state: 'ready', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
-    }
-
-    // 9. 需确认的四种情形。原文只列前两支(ambient-local-files / personal),那是在 browser tier
-    //    存在之前写的,枚举不完整——不是判据错了。补的两支各有独立理由:
-    //    · browser-profile **严格强于** ambient-local-files:后者是「程序自己去扫本地文件」,
-    //      前者在此之上还动用**用户的登录态本身**,读取范围由站点会话决定;
-    //    · residues 含 persistent-session 是用户看得见的跨命令状态(浏览器里多一个不关的自动化
-    //      标签),该在确认时告知,而不是靠 personal 顺带覆盖。
-    //    对既有三条记录是 **no-op**:它们的 authorities 为 [] / [explicit-local-input] /
-    //    [ambient-local-files]、residues 全为 [],新增两支在其身上恒假。
-    //    它同时堵掉本 tier 唯一的漏网者 bilibili/hot(exposure=public 且无 persistent-session,
-    //    按原两支会落第 10 步直接 ready——而它是以用户登录身份打 B 站 API 的)。
-    if (
-      m.authorities.includes('ambient-local-files')
-      || m.authorities.includes('browser-profile')
-      || m.exposure === 'personal'
-      || m.residues.includes('persistent-session')
-    ) {
-      return { ...base, state: 'acknowledgement-required', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
-    }
-
-    // 10.
+    // 8. 通过前 7 步的命令一律 ready。2026-10-29 起不再要求运行前确认(用户决定);
+    //    metadata 里的 authorities / exposure / residues 仍如实下发,fingerprint 照常计算。
+    //    协议里的 acknowledgement-required 状态(validateStartRequest 的 428/409 分支)保留,只是现行策略不再产生。
     return { ...base, state: 'ready', decisionSource: 'tier-evaluation', metadata: m, fingerprint }
   })
 }

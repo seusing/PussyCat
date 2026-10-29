@@ -101,7 +101,7 @@ describe('2.0 目录条目 —— 参数按 1.8.8 口径规整后审定哈希不
     const decisions = decisionsOf(commands, NEW_VERSION)
     for (const key of ['bilibili/hot', 'xiaohongshu/search', 'twitter/timeline']) {
       expect(decisions.get(key).reasonCode, key).not.toBe('review-stale')
-      expect(decisions.get(key).state, key).toBe('acknowledgement-required')
+      expect(decisions.get(key).state, key).toBe('ready')
     }
   })
 })
@@ -150,7 +150,7 @@ describe('审定沿用', () => {
 
   it('同版本、命令不变:行为不变', () => {
     const baseline = decisionsOf(snapshot.commands, BASELINE)
-    expect(baseline.get(REVIEWED).state).toBe('acknowledgement-required')
+    expect(baseline.get(REVIEWED).state).toBe('ready')
     expect(baseline.get('mercury/reimbursement-plan').state).toBe('ready')
     expect(baseline.get('trae-cn/setup').state).toBe('ready')
   })
@@ -167,14 +167,14 @@ describe('审定沿用', () => {
 
   it('版本不同、参数一致 → 沿用审定', () => {
     const d = upgraded(REVIEWED)
-    expect(d.state).toBe('acknowledgement-required')
+    expect(d.state).toBe('ready')
     expect(d.decisionSource).toBe('tier-evaluation')
     expect(upgraded('mercury/reimbursement-plan').state).toBe('ready')
   })
 
   it('版本不同、只有 columns 变 → 沿用', () => {
     const d = upgraded(REVIEWED, (c) => ({ ...c, columns: ['only', 'new', 'columns'] }))
-    expect(d.state).toBe('acknowledgement-required')
+    expect(d.state).toBe('ready')
   })
 
   it('版本不同、参数变了 → review-stale', () => {
@@ -196,7 +196,7 @@ describe('审定沿用', () => {
     expect(d.reasonCode).toBe('review-stale')
   })
 
-  it('decisionFingerprint 随版本变:需要确认的命令在新版里再确认一次', () => {
+  it('decisionFingerprint 随版本变(照常计算并下发)', () => {
     const before = decisionsOf(snapshot.commands, BASELINE).get(REVIEWED).fingerprint
     const after = upgraded(REVIEWED).fingerprint
     expect(after).toEqual(expect.any(String))
