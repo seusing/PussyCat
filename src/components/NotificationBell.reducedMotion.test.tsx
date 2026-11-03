@@ -53,3 +53,26 @@ it('缩减动效下面板照常打开、标已读、Esc 关闭并还回焦点', 
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '通知' })).not.toBeInTheDocument())
   expect(bell()).toHaveFocus()
 })
+
+it('缩减动效下窗口在后台期间新增的未读,回到前台也不补摇', () => {
+  const hasFocus = vi.spyOn(Document.prototype, 'hasFocus').mockReturnValue(false)
+  const visibility = vi.spyOn(Document.prototype, 'visibilityState', 'get').mockReturnValue('hidden')
+  try {
+    render(<NotificationBell />)
+    act(() => recordNotifications([entry('a')]))
+
+    hasFocus.mockReturnValue(true)
+    visibility.mockReturnValue('visible')
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      window.dispatchEvent(new Event('focus'))
+    })
+
+    expect(animateCalls.count).toBe(0)
+    expect(bell()).toHaveAttribute('data-ring-count', '0')
+    expect(screen.getByTestId('notification-badge')).toHaveTextContent(/^1$/)
+  } finally {
+    hasFocus.mockRestore()
+    visibility.mockRestore()
+  }
+})
