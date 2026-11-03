@@ -317,12 +317,38 @@
   overflow: hidden;
 }
 .vk-task-detail-task-main b { flex: 0 0 auto; font-weight: 650; }
+/* 链接换成标题时,旧文字由 popLayout 脱离文档流上滑淡出,所以外层要 relative。
+   overflow-x 用 clip:不挡住竖直方向的位移,也不建立滚动容器。 */
 .vk-task-detail-task-source {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   flex: 1 1 auto;
+  overflow-x: clip;
+}
+/* 省略号归这个块级元素自己画(不透明),流光的透明文字填充只落在里面的行内 span 上。 */
+.vk-task-detail-task-source-line {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 排队或进行中的流光:一道亮光从左扫到右,1.6s 一轮。 */
+.vk-task-detail-task-source-text.is-flowing {
+  background-image: linear-gradient(90deg, var(--color-fg-dim) 40%, #f6f8fc 50%, var(--color-fg-dim) 60%);
+  background-position: 100% 0;
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: vk-task-source-flow 1.6s linear infinite;
+}
+@keyframes vk-task-source-flow {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
 }
 .vk-task-detail-batch-status { flex: 0 0 auto; white-space: nowrap; font-size: 11px; }
 .vk-task-detail-task-elapsed { flex: 0 0 auto; color: var(--color-fg-dim); font-size: 11px; white-space: nowrap; }
@@ -422,6 +448,12 @@
   .vk-task-detail-task-disclosure,
   .vk-task-detail-step { animation: none; opacity: 1; transform: none; }
   .vk-task-detail-step-spinner { animation: none; }
+  .vk-task-detail-task-source-text.is-flowing {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: inherit;
+    animation: none;
+  }
 }
 
 /* 批量重跑:菜单通过 portal 挂到 body,不受详情滚动容器的 overflow 裁切。

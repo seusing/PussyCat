@@ -12,6 +12,7 @@ import { useAppStore } from '../../store/appStore'
 import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
+import { recordNotifications } from '../../store/notificationHistory'
 import { GlassCombobox, GlassSelect } from '../../components/GlassMenu'
 import { HostRequestError } from '../../host/errors'
 import {
@@ -410,6 +411,8 @@ type TaskBanner = {
   description?: string
   tone: TaskBannerTone
   createdAt: number
+  /** 任务状态类的通知:除了弹出来,还记进铃铛的通知历史。 */
+  history?: true
 }
 
 function TaskBannerNotice({ banner, onDismiss }: {
@@ -730,6 +733,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       ...banners.filter((banner) => !current.some((item) => item.id === banner.id)),
       ...current,
     ])
+    // 记历史放在 updater 之外(updater 要保持纯):历史按 id 去重,和弹窗各自去重。
+    recordNotifications(banners.filter((banner) => banner.history))
   }, [])
 
   // —— 提交前预检 ——
@@ -890,6 +895,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             message: '\u4efb\u52a1\u5df2\u63d0\u4ea4',
             tone: 'info',
             createdAt: Date.now(),
+            history: true,
           }])
         }
       }
@@ -1073,6 +1079,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               description: failureHeadlines.get(row.job_id),
               tone: interrupted ? 'warning' as const : success ? 'success' as const : 'danger' as const,
               createdAt: Date.now(),
+              history: true as const,
             }]
           })
           const summaryNotices = settlements.flatMap((settlement) => {
@@ -1083,15 +1090,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               message: batchSummaryMessage(settlement),
               tone: BATCH_SUMMARY_TONES[settlement.outcome],
               createdAt: Date.now(),
+              history: true as const,
             }]
           })
           const notices = [...summaryNotices, ...memberNotices]
-          if (notices.length) {
-            setTaskBanners((current) => [
-              ...notices.filter((notice) => !current.some((item) => item.id === notice.id)),
-              ...current,
-            ])
-          }
+          if (notices.length) addTaskBanners(notices)
         }
         previousStatusesRef.current = new Map(rows.map((row) => [row.job_id, row.status]))
         previousLogicalStatusesRef.current = snapshotJobStatuses(logicalRows)
@@ -1168,6 +1171,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         message: '\u4efb\u52a1\u5df2\u91cd\u65b0\u63d0\u4ea4\uff0c\u6b63\u5728\u91cd\u8dd1',
         tone: 'rerun',
         createdAt: Date.now(),
+        history: true,
       }])
     }
     window.addEventListener(VK_JOB_DETAIL_TERMINAL_EVENT, refreshFromDetail)
@@ -1206,6 +1210,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           message: '\u4efb\u52a1\u5df2\u91cd\u65b0\u63d0\u4ea4\uff0c\u6b63\u5728\u91cd\u8dd1',
           tone: 'rerun',
           createdAt: Date.now(),
+          history: true,
         }])
       }
       await refreshJobs()

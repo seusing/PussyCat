@@ -49,6 +49,8 @@ export function memberInFlight(state: BatchState): boolean {
 export type BatchMember = {
   job_id: string
   source: string
+  /** 帖子标题:尝试链里最新的非空标题;全都没有时不带这个键。 */
+  title?: string
   /** 最新一次尝试的原始状态,整批汇总按它算。 */
   status: string
   state: BatchState
@@ -68,7 +70,7 @@ export function memberSource(row: { source?: string; request?: { source?: string
 
 type AttemptRow = {
   job_id: string; parent_job_id?: string | null; submitted_at: string
-  finished_at?: string | null; status: string; source?: string
+  finished_at?: string | null; status: string; source?: string; title?: string | null
 }
 
 /** 同一个视频的多次尝试归成一组,组按首次提交排序。组的位置就是「小任务n」的 n。
@@ -121,19 +123,24 @@ function groupAttempts<Row extends AttemptRow>(rows: readonly Row[]): {
 /** 把「同一个视频的多次尝试」折成一行。
  *
  * 折叠取**最新一次尝试**的状态与 job_id(点进去、重跑都该落在它身上),来源取链上
- * 任意一条能取到的——同一个视频,链接本来就一样。
+ * 任意一条能取到的——同一个视频,链接本来就一样。标题取链上最新的非空标题:
+ * 重试刚提交时还没采集到标题,不能因此退回显示链接。
  */
 export function collapseAttempts(rows: readonly AttemptRow[]): BatchMember[] {
-  return groupAttempts(rows).map(({ latest, source }) => ({
-    job_id: latest.job_id,
-    source,
-    status: latest.status,
-    state: batchState(latest.status),
-    // 耗时按**最新那次尝试**算。从首次提交算起会把中间等着的时间也算进去,
-    // 那不是这次跑用了多久。
-    submitted_at: latest.submitted_at,
-    finished_at: latest.finished_at ?? null,
-  }))
+  return groupAttempts(rows).map(({ attempts, latest, source }) => {
+    const title = attempts.map((attempt) => attempt.title?.trim() ?? '').reverse().find(Boolean)
+    return {
+      job_id: latest.job_id,
+      source,
+      ...(title ? { title } : {}),
+      status: latest.status,
+      state: batchState(latest.status),
+      // 耗时按**最新那次尝试**算。从首次提交算起会把中间等着的时间也算进去,
+      // 那不是这次跑用了多久。
+      submitted_at: latest.submitted_at,
+      finished_at: latest.finished_at ?? null,
+    }
+  })
 }
 
 /** job_id → 小任务编号(从 1 起)。同一个视频的每一次尝试都落在同一个编号上,

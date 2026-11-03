@@ -11,7 +11,9 @@ import {
 const row = (
   job_id: string,
   submitted_at: string,
-  over: { source?: string; parent_job_id?: string | null; status?: string; finished_at?: string | null } = {},
+  over: {
+    source?: string; parent_job_id?: string | null; status?: string; finished_at?: string | null; title?: string | null
+  } = {},
 ) => ({ job_id, submitted_at, status: 'done', parent_job_id: null, ...over })
 
 describe('aggregateBatchStatus', () => {
@@ -169,5 +171,26 @@ describe('collapseAttempts', () => {
         submitted_at: '2026-09-01T00:00:01Z', finished_at: null,
       },
     ])
+  })
+
+  it('带上尝试链里最新的非空标题,重试还没有标题时不退回链接', () => {
+    const members = collapseAttempts([
+      row('a', '2026-09-01T00:00:00Z', { source: 'https://v/1', title: '第一次的标题', status: 'failed' }),
+      row('a-retry', '2026-09-01T00:10:00Z', { source: 'https://v/1', parent_job_id: 'a', status: 'running' }),
+      row('b', '2026-09-01T00:00:01Z', { source: 'https://v/2' }),
+    ])
+    expect(members.map((member) => member.title)).toEqual(['第一次的标题', undefined])
+    expect(members[1]).not.toHaveProperty('title')
+  })
+
+  it('标题以最新一次尝试为准,空白和 null 的忽略', () => {
+    const [member] = collapseAttempts([
+      row('a', '2026-09-01T00:00:00Z', { source: 'https://v/1', title: '旧标题' }),
+      row('a-2', '2026-09-01T00:05:00Z', { source: 'https://v/1', parent_job_id: 'a', title: ' 新标题 ' }),
+      row('a-3', '2026-09-01T00:10:00Z', { source: 'https://v/1', parent_job_id: 'a-2', title: '   ' }),
+      row('a-4', '2026-09-01T00:15:00Z', { source: 'https://v/1', parent_job_id: 'a-3', title: null }),
+    ])
+    expect(member.job_id).toBe('a-4')
+    expect(member.title).toBe('新标题')
   })
 })

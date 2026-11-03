@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { VkJobRow } from '../../host/vkClient'
-import { vkTaskResultGroups } from './taskResults'
+import type { VkJobRow, VkJobView } from '../../host/vkClient'
+import { vkJobRowFromView, vkTaskResultGroups } from './taskResults'
 
 function row(jobId: string, overrides: Partial<VkJobRow> = {}): VkJobRow {
   return {
@@ -59,5 +59,27 @@ describe('vkTaskResultGroups', () => {
     ], 'retry')
     expect(groups).toHaveLength(1)
     expect(groups[0].versions.map((version) => version.jobId)).toEqual(['original'])
+  })
+})
+
+describe('vkJobRowFromView', () => {
+  const view = (over: Partial<VkJobView> = {}): VkJobView => ({
+    job_id: 'job-one', kind: 'run', status: 'done',
+    submitted_at: '2026-09-03T00:00:00Z', finished_at: null,
+    parent_job_id: null, cache_bypass: false,
+    request: { source: 'https://example.com/one' },
+    ...over,
+  })
+
+  it('带上详情里的标题与来源', () => {
+    expect(vkJobRowFromView(view({ title: '  帖子标题  ' }))).toMatchObject({
+      source: 'https://example.com/one', title: '帖子标题',
+    })
+  })
+
+  it.each([undefined, null, '', '   '])('标题为 %j 时不带 title 键,合并列表行时不会抹掉已知标题', (title) => {
+    const currentRow = vkJobRowFromView(view({ title: title as string | undefined }))
+    expect(currentRow).not.toHaveProperty('title')
+    expect({ ...row('job-one', { title: '列表里的标题' }), ...currentRow }.title).toBe('列表里的标题')
   })
 })

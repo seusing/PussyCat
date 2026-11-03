@@ -212,7 +212,7 @@
 }
 
 .vk-task-banners {
-  width: min(620px, calc(100vw - 24px));
+  width: 100%;
   margin: 0;
   pointer-events: none;
 }
@@ -224,10 +224,10 @@
 
 .vk-installing-beam { width: 100%; }
 
-.vk-task-banner.app-alert {
-  max-width: 100%;
-  min-height: 64px;
-}
+.vk-task-banner.app-alert { max-width: 100%; }
+
+/* 最小高度只在悬浮层外生效:层里的弹窗按内容撑高,贴着顶栏不留空。 */
+.vk-task-banner.app-alert:not(.app-notification-layer *) { min-height: 64px; }
 
 @media (max-width: 640px) {
   .vk-task-banner.app-alert { width: 100%; min-width: 0; }

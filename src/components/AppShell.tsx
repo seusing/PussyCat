@@ -14,6 +14,8 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { SystemHealthPill } from './SystemHealthPill'
+import { NotificationBell } from './NotificationBell'
+import { computeToastLane } from './toastLane'
 import ResizableSplit from './ResizableSplit'
 import { useAppStore } from '../store/appStore'
 import { APP_VERSION_LABEL } from '../lib/appVersion'
@@ -79,6 +81,11 @@ export default function AppShell({
   const activeLabel = MODULES.find((module) => module.key === activeModule)?.label ?? '爪爪'
   const shellRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLElement>(null)
+  const titleRef = useRef<HTMLDivElement>(null)
+  const actionsRef = useRef<HTMLDivElement>(null)
+  const layerRef = useRef<HTMLDivElement>(null)
   const [layout, setLayout] = useState<LayoutSnapshot>(() => loadLayout())
   const layoutRef = useRef(layout)
   const [sidebarTransitioning, setSidebarTransitioning] = useState(false)
@@ -96,6 +103,40 @@ export default function AppShell({
     })
     observer.observe(node)
     return () => observer.disconnect()
+  }, [])
+
+  // 弹窗层的位置:量顶栏标题右边到按钮组左边还剩多宽,够宽就压在顶栏这一行,否则退到顶栏下方。
+  // 结果写成三个 CSS 变量和 data-placement(index.css 的 .app-notification-layer 读它们);
+  // 尺寸变化(窗口、侧栏、标题和按钮组内容)每帧最多重算一次。
+  useEffect(() => {
+    const main = mainRef.current
+    const header = headerRef.current
+    const title = titleRef.current
+    const actions = actionsRef.current
+    const layer = layerRef.current
+    if (!main || !header || !title || !actions || !layer) return undefined
+    let frame = 0
+    const apply = () => {
+      frame = 0
+      const lane = computeToastLane(
+        main.getBoundingClientRect(), header.getBoundingClientRect(),
+        title.getBoundingClientRect(), actions.getBoundingClientRect(),
+      )
+      layer.style.setProperty('--toast-lane-top', `${lane.top}px`)
+      layer.style.setProperty('--toast-lane-left', `${lane.left}px`)
+      layer.style.setProperty('--toast-lane-right', `${lane.right}px`)
+      layer.dataset.placement = lane.placement
+    }
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(apply) }
+    apply()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule)
+    for (const element of [main, header, title, actions]) observer?.observe(element)
+    window.addEventListener('resize', schedule)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', schedule)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
   }, [])
 
   const proposeNav = useCallback((proposed: number) => {
@@ -243,8 +284,8 @@ export default function AppShell({
         disabled={sidebarCollapsed}
       />
 
-      <div className="app-main">
-        <header data-testid="app-header" className="app-header flex-wrap">
+      <div ref={mainRef} data-testid="app-main" className="app-main">
+        <header ref={headerRef} data-testid="app-header" className="app-header flex-wrap">
           <div className="app-header-primary">
             <button
               type="button"
@@ -269,10 +310,11 @@ export default function AppShell({
                 {layout.navHidden ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
               </button>
             )}
-            <div><strong>{activeLabel}</strong></div>
+            <div ref={titleRef} data-testid="app-header-title"><strong>{activeLabel}</strong></div>
           </div>
-          <div data-testid="app-header-actions" className="app-header-actions">
+          <div ref={actionsRef} data-testid="app-header-actions" className="app-header-actions">
             {headerActions}
+            <NotificationBell />
             {!fullPage && (
               <button
                 type="button"
@@ -301,7 +343,7 @@ export default function AppShell({
           </div>
         </header>
 
-        <div data-testid="app-notification-layer" className="app-notification-layer" />
+        <div ref={layerRef} data-testid="app-notification-layer" className="app-notification-layer" />
 
         {catalogStatus === 'loading' && (
           <div data-testid="catalog-loading" className="app-status-screen app-catalog-loading" role="status">

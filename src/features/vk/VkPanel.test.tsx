@@ -6,6 +6,7 @@ import type { VkProcessingRequest } from '../../host/vkClient'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
+import { useNotificationHistory } from '../../store/notificationHistory'
 
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
 
@@ -266,6 +267,8 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('vk-panel')).not.toContainElement(screen.getByTestId('vk-task-banner'))
     expect(useAppStore.getState().activeModule).not.toBe('providers')
     expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('请选择基础处理和深度分析使用的模型配置。')
+    // 只弹窗、不进铃铛的通知历史
+    expect(useNotificationHistory.getState().entries).toEqual([])
   })
 
   it.each([0, 1])('模型配置变更后保活页面使用最新配置提交，revision=%s', async (revision) => {
@@ -2676,5 +2679,149 @@ describe('解析完成的系统通知', () => {
     await screen.findByText(/任务\d+已完成/)
     await act(async () => {})
     expect(sendNotification).not.toHaveBeenCalled()
+  })
+})
+
+describe('任务状态进铃铛的通知历史', () => {
+  const RATE_LIMITED = 'channel-a:default HTTP 429（阶段 chapter，角色 basic，路由 channel-a:default，已尝试 2 次；同角色未配置备用通道；不会跨角色自动切换）'
+  const member = (batchId: string, index: number, status: string, over: Record<string, unknown> = {}) => ({
+    kind: 'request', parent_job_id: null, cache_bypass: false, run_id: null, cost_cny: 0,
+    job_id: `${batchId}-${index}`, batch_id: batchId, status,
+    source: `https://example.com/${batchId}/${index}`,
+    submitted_at: `2026-08-01T00:00:0${index}Z`,
+    finished_at: status === 'running' || status === 'queued' ? null : '2026-08-01T00:10:00Z',
+    ...over,
+  })
+  const batch = (batchId: string, statuses: string[]) => statuses.map((status, index) => member(batchId, index, status))
+  const single = (jobId: string, status: string, minute: number) => ({
+    job_id: jobId, kind: 'request', status, parent_job_id: null, cache_bypass: false, run_id: null,
+    submitted_at: `2026-08-01T00:0${minute}:00Z`,
+    finished_at: status === 'running' ? null : '2026-08-01T00:10:00Z',
+  })
+  const history = () => useNotificationHistory.getState().entries
+  const messages = () => history().map((item) => item.message)
+
+  /** 先渲染一批进行中的任务,再用 refresh 换成新状态。 */
+  const setup = async (initial: Array<{ job_id: string }>, extra: Record<string, Route> = {}) => {
+    const jobsRoute: Route = { body: initial }
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': jobsRoute, ...extra })
+    render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId(`vk-job-open-${initial[0].job_id}`)
+    return {
+      refresh: async (next: unknown[]) => {
+        jobsRoute.body = next
+        await userEvent.click(screen.getByTestId('vk-jobs-refresh'))
+      },
+    }
+  }
+
+  it('同一条重新提交事件来两次,历史里只有一条', async () => {
+    stubRoutes({ 'GET /vk/v1/health': { body: HEALTH }, 'GET /vk/v1/jobs': { body: [] } })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled())
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('vk:job-retry-submitted', { detail: { jobId: 'retry-child' } }))
+      window.dispatchEvent(new CustomEvent('vk:job-retry-submitted', { detail: { jobId: 'retry-child' } }))
+    })
+
+    expect(history()).toHaveLength(1)
+    expect(history()[0]).toMatchObject({ id: 'retry-submitted:retry-child', message: '任务已重新提交，正在重跑', tone: 'rerun' })
+    expect(screen.getAllByTestId('vk-task-banner')).toHaveLength(1)
+  })
+
+  it('在任务面板里点「重试」也记一条「重新提交」', async () => {
+    const failed = single('job-fail', 'failed', 1)
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [failed] },
+      'GET /vk/v1/jobs/job-fail': { body: { ...failed, outputs: {} } },
+      'POST /vk/v1/jobs/job-fail/retry': { body: { job_id: 'job-retry' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await userEvent.click(await screen.findByTestId('vk-job-open-job-fail'))
+    await userEvent.click(await screen.findByTestId('vk-job-retry'))
+
+    await waitFor(() => expect(history().map((item) => item.id)).toContain('retry-submitted:job-retry'))
+    expect(history().find((item) => item.id === 'retry-submitted:job-retry')).toMatchObject({ tone: 'rerun' })
+  })
+
+  it('完成、中断、遇到问题三种色调都记录,失败的带上原因', async () => {
+    const { refresh } = await setup(
+      [single('ok', 'running', 1), single('stopped', 'running', 2), single('bad', 'running', 3)],
+      { 'GET /vk/v1/jobs/bad': { body: { ...single('bad', 'failed', 3), error: RATE_LIMITED } } },
+    )
+    await refresh([single('ok', 'done', 1), single('stopped', 'cancelled', 2), single('bad', 'failed', 3)])
+
+    await waitFor(() => expect(history()).toHaveLength(3))
+    const byMessage = (pattern: RegExp) => history().find((item) => pattern.test(item.message))!
+    expect(byMessage(/已完成$/)).toMatchObject({ tone: 'success', read: false })
+    expect(byMessage(/已中断$/)).toMatchObject({ tone: 'warning' })
+    expect(byMessage(/遇到了些问题$/)).toMatchObject({ tone: 'danger', description: '模型服务限流了' })
+  })
+
+  it('批内成员和整批汇总都记录,汇总排在成员前面;再刷新一次不重复', async () => {
+    const { refresh } = await setup(batch('s', ['running', 'running']))
+
+    await refresh(batch('s', ['done', 'done']))
+    await waitFor(() => expect(history()).toHaveLength(3))
+    expect(messages()[0]).toBe('任务1已全部结束：2 个成功')
+    expect(history()[0]).toMatchObject({ tone: 'success' })
+    expect(history()[0].id).toContain(':summary:')
+    expect(messages().slice(1).sort()).toEqual(['任务1的小任务1已完成', '任务1的小任务2已完成'])
+
+    await refresh(batch('s', ['done', 'done']))
+    await act(async () => {})
+    expect(history()).toHaveLength(3)
+  })
+
+  it('关掉所属任务的通知开关后,该任务的成员和汇总都不进历史;别的任务照记', async () => {
+    const { refresh } = await setup([...batch('muted', ['running', 'running']), ...batch('loud', ['running', 'running'])])
+    await userEvent.click(screen.getByRole('switch', { name: '关闭任务 1 完成通知' }))
+
+    await refresh([...batch('muted', ['done', 'done']), ...batch('loud', ['done', 'done'])])
+
+    await waitFor(() => expect(history().some((item) => item.message.startsWith('任务2已全部结束'))).toBe(true))
+    expect(messages().every((message) => message.startsWith('任务2'))).toBe(true)
+    expect(history()).toHaveLength(3)
+  })
+
+  it('弹窗被关掉不影响历史', async () => {
+    const { refresh } = await setup([single('ok', 'running', 1)])
+    await refresh([single('ok', 'done', 1)])
+    await waitFor(() => expect(history()).toHaveLength(1))
+    await userEvent.click(screen.getAllByRole('button', { name: '关闭任务提醒' })[0])
+
+    expect(screen.queryByTestId('vk-task-banner')).not.toBeInTheDocument()
+    expect(history()).toHaveLength(1)
+  })
+})
+
+describe('提交时的弹窗哪些进历史', () => {
+  const providers = {
+    configured: true,
+    channels: [{ id: 'c1', name: '主通道', base_url: 'https://relay.example/v1', model_id: 'gpt-x', key_env: 'VK_C1_KEY', api_style: 'openai_responses', key_stored: true }],
+    roles: { basic: 'c1', deep_analysis: 'c1' },
+  }
+  const history = () => useNotificationHistory.getState().entries
+
+  it('提交成功记一条「任务已提交」;同时弹出的「模型服务暂时不稳定」不进历史', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/providers': { body: providers },
+      'POST /vk/v1/providers/test': { body: { ok: false, reason_code: 'timeout', message: '10 秒内没有响应' } },
+      'POST /vk/v1/preview': { body: resolvedRequest() },
+      'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: 'https://example.com/v' } })
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+
+    await screen.findByText('基础处理的模型服务暂时不稳定')
+    await screen.findByText('任务已提交')
+    expect(history().map((item) => item.message)).toEqual(['任务已提交'])
+    expect(history()[0]).toMatchObject({ tone: 'info', read: false })
+    expect(history()[0].id).toMatch(/^submitted:/)
   })
 })

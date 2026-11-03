@@ -67,6 +67,8 @@ export interface VkJobRow {
   batch_id?: string | null
   /** 这条任务跑的是哪个视频(公开请求里的第一行来源)。列表接口直接给,不在 request 里。 */
   source?: string
+  /** 帖子标题。引擎知道时才带,采集前、旧引擎都没有。 */
+  title?: string
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number
@@ -136,6 +138,8 @@ export interface VkJobView {
   error?: string | null
   parent_job_id: string | null
   batch_id?: string | null
+  /** 帖子标题。引擎知道时才带,采集前、旧引擎都没有。 */
+  title?: string
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number

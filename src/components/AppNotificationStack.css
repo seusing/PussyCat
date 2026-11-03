@@ -3,7 +3,7 @@
   width: 100%;
   min-width: 0;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
   pointer-events: none;
 }
@@ -14,48 +14,63 @@
   width: 100%;
   min-width: 0;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: stretch;
+  gap: 10px;
   pointer-events: none;
 }
 
+/* 堆叠的外层(卡片包裹层、容器)不能有 opacity、filter、clip-path:它们会让里面最前面那张卡的
+   backdrop-filter 在 WebView2 里失效。被盖住的卡只淡化它里面的内容。 */
 .app-notification-stack__card {
-  display: flex;
-  justify-content: flex-end;
   position: relative;
+  display: flex;
+  justify-content: center;
   min-width: 0;
   width: 100%;
   pointer-events: none;
 }
 
-/* 收起时第 2 张起叠在第 1 张后面,只露出向下错开的卡边 */
+/* 收起时第 2 张起叠在第 1 张后面,按深度下移并收窄(位移和缩放由 motion 写在包裹层上),
+   高度对齐最前面那张,只露出一道卡边;纯色底,不做半透明和模糊。 */
 .app-notification-stack__card[data-covered='true'] {
   position: absolute;
   top: 0;
   right: 0;
   left: 0;
+  height: var(--stack-front-height, auto);
+  overflow: hidden;
+  border-radius: 0.5rem;
 }
 
-/* 每一层比前一层两侧各收 6px(合计窄 12px) */
-.app-notification-stack__card[data-covered='true'][data-layer='1'] > * {
-  clip-path: inset(0 6px 0 6px round 0 0 8px 8px);
+.app-notification-stack__card[data-covered='true'] > .app-alert {
+  height: 100%;
+  background: #262b36;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 6px 14px rgb(0 0 0 / 28%);
 }
 
-.app-notification-stack__card[data-covered='true'][data-layer='2'] > * {
-  clip-path: inset(0 12px 0 12px round 0 0 8px 8px);
+.app-notification-stack__card[data-covered='true'][data-layer='2'] > .app-alert {
+  background: #1f232c;
+  box-shadow: 0 6px 14px rgb(0 0 0 / 20%);
 }
 
-.app-notification-stack .app-alert {
-  max-height: 100%;
-  overflow: auto;
+.app-notification-stack__card > .app-alert > * {
+  opacity: 1;
+  transition: opacity 140ms ease;
+}
+
+.app-notification-stack__card[data-covered='true'] > .app-alert > * {
+  opacity: 0;
 }
 
 .app-notification-stack__toggle-row {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .app-notification-stack__toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -70,7 +85,16 @@
   backdrop-filter: var(--glass-blur);
   cursor: pointer;
   pointer-events: auto;
-  transition: background-color 120ms ease;
+  transition: background-color 120ms ease, scale 120ms ease;
+}
+
+.app-notification-stack__toggle-text {
+  display: inline-block;
+}
+
+.app-notification-stack__chevron {
+  display: inline-grid;
+  place-items: center;
 }
 
 .app-notification-stack__toggle:hover,
@@ -83,8 +107,14 @@
   border-color: var(--color-accent);
 }
 
+/* 全局的 button:active 是 .95;这里的选择器更具体,按下缩到 .93(用 scale 属性,不动 transform)。 */
+.app-notification-stack__toggle:not(:disabled):active {
+  scale: 0.93;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .app-notification-stack__toggle {
+  .app-notification-stack__toggle,
+  .app-notification-stack__card > .app-alert > * {
     transition: none;
   }
 }

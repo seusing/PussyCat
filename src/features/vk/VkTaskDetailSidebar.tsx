@@ -405,6 +405,8 @@ type TaskRowProps = {
   id: string
   label: string
   source: string
+  /** 帖子标题;有就替代链接显示,双击仍复制链接。 */
+  title?: string
   state: BatchState
   elapsed: string
   current: boolean
@@ -418,8 +420,38 @@ type TaskRowProps = {
 
 const TaskDisclosureContext = createContext(true)
 
+/** 行首的链接/标题。文字换了(链接 → 标题)时旧的上滑淡出、新的从下方淡入;排队或进行中带流光。
+ * 省略号由块级的 -line 画(不透明),流光的透明填充只在里面的行内 span 上,省略号不会跟着消失。 */
+function TaskSourceText({ text, flowing, reduceMotion }: { text: string; flowing: boolean; reduceMotion: boolean | null }) {
+  const content = (
+    <span className={flowing ? 'vk-task-detail-task-source-text is-flowing' : 'vk-task-detail-task-source-text'}>
+      {text}
+    </span>
+  )
+  return (
+    <span className="vk-task-detail-task-source">
+      {reduceMotion
+        ? <span className="vk-task-detail-task-source-line">{content}</span>
+        : (
+          <AnimatePresence initial={false} mode="popLayout">
+            <motion.span
+              key={text}
+              className="vk-task-detail-task-source-line"
+              initial={{ y: 6, opacity: 0, filter: 'blur(3px)' }}
+              animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
+              exit={{ y: -6, opacity: 0, filter: 'blur(3px)' }}
+              transition={{ type: 'spring', duration: 0.55, bounce: 0.1 }}
+            >
+              {content}
+            </motion.span>
+          </AnimatePresence>
+        )}
+    </span>
+  )
+}
+
 function TaskRow({
-  id, label, source, state, elapsed, current, expanded, onToggle, onCopy, children,
+  id, label, source, title, state, elapsed, current, expanded, onToggle, onCopy, children,
 }: TaskRowProps) {
   const reduceMotion = useReducedMotion()
   return (
@@ -445,11 +477,16 @@ function TaskRow({
           event.stopPropagation()
           onCopy(source)
         }}
-        title="双击复制链接"
+        title={title ? `${source}
+双击复制链接` : '双击复制链接'}
       >
         <span className="vk-task-detail-task-main">
           <b>{label}：</b>
-          <span className="vk-task-detail-task-source">{source || '未返回来源信息'}</span>
+          <TaskSourceText
+            text={title || source || '未返回来源信息'}
+            flowing={memberInFlight(state)}
+            reduceMotion={reduceMotion}
+          />
         </span>
         <span className={`vk-task-detail-batch-status is-${state}`}>{BATCH_STATE_LABELS[state]}</span>
         <span className="vk-task-detail-task-elapsed">{elapsed}</span>
@@ -480,6 +517,7 @@ const MemoTaskRow = memo(TaskRow, (previous, next) => (
   previous.id === next.id
   && previous.label === next.label
   && previous.source === next.source
+  && previous.title === next.title
   && previous.state === next.state
   && previous.elapsed === next.elapsed
   && previous.current === next.current
@@ -581,15 +619,20 @@ function TaskProgressDetails({
   )
 }
 
-function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
+function TaskMemberProgress({ jobId, baseUrl, currentJob, listStatus, listFinishedAt }: {
   jobId: string
   baseUrl?: string
   currentJob: VkJobView | null
+  /** 列表里这一条的最新状态与结束时间;和手里缓存的详情对不上,说明缓存过期了。 */
+  listStatus: string
+  listFinishedAt: string | null
 }) {
   const pollingEnabled = useContext(TaskDisclosureContext)
   const [memberJob, setMemberJob] = useState<VkJobView | null>(
     () => currentJob?.job_id === jobId ? currentJob : null,
   )
+  const memberJobRef = useRef(memberJob)
+  memberJobRef.current = memberJob
   const [error, setError] = useState<string | null>(null)
   const currentJobRef = useRef(currentJob)
   const [retryVersion, setRetryVersion] = useState(0)
@@ -622,6 +665,16 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
     return () => { disposed = true }
   }, [jobId, baseUrl, retryVersion])
 
+  // 侧栏打开时还在排队的小任务,缓存的是排队那一刻的详情。列表里它的状态一变就重读,
+  // 收起时也一样,这样展开前拿到的就是新的,不会先闪一下过期的「排队中」。
+  useEffect(() => {
+    const snapshot = memberJobRef.current
+    if (!snapshot || currentJobRef.current?.job_id === jobId) return
+    if (snapshot.status !== listStatus || (snapshot.finished_at ?? null) !== listFinishedAt) {
+      setRetryVersion((version) => version + 1)
+    }
+  }, [jobId, listStatus, listFinishedAt])
+
   const active = !!memberJob && ACTIVE_STATUSES.has(memberJob.status)
   useEffect(() => {
     if (!pollingEnabled || !active) return undefined
@@ -641,6 +694,7 @@ function TaskMemberProgress({ jobId, baseUrl, currentJob }: {
         loading = false
       }
     }
+    void load()
     const timer = window.setInterval(load, 1500)
     return () => {
       disposed = true
@@ -1215,15 +1269,22 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                     id={member.job_id}
                     label={`小任务${index + 1}`}
                     source={member.source || member.job_id}
+                    title={member.title}
                     state={member.state}
                     elapsed={elapsedLabel(member.state, member.submitted_at, member.finished_at)}
                     current={member.job_id === jobId}
                     expanded={expandedTaskIds.has(member.job_id)}
                     onToggle={() => toggleTask(member.job_id)}
                     onCopy={copyLink}
-                    contentVersion={member.job_id === jobId ? job : baseUrl}
+                    contentVersion={member.job_id === jobId ? job : `${baseUrl}|${member.status}|${member.finished_at}`}
                   >
-                    <MemoTaskMemberProgress jobId={member.job_id} baseUrl={baseUrl} currentJob={member.job_id === jobId ? job : null} />
+                    <MemoTaskMemberProgress
+                      jobId={member.job_id}
+                      baseUrl={baseUrl}
+                      currentJob={member.job_id === jobId ? job : null}
+                      listStatus={member.status}
+                      listFinishedAt={member.finished_at}
+                    />
                   </MemoTaskRow>
                 ))
                 : sources.length > 0
@@ -1235,6 +1296,7 @@ export function VkTaskDetailSidebar({ jobId, baseUrl, onClose, onJobChange, onJo
                         id={rowId}
                         label="链接"
                         source={source}
+                        title={sources.length === 1 ? job.title?.trim() || undefined : undefined}
                         state={batchState(job.status)}
                         elapsed={elapsedLabel(batchState(job.status), job.submitted_at, job.finished_at)}
                         current

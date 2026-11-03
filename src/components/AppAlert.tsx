@@ -1,5 +1,7 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
+import { forwardRef, useCallback, useContext, useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import { CheckCircle2, CircleAlert, Info, RotateCw, TriangleAlert, X } from 'lucide-react'
+import { useGlassMenuSurface } from './GlassMenu'
+import { NotificationLayerContext, NotificationStackCardContext } from './notificationContext'
 import './AppAlert.css'
 
 export type AppAlertTone = 'info' | 'success' | 'warning' | 'error' | 'rerun' | 'neutral'
@@ -42,7 +44,7 @@ function clampProgress(value: number) {
   return Math.min(100, Math.max(0, value))
 }
 
-export function AppAlert({
+export const AppAlert = forwardRef<HTMLDivElement, AppAlertProps>(function AppAlert({
   tone = 'neutral',
   title,
   description,
@@ -60,7 +62,7 @@ export function AppAlert({
   progressLabel = '通知剩余时间',
   progressClassName,
   dataTone,
-}: AppAlertProps) {
+}, forwardedRef) {
   const onExpireRef = useRef(onExpire)
   onExpireRef.current = onExpire
   const expires = typeof onExpire === 'function'
@@ -69,6 +71,18 @@ export function AppAlert({
     const timer = window.setTimeout(() => onExpireRef.current?.(), durationMs)
     return () => window.clearTimeout(timer)
   }, [durationMs, expires])
+
+  // 在悬浮层里、而且不是被盖住的那几张:接上液态玻璃(和玻璃菜单同一套)。
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const setRootRef = useCallback((node: HTMLDivElement | null) => {
+    rootRef.current = node
+    if (typeof forwardedRef === 'function') forwardedRef(node)
+    else if (forwardedRef) forwardedRef.current = node
+  }, [forwardedRef])
+  const inLayer = useContext(NotificationLayerContext)
+  const stackCard = useContext(NotificationStackCardContext)
+  const glass = inLayer && !stackCard?.covered
+  useGlassMenuSurface(rootRef, glass)
 
   const Icon = toneIcons[tone]
   const rootRole = role ?? (tone === 'error' ? 'alert' : 'status')
@@ -82,9 +96,10 @@ export function AppAlert({
 
   return (
     <div
+      ref={setRootRef}
       data-testid={testId}
       data-tone={dataTone ?? tone}
-      className={cx('app-alert', className)}
+      className={cx('app-alert', glass && 'app-alert--glass', className)}
       role={rootRole}
       aria-live={ariaLive ?? (rootRole === 'alert' ? 'assertive' : 'polite')}
     >
@@ -116,4 +131,4 @@ export function AppAlert({
       )}
     </div>
   )
-}
+})

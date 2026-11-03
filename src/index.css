@@ -555,22 +555,25 @@ select:focus-visible {
   flex-direction: column;
 }
 
+/* 弹窗层的位置由 AppShell 量出来写进这三个变量(顶栏这一行放得下就压在顶栏上,放不下退到顶栏下方);
+   没量到之前用默认值。弹窗最宽 560px,窄了跟着层收窄。 */
 .app-notification-layer {
   position: absolute;
   z-index: 40;
-  top: 74px;
-  right: 12px;
-  left: 12px;
+  top: var(--toast-lane-top, 10px);
+  right: var(--toast-lane-right, 12px);
+  left: var(--toast-lane-left, 12px);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 7px;
   pointer-events: none;
-  max-height: calc(100% - 74px);
+  max-height: calc(100% - var(--toast-lane-top, 10px) - 10px);
   overflow: hidden;
 }
 
-.app-notification-layer .app-alert { pointer-events: auto; }
+.app-notification-layer > * { width: min(560px, 100%); }
+.app-notification-layer .app-alert { width: 100%; min-height: 0; pointer-events: auto; }
 
 .app-details-sidebar {
   min-width: 0;
@@ -1178,7 +1181,6 @@ select:focus-visible {
   .app-header-actions [data-testid='policy-disconnected'],
   .app-header-actions [data-testid='catalog-meta'] { display: none; }
   .app-header { min-height: 58px; flex-basis: 58px; padding: 0 14px; }
-  .app-notification-layer { top: 70px; }
   .app-header-primary { width: auto; justify-content: flex-start; }
   .app-header-actions { width: auto; }
   .inspiration-page, .inspiration-execute { padding: 20px 14px; }

@@ -2608,7 +2608,7 @@ describe('VkTaskDetailSidebar', () => {
 })
 
 describe('批次顶部状态与排队显示', () => {
-  type Member = { job_id: string; status: string }
+  type Member = { job_id: string; status: string; title?: string }
   const settledAt = (status: string, index: number) =>
     status === 'queued' || status === 'running' ? null : `2026-09-05T00:01:0${index}Z`
 
@@ -2617,7 +2617,7 @@ describe('批次顶部状态与排队显示', () => {
     const view = (member: Member, index: number) => ({
       job_id: member.job_id, kind: 'run', status: member.status, batch_id: batchId,
       submitted_at: `2026-09-05T00:00:0${index}Z`, finished_at: settledAt(member.status, index),
-      parent_job_id: null, cache_bypass: false,
+      parent_job_id: null, cache_bypass: false, ...(member.title ? { title: member.title } : {}),
     })
     const sourceOf = (member: Member) => `https://example.com/${member.job_id}`
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -2696,6 +2696,56 @@ describe('批次顶部状态与排队显示', () => {
     expect(await within(rowOf('m-0')).findByTestId('vk-task-detail-stage-details')).toHaveTextContent('等待阶段数据')
   })
 
+  const pollAll = (polls: Map<number, () => Promise<void>>) =>
+    act(async () => { await Promise.all([...polls.values()].map((poll) => poll())) })
+  const memberReads = (jobId: string) =>
+    vi.mocked(fetch).mock.calls.filter(([input]) => new URL(String(input)).pathname === `/vk/v1/jobs/${jobId}`).length
+
+  it('侧栏打开时还在排队的小任务后来完成:展开前就已刷新,展开时不再闪「排队中，等待空闲名额」', async () => {
+    const user = userEvent.setup()
+    const polls = captureMemberPolling()
+    const batch = stubBatch(members('running', 'queued'))
+    await open('m-0', 'm-1')
+    await waitFor(() => expect(within(rowOf('m-1')).getByTestId('vk-task-detail-stage-details'))
+      .toHaveTextContent('排队中，等待空闲名额'))
+
+    batch[1].status = 'done'
+    await pollAll(polls)
+    await waitFor(() => expect(rowOf('m-1')).toHaveAttribute('data-state', 'done'))
+    await waitFor(() => expect(rowOf('m-1')).not.toHaveTextContent('排队中，等待空闲名额'))
+
+    await user.click(screen.getByTestId('vk-task-detail-task-row-m-1'))
+    expect(rowOf('m-1')).not.toHaveTextContent('排队中，等待空闲名额')
+    expect(rowOf('m-1')).not.toHaveTextContent('正在读取小任务进度')
+    await waitFor(() => expect(within(rowOf('m-1')).getByTestId('vk-task-detail-stage-details'))
+      .toHaveTextContent('尚未返回阶段数据'))
+    expect(rowOf('m-1')).not.toHaveTextContent('排队中，等待空闲名额')
+  })
+
+  it('列表状态没变就不重读小任务详情', async () => {
+    const polls = captureMemberPolling()
+    stubBatch(members('running', 'done'))
+    await open('m-0', 'm-1')
+    await waitFor(() => expect(within(rowOf('m-1')).getByTestId('vk-task-detail-stage-details')).toBeInTheDocument())
+    const reads = memberReads('m-1')
+    await pollAll(polls)
+    await pollAll(polls)
+    expect(memberReads('m-1')).toBe(reads)
+  })
+
+  it('展开还在处理中的小任务时先读一次,不用等第一个轮询周期', async () => {
+    const user = userEvent.setup()
+    const polls = captureMemberPolling()
+    stubBatch(members('running', 'running'))
+    await open('m-0', 'm-1')
+    await waitFor(() => expect(within(rowOf('m-1')).getByTestId('vk-task-detail-stage-details')).toBeInTheDocument())
+    const reads = memberReads('m-1')
+
+    await user.click(screen.getByTestId('vk-task-detail-task-row-m-1'))
+    await waitFor(() => expect(memberReads('m-1')).toBe(reads + 1))
+    expect(polls.size).toBe(2)
+  })
+
   it('样式表为排队中配了独立的中性色', () => {
     const css = readFileSync(resolve(import.meta.dirname, 'VkTaskDetailSidebar.css'), 'utf8')
     expect(css).toContain(".vk-task-detail-task-row[data-state='queued']")
@@ -2745,6 +2795,112 @@ describe('批次顶部状态与排队显示', () => {
     await waitFor(() => expect(badge()).toHaveTextContent('已完成'))
     expect(screen.getByTestId('vk-task-detail-sources')).toHaveTextContent('已处理 2/2')
     expect(polls.size).toBe(0)
+  })
+
+  describe('帖子标题与流光', () => {
+    const sourceText = (jobId: string) => rowOf(jobId).querySelector('.vk-task-detail-task-source') as HTMLElement
+    const flowing = (jobId: string) => rowOf(jobId).querySelector('.vk-task-detail-task-source-text.is-flowing') !== null
+
+    it('有标题时替代链接显示,悬停提示带链接,双击仍复制链接', async () => {
+      const user = userEvent.setup()
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      vi.stubGlobal('navigator', { clipboard: { writeText } })
+      stubBatch([
+        { job_id: 'm-0', status: 'done', title: '三分钟讲清楚缓存' },
+        { job_id: 'm-1', status: 'done' },
+      ])
+      await open('m-0', 'm-1')
+
+      const titled = screen.getByTestId('vk-task-detail-task-row-m-0')
+      expect(sourceText('m-0')).toHaveTextContent('三分钟讲清楚缓存')
+      expect(sourceText('m-0')).not.toHaveTextContent('https://example.com/m-0')
+      expect(titled).toHaveAttribute('title', 'https://example.com/m-0\n双击复制链接')
+      expect(sourceText('m-1')).toHaveTextContent('https://example.com/m-1')
+      expect(screen.getByTestId('vk-task-detail-task-row-m-1')).toHaveAttribute('title', '双击复制链接')
+
+      await user.dblClick(titled)
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://example.com/m-0'))
+      expect(writeText).toHaveBeenCalledTimes(1)
+    })
+
+    it('标题晚到时从链接换成标题,链接随退出动画消失', async () => {
+      const polls = captureMemberPolling()
+      const batch = stubBatch(members('running', 'done'))
+      await open('m-0', 'm-1')
+      expect(sourceText('m-0')).toHaveTextContent('https://example.com/m-0')
+
+      batch[0].title = '刚采集到的标题'
+      await pollAll(polls)
+      await waitFor(() => expect(sourceText('m-0')).toHaveTextContent('刚采集到的标题'))
+      await waitFor(() => expect(sourceText('m-0')).not.toHaveTextContent('https://example.com/m-0'))
+    })
+
+    it('重试成员暂时没有标题时沿用上一次的标题', async () => {
+      const row = (job_id: string, status: string, over: Record<string, unknown>) => ({
+        job_id, kind: 'run', status, batch_id: 'batch-retry', cache_bypass: false,
+        submitted_at: '2026-09-05T00:00:00Z', finished_at: status === 'running' ? null : '2026-09-05T00:01:00Z',
+        parent_job_id: null, source: 'https://example.com/video-1', ...over,
+      })
+      const rows = [
+        row('first', 'failed', { title: '原来的标题' }),
+        row('first-retry', 'running', { parent_job_id: 'first', submitted_at: '2026-09-05T00:05:00Z' }),
+        row('other', 'done', { source: 'https://example.com/video-2', submitted_at: '2026-09-05T00:00:01Z' }),
+      ]
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const path = new URL(String(input)).pathname
+        if (path === '/vk/v1/providers') return new Response(JSON.stringify({ channels: [], roles: {} }))
+        if (path === '/vk/v1/jobs') return new Response(JSON.stringify(rows))
+        const hit = rows.find((item) => path === `/vk/v1/jobs/${item.job_id}`)
+        if (!hit) return new Response('{}', { status: 404 })
+        return new Response(JSON.stringify({ ...hit, request: { source: hit.source, preset: 'quick-summary' } }))
+      }))
+      captureMemberPolling()
+      render(<VkTaskDetailSidebar jobId="first-retry" baseUrl={BASE} onClose={() => {}} />)
+      await screen.findByTestId('vk-task-detail-task-row-first-retry')
+
+      expect(sourceText('first-retry')).toHaveTextContent('原来的标题')
+      expect(sourceText('first-retry')).not.toHaveTextContent('https://example.com/video-1')
+    })
+
+    it('流光只出现在排队和进行中的行上,完成或失败后变回普通文字', async () => {
+      const polls = captureMemberPolling()
+      const batch = stubBatch(members('running', 'queued', 'done', 'failed'))
+      await open('m-0', 'm-3')
+
+      expect(flowing('m-0')).toBe(true)
+      expect(flowing('m-1')).toBe(true)
+      expect(flowing('m-2')).toBe(false)
+      expect(flowing('m-3')).toBe(false)
+
+      batch[0].status = 'done'
+      batch[1].status = 'failed'
+      await pollAll(polls)
+      await waitFor(() => expect(rowOf('m-0')).toHaveAttribute('data-state', 'done'))
+      expect(flowing('m-0')).toBe(false)
+      expect(flowing('m-1')).toBe(false)
+    })
+
+    it('单视频任务的链接行有标题时显示标题,进行中带流光', async () => {
+      stubBatch([{ job_id: 'm-0', status: 'running', title: '单个视频的标题' }], null)
+      render(<VkTaskDetailSidebar jobId="m-0" baseUrl={BASE} onClose={() => {}} />)
+      const row = (await screen.findByTestId('vk-task-detail-task-row-source-0')).closest('li')!
+
+      expect(row.querySelector('.vk-task-detail-task-source')).toHaveTextContent('单个视频的标题')
+      expect(row.querySelector('.is-flowing')).not.toBeNull()
+    })
+
+    it('样式表:流光用 background-clip 文字渐变循环,省略号留给块级元素,减少动态效果时关闭', () => {
+      const css = readFileSync(resolve(import.meta.dirname, 'VkTaskDetailSidebar.css'), 'utf8')
+      expect(css).toMatch(/\.vk-task-detail-task-source-text\.is-flowing\s*\{[^}]*background-clip:\s*text/)
+      expect(css).toMatch(/\.vk-task-detail-task-source-text\.is-flowing\s*\{[^}]*-webkit-text-fill-color:\s*transparent/)
+      expect(css).toMatch(/\.vk-task-detail-task-source-text\.is-flowing\s*\{[^}]*linear-gradient\(90deg[^;]*40%[^;]*50%[^;]*60%/)
+      expect(css).toMatch(/\.vk-task-detail-task-source-text\.is-flowing\s*\{[^}]*background-size:\s*250% 100%/)
+      expect(css).toMatch(/\.vk-task-detail-task-source-text\.is-flowing\s*\{[^}]*animation:\s*vk-task-source-flow 1\.6s linear infinite/)
+      expect(css).toMatch(/\.vk-task-detail-task-source-line\s*\{[^}]*text-overflow:\s*ellipsis/)
+      expect(css).toMatch(/\.vk-task-detail-task-source\s*\{[^}]*overflow-x:\s*clip/)
+      const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
+      expect(reduced).toMatch(/\.vk-task-detail-task-source-text\.is-flowing\s*\{[^}]*animation:\s*none/)
+    })
   })
 })
 

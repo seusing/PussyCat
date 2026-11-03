@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import App from '../App'
 import AppShell from './AppShell'
 import type { HostBridge } from '../host/types'
@@ -80,15 +80,115 @@ function gridTemplate(): string {
   return screen.getByTestId('app-grid').style.gridTemplateColumns
 }
 
-test('主页面提供唯一且脱离布局流的通知悬浮层', () => {
+test('主页面提供唯一且脱离布局流的通知悬浮层,位置由变量控制', () => {
   renderShell()
   const layer = screen.getByTestId('app-notification-layer')
   expect(screen.getAllByTestId('app-notification-layer')).toHaveLength(1)
   expect(layer.parentElement).toHaveClass('app-main')
   expect(indexCss).toMatch(/\.app-main\s*\{[^}]*position:\s*relative;/s)
-  expect(indexCss).toMatch(/\.app-notification-layer\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*40;[^}]*top:\s*74px;[^}]*right:\s*12px;[^}]*left:\s*12px;[^}]*pointer-events:\s*none;/s)
-  expect(indexCss).toMatch(/\.app-notification-layer \.app-alert\s*\{[^}]*pointer-events:\s*auto;/s)
-  expect(indexCss).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.app-notification-layer\s*\{\s*top:\s*70px;/)
+  const layerRule = indexCss.match(/\.app-notification-layer\s*\{([^}]*)\}/s)![1]
+  expect(layerRule).toMatch(/position:\s*absolute;/)
+  expect(layerRule).toMatch(/z-index:\s*40;/)
+  expect(layerRule).toMatch(/top:\s*var\(--toast-lane-top,\s*10px\);/)
+  expect(layerRule).toMatch(/right:\s*var\(--toast-lane-right,\s*12px\);/)
+  expect(layerRule).toMatch(/left:\s*var\(--toast-lane-left,\s*12px\);/)
+  expect(layerRule).toMatch(/max-height:\s*calc\(100% - var\(--toast-lane-top,\s*10px\) - 10px\);/)
+  expect(layerRule).toMatch(/pointer-events:\s*none;/)
+  expect(layerRule).not.toMatch(/74px/)
+  expect(indexCss).toMatch(/\.app-notification-layer > \*\s*\{\s*width:\s*min\(560px,\s*100%\);/)
+  expect(indexCss).toMatch(/\.app-notification-layer \.app-alert\s*\{[^}]*width:\s*100%;[^}]*min-height:\s*0;[^}]*pointer-events:\s*auto;/s)
+  // 窄窗口不再有写死的 top:有变量就够了
+  expect(indexCss).not.toMatch(/\.app-notification-layer\s*\{\s*top:\s*70px;/)
+})
+
+describe('弹窗通道随顶栏测量', () => {
+  type Rect = { left: number; right: number; top: number; bottom: number }
+  const rectOf = (value: Rect) => ({ ...value, width: value.right - value.left, height: value.bottom - value.top, x: value.left, y: value.top, toJSON: () => ({}) }) as DOMRect
+  const MAIN: Rect = { left: 229, right: 1280, top: 0, bottom: 900 }
+  const HEADER: Rect = { left: 229, right: 1280, top: 0, bottom: 62 }
+  const TITLE: Rect = { left: 331, right: 391, top: 21, bottom: 41 }
+  const ACTIONS: Rect = { left: 1110, right: 1258, top: 14, bottom: 48 }
+  let rects: Record<string, Rect>
+
+  // jsdom 没有布局:按 data-testid 给几个关键元素喂矩形。
+  beforeEach(() => {
+    rects = { 'app-main': MAIN, 'app-header': HEADER, 'app-header-title': TITLE, 'app-header-actions': ACTIONS }
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return rectOf(rects[this.dataset.testid ?? ''] ?? { left: 0, right: 0, top: 0, bottom: 0 })
+    })
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  const nextFrame = () => act(async () => { await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined))) })
+  const layer = () => screen.getByTestId('app-notification-layer')
+
+  test('通道够宽:弹窗压在顶栏这一行,距顶 10px,左右各离标题和按钮 12px', () => {
+    renderShell()
+
+    expect(layer()).toHaveAttribute('data-placement', 'header')
+    expect(layer().style.getPropertyValue('--toast-lane-top')).toBe('10px')
+    expect(layer().style.getPropertyValue('--toast-lane-left')).toBe(`${391 - 229 + 12}px`)
+    expect(layer().style.getPropertyValue('--toast-lane-right')).toBe(`${1280 - 1110 + 12}px`)
+  })
+
+  test('通道不够 320px:退到顶栏下方 8px,左右各 12px', () => {
+    rects['app-header-actions'] = { left: 700, right: 1258, top: 14, bottom: 48 }   // 标题右边 391 → 通道 700-391-24 = 285
+    renderShell()
+
+    expect(layer()).toHaveAttribute('data-placement', 'below-header')
+    expect(layer().style.getPropertyValue('--toast-lane-top')).toBe(`${62 + 8}px`)
+    expect(layer().style.getPropertyValue('--toast-lane-left')).toBe('12px')
+    expect(layer().style.getPropertyValue('--toast-lane-right')).toBe('12px')
+  })
+
+  test('顶栏换行(按钮组掉到标题下面)也退到顶栏下方,按顶栏实际底边算', () => {
+    rects['app-header'] = { left: 229, right: 760, top: 0, bottom: 104 }
+    rects['app-main'] = { left: 229, right: 760, top: 0, bottom: 900 }
+    rects['app-header-actions'] = { left: 241, right: 748, top: 56, bottom: 90 }
+    renderShell()
+
+    expect(layer()).toHaveAttribute('data-placement', 'below-header')
+    expect(layer().style.getPropertyValue('--toast-lane-top')).toBe(`${104 + 8}px`)
+  })
+
+  test('窗口尺寸变化后每帧重算一次', async () => {
+    renderShell()
+    expect(layer()).toHaveAttribute('data-placement', 'header')
+
+    rects['app-header-actions'] = { left: 700, right: 1258, top: 14, bottom: 48 }
+    window.dispatchEvent(new Event('resize'))
+    window.dispatchEvent(new Event('resize'))
+    expect(layer()).toHaveAttribute('data-placement', 'header')   // 还没到下一帧
+    await nextFrame()
+
+    expect(layer()).toHaveAttribute('data-placement', 'below-header')
+  })
+
+  test('卸载时取消监听:之后的窗口变化不再写样式', async () => {
+    const { unmount } = renderShell()
+    const node = layer()
+    unmount()
+    rects['app-header-actions'] = { left: 700, right: 1258, top: 14, bottom: 48 }
+    window.dispatchEvent(new Event('resize'))
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)))
+
+    expect(node.dataset.placement).toBe('header')
+  })
+})
+
+test('通知铃铛是顶栏按钮组的直接子按钮,排在各模块的按钮之后、运行面板开关之前', () => {
+  render(
+    <AppShell
+      nav={<div>NAV</div>} config={<div>CONFIG</div>} runs={<div>RUNS</div>}
+      catalogStatus="ready" onRetryCatalog={() => {}}
+      headerActions={<span data-testid="module-action">模块按钮</span>}
+    />,
+  )
+  const actions = screen.getByTestId('app-header-actions')
+  const children = Array.from(actions.children)
+
+  expect(screen.getByTestId('notification-bell').parentElement).toBe(actions)
+  expect(children.map((child) => child.getAttribute('data-testid'))).toEqual(['module-action', 'notification-bell', 'toggle-runs'])
 })
 
 test('桌面健康状态浮层不被应用侧栏裁切', () => {

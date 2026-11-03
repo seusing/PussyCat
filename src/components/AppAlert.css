@@ -18,6 +18,14 @@
   pointer-events: auto;
 }
 
+/* 在弹窗层里最前面的那张卡:backdrop-filter 换成 hyalite 的折射(不支持的环境回落到普通模糊),
+   边缘换成它的亮边。写法同 GlassMenu.css 的 .glass-menu-effect。 */
+.app-alert--glass {
+  -webkit-backdrop-filter: var(--hyalite, var(--glass-blur));
+  backdrop-filter: var(--hyalite, var(--glass-blur));
+  box-shadow: var(--hyalite-edge, var(--glass-highlight)), var(--glass-menu-shadow);
+}
+
 .app-alert[data-tone="success"] { --app-alert-tone: var(--color-success); }
 .app-alert[data-tone="warning"] { --app-alert-tone: var(--color-warning); }
 .app-alert[data-tone="error"],

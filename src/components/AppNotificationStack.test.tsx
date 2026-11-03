@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { useContext } from 'react'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AppAlert } from './AppAlert'
 import { AppNotificationStack } from './AppNotificationStack'
+import { NotificationStackCardContext } from './notificationContext'
 
 const alerts = (count: number) => Array.from({ length: count }, (_, index) => <AppAlert key={index} title={`通知 ${index}`} />)
 const cardOf = (title: string) => screen.getByText(title).closest<HTMLElement>('.app-notification-stack__card')!
@@ -161,5 +165,124 @@ test('收起状态下被盖住的卡仍按各自的倒计时过期', () => {
     expect(onExpire).toHaveBeenCalledTimes(1)
   } finally {
     vi.useRealTimers()
+  }
+})
+
+describe('toggleLabel 与切换按钮', () => {
+  test('默认文字「全部 N 条」,可用 toggleLabel 换成别的;展开后统一是「收起」', async () => {
+    const user = userEvent.setup()
+    render(<AppNotificationStack toggleLabel={(count) => `查看所有 ${count} 条`}>{alerts(4)}</AppNotificationStack>)
+
+    const toggle = screen.getByRole('button', { name: '查看所有 4 条' })
+    expect(screen.queryByRole('button', { name: '全部 4 条' })).not.toBeInTheDocument()
+    await user.click(toggle)
+    expect(screen.getByRole('button', { name: '收起' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '收起' }))
+    expect(screen.getByRole('button', { name: '查看所有 4 条' })).toBeInTheDocument()
+  })
+
+  test('aria-label 始终等于当前文字,按钮里只有一个箭头,展开时旋转', async () => {
+    const user = userEvent.setup()
+    render(<AppNotificationStack>{alerts(3)}</AppNotificationStack>)
+    const toggle = screen.getByRole('button', { name: '全部 3 条' })
+
+    expect(toggle.getAttribute('aria-label')).toBe('全部 3 条')
+    expect(toggle.querySelectorAll('svg')).toHaveLength(1)
+    expect(toggle.querySelector('.app-notification-stack__chevron')).toHaveAttribute('data-expanded', 'false')
+
+    await user.click(toggle)
+    expect(toggle.getAttribute('aria-label')).toBe('收起')
+    expect(toggle.querySelectorAll('svg')).toHaveLength(1)
+    expect(toggle.querySelector('.app-notification-stack__chevron')).toHaveAttribute('data-expanded', 'true')
+  })
+})
+
+describe('不做半透明、滤镜和裁剪', () => {
+  const layersOf = (container: HTMLElement) => [
+    container.querySelector('.app-notification-stack'),
+    container.querySelector('.app-notification-stack__cards'),
+    ...container.querySelectorAll('.app-notification-stack__card'),
+    container.querySelector('.app-notification-stack__toggle-row'),
+  ] as HTMLElement[]
+
+  test.each([['收起', false], ['展开', true]])('%s时堆叠的外层没有 opacity、filter、clip-path 的行内样式', async (_name, expand) => {
+    const user = userEvent.setup()
+    const { container } = render(<AppNotificationStack>{alerts(4)}</AppNotificationStack>)
+    if (expand) await user.click(screen.getByRole('button', { name: '全部 4 条' }))
+
+    for (const layer of layersOf(container)) {
+      expect(layer.style.opacity).toBe('')
+      expect(layer.style.filter).toBe('')
+      expect(layer.style.clipPath).toBe('')
+    }
+  })
+
+  test('样式表里堆叠外层没有 opacity / filter / clip-path;被盖住的卡片是纯色底、没有模糊,只淡化里面的内容', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/components/AppNotificationStack.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const ruleOf = (selector: string) => {
+      const start = css.indexOf(`${selector} {`)
+      return start < 0 ? '' : css.slice(start, css.indexOf('}', start))
+    }
+
+    expect(css).not.toMatch(/clip-path/)
+    for (const selector of ['.app-notification-stack', '.app-notification-stack__cards', '.app-notification-stack__card', '.app-notification-stack__toggle-row']) {
+      expect(ruleOf(selector), selector).not.toBe('')
+      expect(ruleOf(selector), selector).not.toMatch(/opacity|filter/)
+    }
+    const covered = ruleOf(".app-notification-stack__card[data-covered='true'] > .app-alert")
+    expect(covered).toMatch(/background:\s*#[0-9a-f]{6};/i)
+    expect(covered).toMatch(/backdrop-filter:\s*none;/)
+    expect(ruleOf(".app-notification-stack__card[data-covered='true'] > .app-alert > *")).toMatch(/opacity:\s*0;/)
+    expect(css).toMatch(/transition:\s*opacity 140ms/)
+    expect(ruleOf(".app-notification-stack__card[data-covered='true']")).toMatch(/height:\s*var\(--stack-front-height/)
+  })
+
+  test('切换按钮按下缩到 .93,选择器比全局的 button:active 更具体', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/components/AppNotificationStack.css'), 'utf8')
+    expect(css).toMatch(/\.app-notification-stack__toggle:not\(:disabled\):active\s*\{\s*scale:\s*0\.93;/)
+  })
+})
+
+describe('向卡片提供堆叠上下文', () => {
+  const CoveredProbe = ({ id }: { id: string }) => <span data-testid={id}>{String(useContext(NotificationStackCardContext)?.covered)}</span>
+  const covered = () => ['probe-0', 'probe-1', 'probe-2'].map((id) => screen.getByTestId(id).textContent)
+
+  test('收起时只有第 1 张不是被盖住的,展开后都不是', async () => {
+    const user = userEvent.setup()
+    render(<AppNotificationStack>{[0, 1, 2].map((index) => <CoveredProbe key={index} id={`probe-${index}`} />)}</AppNotificationStack>)
+
+    expect(covered()).toEqual(['false', 'true', 'true'])
+    await user.click(screen.getByRole('button', { name: '全部 3 条' }))
+    expect(covered()).toEqual(['false', 'false', 'false'])
+  })
+})
+
+test('--stack-front-height 取最前面那张卡的高度,被盖住的卡据此对齐', () => {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    const height = this.getAttribute('data-front') === 'true' ? 64 : 0
+    return { top: 0, right: 0, bottom: height, left: 0, width: 0, height, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+  }
+  try {
+    const { container } = render(<AppNotificationStack>{alerts(3)}</AppNotificationStack>)
+    expect(container.querySelector<HTMLElement>('.app-notification-stack')!.style.getPropertyValue('--stack-front-height')).toBe('64px')
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+})
+
+test('不传 onOverflow 时无论多挤都不淘汰', async () => {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    const height = this.classList.contains('app-notification-stack__card') ? 400 : 0
+    return { top: 0, right: 0, bottom: height, left: 0, width: 0, height, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+  }
+  try {
+    render(<div className="app-main"><AppNotificationStack>{alerts(5)}</AppNotificationStack></div>)
+    await userEvent.click(screen.getByRole('button', { name: '全部 5 条' }))
+    act(() => window.dispatchEvent(new Event('resize')))
+    expect(screen.getAllByRole('status')).toHaveLength(5)
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = original
   }
 })

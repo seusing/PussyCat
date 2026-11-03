@@ -23,8 +23,11 @@ export type VkTaskResultGroup = {
   versions: VkResultVersion[]
 }
 
+/** 详情里没有标题时不带 title 键:列表行与它合并时,才不会把列表里已知的标题抹掉。 */
 export function vkJobRowFromView(job: VkJobView): VkResultRow {
-  return { ...job, source: job.request?.source }
+  const { title, ...rest } = job
+  const trimmed = typeof title === 'string' ? title.trim() : ''
+  return { ...rest, source: job.request?.source, ...(trimmed ? { title: trimmed } : {}) }
 }
 
 /** Results belong to one submission. Retries stay with their original video. */
