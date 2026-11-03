@@ -35,7 +35,7 @@ export function NotificationBell() {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [ringCount, setRingCount] = useState(0)
   const iconRef = useRef<HTMLSpanElement>(null)
-  const ringing = useRef<{ stop: () => void } | null>(null)
+  const ringing = useRef<{ stop: () => void; state: string } | null>(null)
   // 启动时已持久化的未读不摇:基准取第一次渲染时的未读数。
   const previousUnread = useRef(unread)
   // 窗口在后台或没有焦点时来的通知,用户看不到摇铃:记下条数,等回到前台再补摇一次。
@@ -97,6 +97,11 @@ export function NotificationBell() {
         aria-expanded={open}
         aria-label={label}
         title="通知"
+        onPointerEnter={(event) => {
+          // 鼠标移入摇一次(幅度同一条通知);触摸和键盘聚焦不触发,面板开着、减少动态效果、正在摇时也不摇。
+          if (event.pointerType !== 'mouse' || open || reducedMotion || ringing.current?.state === 'running') return
+          ring(1)
+        }}
         onClick={(event) => {
           const bell = event.currentTarget
           setAnchor((current) => (current ? null : bell))

@@ -1,20 +1,22 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { recordNotifications, useNotificationHistory, type NotificationInput } from '../store/notificationHistory'
 import { NotificationBell, ringPeak, ringVelocity } from './NotificationBell'
 
 // 摇铃走 motion 的 animate;包一层记下每次的参数,原样放行。
-const animateCalls = vi.hoisted(() => ({ calls: [] as unknown[][] }))
+const animateCalls = vi.hoisted(() => ({ calls: [] as unknown[][], results: [] as Array<{ stop: () => void }> }))
 vi.mock('motion/react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('motion/react')>()
   return {
     ...actual,
     animate: (...args: unknown[]) => {
       animateCalls.calls.push(args)
-      return (actual.animate as (...params: unknown[]) => unknown)(...args)
+      const controls = (actual.animate as (...params: unknown[]) => { stop: () => void })(...args)
+      animateCalls.results.push(controls)
+      return controls
     },
   }
 })
@@ -57,6 +59,7 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   animateCalls.calls.length = 0
+  animateCalls.results.length = 0
 })
 
 describe('ringPeak', () => {
@@ -155,9 +158,8 @@ describe('摇铃(前台)', () => {
   })
 
   it('面板开着时来新通知:不摇,也不留未读', async () => {
-    const user = userEvent.setup()
     render(<NotificationBell />)
-    await user.click(bell())
+    fireEvent.click(bell())   // 不用 userEvent:它会先把鼠标移到铃铛上,触发悬浮摇铃
     await screen.findByRole('dialog', { name: '通知' })
 
     act(() => recordNotifications([entry('a')]))
@@ -300,11 +302,10 @@ describe('窗口在后台或失焦时补摇', () => {
   })
 
   it('后台期间面板被打开(标成已读)再回到前台:不补摇', async () => {
-    const user = userEvent.setup()
     render(<NotificationBell />)
     enterBackground()
     act(() => recordNotifications([entry('a')]))
-    await user.click(bell())
+    fireEvent.click(bell())
     await screen.findByRole('dialog', { name: '通知' })
     await waitFor(() => expect(unreadCount()).toBe(0))
 
@@ -314,13 +315,12 @@ describe('窗口在后台或失焦时补摇', () => {
   })
 
   it('回到前台时面板正开着:不补摇', async () => {
-    const user = userEvent.setup()
     render(<NotificationBell />)
     enterBackground()
     act(() => recordNotifications([entry('a')]))
     windowState.visibility = 'visible'
     windowState.focused = true
-    await user.click(bell())
+    fireEvent.click(bell())
     await screen.findByRole('dialog', { name: '通知' })
 
     returnToForeground()
@@ -349,6 +349,117 @@ describe('窗口在后台或失焦时补摇', () => {
 
     expect(() => returnToForeground()).not.toThrow()
     expect(animateCalls.calls).toHaveLength(0)
+  })
+})
+
+describe('鼠标悬浮摇铃', () => {
+  // jsdom 没有 PointerEvent,React 读不到 pointerType;补一个最小的。
+  class PointerEventStub extends MouseEvent {
+    readonly pointerType: string
+    constructor(type: string, init: MouseEventInit & { pointerType?: string } = {}) {
+      super(type, init)
+      this.pointerType = init.pointerType ?? ''
+    }
+  }
+  let originalPointerEvent: unknown
+  beforeEach(() => {
+    const view = document.defaultView as unknown as { PointerEvent?: unknown }
+    originalPointerEvent = view.PointerEvent
+    view.PointerEvent = PointerEventStub
+  })
+  afterEach(() => {
+    ;(document.defaultView as unknown as { PointerEvent?: unknown }).PointerEvent = originalPointerEvent
+  })
+  const hover = (pointerType: string) => fireEvent.pointerEnter(bell(), { pointerType })
+  const leave = (pointerType: string) => fireEvent.pointerLeave(bell(), { pointerType })
+
+  it('鼠标移入摇一次,幅度同一条通知(首个峰值 28 度),不带任何未读计数', () => {
+    render(<NotificationBell />)
+
+    hover('mouse')
+
+    expect(bell()).toHaveAttribute('data-ring-count', '1')
+    expect(animateCalls.calls).toHaveLength(1)
+    const [target, keyframes, options] = animateCalls.calls[0]
+    expect(target).toBe(bell().querySelector('.notification-bell__icon'))
+    expect(keyframes).toEqual({ rotate: 0 })
+    expect(options).toMatchObject({ type: 'spring', stiffness: 220, damping: 4.5 })
+    expect(velocityOf(animateCalls.calls[0])).toBeCloseTo(ringVelocity(1), 5)
+    expect(badge()).not.toBeInTheDocument()
+  })
+
+  it('正在摇时再次移入不重新开始;移出再移入也一样', () => {
+    render(<NotificationBell />)
+
+    hover('mouse')
+    leave('mouse')
+    hover('mouse')
+    hover('mouse')
+
+    expect(bell()).toHaveAttribute('data-ring-count', '1')
+    expect(animateCalls.calls).toHaveLength(1)
+  })
+
+  it('摇完(动画结束)之后再移入又能摇', async () => {
+    render(<NotificationBell />)
+    hover('mouse')
+    expect(bell()).toHaveAttribute('data-ring-count', '1')
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)) })   // 让动画真的开始
+    act(() => animateCalls.results[0].stop())   // 等价于已经摇完
+    hover('mouse')
+
+    expect(bell()).toHaveAttribute('data-ring-count', '2')
+  })
+
+  it('触摸和笔不触发,键盘聚焦也不触发', async () => {
+    const user = userEvent.setup()
+    render(<NotificationBell />)
+
+    hover('touch')
+    hover('pen')
+    act(() => bell().focus())
+    await user.tab()
+    await user.tab({ shift: true })
+
+    expect(bell()).toHaveAttribute('data-ring-count', '0')
+    expect(animateCalls.calls).toHaveLength(0)
+  })
+
+  it('面板开着时不摇', async () => {
+    render(<NotificationBell />)
+    fireEvent.click(bell())
+    await screen.findByRole('dialog', { name: '通知' })
+
+    hover('mouse')
+
+    expect(bell()).toHaveAttribute('data-ring-count', '0')
+    expect(animateCalls.calls).toHaveLength(0)
+  })
+
+  it('不影响通知摇铃:悬浮摇过之后,新通知来了照样按条数摇', () => {
+    render(<NotificationBell />)
+    hover('mouse')
+
+    act(() => recordNotifications([entry('a'), entry('b')]))
+
+    expect(bell()).toHaveAttribute('data-ring-count', '2')
+    expect(velocityOf(animateCalls.calls[1])).toBeCloseTo(ringVelocity(2), 5)
+  })
+
+  it('后台攒下的待摇不受悬浮影响:回到前台仍按攒下的条数补摇一次', () => {
+    render(<NotificationBell />)
+    enterBackground()
+    act(() => recordNotifications([entry('a'), entry('b'), entry('c')]))
+    windowState.visibility = 'visible'
+    windowState.focused = true
+    hover('mouse')
+    expect(bell()).toHaveAttribute('data-ring-count', '1')
+
+    act(() => { window.dispatchEvent(new Event('focus')) })
+
+    expect(bell()).toHaveAttribute('data-ring-count', '2')
+    expect(velocityOf(animateCalls.calls[1])).toBeCloseTo(ringVelocity(3), 5)
   })
 })
 

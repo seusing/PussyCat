@@ -1,16 +1,23 @@
-/* 通知历史面板:材质来自 glass-menu-effect,这里只管定位和版式。 */
+/* 通知历史面板:定位和版式在这里。
+   材质是普通毛玻璃(backdrop-filter: var(--glass-blur)),不接液态玻璃(Hyalite)。Hyalite 的 SVG 位移滤镜在
+   它的区域里任何内容变化(堆叠展开、长高、滚动)时每帧整块重算,实测展开 16 条约 10 帧/秒,普通毛玻璃约 160 帧/秒;
+   面板里的卡片也不再各自做 backdrop-filter(见下面 .app-alert),否则每张卡再叠一层开销。 */
 .notification-popover {
   position: fixed;
   z-index: 70;
   box-sizing: border-box;
   width: min(380px, calc(100vw - 16px));
   overflow: hidden;
+  border: 1px solid var(--glass-edge);
   border-radius: 12px;
+  background: var(--glass-menu-fill);
+  color: var(--color-fg);
+  /* 亮边由 --glass-highlight 的 inset 高光给出 */
+  box-shadow: var(--glass-highlight), var(--glass-menu-shadow);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   outline: none;
 }
-
-/* 进出由 motion 驱动,关掉 .glass-menu-effect 自带的 glass-menu-enter,免得它盖住 opacity / transform。 */
-.notification-popover.glass-menu-effect { animation: none; }
 
 .notification-popover__head {
   display: flex;
@@ -58,6 +65,13 @@
   max-width: 100%;
   min-height: 0;
   padding: 0.75rem;
+}
+
+/* 面板里的卡片只用半透明底色:面板自己已经是毛玻璃,卡片再做 backdrop-filter 只会多一层每帧的开销。 */
+.notification-popover .app-alert {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: rgb(44 50 63 / 62%);
 }
 
 .notification-popover__empty {

@@ -5,7 +5,7 @@ import { selectUnreadCount, useNotificationHistory, type NotificationEntry } fro
 import { AppAlert, type AppAlertTone } from './AppAlert'
 import { AppNotificationStack } from './AppNotificationStack'
 import { restoreFocus } from './ConfirmPopover'
-import { glassPopMotion, positionMenu, useGlassMenuSurface } from './GlassMenu'
+import { glassPopMotion, positionMenu } from './GlassMenu'
 import './NotificationHistoryPopover.css'
 
 type Placement = { top: number; left: number; width: number; maxHeight: number }
@@ -43,6 +43,7 @@ function HistoryCard({ entry, now }: { entry: NotificationEntry; now: number }) 
 /**
  * 铃铛点开的通知历史面板:机制照 OpencliReleasePanel——portal 到 body、锚定触发按钮、Esc / 点外部关闭、
  * 关闭后焦点回到触发按钮。打开时(以及开着时又来了新通知)全部标为已读。
+ * 材质是普通毛玻璃,不接液态玻璃(Hyalite):面板里的内容会动(堆叠展开、长高、滚动),见 CSS 里的说明。
  */
 export function NotificationHistoryPopover({ anchor, onClose }: { anchor: HTMLElement; onClose: () => void }) {
   const surfaceRef = useRef<HTMLDivElement | null>(null)
@@ -50,7 +51,6 @@ export function NotificationHistoryPopover({ anchor, onClose }: { anchor: HTMLEl
   const unread = useNotificationHistory(selectUnreadCount)
   const [placement, setPlacement] = useState<Placement | null>(null)
   const reduceMotion = useReducedMotion()
-  useGlassMenuSurface(surfaceRef, true)
 
   useEffect(() => {
     if (unread > 0) useNotificationHistory.getState().markAllRead()
@@ -114,7 +114,7 @@ export function NotificationHistoryPopover({ anchor, onClose }: { anchor: HTMLEl
       aria-label="通知"
       tabIndex={-1}
       data-testid="notification-history"
-      className="notification-popover glass-menu-effect"
+      className="notification-popover"
       style={placement
         ? {
           top: placement.top, left: placement.left, width: placement.width, maxHeight: placement.maxHeight,
@@ -123,7 +123,7 @@ export function NotificationHistoryPopover({ anchor, onClose }: { anchor: HTMLEl
         : { top: 0, left: 0, visibility: 'hidden' }}
       {...glassPopMotion(reduceMotion)}
     >
-      <div className="glass-menu-content">
+      <div>
         <div className="notification-popover__head">
           <h3>通知</h3>
           <button

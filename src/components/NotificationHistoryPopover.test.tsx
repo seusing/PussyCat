@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -58,17 +60,43 @@ describe('formatNotificationTime', () => {
 })
 
 describe('NotificationHistoryPopover', () => {
-  it('以名为「通知」的 dialog 渲染到 body 下,用玻璃菜单的材质、关掉自带入场动画', async () => {
+  it('以名为「通知」的 dialog 渲染到 body 下,不再套用玻璃菜单的 Hyalite 材质类', async () => {
     const { dialog } = await openPopover()
 
     expect(dialog.parentElement).toBe(document.body)
-    expect(dialog).toHaveClass('glass-menu-effect', 'notification-popover')
-    const { readFileSync } = await import('node:fs')
-    const { resolve } = await import('node:path')
-    const css = readFileSync(resolve(process.cwd(), 'src/components/NotificationHistoryPopover.css'), 'utf8')
-    expect(css).toMatch(/\.notification-popover\.glass-menu-effect\s*\{\s*animation:\s*none;/)
-    expect(css).toMatch(/\.notification-popover\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*70;[^}]*width:\s*min\(380px,\s*calc\(100vw - 16px\)\);/s)
+    expect(dialog).toHaveClass('notification-popover')
+    expect(dialog).not.toHaveClass('glass-menu-effect')
+  })
+
+  it('样式:定位、尺寸和滚动区;材质是普通毛玻璃,不依赖 --hyalite', () => {
+    const raw = readFileSync(resolve(process.cwd(), 'src/components/NotificationHistoryPopover.css'), 'utf8')
+    const css = raw.replace(/\/\*[\s\S]*?\*\//g, '')
+    const surface = css.match(/\.notification-popover\s*\{([^}]*)\}/)![1]
+
+    expect(surface).toMatch(/position:\s*fixed;/)
+    expect(surface).toMatch(/z-index:\s*70;/)
+    expect(surface).toMatch(/width:\s*min\(380px,\s*calc\(100vw - 16px\)\);/)
+    expect(surface).toMatch(/border:\s*1px solid var\(--glass-edge\);/)
+    expect(surface).toMatch(/border-radius:\s*12px;/)
+    expect(surface).toMatch(/background:\s*var\(--glass-menu-fill\);/)
+    expect(surface).toMatch(/box-shadow:\s*var\(--glass-highlight\),\s*var\(--glass-menu-shadow\);/)
+    expect(surface).toMatch(/(?<!-webkit-)backdrop-filter:\s*var\(--glass-blur\);/)
+    expect(css).not.toMatch(/hyalite/i)
+    expect(css).not.toMatch(/glass-menu-effect/)
     expect(css).toMatch(/\.notification-popover__body\s*\{[^}]*max-height:\s*min\(440px,\s*calc\(100vh - 120px\)\);[^}]*overflow-y:\s*auto;/s)
+    // 注释里写明了为什么不用液态玻璃
+    expect(raw).toMatch(/Hyalite[\s\S]*每帧[\s\S]*重算/)
+  })
+
+  it('面板里的卡片不做 backdrop-filter,只用半透明底色(作用域限定在历史面板内)', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/components/NotificationHistoryPopover.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const cards = css.match(/\.notification-popover \.app-alert\s*\{([^}]*)\}/)![1]
+
+    expect(cards).toMatch(/(?<!-webkit-)backdrop-filter:\s*none;/)
+    expect(cards).toMatch(/-webkit-backdrop-filter:\s*none;/)
+    expect(cards).toMatch(/background:\s*rgb\([^)]*\/\s*\d+%\);/)
+    // 没有把全局的 .app-alert 改掉:弹窗里的卡片仍然是液态玻璃
+    expect(css).not.toMatch(/^\.app-alert\s*\{/m)
   })
 
   it('没有通知:显示空状态,清空按钮不可用', async () => {
@@ -96,18 +124,17 @@ describe('NotificationHistoryPopover', () => {
     expect(items()[2].querySelector('.app-alert__description')).toHaveTextContent(/^刚刚$/)
   })
 
-  it('历史卡片不接液态玻璃(不在弹窗层里),也不会被读屏当成实时通知', async () => {
+  it('面板和卡片都不调用 Hyalite.attach,卡片也不会被读屏当成实时通知', async () => {
     const attach = vi.fn()
     const original = { supported: window.Hyalite.supported, attach: window.Hyalite.attach }
     window.Hyalite.supported = vi.fn(() => true)
     window.Hyalite.attach = attach
     try {
       recordNotifications([entry('a'), entry('b')])
-      await openPopover()
+      const { user } = await openPopover()
+      await user.click(screen.getByRole('button', { name: '查看所有 2 条' }))   // 展开也不接
 
-      // 面板自己接一次玻璃;卡片一次都没有
-      expect(attach).toHaveBeenCalledTimes(1)
-      expect(attach.mock.calls[0][0]).toBe(screen.getByRole('dialog', { name: '通知' }))
+      expect(attach).not.toHaveBeenCalled()
       for (const item of items()) {
         expect(item).not.toHaveClass('app-alert--glass')
         expect(item).not.toHaveAttribute('aria-live', 'polite')

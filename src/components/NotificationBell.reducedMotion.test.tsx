@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { recordNotifications, useNotificationHistory } from '../store/notificationHistory'
@@ -74,5 +74,27 @@ it('缩减动效下窗口在后台期间新增的未读,回到前台也不补摇
   } finally {
     hasFocus.mockRestore()
     visibility.mockRestore()
+  }
+})
+
+it('缩减动效下鼠标移入铃铛也不摇', () => {
+  class PointerEventStub extends MouseEvent {
+    readonly pointerType: string
+    constructor(type: string, init: MouseEventInit & { pointerType?: string } = {}) {
+      super(type, init)
+      this.pointerType = init.pointerType ?? ''
+    }
+  }
+  const view = document.defaultView as unknown as { PointerEvent?: unknown }
+  const original = view.PointerEvent
+  view.PointerEvent = PointerEventStub
+  try {
+    render(<NotificationBell />)
+    fireEvent.pointerEnter(bell(), { pointerType: 'mouse' })
+
+    expect(animateCalls.count).toBe(0)
+    expect(bell()).toHaveAttribute('data-ring-count', '0')
+  } finally {
+    view.PointerEvent = original
   }
 })
