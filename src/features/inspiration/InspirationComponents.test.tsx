@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
@@ -279,7 +279,7 @@ describe('inspiration selectors', () => {
 
 describe('inspiration workspace link', () => {
   const renderPanel = () => render(
-    <InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />,
+    <InspirationPanel onRun={() => {}} onCancel={() => {}} />,
   )
 
   it('execute 页使用无文字的固定尺寸灵感库图标按钮', () => {
@@ -305,6 +305,41 @@ describe('inspiration workspace link', () => {
   })
 })
 
+describe('inspiration execute header', () => {
+  it('头部没有稍后查看/收藏按钮,保留收进灵感库', () => {
+    useAppStore.setState({ commands: [commands[0]], selected: commands[0] })
+    render(<InspirationPanel onRun={() => {}} onCancel={() => {}} />)
+
+    expect(screen.queryByTestId('fav-site')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('fav-command')).not.toBeInTheDocument()
+    expect(screen.getByTestId('save-command-to-inspiration-library')).toBeInTheDocument()
+  })
+
+  it('访问标签显示「只读」/「写入」,不出现 read/write 原文,写入带 is-write', () => {
+    const readCommand: CommandManifest = { ...commands[0], command: 'site/browse', name: 'browse', description: '示例', browser: false }
+    const writeCommand: CommandManifest = { ...readCommand, command: 'site/post', name: 'post', access: 'write' }
+    const header = () => within(screen.getByTestId('command-header'))
+
+    useAppStore.setState({ commands: [readCommand, writeCommand], selected: readCommand })
+    const { unmount } = render(<InspirationPanel onRun={() => {}} onCancel={() => {}} />)
+    expect(header().getByText('只读')).toHaveClass('inspiration-command-tag')
+    expect(header().getByText('只读')).not.toHaveClass('is-write')
+    expect(header().queryByText('read')).not.toBeInTheDocument()
+    expect(header().queryByText('READ')).not.toBeInTheDocument()
+    expect(header().queryByText('浏览器')).not.toBeInTheDocument()
+    unmount()
+
+    useAppStore.setState({ selected: { ...writeCommand, browser: true } })
+    render(<InspirationPanel onRun={() => {}} onCancel={() => {}} />)
+    expect(header().getByText('写入')).toHaveClass('inspiration-command-tag', 'is-write')
+    expect(header().queryByText('write')).not.toBeInTheDocument()
+    expect(header().queryByText('WRITE')).not.toBeInTheDocument()
+    expect(header().getByText('浏览器')).toHaveClass('inspiration-command-tag')
+    expect(header().getByTestId('save-command-to-inspiration-library')).toBeInTheDocument()
+    expect(screen.getByTestId('command-description')).toHaveTextContent('示例')
+  })
+})
+
 describe('inspiration command search', () => {
   const likedCommand: CommandManifest = {
     command: 'xiaohongshu/liked',
@@ -326,7 +361,7 @@ describe('inspiration command search', () => {
     args: [],
   }
   const renderPanel = () => render(
-    <InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />,
+    <InspirationPanel onRun={() => {}} onCancel={() => {}} />,
   )
 
   afterEach(() => { act(() => { useAppStore.setState({ mode: 'demo' }) }) })

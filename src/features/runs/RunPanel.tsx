@@ -1,26 +1,27 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
-import { ChevronDown, Download, RotateCw, Send, Square, X } from 'lucide-react'
+import { Check, ChevronDown, Download, Send, Square, X } from 'lucide'
 import { useAppStore } from '../../store/appStore'
 import { StreamLog } from './StreamLog'
 import { ResultsTable } from './ResultsTable'
 import { copyPayloadFor } from '../../data/copyPayload'
 import { CopyButton } from '../../components/CopyButton'
-import { validate } from '../config/validation'
+import { IconActionButton } from '../../components/IconActionButton'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { collectNoteLinks } from './noteLinks'
 import './RunPanel.css'
 
-export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun: () => void }) {
+export function RunPanel({ onCancel }: { onCancel: () => void }) {
   const run = useAppStore((s) => s.currentRun)
-  const selected = useAppStore((s) => s.selected)
-  const values = useAppStore((s) => s.values)
   const [tab, setTab] = useState<'result' | 'log'>('log')
   const collapsed = useAppStore((s) => s.runPanelCollapsed)
   const setCollapsed = useAppStore((s) => s.setRunPanelCollapsed)
   const [detailOpen, setDetailOpen] = useState(false)
   const [savingLinks, setSavingLinks] = useState(false)
+  const [linksSaved, setLinksSaved] = useState(false)
+  const savedTimer = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => { setDetailOpen(false) }, [run?.id])
+  useEffect(() => () => clearTimeout(savedTimer.current), [])
   const listingCollections = run?.command.command === 'xiaohongshu/saved'
     && run.values['list-collections'] === true
   const noteLinks = useMemo(
@@ -44,75 +45,65 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
     if (savingLinks || noteLinks.all.length === 0) return
     setSavingLinks(true)
     try {
-      await saveTextFileAs('笔记链接.txt', `${noteLinks.all.join('\n')}\n`)
+      if (await saveTextFileAs('笔记链接.txt', `${noteLinks.all.join('\n')}\n`)) {
+        setLinksSaved(true)
+        clearTimeout(savedTimer.current)
+        savedTimer.current = setTimeout(() => setLinksSaved(false), 1500)
+      }
     } finally {
       setSavingLinks(false)
     }
   }
-  const rerunVisible = terminal && selected?.command === run.command.command
-  const rerunErrors = rerunVisible && selected ? validate(selected, values) : {}
-  const rerunDisabled = Object.keys(rerunErrors).length > 0
-  const rerunLabel = run.state === 'succeeded' ? '再次执行' : run.state === 'failed' ? '重试' : '重新执行'
+  const cancelLabel = run.state === 'cancelling' ? '正在取消' : '取消执行'
+  const saveLabel = savingLinks ? '正在保存' : linksSaved ? '已保存' : '保存至本地'
 
   return (
     <div className="run-panel flex h-full flex-col p-3">
       <div className="run-panel-header">
-        <span data-testid="run-state" className="run-panel-status text-sm font-medium">
+        <span data-testid="run-state" className="run-panel-status">
           {active && <ThinkingOrb state={orbState(run.state)} size={20} theme="dark" />}
+          {terminal && <span className="run-panel-status-dot" data-tone={terminalTone(run.state)} aria-hidden="true" />}
           {stateLabel(run.state)}
         </span>
         <div className="run-panel-actions" role="toolbar" aria-label="任务操作">
           {active && (
-            <button data-testid="cancel-button" onClick={onCancel} disabled={run.state === 'cancelling'}
-              className="run-panel-icon-button is-danger disabled:opacity-50"
-              aria-label={run.state === 'cancelling' ? '正在取消' : '取消执行'}
-              title={run.state === 'cancelling' ? '正在取消' : '取消执行'}>
-              <Square size={15} aria-hidden="true" />
-              <span className="sr-only">{run.state === 'cancelling' ? '正在取消' : '取消执行'}</span>
-            </button>
+            <IconActionButton
+              data-testid="cancel-button"
+              tone="danger"
+              icon={Square}
+              label={cancelLabel}
+              onClick={onCancel}
+              disabled={run.state === 'cancelling'}
+            />
           )}
-          {payload && <CopyButton iconOnly label={payload.label} getText={() => payload.text} testid="copy-run" />}
+          {payload && <CopyButton label={payload.label} getText={() => payload.text} testid="copy-run" />}
           {noteLinks.video.length > 0 && (
-            <button
+            <IconActionButton
               data-testid="export-note-links"
-              type="button"
+              icon={Send}
+              label="一键导出笔记链接"
               onClick={() => useAppStore.getState().setVkHandoff({
                 url: noteLinks.video.join('\n'),
                 commandKey: run.command.command,
                 collectedAt: run.startedAt,
               })}
-              className="run-panel-icon-button"
-              aria-label="一键导出笔记链接"
-              title="一键导出笔记链接"
-            ><Send size={16} aria-hidden="true" /><span className="sr-only">一键导出笔记链接</span></button>
+            />
           )}
           {noteLinks.all.length > 0 && (
-            <button
+            <IconActionButton
               data-testid="save-note-links"
-              type="button"
+              icon={linksSaved ? Check : Download}
+              label={saveLabel}
               onClick={() => { void saveLinks() }}
               disabled={savingLinks}
-              className="run-panel-icon-button disabled:opacity-50"
-              aria-label={savingLinks ? '正在保存' : '保存至本地'}
-              title={savingLinks ? '正在保存' : '保存至本地'}
-            ><Download size={16} aria-hidden="true" /><span className="sr-only">{savingLinks ? '正在保存' : '保存至本地'}</span></button>
+            />
           )}
-          {rerunVisible && (
-            <button data-testid="rerun-button" disabled={rerunDisabled} onClick={onRerun}
-              title={rerunDisabled ? '参数校验未通过，请回表单修正' : rerunLabel}
-              aria-label={rerunDisabled ? `不可${rerunLabel}：参数校验未通过` : rerunLabel}
-              className="run-panel-icon-button is-accent disabled:opacity-50">
-              <RotateCw size={16} aria-hidden="true" />
-              <span className="sr-only">{rerunLabel}</span>
-            </button>
-          )}
-          <button data-testid="collapse-panel" onClick={() => setCollapsed(!collapsed)}
-            aria-label={collapsed ? '展开面板' : '收起面板'}
-            title={collapsed ? '展开面板' : '收起面板'}
-            className="run-panel-icon-button">
-            {collapsed ? <ChevronDown size={17} aria-hidden="true" /> : <X size={17} aria-hidden="true" />}
-            <span className="sr-only">{collapsed ? '展开面板' : '收起面板'}</span>
-          </button>
+          <IconActionButton
+            data-testid="collapse-panel"
+            icon={collapsed ? ChevronDown : X}
+            label={collapsed ? '展开面板' : '收起面板'}
+            onClick={() => setCollapsed(!collapsed)}
+          />
         </div>
       </div>
 
@@ -142,9 +133,9 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
           )}
 
           {showTable && (
-            <div className="mb-2 flex gap-2 text-xs">
-              <button onClick={() => setTab('result')} style={{ color: tab === 'result' ? 'var(--color-accent)' : 'var(--color-fg-dim)' }}>表格结果</button>
-              <button onClick={() => setTab('log')} style={{ color: tab === 'log' ? 'var(--color-accent)' : 'var(--color-fg-dim)' }}>完整日志</button>
+            <div className="run-panel-tabs">
+              <button type="button" className={tab === 'result' ? 'is-active' : undefined} aria-pressed={tab === 'result'} onClick={() => setTab('result')}>表格结果</button>
+              <button type="button" className={tab === 'log' ? 'is-active' : undefined} aria-pressed={tab === 'log'} onClick={() => setTab('log')}>完整日志</button>
             </div>
           )}
 
@@ -182,10 +173,10 @@ export function RunPanel({ onCancel, onRerun }: { onCancel: () => void; onRerun:
 
 function LinkGroup({ title, links, testid }: { title: string; links: string[]; testid: string }) {
   return (
-    <section data-testid={testid} className="min-w-0 rounded-lg p-2" style={{ border: '1px solid var(--color-line)', background: 'var(--color-canvas)' }}>
+    <section data-testid={testid} className="min-w-0 rounded-lg p-2" style={{ border: '1px solid var(--color-hairline)', background: 'rgb(255 255 255 / 2%)' }}>
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-xs font-medium" style={{ color: 'var(--color-fg)' }}>{title}（{links.length}）</span>
-        <CopyButton iconOnly label="复制链接" getText={() => `${links.join('\n')}\n`} testid={`${testid}-copy`} />
+        <CopyButton label="复制链接" getText={() => `${links.join('\n')}\n`} testid={`${testid}-copy`} />
       </div>
       <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-all text-xs" style={{ color: 'var(--color-fg-dim)' }}>{links.join('\n')}</pre>
     </section>
@@ -194,6 +185,10 @@ function LinkGroup({ title, links, testid }: { title: string; links: string[]; t
 
 function stateLabel(s: string): string {
   return ({ starting: '正在启动…', running: '运行中…', cancelling: '正在取消…', succeeded: '已完成', failed: '失败', cancelled: '已取消' } as Record<string, string>)[s] ?? s
+}
+
+function terminalTone(s: string): string {
+  return ({ succeeded: 'success', failed: 'danger', cancelled: 'dim' } as Record<string, string>)[s]
 }
 
 // 只在进行中的三态出球:终态(已完成/失败/已取消)的信息由文字与颜色承担,再放个动图是噪音。

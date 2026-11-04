@@ -6,9 +6,8 @@ import type { LoginCheckEntry, LoginCheckState } from '../data/loginStatus'
 import { transition, type RunState } from './runMachine'
 import {
   emptyPreferences, loadPreferences, savePreferences,
-  toggleFavoriteSite, toggleFavoriteCommand, restoreFavoriteSite, restoreFavoriteCommand,
   pushRecent, staleKeys, acknowledge, revokeAcknowledgement,
-  type PreferencesSnapshot, type FavoriteSite, type FavoriteCommand,
+  type PreferencesSnapshot,
 } from '../data/preferences'
 
 const SENSITIVE = /password|passcode|secret|token|cookie/i
@@ -34,10 +33,6 @@ export type CommandRun = {
   result?: Record<string, unknown>[]
   error?: { summary: string; detail?: string }
 }
-
-export type LastUndo =
-  | { kind: 'site'; item: FavoriteSite }
-  | { kind: 'command'; item: FavoriteCommand }
 
 function defaultsOf(cmd: CommandManifest): Record<string, unknown> {
   const v: Record<string, unknown> = {}
@@ -119,12 +114,7 @@ type AppState = {
   // —— preferences 切片 ——
   preferences: PreferencesSnapshot
   stale: { sites: Set<string>; commands: Set<string> }
-  lastUndo?: LastUndo
   hydratePreferences: () => void
-  toggleSiteFavorite: (site: string) => void
-  toggleCommandFavorite: (cmd: CommandManifest) => void
-  undoLastFavorite: () => void
-  dismissUndo: () => void
   // —— acknowledgement 切片(Task 8):Host 判 acknowledgement-required 时,前端要求用户确认一次并绑定 fingerprint。
   // acknowledgement 本身不是安全授权(I-P5)——它只防误点/陈旧 UI,执行边界仍由 Host 的 denied/unknown 拒绝把守。
   pendingAcknowledgement?: { command: CommandManifest; decision: PolicyDecision }
@@ -248,33 +238,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   // —— preferences 切片 ——
   preferences: emptyPreferences(),
   stale: { sites: new Set<string>(), commands: new Set<string>() },
-  lastUndo: undefined,
   hydratePreferences: () => set((s) => {
     const preferences = loadPreferences()
-    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
+    return { preferences, stale: staleKeys(preferences, s.commands) }
   }),
-  toggleSiteFavorite: (site) => set((s) => {
-    const removed = s.preferences.favoriteSites.find((f) => f.site === site)
-    const preferences = toggleFavoriteSite(s.preferences, site, Date.now())
-    savePreferences(preferences)
-    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: removed ? { kind: 'site', item: removed } : undefined }
-  }),
-  toggleCommandFavorite: (cmd) => set((s) => {
-    const removed = s.preferences.favoriteCommands.find((f) => f.command === cmd.command)
-    const preferences = toggleFavoriteCommand(s.preferences, cmd.command, cmd.site, Date.now())
-    savePreferences(preferences)
-    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: removed ? { kind: 'command', item: removed } : undefined }
-  }),
-  undoLastFavorite: () => set((s) => {
-    const u = s.lastUndo
-    if (!u) return s
-    const preferences = u.kind === 'site'
-      ? restoreFavoriteSite(s.preferences, u.item)
-      : restoreFavoriteCommand(s.preferences, u.item)
-    savePreferences(preferences)
-    return { preferences, stale: staleKeys(preferences, s.commands), lastUndo: undefined }
-  }),
-  dismissUndo: () => set({ lastUndo: undefined }),
   // —— acknowledgement 切片 ——
   pendingAcknowledgement: undefined,
   requestAcknowledgement: (command, decision) => set({ pendingAcknowledgement: { command, decision } }),

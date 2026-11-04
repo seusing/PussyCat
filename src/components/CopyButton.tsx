@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { Check, Copy } from 'lucide'
 import { copyText } from '../lib/clipboard'
-import { MicroButton } from './MicroButton'
+import { IconActionButton } from './IconActionButton'
 
-export function CopyButton({ label, getText, testid, iconOnly = false }: {
+export function CopyButton({ label, getText, testid, className }: {
   label: string
   getText: () => string
   testid: string
-  iconOnly?: boolean
+  className?: string
 }) {
   const [flash, setFlash] = useState<'idle' | 'ok' | 'fail'>('idle')
   const timer = useRef<ReturnType<typeof setTimeout>>()
@@ -20,16 +21,13 @@ export function CopyButton({ label, getText, testid, iconOnly = false }: {
   const currentLabel = flash === 'ok' ? '已复制' : flash === 'fail' ? '复制失败' : label
 
   return (
-    <MicroButton
-      variant="copy"
-      active={flash === 'ok'}
+    <IconActionButton
+      icon={flash === 'ok' ? Check : Copy}
+      label={currentLabel}
       data-testid={testid}
+      data-state={flash}
+      className={className}
       onClick={onClick}
-      aria-label={iconOnly ? currentLabel : undefined}
-      title={iconOnly ? currentLabel : undefined}
-      style={iconOnly ? { width: 36, padding: 0 } : undefined}
-    >
-      {iconOnly ? <span className="sr-only">{currentLabel}</span> : currentLabel}
-    </MicroButton>
+    />
   )
 }

@@ -134,32 +134,6 @@ export function savePreferences(prefs: PreferencesSnapshot, storage?: Storage): 
   return tryWrite(s, PREFS_KEY_V2, prefs)
 }
 
-export function isSiteFavorited(prefs: PreferencesSnapshot, site: string): boolean {
-  return prefs.favoriteSites.some((f) => f.site === site)
-}
-
-export function isCommandFavorited(prefs: PreferencesSnapshot, command: string): boolean {
-  return prefs.favoriteCommands.some((f) => f.command === command)
-}
-
-function nextOrder(items: ReadonlyArray<{ order: number }>): number {
-  return items.reduce((m, x) => Math.max(m, x.order), -1) + 1
-}
-
-export function toggleFavoriteSite(prefs: PreferencesSnapshot, site: string, now: number): PreferencesSnapshot {
-  if (isSiteFavorited(prefs, site)) {
-    return { ...prefs, favoriteSites: prefs.favoriteSites.filter((f) => f.site !== site) }
-  }
-  return { ...prefs, favoriteSites: [...prefs.favoriteSites, { site, order: nextOrder(prefs.favoriteSites), createdAt: now }] }
-}
-
-export function toggleFavoriteCommand(prefs: PreferencesSnapshot, command: string, site: string, now: number): PreferencesSnapshot {
-  if (isCommandFavorited(prefs, command)) {
-    return { ...prefs, favoriteCommands: prefs.favoriteCommands.filter((f) => f.command !== command) }
-  }
-  return { ...prefs, favoriteCommands: [...prefs.favoriteCommands, { command, site, order: nextOrder(prefs.favoriteCommands), createdAt: now }] }
-}
-
 export function pushRecent(prefs: PreferencesSnapshot, command: string, at: number): PreferencesSnapshot {
   const rest = prefs.recent.filter((r) => r.command !== command)
   return { ...prefs, recent: [{ command, at }, ...rest].slice(0, RECENT_CAP) }
@@ -172,17 +146,6 @@ export function staleKeys(prefs: PreferencesSnapshot, commands: CommandManifest[
   const sites = new Set(prefs.favoriteSites.filter((f) => !liveSites.has(f.site)).map((f) => f.site))
   const cmds = new Set(prefs.favoriteCommands.filter((f) => !liveCommands.has(f.command)).map((f) => f.command))
   return { sites, commands: cmds }
-}
-
-// 撤销回插:原记录原样回插(保 createdAt/order → UI 按 createdAt 排序自然回到原位);已存在则不动(幂等)
-export function restoreFavoriteSite(prefs: PreferencesSnapshot, item: FavoriteSite): PreferencesSnapshot {
-  if (isSiteFavorited(prefs, item.site)) return prefs
-  return { ...prefs, favoriteSites: [...prefs.favoriteSites, item] }
-}
-
-export function restoreFavoriteCommand(prefs: PreferencesSnapshot, item: FavoriteCommand): PreferencesSnapshot {
-  if (isCommandFavorited(prefs, item.command)) return prefs
-  return { ...prefs, favoriteCommands: [...prefs.favoriteCommands, item] }
 }
 
 // —— acknowledgement 管理(Task 8) ——

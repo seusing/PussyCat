@@ -44,31 +44,11 @@ test('loadPreferences:缺字段→empty', () => {
   expect(loadPreferences(s)).toEqual(emptyPreferences())
 })
 
-import { isSiteFavorited, isCommandFavorited, toggleFavoriteSite, toggleFavoriteCommand, pushRecent, staleKeys, RECENT_CAP, restoreFavoriteSite } from './preferences'
+import { pushRecent, staleKeys, RECENT_CAP } from './preferences'
 import type { CommandManifest } from './types'
 
 const mkCmd = (site: string, name: string): CommandManifest => ({
   command: `${site}/${name}`, site, name, description: '', access: 'read', browser: false, args: [],
-})
-
-test('toggleFavoriteSite 幂等往返 + order 递增 + 注入 now', () => {
-  let p = emptyPreferences()
-  p = toggleFavoriteSite(p, 'x', 100)
-  expect(isSiteFavorited(p, 'x')).toBe(true)
-  expect(p.favoriteSites[0]).toEqual({ site: 'x', order: 0, createdAt: 100 })
-  p = toggleFavoriteSite(p, 'y', 200)
-  expect(p.favoriteSites[1].order).toBe(1)          // order = max+1
-  p = toggleFavoriteSite(p, 'x', 300)               // 再 toggle → 移除
-  expect(isSiteFavorited(p, 'x')).toBe(false)
-  expect(p.favoriteSites.map((f) => f.site)).toEqual(['y'])
-})
-
-test('toggleFavoriteCommand 存 command+site 两键', () => {
-  let p = toggleFavoriteCommand(emptyPreferences(), 'x/go', 'x', 5)
-  expect(isCommandFavorited(p, 'x/go')).toBe(true)
-  expect(p.favoriteCommands[0]).toEqual({ command: 'x/go', site: 'x', order: 0, createdAt: 5 })
-  p = toggleFavoriteCommand(p, 'x/go', 'x', 9)
-  expect(isCommandFavorited(p, 'x/go')).toBe(false)
 })
 
 test('pushRecent 去重置顶 + 上限 RECENT_CAP', () => {
@@ -83,10 +63,14 @@ test('pushRecent 去重置顶 + 上限 RECENT_CAP', () => {
 
 test('staleKeys 标记已失效收藏', () => {
   const commands = [mkCmd('x', 'go'), mkCmd('y', 'list')]
-  let p = toggleFavoriteSite(emptyPreferences(), 'x', 1)
-  p = toggleFavoriteSite(p, 'ghost', 2)
-  p = toggleFavoriteCommand(p, 'y/list', 'y', 3)
-  p = toggleFavoriteCommand(p, 'dead/none', 'dead', 4)
+  const p = {
+    ...emptyPreferences(),
+    favoriteSites: [{ site: 'x', order: 0, createdAt: 1 }, { site: 'ghost', order: 1, createdAt: 2 }],
+    favoriteCommands: [
+      { command: 'y/list', site: 'y', order: 0, createdAt: 3 },
+      { command: 'dead/none', site: 'dead', order: 1, createdAt: 4 },
+    ],
+  }
   const stale = staleKeys(p, commands)
   expect(stale.sites.has('ghost')).toBe(true)
   expect(stale.sites.has('x')).toBe(false)
@@ -95,19 +79,8 @@ test('staleKeys 标记已失效收藏', () => {
 })
 
 test('staleKeys 空 manifest → 空 stale(无法判定,不误灰)', () => {
-  const p = toggleFavoriteSite(emptyPreferences(), 'x', 1)
+  const p = { ...emptyPreferences(), favoriteSites: [{ site: 'x', order: 0, createdAt: 1 }] }
   expect(staleKeys(p, []).sites.size).toBe(0)
-})
-
-test('restoreFavorite* 原记录原位回插且幂等', () => {
-  let p = toggleFavoriteSite(emptyPreferences(), 'a', 100)
-  p = toggleFavoriteSite(p, 'b', 200)
-  const removed = p.favoriteSites[0]
-  p = toggleFavoriteSite(p, 'a', 300)          // 取消 a
-  p = restoreFavoriteSite(p, removed)
-  const order = [...p.favoriteSites].sort((x, y) => x.createdAt - y.createdAt).map((f) => f.site)
-  expect(order).toEqual(['a', 'b'])            // a 凭原 createdAt=100 回到 b 前
-  expect(restoreFavoriteSite(p, removed)).toEqual(p)
 })
 
 test('元素结构校验:无效项丢弃、有效项保留、不再抛', () => {
@@ -122,7 +95,6 @@ test('元素结构校验:无效项丢弃、有效项保留、不再抛', () => {
   expect(p.favoriteSites).toEqual([{ site: 'x', order: 0, createdAt: 1 }])
   expect(p.favoriteCommands).toEqual([{ command: 'x/go', site: 'x', order: 0, createdAt: 1 }])
   expect(p.recent).toEqual([{ command: 'x/go', at: 1 }])
-  expect(isSiteFavorited(p, 'x')).toBe(true)   // 不抛且判定正确
 })
 
 test('loadPreferences: 收藏数组按唯一键去重(首见保留;二轮复审 P2)', () => {

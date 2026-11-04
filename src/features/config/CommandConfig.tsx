@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Lock, Send, Loader2, Copy, Check } from 'lucide-react'
+import { Lock, Send, Loader2 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { buildTokens, commandPreview, quote } from '../../data/command'
-import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { validate } from './validation'
 import { DynamicField } from './DynamicField'
 import { explainDecision, isRunnable } from '../../data/policy'
 import { commandDescription, commandTitle } from '../../data/zhCopy'
-import { MicroButton } from '../../components/MicroButton'
-import { copyText } from '../../lib/clipboard'
+import { CopyButton } from '../../components/CopyButton'
 
 export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: {
   onRun: () => void
@@ -21,14 +19,7 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
   const currentRun = useAppStore((s) => s.currentRun)
   const decision = useAppStore((s) => (s.selected ? s.decisionFor(s.selected.command) : undefined))
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const preferences = useAppStore((s) => s.preferences)
-  const toggleSiteFavorite = useAppStore((s) => s.toggleSiteFavorite)
-  const toggleCommandFavorite = useAppStore((s) => s.toggleCommandFavorite)
-  const [copyState, setCopyState] = useState<'idle' | 'ok' | 'err'>('idle')
-  const copyTimer = useRef<ReturnType<typeof setTimeout>>()
   const handleRunRef = useRef<(() => void) | null>(null)
-
-  useEffect(() => () => clearTimeout(copyTimer.current), [])
 
   useEffect(() => { setErrors({}) }, [selected])   // ⑦a 切换命令后清掉上一条命令残留的字段错误
 
@@ -66,15 +57,6 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
 
   const tokens = buildTokens(selected, values)
 
-  const handleCopy = async () => {
-    const ok = await copyText(commandPreview(selected, values))
-    setCopyState(ok ? 'ok' : 'err')
-    clearTimeout(copyTimer.current)
-    copyTimer.current = setTimeout(() => setCopyState('idle'), 1500)
-  }
-
-  const copyTitle = copyState === 'ok' ? '已复制' : copyState === 'err' ? '复制失败' : '复制命令'
-
   return (
     <div>
       {!compactHeader && <div data-testid="command-header" className="mb-4 flex flex-wrap items-center gap-2">
@@ -82,26 +64,6 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
           <h2 className="text-lg font-semibold">{commandTitle(selected.command) ?? selected.name}</h2>
           {commandTitle(selected.command) && <small>{selected.name}</small>}
         </div>
-        <MicroButton
-          variant="save"
-          data-testid="fav-site"
-          onClick={() => toggleSiteFavorite(selected.site)}
-          active={isSiteFavorited(preferences, selected.site)}
-          aria-pressed={isSiteFavorited(preferences, selected.site)}
-          title={isSiteFavorited(preferences, selected.site) ? '取消收藏站点' : '收藏站点'}
-        >
-          {isSiteFavorited(preferences, selected.site) ? '已保存' : '稍后查看'}
-        </MicroButton>
-        <MicroButton
-          variant="favorite"
-          data-testid="fav-command"
-          onClick={() => toggleCommandFavorite(selected)}
-          active={isCommandFavorited(preferences, selected.command)}
-          aria-pressed={isCommandFavorited(preferences, selected.command)}
-          title={isCommandFavorited(preferences, selected.command) ? '取消收藏命令' : '收藏命令'}
-        >
-          {isCommandFavorited(preferences, selected.command) ? '已收藏' : '收藏'}
-        </MicroButton>
         <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
         {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
         {/* 说明和标题控件共用一行空间，窄窗口时自然换行，避免再占一整段底部高度。 */}
@@ -134,17 +96,7 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
             </span>
           ))}
         </pre>
-        <button
-          data-testid="copy-command"
-          className="cmd-form-preview-copy"
-          onClick={handleCopy}
-          aria-label={copyTitle}
-          title={copyTitle}
-        >
-          {copyState === 'ok'
-            ? <Check size={14} aria-hidden="true" />
-            : <Copy size={14} aria-hidden="true" />}
-        </button>
+        <CopyButton label="复制命令" getText={() => commandPreview(selected, values)} testid="copy-command" className="cmd-form-preview-copy" />
       </div>
 
       {/* 操作栏 */}
@@ -156,13 +108,13 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
         </span>
         <button data-testid="run-button" className="cmd-run-btn" disabled={running || !runnable} onClick={handleRun}>
           {running
-            ? <><Loader2 size={15} className="animate-spin" aria-hidden="true" />运行中…</>
-            : <><Send size={14} aria-hidden="true" />运行任务</>}
+            ? <><Loader2 size={15} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />运行中…</>
+            : <><Send size={14} strokeWidth={1.5} aria-hidden="true" />运行任务</>}
         </button>
       </div>
       {!runnable && (
         <p data-testid="decision-reason" className="cmd-decision-reason">
-          <Lock size={13} aria-hidden="true" />
+          <Lock size={13} strokeWidth={1.5} aria-hidden="true" />
           {explainDecision(decision)}
         </p>
       )}

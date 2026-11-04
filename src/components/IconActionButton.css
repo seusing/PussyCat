@@ -1,0 +1,37 @@
+.icon-action {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-fg-dim);
+  padding: 0;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.icon-action:hover:not(:disabled) {
+  background: rgb(255 255 255 / 6%);
+  color: var(--color-fg);
+}
+
+.icon-action:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.icon-action.is-danger {
+  color: var(--color-danger);
+}
+
+.icon-action.is-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  color: var(--color-danger);
+}
+
+.icon-action-glyph {
+  display: inline-grid;
+  place-items: center;
+}

@@ -10,16 +10,24 @@
 
 .run-panel-status {
   display: inline-flex;
-  min-height: 36px;
+  min-height: 32px;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-panel);
-  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 500;
   white-space: nowrap;
 }
+
+.run-panel-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+}
+.run-panel-status-dot[data-tone='success'] { background: var(--color-success); }
+.run-panel-status-dot[data-tone='danger'] { background: var(--color-danger); }
+.run-panel-status-dot[data-tone='dim'] { background: var(--color-fg-dim); }
 
 .run-panel-actions {
   display: flex;
@@ -31,33 +39,27 @@
   gap: 6px;
 }
 
-.run-panel-icon-button {
-  display: inline-grid;
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  flex: 0 0 36px;
-  place-items: center;
-  border: 1px solid var(--color-line);
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--color-fg);
-  padding: 0;
-  white-space: nowrap;
+/* 表格结果 / 完整日志 的分段切换 */
+.run-panel-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 4%);
 }
+.run-panel-tabs button {
+  padding: 3px 10px;
+  border-radius: 6px;
+  color: var(--color-fg-dim);
+  font-size: 13px;
+}
+.run-panel-tabs button.is-active { background: rgb(255 255 255 / 8%); color: var(--color-fg); }
 
-.run-panel-icon-button:hover:not(:disabled) {
-  border-color: var(--color-fg-dim);
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.run-panel-icon-button.is-accent {
-  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
-  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-}
-
-.run-panel-icon-button.is-danger {
-  border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-line));
-  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
-  color: var(--color-danger);
-}
+/* 日志用等宽字体,高特异性防止全局 font-family !important 覆盖 */
+#root .run-log,
+#root .run-log * { font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, 'Segoe UI Mono', monospace !important; }
+.run-log { font-size: 12.5px; line-height: 1.65; color: #aab2bf; white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-log .is-stderr { color: var(--color-danger); }
+.run-log-empty { color: var(--color-fg-dim); }

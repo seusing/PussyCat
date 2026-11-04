@@ -94,13 +94,13 @@ test('切换命令后旧字段错误不残留', async () => {
   await waitFor(() => expect(screen.queryByTestId('error-url')).not.toBeInTheDocument())
 })
 
-test('命令标题区域包含收藏、标签和说明且不再渲染旧面包屑', () => {
+test('命令标题区域包含标签和说明,没有收藏按钮且不再渲染旧面包屑', () => {
   render(<CommandConfig onRun={() => {}} />)
   const header = screen.getByTestId('command-header')
   expect(screen.queryByTestId('command-breadcrumb')).not.toBeInTheDocument()
   expect(screen.queryByText('/ go')).not.toBeInTheDocument()
-  expect(within(header).getByTestId('fav-site')).toBeInTheDocument()
-  expect(within(header).getByTestId('fav-command')).toBeInTheDocument()
+  expect(within(header).queryByTestId('fav-site')).not.toBeInTheDocument()
+  expect(within(header).queryByTestId('fav-command')).not.toBeInTheDocument()
   expect(within(header).getByText('read')).toBeInTheDocument()
   expect(within(header).getByTestId('command-description')).toHaveTextContent('示例')
 })
@@ -116,29 +116,6 @@ test('参数帮助与参数名同在标签头且输入下不再单独显示帮�
   expect(field.nextElementSibling?.getAttribute('data-testid')).not.toBe('field-help-url')
 })
 
-import { emptyPreferences } from '../../data/preferences'
-
-describe('收藏动作', () => {
-  beforeEach(() => { useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined, preferences: emptyPreferences(), stale: { sites: new Set(), commands: new Set() } }); localStorage.clear() })
-
-  test('点 Save Later 站点按钮后保存', async () => {
-    render(<CommandConfig onRun={() => {}} />)
-    const btn = screen.getByTestId('fav-site')
-    expect(btn).toHaveTextContent('稍后查看')
-    await userEvent.click(btn)
-    expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])
-    expect(screen.getByTestId('fav-site')).toHaveTextContent('已保存')
-  })
-
-  test('点 Favorite 命令按钮后收藏 command+site', async () => {
-    render(<CommandConfig onRun={() => {}} />)
-    await userEvent.click(screen.getByTestId('fav-command'))
-    const fav = useAppStore.getState().preferences.favoriteCommands[0]
-    expect(fav.command).toBe('x/go'); expect(fav.site).toBe('x')
-    expect(screen.getByTestId('fav-command')).toHaveTextContent('已收藏')
-  })
-})
-
 test('preview 旁复制命令按钮,text=commandPreview', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined)
   vi.stubGlobal('navigator', { clipboard: { writeText } })
@@ -146,6 +123,7 @@ test('preview 旁复制命令按钮,text=commandPreview', async () => {
   render(<CommandConfig onRun={() => {}} />)
   await userEvent.click(screen.getByTestId('copy-command'))
   expect(writeText).toHaveBeenCalledWith(commandPreview(cmd, {}))
+  expect(screen.getByTestId('copy-command')).toHaveAttribute('aria-label', '已复制')
 })
 
 // 锁住 handleRun 的 running 守卫存在(评审 ⚠️ 指出它在键盘/按钮两条路径上都被别的机制兜住,

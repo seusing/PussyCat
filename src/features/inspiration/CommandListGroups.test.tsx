@@ -11,7 +11,7 @@ const snapshot = JSON.parse(readFileSync(resolve(process.cwd(), 'public/catalog.
 const catalog = snapshot.commands.filter((command) => ['twitter', 'xiaohongshu', 'youtube', 'bilibili'].includes(command.site))
 const initialState = useAppStore.getState()
 
-const renderPanel = () => render(<InspirationPanel onRun={() => {}} onCancel={() => {}} onRerun={() => {}} />)
+const renderPanel = () => render(<InspirationPanel onRun={() => {}} onCancel={() => {}} />)
 
 // 条带位移取自 motion 写在 strip 上的 transform;离目标不到半张卡(80px)时,卡片才接受点击。
 const stripArrived = (index: number) => waitFor(() => {

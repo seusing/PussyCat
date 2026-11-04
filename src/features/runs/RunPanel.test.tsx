@@ -5,6 +5,9 @@ import { RunPanel } from './RunPanel'
 import { useAppStore } from '../../store/appStore'
 import type { CommandManifest } from '../../data/types'
 import type { HostBridge } from '../../host/types'
+import { saveTextFileAs } from '../../lib/saveTextFile'
+
+vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
 
 const cmd: CommandManifest = {
   command: 'x/go', site: 'x', name: 'go', description: '', access: 'read', browser: false, args: [], columns: ['status', 'site'],
@@ -62,7 +65,7 @@ test('取消闭环：cancelled 终态显示已取消、不出现 error 框、收
       error: undefined,
     },
   })
-  render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+  render(<RunPanel onCancel={() => {}} />)
 
   expect(screen.getByTestId('run-state')).toHaveTextContent('已取消')
   expect(screen.queryByTestId('cancel-button')).not.toBeInTheDocument()
@@ -141,7 +144,7 @@ test('× 只收起面板：隐藏日志区、不取消、不改 run.state', asyn
       startedAt: Date.now(), lines: [{ runId: 'run-1', seq: 0, at: 1, stream: 'stdout' as const, text: 'hello' }],
     },
   })
-  render(<RunPanel onCancel={onCancel} onRerun={() => {}} />)
+  render(<RunPanel onCancel={onCancel} />)
   expect(screen.getByText('hello')).toBeInTheDocument()
 
   await userEvent.click(screen.getByTestId('collapse-panel'))
@@ -153,7 +156,7 @@ test('× 只收起面板：隐藏日志区、不取消、不改 run.state', asyn
 })
 
 describe('终态按钮矩阵与错误详情(块 B)', () => {
-  test('succeeded → 「复制结构化结果」+「再次执行」', () => {
+  test('succeeded → 「复制结构化结果」,没有重跑按钮', () => {
     useAppStore.setState({
       selected: cmd,
       values: {},
@@ -162,12 +165,10 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [{ status: 'ok' }],
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     expect(screen.getByTestId('copy-run')).toHaveTextContent('复制结构化结果')
     expect(screen.getByTestId('copy-run')).toHaveAttribute('aria-label', '复制结构化结果')
-    expect(screen.getByTestId('rerun-button')).toHaveTextContent('再次执行')
-    expect(screen.getByTestId('rerun-button')).toHaveAttribute('aria-label', '再次执行')
-    expect(screen.getByTestId('rerun-button')).toHaveAttribute('title', '再次执行')
+    expect(screen.queryByTestId('rerun-button')).not.toBeInTheDocument()
     expect(screen.getByRole('toolbar', { name: '任务操作' })).toHaveClass('run-panel-actions')
   })
 
@@ -182,7 +183,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         result: [],
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     expect(screen.getByTestId('empty-result')).toHaveTextContent('执行成功，没有符合条件的结果')
     expect(screen.getByText('[]')).toBeInTheDocument()
     expect(screen.queryByText('表格结果')).not.toBeInTheDocument()
@@ -195,14 +196,14 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
       values: {},
       currentRun: { ...base, id: 'run-has-result', state: 'succeeded', result: [{ status: 'ok' }] },
     })
-    const { unmount } = render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    const { unmount } = render(<RunPanel onCancel={() => {}} />)
     expect(screen.queryByTestId('empty-result')).not.toBeInTheDocument()
     unmount()
 
     useAppStore.setState({
       currentRun: { ...base, id: 'run-failed-empty', state: 'failed', result: [], error: { summary: 'boom' } },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     expect(screen.queryByTestId('empty-result')).not.toBeInTheDocument()
   })
 
@@ -221,7 +222,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         ],
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     await user.click(screen.getByText('表格结果'))
     expect(screen.getByTestId('video-note-links')).toHaveTextContent('视频笔记（2）')
     expect(screen.getByTestId('image-note-links')).toHaveTextContent('图文笔记（1）')
@@ -244,7 +245,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         result: [{ rank: 1, id: 'folder-1', name: '食谱', count: 12, url: 'https://www.xiaohongshu.com/user/profile/example' }],
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     await userEvent.click(screen.getByText('表格结果'))
 
     const table = screen.getByTestId('results-table')
@@ -258,7 +259,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     expect(screen.queryByTestId('export-note-links')).not.toBeInTheDocument()
   })
 
-  test('failed → 「复制日志」+「重试」;cancelled → 「重新执行」', () => {
+  test('failed → 「复制日志」;failed 与 cancelled 都没有重跑按钮', () => {
     useAppStore.setState({
       selected: cmd,
       values: {},
@@ -269,9 +270,9 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         error: { summary: 'boom' },
       },
     })
-    const { unmount } = render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    const { unmount } = render(<RunPanel onCancel={() => {}} />)
     expect(screen.getByTestId('copy-run')).toHaveTextContent('复制日志')
-    expect(screen.getByTestId('rerun-button')).toHaveTextContent('重试')
+    expect(screen.queryByTestId('rerun-button')).not.toBeInTheDocument()
     unmount()
 
     useAppStore.setState({
@@ -282,8 +283,8 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         startedAt: Date.now(), endedAt: Date.now(), lines: [],
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
-    expect(screen.getByTestId('rerun-button')).toHaveTextContent('重新执行')
+    render(<RunPanel onCancel={() => {}} />)
+    expect(screen.queryByTestId('rerun-button')).not.toBeInTheDocument()
   })
 
   test('点复制 → clipboard 收到 payload text', async () => {
@@ -298,77 +299,9 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         startedAt: Date.now(), endedAt: Date.now(), lines: [], result,
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     await userEvent.click(screen.getByTestId('copy-run'))
     expect(writeText).toHaveBeenCalledWith(JSON.stringify(result, null, 2))
-  })
-
-  test('切走命令 → 重跑按钮隐藏', () => {
-    const otherCmd: CommandManifest = {
-      command: 'y/list', site: 'y', name: 'list', description: '', access: 'read', browser: false, args: [],
-    }
-    useAppStore.setState({
-      selected: otherCmd,
-      values: {},
-      currentRun: {
-        id: 'run-switched', command: cmd, values: {}, state: 'succeeded',
-        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [],
-      },
-    })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
-    expect(screen.queryByTestId('rerun-button')).not.toBeInTheDocument()
-  })
-
-  test('validate 有错 → 重跑 disabled + title 提示', () => {
-    const cmdRequired: CommandManifest = {
-      command: 'x/go', site: 'x', name: 'go', description: '', access: 'read', browser: false,
-      args: [{ name: 'url', type: 'str', required: true }],
-    }
-    useAppStore.setState({
-      selected: cmdRequired,
-      values: {},
-      currentRun: {
-        id: 'run-invalid', command: cmdRequired, values: {}, state: 'succeeded',
-        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [],
-      },
-    })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
-    const btn = screen.getByTestId('rerun-button')
-    expect(btn).toBeDisabled()
-    expect(btn).toHaveAttribute('title', '参数校验未通过，请回表单修正')
-    expect(btn).toHaveAttribute('aria-label', '不可再次执行：参数校验未通过')
-  })
-
-  test('点重跑 → onRerun 被调', async () => {
-    const onRerun = vi.fn()
-    useAppStore.setState({
-      selected: cmd,
-      values: {},
-      currentRun: {
-        id: 'run-rerun', command: cmd, values: {}, state: 'succeeded',
-        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [],
-      },
-    })
-    render(<RunPanel onCancel={() => {}} onRerun={onRerun} />)
-    await userEvent.click(screen.getByTestId('rerun-button'))
-    expect(onRerun).toHaveBeenCalledOnce()
-  })
-
-  test('结果面板「再次执行」直接提交,不弹确认框', async () => {
-    const startCommand = vi.fn((req: { runId: string }) => Promise.resolve({ runId: req.runId }))
-    const host: HostBridge = {
-      startCommand, cancelCommand: () => Promise.resolve(), onOutput: () => () => {}, onDone: () => () => {},
-    }
-    useAppStore.setState({
-      currentRun: {
-        id: 'run-prev', command: cmd, values: {}, state: 'succeeded',
-        startedAt: Date.now(), endedAt: Date.now(), lines: [], result: [],
-      },
-    })
-    render(<App host={host} mode="connected" />)
-    await userEvent.click(screen.getByTestId('rerun-button'))
-    expect(startCommand).toHaveBeenCalledOnce()
-    expect(screen.queryByTestId('acknowledge-dialog')).not.toBeInTheDocument()
   })
 
   test('error.detail 展开/收起', async () => {
@@ -381,7 +314,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         error: { summary: 'boom', detail: 'stack trace here' },
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     expect(screen.queryByTestId('error-detail')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('error-detail-toggle'))
     expect(screen.getByTestId('error-detail')).toHaveTextContent('stack trace here')
@@ -389,7 +322,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     expect(screen.queryByTestId('error-detail')).not.toBeInTheDocument()
   })
 
-  test('运行中不显示复制/重跑', () => {
+  test('运行中不显示复制', () => {
     useAppStore.setState({
       selected: cmd,
       values: {},
@@ -398,8 +331,116 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
         startedAt: Date.now(), lines: [],
       },
     })
-    render(<RunPanel onCancel={() => {}} onRerun={() => {}} />)
+    render(<RunPanel onCancel={() => {}} />)
     expect(screen.queryByTestId('copy-run')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('rerun-button')).not.toBeInTheDocument()
+  })
+})
+
+describe('状态点、分段切换与日志样式', () => {
+  const runIn = (state: 'running' | 'succeeded' | 'failed' | 'cancelled', extra: object = {}) => useAppStore.setState({
+    selected: cmd,
+    values: {},
+    currentRun: {
+      id: `run-${state}`, command: cmd, values: {}, state,
+      startedAt: Date.now(), endedAt: state === 'running' ? undefined : Date.now(), lines: [], ...extra,
+    },
+  })
+
+  test.each([
+    ['succeeded', 'success', '已完成'],
+    ['failed', 'danger', '失败'],
+    ['cancelled', 'dim', '已取消'],
+  ] as const)('终态 %s 带 %s 色状态点,文字不变', (state, tone, label) => {
+    runIn(state)
+    render(<RunPanel onCancel={() => {}} />)
+    const status = screen.getByTestId('run-state')
+    expect(status).toHaveTextContent(label)
+    const dot = status.querySelector('.run-panel-status-dot')
+    expect(dot).toHaveAttribute('data-tone', tone)
+    expect(dot).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  test('进行中不显示状态点', () => {
+    runIn('running')
+    render(<RunPanel onCancel={() => {}} />)
+    expect(screen.getByTestId('run-state').querySelector('.run-panel-status-dot')).toBeNull()
+  })
+
+  test('表格结果 / 完整日志 是分段控件,aria-pressed 跟随当前项', async () => {
+    runIn('succeeded', { result: [{ status: 'ok' }] })
+    render(<RunPanel onCancel={() => {}} />)
+    const table = screen.getByText('表格结果')
+    const log = screen.getByText('完整日志')
+    expect(table.parentElement).toHaveClass('run-panel-tabs')
+    expect(table).toHaveAttribute('aria-pressed', 'false')
+    expect(log).toHaveAttribute('aria-pressed', 'true')
+
+    await userEvent.click(table)
+    expect(table).toHaveAttribute('aria-pressed', 'true')
+    expect(table).toHaveClass('is-active')
+    expect(log).toHaveAttribute('aria-pressed', 'false')
+    expect(log).not.toHaveClass('is-active')
+  })
+
+  test('日志使用 run-log,stderr 行带 is-stderr', () => {
+    runIn('failed', {
+      lines: [
+        { runId: 'run-failed', seq: 0, at: 1, stream: 'stdout' as const, text: 'out line' },
+        { runId: 'run-failed', seq: 1, at: 2, stream: 'stderr' as const, text: 'err line' },
+      ],
+    })
+    render(<RunPanel onCancel={() => {}} />)
+    expect(screen.getByTestId('stream-log')).toHaveClass('run-log')
+    expect(screen.getByText('err line')).toHaveClass('is-stderr')
+    expect(screen.getByText('out line')).not.toHaveClass('is-stderr')
+  })
+
+  test('没有输出时显示空态', () => {
+    runIn('running')
+    render(<RunPanel onCancel={() => {}} />)
+    expect(screen.getByText('暂无输出')).toHaveClass('run-log-empty')
+  })
+})
+
+describe('保存笔记链接', () => {
+  const withLinks = () => useAppStore.setState({
+    selected: savedCmd,
+    values: {},
+    currentRun: {
+      id: 'run-save', command: savedCmd, values: {}, state: 'succeeded',
+      startedAt: 123, endedAt: 456, lines: [],
+      result: [
+        { type: 'normal', url: 'https://example.com/image' },
+        { type: 'video', url: 'https://example.com/video-a' },
+      ],
+    },
+  })
+
+  afterEach(() => { vi.mocked(saveTextFileAs).mockReset() })
+
+  test('保存成功 → 已保存,1.5 秒后复原', async () => {
+    vi.mocked(saveTextFileAs).mockResolvedValue(true)
+    withLinks()
+    render(<RunPanel onCancel={() => {}} />)
+    const button = screen.getByTestId('save-note-links')
+    expect(button).toHaveAttribute('aria-label', '保存至本地')
+
+    await userEvent.click(button)
+    expect(saveTextFileAs).toHaveBeenCalledWith('笔记链接.txt', 'https://example.com/image\nhttps://example.com/video-a\n')
+    await waitFor(() => expect(button).toHaveAttribute('aria-label', '已保存'))
+    expect(button).toHaveAttribute('title', '已保存')
+    await waitFor(() => expect(button).toHaveAttribute('aria-label', '保存至本地'), { timeout: 2500 })
+  })
+
+  test('用户取消保存对话框 → 保持「保存至本地」', async () => {
+    vi.mocked(saveTextFileAs).mockResolvedValue(false)
+    withLinks()
+    render(<RunPanel onCancel={() => {}} />)
+    const button = screen.getByTestId('save-note-links')
+
+    await userEvent.click(button)
+    await waitFor(() => expect(saveTextFileAs).toHaveBeenCalledOnce())
+    expect(button).toHaveAttribute('aria-label', '保存至本地')
+    expect(button).toBeEnabled()
   })
 })

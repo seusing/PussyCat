@@ -25,6 +25,8 @@
   --color-warning: #d29922;
   --color-danger: #f85149;
   --color-on-accent: #ffffff;
+  --color-hairline: rgb(255 255 255 / 7%);
+  --color-hairline-strong: rgb(255 255 255 / 14%);
 
   /* 字号上调一档(2026-07-31)。--text-body/--text-dim 是语义基准,body 的 font-size 直接引用它们。
      仅设 body 基准不够:Tailwind 的 text-xs/text-sm 原子类会显式设置自己的 font-size,覆盖掉从 body
@@ -664,8 +666,7 @@ select:focus-visible {
 }
 
 .inspiration-page-heading > div:not(.display-mode-switch) { display: flex; min-width: 0; flex-direction: column; }
-.inspiration-page-heading span,
-.inspiration-breadcrumb span { color: #7c8493; font-size: 11px; text-transform: uppercase; }
+.inspiration-page-heading span { color: #7c8493; font-size: 11px; text-transform: uppercase; }
 .inspiration-page-heading h1 { margin: 2px 0 0; font-size: 24px; font-weight: 650; letter-spacing: 0; }
 
 .inspiration-site-heading { justify-content: space-between; }
@@ -689,8 +690,7 @@ select:focus-visible {
 }
 
 .display-mode-switch button[aria-pressed='true'] { background: #2c2738; color: #e9d5ff; }
-.inspiration-workspace-link,
-.inspiration-source-save {
+.inspiration-workspace-link {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -703,10 +703,23 @@ select:focus-visible {
   font-weight: 600;
   white-space: nowrap;
 }
-.inspiration-workspace-link:hover,
-.inspiration-source-save:hover { border-color: #5877b9; background: #263653; color: #e5edff; }
-.inspiration-source-save { border-color: #415b4e; background: #1d2c25; color: #a8e6bf; padding: 4px 8px; font-size: 11px; }
-.inspiration-source-save:hover { border-color: #5c9270; background: #263d31; color: #d7ffe4; }
+.inspiration-workspace-link:hover { border-color: #5877b9; background: #263653; color: #e5edff; }
+.inspiration-source-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin-left: auto;
+  padding: 0 12px;
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 4%);
+  color: #d6dae1;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.inspiration-source-save:hover { border-color: rgb(255 255 255 / 22%); background: rgb(255 255 255 / 8%); color: var(--color-fg); }
 .site-display { display: grid; flex: 1; place-items: center; overflow: hidden; }
 
 .site-carousel { display: flex; width: min(760px, 100%); min-height: 350px; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; user-select: none; }
@@ -834,22 +847,37 @@ select:focus-visible {
 .book-demo-button:hover .book-demo-dot,
 .book-demo-button:focus-visible .book-demo-dot { animation-duration: .95s; }
 
-.inspiration-execute { display: flex; flex-direction: column; }
+/* 两栏时整页钉在内容区高度内:长日志、长表单各自在栏内滚动,头部和结果区工具栏不跟着滚走 */
+.inspiration-execute { display: flex; height: 100%; flex-direction: column; }
 .inspiration-breadcrumb { display: flex; min-height: 50px; align-items: center; gap: 12px; margin-bottom: 18px; }
 .inspiration-breadcrumb > div { display: flex; min-width: 0; flex-direction: column; }
 .inspiration-breadcrumb strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspiration-command-heading > span { color: #7c8493; font-size: 11px; text-transform: uppercase; }
-.inspiration-command-heading > div { flex-direction: row; align-items: center; }
-.inspiration-command-title { display: flex; min-width: 0; flex-direction: column; }
-.inspiration-command-title strong { font-size: 18px; }
-.inspiration-command-title small { color: #7c8493; font-size: 11px; }
-.command-workspace { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(420px, 1.35fr) minmax(320px, .85fr); overflow: hidden; border: 1px solid #292e37; border-radius: 8px; background: #14171c; }
-.command-config-pane { min-width: 0; overflow: auto; border-right: 1px solid #292e37; padding: 22px; }
-.command-run-pane { min-width: 0; overflow: auto; background: #111318; }
+.inspiration-command-heading { flex: 1 1 auto; }
+.inspiration-command-eyebrow { color: var(--color-fg-dim); font-size: 13px; }
+.inspiration-command-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 2px; }
+.inspiration-command-title { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.inspiration-command-title strong { color: #f1f3f6; font-size: 20px; font-weight: 600; }
+/* 命令英文名用等宽字体,高特异性防止全局 font-family !important 覆盖 */
+#root .inspiration-command-title small,
+#root .inspiration-command-title small * { font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, 'Segoe UI Mono', monospace !important; }
+.inspiration-command-title small { color: #737c8a; font-size: 12px; }
+.inspiration-command-tag {
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: 6px;
+  padding: 0 7px;
+  color: var(--color-fg-dim);
+  font-size: 12px;
+  line-height: 20px;
+}
+.inspiration-command-tag.is-write { border-color: color-mix(in srgb, var(--color-warning) 40%, transparent); color: var(--color-warning); }
+.inspiration-command-description { margin: 6px 0 0; color: var(--color-fg-dim); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.command-workspace { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(420px, 1.35fr) minmax(320px, .85fr); overflow: hidden; border: 1px solid var(--color-hairline); border-radius: 12px; background: #13151a; }
+.command-config-pane { min-width: 0; overflow: auto; border-right: 1px solid var(--color-hairline); padding: 22px; }
+.command-run-pane { min-width: 0; overflow: auto; background: #111317; }
 
 @media (max-width: 760px) {
   .inspiration-workspace-link { padding-inline: 8px; }
-  .inspiration-source-save { padding-inline: 6px; }
+  .inspiration-source-save { padding-inline: 10px; }
 }
 
 /* Login status: adapted from Astryx Table, Badge and DropdownMenu source. */
@@ -1145,8 +1173,9 @@ select:focus-visible {
 @keyframes login-menu-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (max-width: 980px) {
+  .inspiration-execute { height: auto; }
   .command-workspace { grid-template-columns: 1fr; overflow: visible; }
-  .command-config-pane { border-right: 0; border-bottom: 1px solid #292e37; }
+  .command-config-pane { border-right: 0; border-bottom: 1px solid var(--color-hairline); }
   .command-run-pane { min-height: 260px; }
 }
 
@@ -1257,11 +1286,7 @@ select:focus-visible {
   flex: 0 0 auto;
   font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace !important;
   font-size: 11.5px;
-  color: #6f7887;
-  background: rgba(255, 255, 255, .04);
-  border: 1px solid #252a33;
-  border-radius: 5px;
-  padding: 1px 6px;
+  color: #6b7383;
   line-height: 1.5;
   white-space: nowrap;
 }
@@ -1272,26 +1297,26 @@ select:focus-visible {
   width: 100%;
   height: 40px;
   box-sizing: border-box;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 0 12px;
   font-size: 14px;
-  border: 1px solid #2a303b;
-  background: linear-gradient(180deg, #161920, #121419);
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 3%);
   color: var(--color-fg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 1px 2px rgba(0, 0, 0, .28);
+  box-shadow: none;
   outline: none;
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
-.cmd-field-control:hover { border-color: #3a4250; }
+.cmd-field-control:hover { border-color: var(--color-hairline-strong); }
 .cmd-field-control:focus {
   border-color: rgba(79, 140, 255, .75);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(79, 140, 255, .16);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .16);
 }
 /* 覆盖全局 focus-visible outline，改为光环 */
 input.cmd-field-control:focus-visible { outline: none; }
 .cmd-field-control[aria-invalid="true"] {
   border-color: var(--color-danger);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(248, 81, 73, .18);
+  box-shadow: 0 0 0 3px rgba(248, 81, 73, .18);
 }
 /* 隐藏 number input 原生箭头 */
 .cmd-field-control[type="number"]::-webkit-outer-spin-button,
@@ -1303,20 +1328,20 @@ button.cmd-field-control {
   display: inline-flex;
   height: 40px;
   align-items: center;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 0 12px;
   font-size: 14px;
-  border: 1px solid #2a303b;
-  background: linear-gradient(180deg, #161920, #121419);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 1px 2px rgba(0, 0, 0, .28);
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 3%);
+  box-shadow: none;
 }
 .cmd-field-control.glass-select-trigger:hover,
-button.cmd-field-control:hover { border-color: #3a4250; }
+button.cmd-field-control:hover { border-color: var(--color-hairline-strong); }
 .cmd-field-control.glass-select-trigger:focus-visible,
 .cmd-field-control.glass-select-trigger[aria-expanded="true"] {
   outline: none;
   border-color: rgba(79, 140, 255, .75);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(79, 140, 255, .16);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .16);
 }
 /* 禁用 run-btn 的全局 scale，改为 translateY */
 #root button.cmd-run-btn:not(:disabled):active { scale: none; }
@@ -1331,19 +1356,19 @@ button.cmd-field-control:hover { border-color: #3a4250; }
   gap: 12px;
   min-height: 40px;
   box-sizing: border-box;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 8px 12px;
-  border: 1px solid #2a303b;
-  background: linear-gradient(180deg, #161920, #121419);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 1px 2px rgba(0, 0, 0, .28);
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 3%);
+  box-shadow: none;
   cursor: pointer;
   user-select: none;
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
-.cmd-field-tile:hover { border-color: #3a4250; }
+.cmd-field-tile:hover { border-color: var(--color-hairline-strong); }
 .cmd-field-tile:has(.cmd-field-switch-input:focus-visible) {
   border-color: rgba(79, 140, 255, .75);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 3px rgba(79, 140, 255, .16);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .16);
 }
 .cmd-field-tile .cmd-field-label-row {
   flex: 1 1 auto;
@@ -1376,11 +1401,11 @@ button.cmd-field-control:hover { border-color: #3a4250; }
   height: 22px;
   flex: 0 0 38px;
   align-items: center;
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid rgb(255 255 255 / 10%);
   border-radius: 999px;
-  background: rgba(0, 0, 0, .2);
+  background: rgb(255 255 255 / 6%);
   padding: 2px;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .4), 0 1px 0 rgba(255, 255, 255, .04);
+  box-shadow: none;
   cursor: pointer;
   transition: border-color 180ms ease, background-color 180ms ease;
 }
@@ -1388,14 +1413,14 @@ button.cmd-field-control:hover { border-color: #3a4250; }
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: linear-gradient(180deg, #fff, #dfe2e8);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .85);
+  background: #e6e9ef;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 30%);
   transform: translateX(0);
   transition: transform 220ms cubic-bezier(.22, 1.35, .42, 1);
 }
 .cmd-field-switch-input:checked + .cmd-field-switch-track {
-  border-color: rgba(79, 140, 255, .72);
-  background: rgba(79, 140, 255, .35);
+  border-color: transparent;
+  background: #3d7bf2;
 }
 .cmd-field-switch-input:checked + .cmd-field-switch-track .cmd-field-switch-thumb {
   transform: translateX(16px);
@@ -1404,10 +1429,10 @@ button.cmd-field-control:hover { border-color: #3a4250; }
 /* ===== 终端预览块 ===== */
 .cmd-form-preview {
   position: relative;
-  border: 1px solid #232833;
-  border-radius: 10px;
-  background: #0c0e12;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .025);
+  border: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 8px;
+  background: rgb(0 0 0 / 28%);
+  box-shadow: none;
   margin-bottom: 0;
   overflow: hidden;
 }
@@ -1427,39 +1452,23 @@ button.cmd-field-control:hover { border-color: #3a4250; }
 /* 行首提示符用 ::before，不进复制内容 */
 .cmd-form-preview pre::before {
   content: '$ ';
-  color: #6f7887;
+  color: #5d6573;
   user-select: none;
 }
-.cmd-preview-sub { color: #6f7887; }
-.cmd-preview-flag { color: #8fb2ff; }
-.cmd-preview-value { color: #aeb6c3; }
+.cmd-preview-sub { color: #8b93a1; }
+.cmd-preview-flag { color: #9fb7e6; }
+.cmd-preview-value { color: #c9ced6; }
 
 /* 内嵌复制按钮 */
 .cmd-form-preview-copy {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, .08);
-  background: rgba(255, 255, 255, .04);
-  color: #6f7887;
-  cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
-}
-.cmd-form-preview-copy:hover {
-  background: rgba(255, 255, 255, .09);
-  color: var(--color-fg);
-  border-color: rgba(255, 255, 255, .14);
+  top: 4px;
+  right: 4px;
 }
 
 /* ===== 操作栏 ===== */
 .cmd-form-actions {
-  border-top: 1px solid #1f242d;
+  border-top: 1px solid rgb(255 255 255 / 6%);
   padding-top: 16px;
   margin-top: 18px;
   display: flex;
@@ -1481,36 +1490,32 @@ button.cmd-field-control:hover { border-color: #3a4250; }
 }
 kbd.cmd-kbd {
   font-size: 11px;
-  border: 1px solid #2d333e;
-  border-bottom-width: 2px;
+  border: 1px solid rgb(255 255 255 / 8%);
   border-radius: 5px;
-  background: #171a21;
+  background: rgb(255 255 255 / 5%);
   color: var(--color-fg-dim);
-  padding: 1px 5px;
-  line-height: 1.4;
+  padding: 0 6px;
+  line-height: 18px;
   display: inline-block;
 }
 .cmd-run-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 40px;
-  padding: 0 18px;
-  border-radius: 10px;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
   font-size: 14px;
   font-weight: 600;
-  border: 1px solid rgba(255, 255, 255, .12);
-  background: linear-gradient(180deg, #5b95ff, #3f7cf0);
+  background: #3d7bf2;
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 1px 2px rgba(0, 0, 0, .4), 0 8px 20px -8px rgba(79, 140, 255, .55);
+  box-shadow: none;
   cursor: pointer;
-  transition: filter 120ms ease, box-shadow 80ms ease, transform 80ms ease;
+  transition: background-color 120ms ease, transform 80ms ease;
 }
-.cmd-run-btn:hover:not(:disabled) { filter: brightness(1.06); }
-.cmd-run-btn:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 1px 1px rgba(0, 0, 0, .3);
-}
+.cmd-run-btn:hover:not(:disabled) { background: #4b87f7; }
+.cmd-run-btn:active:not(:disabled) { transform: translateY(1px); }
 .cmd-run-btn:disabled {
   background: #1c212b;
   color: #5d6675;

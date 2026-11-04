@@ -95,52 +95,6 @@ test('setCommands 加载成功须清掉残留 catalogError（Task3 reviewer 发�
 describe('preferences 切片', () => {
   beforeEach(() => { useAppStore.setState(initialState, true); localStorage.clear() })
 
-  test('toggleSiteFavorite 收藏并落盘', () => {
-    useAppStore.getState().toggleSiteFavorite('xiaohongshu')
-    expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['xiaohongshu'])
-    // Task 8:savePreferences 改写 v2 key(v1 变为只读迁移源,不再写入)——改写而非删除既有断言(R7)
-    expect(localStorage.getItem('opencli-app:prefs:v2')).toContain('xiaohongshu')
-  })
-
-  test('toggleCommandFavorite 存 command+site', () => {
-    useAppStore.getState().toggleCommandFavorite(cmd)   // cmd = x/login(文件顶部已定义)
-    const fav = useAppStore.getState().preferences.favoriteCommands[0]
-    expect(fav.command).toBe('x/login'); expect(fav.site).toBe('x')
-  })
-
-  test('取消收藏设置 lastUndo,undoLastFavorite 回滚', () => {
-    useAppStore.getState().toggleSiteFavorite('x')       // 收藏
-    useAppStore.getState().toggleSiteFavorite('x')       // 取消 → lastUndo
-    expect(useAppStore.getState().lastUndo).toMatchObject({ kind: 'site', item: { site: 'x' } })
-    useAppStore.getState().undoLastFavorite()
-    expect(useAppStore.getState().preferences.favoriteSites.map((f) => f.site)).toEqual(['x'])
-    expect(useAppStore.getState().lastUndo).toBeUndefined()
-  })
-
-  test('收藏(新增)不设 lastUndo;dismissUndo 清除', () => {
-    useAppStore.getState().toggleSiteFavorite('x')
-    expect(useAppStore.getState().lastUndo).toBeUndefined()
-    useAppStore.setState({ lastUndo: { kind: 'site', item: { site: 'z', order: 0, createdAt: 1 } } })
-    useAppStore.getState().dismissUndo()
-    expect(useAppStore.getState().lastUndo).toBeUndefined()
-  })
-
-  test('command 撤销恢复原 createdAt(原位)', () => {
-    // 注入时钟:同步执行两次 Date.now() 常落同一毫秒,旧实现(undo=重新 toggle)会巧合通过;
-    // mock 只给两次值,旧实现 undo 的第三次取钟得 undefined → 确定性红
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000)
-    try {
-      useAppStore.getState().toggleCommandFavorite(cmd)      // createdAt=1000
-      const orig = useAppStore.getState().preferences.favoriteCommands[0]
-      expect(orig.createdAt).toBe(1000)
-      useAppStore.getState().toggleCommandFavorite(cmd)      // 取消(now=2000 被移除分支忽略)
-      useAppStore.getState().undoLastFavorite()              // restore 路径不取时钟
-      expect(useAppStore.getState().preferences.favoriteCommands[0]).toEqual(orig)
-    } finally {
-      nowSpy.mockRestore()
-    }
-  })
-
   test('beginRun 追加 recent(运行开始即记)', () => {
     useAppStore.getState().selectCommand(cmd)
     useAppStore.getState().beginRun('r-a')
@@ -154,7 +108,9 @@ describe('preferences 切片', () => {
   })
 
   test('setCommands 后 stale 正确派生(收藏了不存在的命令)', () => {
-    useAppStore.getState().toggleCommandFavorite(cmd)                 // x/login
+    useAppStore.setState((s) => ({
+      preferences: { ...s.preferences, favoriteCommands: [{ command: 'x/login', site: 'x', order: 0, createdAt: 1 }] },
+    }))
     useAppStore.getState().setCommands([])                            // 空 manifest → 不误灰
     expect(useAppStore.getState().stale.commands.size).toBe(0)
     useAppStore.getState().setCommands([{ command: 'other/x', site: 'other', name: 'x', description: '', access: 'read', browser: false, args: [] }])
@@ -168,24 +124,14 @@ describe('preferences 切片', () => {
     expect(useAppStore.getState().stale.commands.has('x/login')).toBe(true)
   })
 
-  test('含重复键快照 hydrate 归一化;toggle→undo 状态保持(二轮复审 P2 影响链闭合)', () => {
+  test('含重复键快照 hydrate 归一化为单条(二轮复审 P2)', () => {
     localStorage.setItem('opencli-app:prefs:v1', JSON.stringify({
       schemaVersion: 1,
       favoriteSites: [{ site: 'x', order: 0, createdAt: 1 }, { site: 'x', order: 2, createdAt: 5 }],
       favoriteCommands: [], recent: [],
     }))
     useAppStore.getState().hydratePreferences()
-    expect(useAppStore.getState().preferences.favoriteSites).toHaveLength(1)   // 归一化为单条
-    const before = useAppStore.getState().preferences
-    useAppStore.getState().toggleSiteFavorite('x')   // 取消(单条,不再"删全部重复")
-    useAppStore.getState().undoLastFavorite()        // lastUndo 存的就是那唯一一条
-    expect(useAppStore.getState().preferences).toEqual(before)
-  })
-
-  test('hydratePreferences 清空遗留 lastUndo(M3 防御)', () => {
-    useAppStore.setState({ lastUndo: { kind: 'site', item: { site: 'z', order: 0, createdAt: 1 } } })
-    useAppStore.getState().hydratePreferences()
-    expect(useAppStore.getState().lastUndo).toBeUndefined()
+    expect(useAppStore.getState().preferences.favoriteSites).toHaveLength(1)
   })
 })
 

@@ -3,7 +3,6 @@ import AppShell from './components/AppShell'
 import { SiteCommandNav } from './features/nav/SiteCommandNav'
 import { CommandConfig } from './features/config/CommandConfig'
 import { RunPanel } from './features/runs/RunPanel'
-import { UndoToast } from './components/UndoToast'
 import { ModuleErrorBoundary } from './components/ModuleErrorBoundary'
 import { AcknowledgeDialog } from './features/config/AcknowledgeDialog'
 import { useAppStore, isTerminal } from './store/appStore'
@@ -290,7 +289,7 @@ export default function App({
     useAppStore.getState().finishRun({ runId, at: Date.now(), outcome: 'error', error: normalizeHostError(err, 'start') })
   }
 
-  // 点「运行任务」、Ctrl+Enter、重跑都直接执行,不再弹确认框。判决若仍是 acknowledgement-required,
+  // 点「运行任务」、Ctrl+Enter 都直接执行,不再弹确认框。判决若仍是 acknowledgement-required,
   // 把 fingerprint 随请求发出,Host 据此放行;不再持久化确认。
   const executeSelected = (): boolean => {
     const s = useAppStore.getState()
@@ -340,7 +339,6 @@ export default function App({
               baseUrl={baseUrl}
               onRun={executeSelected}
               onCancel={onCancel}
-              onRerun={executeSelected}
               registerSubmit={registerSubmit}
               searchRef={searchInputRef}
             />
@@ -399,7 +397,7 @@ export default function App({
         onRightPanelOpenChange={setVkRightPanelOpen}
         nav={<SiteCommandNav searchRef={searchInputRef} />}
         config={<CommandConfig onRun={executeSelected} registerSubmit={registerSubmit} />}
-        runs={<RunPanel onCancel={onCancel} onRerun={executeSelected} />}
+        runs={<RunPanel onCancel={onCancel} />}
         catalogStatus={catalogStatus}
         catalogError={catalogError}
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
@@ -408,7 +406,6 @@ export default function App({
           : undefined}
         baseUrl={baseUrl}
       />
-      <UndoToast />
       <AcknowledgeDialog
         pending={pendingAcknowledgement}
         onCancel={() => useAppStore.getState().dismissAcknowledgement()}

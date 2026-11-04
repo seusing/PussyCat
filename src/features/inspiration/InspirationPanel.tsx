@@ -13,8 +13,6 @@ import { SiteCarousel } from './SiteCarousel'
 import { FisheyeCommandList, type CommandSection } from './FisheyeCommandList'
 import { CommandConfig } from '../config/CommandConfig'
 import { RunPanel } from '../runs/RunPanel'
-import { MicroButton } from '../../components/MicroButton'
-import { isSiteFavorited, isCommandFavorited } from '../../data/preferences'
 import { commandDescription, commandTitle } from '../../data/zhCopy'
 import { groupCommands } from './commandGroups'
 import { addInspirationItem } from './inspirationLibrary'
@@ -56,22 +54,17 @@ export function InspirationPanel({
   baseUrl,
   onRun,
   onCancel,
-  onRerun,
   registerSubmit,
   searchRef,
 }: {
   baseUrl?: string
   onRun: () => void
   onCancel: () => void
-  onRerun: () => void
   registerSubmit?: (submit: (() => void) | null) => void
   searchRef?: Ref<HTMLInputElement>
 }) {
   const allCommands = useAppStore((state) => state.commands)
   const selected = useAppStore((state) => state.selected)
-  const preferences = useAppStore((state) => state.preferences)
-  const toggleSiteFavorite = useAppStore((state) => state.toggleSiteFavorite)
-  const toggleCommandFavorite = useAppStore((state) => state.toggleCommandFavorite)
   const selectCommand = useAppStore((state) => state.selectCommand)
   const decisionFor = useAppStore((state) => state.decisionFor)
   const commands = useMemo(
@@ -186,47 +179,27 @@ export function InspirationPanel({
       <div data-testid="inspiration-execute" className="inspiration-execute">
         <div className="inspiration-breadcrumb">
           <button type="button" onClick={() => { if (executionSite) setSite(executionSite); setStage('commands') }} aria-label="返回命令集合">
-            <ArrowLeft size={17} />
+            <ArrowLeft size={17} strokeWidth={1.5} />
           </button>
           <div className="inspiration-command-heading">
-            <span>{executionSite?.label ?? selected.site}</span>
-            <div data-testid="command-header" className="flex flex-wrap items-center gap-2">
+            <span className="inspiration-command-eyebrow">{executionSite?.label ?? selected.site}</span>
+            <div data-testid="command-header" className="inspiration-command-row">
               <div className="inspiration-command-title">
                 <strong data-testid="command-title">{commandTitle(selected.command) ?? selected.name}</strong>
                 {commandTitle(selected.command) && <small data-testid="command-subtitle">{selected.name}</small>}
               </div>
-              <MicroButton
-                variant="save"
-                data-testid="fav-site"
-                onClick={() => toggleSiteFavorite(selected.site)}
-                active={isSiteFavorited(preferences, selected.site)}
-                aria-pressed={isSiteFavorited(preferences, selected.site)}
-                title={isSiteFavorited(preferences, selected.site) ? '取消收藏站点' : '收藏站点'}
-              >
-                {isSiteFavorited(preferences, selected.site) ? '已保存' : '稍后查看'}
-              </MicroButton>
-              <MicroButton
-                variant="favorite"
-                data-testid="fav-command"
-                onClick={() => toggleCommandFavorite(selected)}
-                active={isCommandFavorited(preferences, selected.command)}
-                aria-pressed={isCommandFavorited(preferences, selected.command)}
-                title={isCommandFavorited(preferences, selected.command) ? '取消收藏命令' : '收藏命令'}
-              >
-                {isCommandFavorited(preferences, selected.command) ? '已收藏' : '收藏'}
-              </MicroButton>
+              <span className={selected.access === 'write' ? 'inspiration-command-tag is-write' : 'inspiration-command-tag'}>{selected.access === 'write' ? '写入' : '只读'}</span>
+              {selected.browser && <span className="inspiration-command-tag">浏览器</span>}
               <button type="button" data-testid="save-command-to-inspiration-library" className="inspiration-source-save" onClick={saveSelectedSource} title="收进灵感库">
-                <BookmarkPlus size={14} aria-hidden="true" />收进灵感库
+                <BookmarkPlus size={15} strokeWidth={1.5} aria-hidden="true" />收进灵感库
               </button>
-              <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: selected.access === 'write' ? 'var(--color-warning)' : 'var(--color-fg-dim)' }}>{selected.access}</span>
-              {selected.browser && <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--color-hover)', color: 'var(--color-fg-dim)' }}>浏览器</span>}
-              <span data-testid="command-description" className="min-w-0 text-sm" style={{ flex: '1 1 16rem', color: 'var(--color-fg-dim)', overflowWrap: 'anywhere' }}>
-                {commandDescription(selected.command, selected.description)}
-              </span>
             </div>
+            <p data-testid="command-description" className="inspiration-command-description">
+              {commandDescription(selected.command, selected.description)}
+            </p>
           </div>
           <label className="command-search execution-search">
-            <Search size={16} aria-hidden="true" />
+            <Search size={16} strokeWidth={1.5} aria-hidden="true" />
             <input
               ref={searchRef}
               data-testid="nav-search"
@@ -240,14 +213,14 @@ export function InspirationPanel({
               aria-label="搜索命令"
             />
           </label>
-          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库" aria-label="打开灵感库"><FolderOpen size={18} aria-hidden="true" /></button>
+          <button type="button" data-testid="open-inspiration-library" className="inspiration-workspace-link" onClick={() => setWorkspace('library')} title="打开灵感库" aria-label="打开灵感库"><FolderOpen size={18} strokeWidth={1.5} aria-hidden="true" /></button>
         </div>
         <div className="command-workspace">
           <main data-testid="col-config" className="command-config-pane">
             <CommandConfig onRun={onRun} registerSubmit={registerSubmit} compactHeader />
           </main>
           <section data-testid="col-runs" className="command-run-pane">
-            <RunPanel onCancel={onCancel} onRerun={onRerun} />
+            <RunPanel onCancel={onCancel} />
           </section>
         </div>
       </div>
