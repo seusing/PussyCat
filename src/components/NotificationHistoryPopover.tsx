@@ -11,6 +11,7 @@ import './NotificationHistoryPopover.css'
 type Placement = { top: number; left: number; width: number; maxHeight: number }
 
 const VIEWPORT_MARGIN = 8
+const POPOVER_WIDTH = 380
 const pad = (value: number) => String(value).padStart(2, '0')
 
 /** 刚刚 / N 分钟前 / 当天的 HH:mm / 更早的 M月D日 HH:mm。 */
@@ -58,10 +59,15 @@ export function NotificationHistoryPopover({ anchor, onClose }: { anchor: HTMLEl
 
   // 右边对齐铃铛;条数变化会改变高度,所以也要重算。
   useLayoutEffect(() => {
-    const update = () => {
+    const update = (event?: Event) => {
       const surface = surfaceRef.current
       if (!surface) return
-      const { top, width, maxHeight } = positionMenu(anchor, surface)
+      // 面板里的列表自己滚动不影响定位,不必重算
+      if (event?.type === 'scroll' && event.target instanceof Node && surface.contains(event.target)) return
+      const { top, maxHeight } = positionMenu(anchor, surface)
+      // 宽度跟 CSS 的 min(380px, 100vw - 16px) 走,不回读面板尺寸:border-box 加 1px 边框时 scrollWidth
+      // 比内联宽度少 2px,每次重算都会再窄一点,滚轮一转面板就越缩越窄
+      const width = Math.min(POPOVER_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2)
       const left = Math.max(VIEWPORT_MARGIN, Math.min(anchor.getBoundingClientRect().right - width, window.innerWidth - VIEWPORT_MARGIN - width))
       setPlacement({ top, left, width, maxHeight })
     }

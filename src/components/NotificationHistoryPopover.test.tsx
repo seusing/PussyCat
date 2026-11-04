@@ -60,6 +60,22 @@ describe('formatNotificationTime', () => {
 })
 
 describe('NotificationHistoryPopover', () => {
+  it('滚动时宽度固定,不会随每次重算越缩越窄', async () => {
+    // jsdom 的 scrollWidth 恒为 0;按真实面板模拟:border-box + 1px 边框时 scrollWidth 比内联宽度少 2px
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      const inline = parseFloat(this.style.width)
+      return Number.isFinite(inline) ? inline - 2 : 380
+    })
+    recordNotifications(Array.from({ length: 8 }, (_, i) => entry(`w${i}`)))
+    const { dialog } = await openPopover()
+    await waitFor(() => expect(dialog.style.width).toBe('380px'))
+    for (let i = 0; i < 20; i++) {
+      act(() => { window.dispatchEvent(new Event('scroll')) })
+      act(() => { items()[0].dispatchEvent(new Event('scroll', { bubbles: true })) })
+    }
+    expect(dialog.style.width).toBe('380px')
+  })
+
   it('以名为「通知」的 dialog 渲染到 body 下,不再套用玻璃菜单的 Hyalite 材质类', async () => {
     const { dialog } = await openPopover()
 
@@ -204,9 +220,9 @@ describe('NotificationHistoryPopover', () => {
       await user.click(trigger)
       const dialog = await screen.findByRole('dialog', { name: '通知' })
 
-      // jsdom 里面板没有布局宽度,positionMenu 取下限 160
-      expect(dialog.style.width).toBe('160px')
-      expect(dialog.style.left).toBe(`${1224 - 160}px`)
+      // 宽度与 CSS 一致取 380px,不读 jsdom 里为 0 的布局宽度
+      expect(dialog.style.width).toBe('380px')
+      expect(dialog.style.left).toBe(`${1224 - 380}px`)
       expect(dialog.style.top).toBe('54px')   // 铃铛底边 + 6px
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: original })
