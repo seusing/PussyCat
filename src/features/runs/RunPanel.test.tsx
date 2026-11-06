@@ -207,7 +207,7 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     expect(screen.queryByTestId('empty-result')).not.toBeInTheDocument()
   })
 
-  test('成功结果按视频/图文分组，并把视频链接按换行交给视频解析', async () => {
+  test('成功结果按视频/图文分组，并把图文和视频链接按结果顺序换行交给视频解析', async () => {
     const user = userEvent.setup()
     useAppStore.setState({
       selected: savedCmd,
@@ -228,11 +228,34 @@ describe('终态按钮矩阵与错误详情(块 B)', () => {
     expect(screen.getByTestId('image-note-links')).toHaveTextContent('图文笔记（1）')
     await user.click(screen.getByTestId('export-note-links'))
     expect(useAppStore.getState().vkHandoff).toEqual({
-      url: 'https://example.com/video-a\nhttps://example.com/video-b',
+      url: 'https://example.com/image\nhttps://example.com/video-a\nhttps://example.com/video-b',
       commandKey: savedCmd.command,
       collectedAt: 123,
     })
     expect(useAppStore.getState().activeModule).toBe('vk')
+  })
+
+  test('只有图文笔记时也能一键导出', async () => {
+    const user = userEvent.setup()
+    useAppStore.setState({
+      selected: savedCmd,
+      values: {},
+      currentRun: {
+        id: 'run-image-only', command: savedCmd, values: {}, state: 'succeeded',
+        startedAt: 789, endedAt: 790, lines: [],
+        result: [
+          { type: 'normal', url: 'https://example.com/image-a' },
+          { type: 'normal', url: 'https://example.com/image-b' },
+        ],
+      },
+    })
+    render(<RunPanel onCancel={() => {}} />)
+    await user.click(screen.getByTestId('export-note-links'))
+    expect(useAppStore.getState().vkHandoff).toEqual({
+      url: 'https://example.com/image-a\nhttps://example.com/image-b',
+      commandKey: savedCmd.command,
+      collectedAt: 789,
+    })
   })
 
   test('saved 列表模式显示收藏夹字段，不提供视频解析操作', async () => {

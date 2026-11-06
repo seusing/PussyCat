@@ -18,9 +18,11 @@ import Markdown, { type Components, type ExtraProps } from 'react-markdown'
 import { positionMenu, useGlassMenuSurface } from '../../components/GlassMenu'
 import { addKnownTerm, loadKnownTerms, normalizeTerm } from '../../data/knownTerms'
 import { NOTE_REMARK_PLUGINS, noteUrlTransform } from '../../lib/noteMarkdown'
+import { ScreenshotBlocksContext, ScreenshotCodeBlock } from './AnnotatedFigure'
 import { CHART_SRC, MarketChart } from './MarketChart'
 import { NoteBlockquote, NoteParagraph } from './NoteEvidence'
 import { FIGURE_SRC, listNoteFigureNames, NoteFigure, NoteFigureGalleryContext } from './NoteFigure'
+import { foldScreenshotBlocks } from './screenshotBlocks'
 import { rehypeTermHints, TERM_HINT_LIMIT, type VkTermHint } from './termHints'
 import './TermHint.css'
 
@@ -229,11 +231,13 @@ function NoteImage({ node: _node, ...props }: ComponentProps<'img'> & ExtraProps
   return <img {...props} />
 }
 
-const TERM_HINT_COMPONENTS: Components = { span: TermHintSpan, img: NoteImage, blockquote: NoteBlockquote, p: NoteParagraph }
+const TERM_HINT_COMPONENTS: Components = { span: TermHintSpan, img: NoteImage, blockquote: NoteBlockquote, p: NoteParagraph, pre: ScreenshotCodeBlock }
 
 /**
  * 渲染笔记 Markdown,并给 terms 里的术语(最多 TERM_HINT_LIMIT 个、已了解的除外)挂上悬停卡片。
- * 传 figureJobId 时,笔记里的 figures/ 配图和 charts/ 行情图按该任务取回显示;同一篇笔记的配图在灯箱里连着翻页。
+ * 传 figureJobId 时,笔记里的 figures/ 配图和 charts/ 行情图按该任务取回显示,`::screenshot` 块
+ * (原图加手绘批注)渲染成 AnnotatedFigure;同一篇笔记的配图在灯箱里连着翻页。
+ * 块先折叠成占位代码块,整篇仍是一棵 Markdown 树:术语额度和「只标首次出现」按整篇算,不随块分段。
  */
 export function TermHintMarkdown({ children, terms, note, figureJobId, baseUrl }: {
   children: string
@@ -252,16 +256,20 @@ export function TermHintMarkdown({ children, terms, note, figureJobId, baseUrl }
     [terms, note, markKnown, figureJobId, baseUrl],
   )
   const gallery = useMemo(() => ({ names: listNoteFigureNames(children), urls: new Map() }), [children])
+  const folded = useMemo(() => (figureJobId ? foldScreenshotBlocks(children) : { markdown: children, blocks: [] }), [children, figureJobId])
+  const screenshots = useMemo(() => ({ blocks: folded.blocks, jobId: figureJobId, baseUrl }), [folded.blocks, figureJobId, baseUrl])
   return (
     <TermHintContext.Provider value={context}>
       <NoteFigureGalleryContext.Provider value={gallery}>
-        <Markdown
-          remarkPlugins={NOTE_REMARK_PLUGINS}
-          rehypePlugins={[[rehypeTermHints, { terms, known, limit: TERM_HINT_LIMIT }]]}
-          components={TERM_HINT_COMPONENTS}
-          skipHtml
-          urlTransform={noteUrlTransform}
-        >{children}</Markdown>
+        <ScreenshotBlocksContext.Provider value={screenshots}>
+          <Markdown
+            remarkPlugins={NOTE_REMARK_PLUGINS}
+            rehypePlugins={[[rehypeTermHints, { terms, known, limit: TERM_HINT_LIMIT }]]}
+            components={TERM_HINT_COMPONENTS}
+            skipHtml
+            urlTransform={noteUrlTransform}
+          >{folded.markdown}</Markdown>
+        </ScreenshotBlocksContext.Provider>
       </NoteFigureGalleryContext.Provider>
     </TermHintContext.Provider>
   )

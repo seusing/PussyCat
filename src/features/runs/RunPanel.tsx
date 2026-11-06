@@ -77,13 +77,13 @@ export function RunPanel({ onCancel }: { onCancel: () => void }) {
             />
           )}
           {payload && <CopyButton label={payload.label} getText={() => payload.text} testid="copy-run" />}
-          {noteLinks.video.length > 0 && (
+          {noteLinks.all.length > 0 && (
             <IconActionButton
               data-testid="export-note-links"
               icon={Send}
               label="一键导出笔记链接"
               onClick={() => useAppStore.getState().setVkHandoff({
-                url: noteLinks.video.join('\n'),
+                url: noteLinks.all.join('\n'),
                 commandKey: run.command.command,
                 collectedAt: run.startedAt,
               })}

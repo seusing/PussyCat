@@ -7,7 +7,7 @@ export const NOTE_REMARK_PLUGINS = [remarkFrontmatter, remarkGfm]
 
 // 导出到灵感库的笔记把配图内联成 data URI;默认转换会拦掉所有 data:,
 // 这里只对 img 的 src 放行常见图片类型,其余 data: 和 javascript: 照旧被拦。
-const INLINE_IMAGE_SRC = /^data:image\/(png|jpeg|webp|gif);base64,/i
+export const INLINE_IMAGE_SRC = /^data:image\/(png|jpeg|webp|gif);base64,/i
 
 export const noteUrlTransform: UrlTransform = (url, key, node) => {
   if (key === 'src' && node.tagName === 'img' && INLINE_IMAGE_SRC.test(url)) return url

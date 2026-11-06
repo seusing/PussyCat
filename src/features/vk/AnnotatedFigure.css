@@ -1,0 +1,39 @@
+/* comark-annotate 的样式随渲染器注入,放在 @layer comark 里,下面这些普通规则一律优先。 */
+
+/* 图注区的配色取 App 现有色值;dark 类让包里的深色变体不随系统明暗偏好变。 */
+.vk-annotated {
+  --comark-background: var(--color-panel);
+  --comark-foreground: var(--color-fg);
+  --comark-muted: var(--color-fg-dim);
+  --comark-border: var(--color-line);
+  --comark-ring: var(--color-accent);
+}
+
+/* 批注字体:comark-annotate 的 .ca 自己设 --ca-note-font,只能写成作用在 .ca 上的规则;
+   Caveat 只覆盖拉丁字符,中文用霞鹜文楷。编号批注列表默认用页面字体,也换成文楷。 */
+.vk-annotated .ca { --ca-note-font: 'LXGW WenKai', comark-caveat, cursive; }
+/* 全局 #root * 的 font-family 带 !important,变量和普通规则都盖不过它,批注文字得用同等写法点名。 */
+#root .vk-annotated :is(.ca-notes, .ca-callout),
+#root .vk-annotated :is(.ca-notes, .ca-callout) * { font-family: 'LXGW WenKai', comark-caveat, cursive !important; }
+
+/* 原图多是竖长的手机截图,铺满正文宽度要滚好几屏才看完一张;整块限宽等比缩小,
+   批注框按百分比定位不会错位,要看原尺寸点图进灯箱。 */
+.vk-annotated { max-width: 480px; }
+
+/* 笔记正文的列表、段落、图片样式会盖过包里分层的同名规则,在这里还原。 */
+.vk-annotated .ca-notes { margin: .5rem 0 0; padding: 0; list-style: none; }
+.vk-annotated .ca-notes > li { margin: 0; }
+.vk-annotated :is(.ca-notes, .ca-callout) p { margin: 0; }
+.vk-annotated .ca-frame img { width: 100%; max-width: 100%; height: auto; max-height: none; border: 0; }
+
+.vk-annotated-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 8rem;
+  margin: .9em 0;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  color: var(--color-fg-dim);
+  font-size: 12px;
+}

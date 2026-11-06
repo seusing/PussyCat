@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveTextFileAs } from '../../lib/saveTextFile'
@@ -377,6 +377,33 @@ describe('灵感库', () => {
     expect(within(preview).getByRole('columnheader', { name: '视频怎么看' })).toBeInTheDocument()
     expect(within(preview).getByRole('cell', { name: '先看有没有漏项' })).toBeInTheDocument()
     expect(within(preview).getByAltText('接缝特写（01:23）')).toHaveAttribute('src', 'data:image/jpeg;base64,/9j/4AAQ')
+  })
+
+  it('阅读视图把 ::screenshot 块渲染成带批注的原图,图已内联所以不取图', async () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+    const dataUrl = 'data:image/jpeg;base64,/9j/4AAQ'
+    const content = [
+      '# 基金复盘', '',
+      `::screenshot{src="${dataUrl}" alt="图3" viewport="1080x1440"}`,
+      ':::annotation{x=6.5 y=20.5 w=72.2 h=5.3 mark="underline" color="red"}',
+      '投入 18 万 → 24.6 万，浮盈约 37%',
+      ':::',
+      '::', '',
+      '收尾一句',
+    ].join('\n')
+    const item = addInspirationItem({ title: '基金复盘', content, kind: 'video', format: 'md', folderId: null })!
+    render(<InspirationLibraryPanel onOpenSources={() => {}} />)
+    await userEvent.click(screen.getByTestId(`inspiration-item-${item.id}`))
+    await userEvent.click(screen.getByRole('button', { name: '阅读' }))
+
+    const preview = screen.getByTestId('inspiration-content-preview')
+    await waitFor(() => expect(preview.querySelector('.vk-annotated .ca-mark')).toBeInTheDocument())
+    expect(within(preview).getByAltText('图3')).toHaveAttribute('src', dataUrl)
+    expect(preview.querySelector('.ca-notes li')).toHaveTextContent('投入 18 万 → 24.6 万，浮盈约 37%')
+    expect(preview).toHaveTextContent('收尾一句')
+    expect(preview).not.toHaveTextContent('::screenshot')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('粘贴公众号文章链接后抓取正文并以阅读模式打开', async () => {

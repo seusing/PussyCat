@@ -11,6 +11,8 @@ import { EmptyState } from '../../components/EmptyState'
 import { GlassSelect } from '../../components/GlassMenu'
 import { NOTE_REMARK_PLUGINS, noteUrlTransform } from '../../lib/noteMarkdown'
 import { saveTextFileAs } from '../../lib/saveTextFile'
+import { ScreenshotBlocksContext, ScreenshotCodeBlock } from '../vk/AnnotatedFigure'
+import { foldScreenshotBlocks } from '../vk/screenshotBlocks'
 import {
   INSPIRATION_LIBRARY_EVENT,
   addInspirationFolder,
@@ -174,7 +176,11 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
   // 渲染器引用一变,图片就会重新挂载并再经宿主代理拉一遍,所以只随 baseUrl 重建。
   const markdownComponents = useMemo<Components>(() => ({
     img: ({ src, alt }) => <WechatMarkdownImage baseUrl={baseUrl} src={typeof src === 'string' ? src : undefined} alt={alt} />,
+    pre: ScreenshotCodeBlock,
   }), [baseUrl])
+  // 收藏的笔记里 ::screenshot 块的原图已内联成 data URL,渲染时不再取图,所以不带任务。
+  const folded = useMemo(() => foldScreenshotBlocks(contentDraft || '*还没有内容*'), [contentDraft])
+  const screenshots = useMemo(() => ({ blocks: folded.blocks }), [folded.blocks])
 
   const showToast = (tone: AppAlertTone, title: string, description?: string) => {
     setToast((current) => [{ id: ++toastSequenceRef.current, tone, title, description }, ...current])
@@ -702,7 +708,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
                 {viewMode === 'edit' ? (
                   <textarea data-testid="inspiration-content-input" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} aria-label="灵感内容" placeholder="写点什么..." />
                 ) : (
-                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><Markdown remarkPlugins={NOTE_REMARK_PLUGINS} components={markdownComponents} skipHtml urlTransform={noteUrlTransform}>{contentDraft || '*还没有内容*'}</Markdown></div>
+                  <div data-testid="inspiration-content-preview" className="inspiration-library-preview scroll-fade"><ScreenshotBlocksContext.Provider value={screenshots}><Markdown remarkPlugins={NOTE_REMARK_PLUGINS} components={markdownComponents} skipHtml urlTransform={noteUrlTransform}>{folded.markdown}</Markdown></ScreenshotBlocksContext.Provider></div>
                 )}
                 <div className="inspiration-library-editor-footer">
                   <span>更新于 {formatDate(selectedItem.updatedAt)}</span>

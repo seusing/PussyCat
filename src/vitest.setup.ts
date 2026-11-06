@@ -66,3 +66,13 @@ beforeEach(async () => {
 afterEach(() => {
   vi.unstubAllGlobals()
 })
+
+// jsdom 的 CSS 解析器不认 @layer,而 comark-annotate 的样式整块包在 @layer 里:注入 head 时 jsdom 会把
+// 整份样式当错误打到 console.error。这只是 jsdom 的缺口(浏览器里没有这回事),单独滤掉这一条。
+if (isJsdomEnv) {
+  const consoleError = console.error.bind(console)
+  console.error = (...args: unknown[]) => {
+    if (typeof args[0] === 'string' && args[0].startsWith('Error: Could not parse CSS stylesheet')) return
+    consoleError(...args)
+  }
+}

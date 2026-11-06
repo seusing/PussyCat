@@ -2,12 +2,14 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { AnimatePresence, motion, useDragControls, useMotionValue } from 'motion/react'
 import { BookmarkPlus, Check, Copy, Download } from 'lucide-react'
 import { fetchVkFigure, fetchVkJob, fetchVkOutputText } from '../../host/vkClient'
+import { blobToDataUrl } from '../../lib/blobToDataUrl'
 import { copyText } from '../../lib/clipboard'
 import { saveTextFileAs } from '../../lib/saveTextFile'
 import { GlassSelect } from '../../components/GlassMenu'
 import { addInspirationItem } from '../inspiration/inspirationLibrary'
 import { vkPrimaryOutput, vkResultVersionLabel, type VkResultVersion } from './taskResults'
 import { vkErrorNote, type VkErrorNote } from './vkErrors'
+import { SCREENSHOT_FIGURE_SRC } from './screenshotBlocks'
 import { TermHintMarkdown } from './TermHint'
 import { loadVkTermHints, type VkTermHint, type VkTermHints } from './termHints'
 import './VkOutputViewer.css'
@@ -41,19 +43,13 @@ function inlineFileName(label: string): string {
 
 const FIGURE_REFERENCE = /!\[([^\]]*)\]\(figures\/([0-9a-f]{12})\.jpg\)/g
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(blob)
-  })
-}
-
-/** 导出前把笔记里的配图引用换成 data URI,让文件自包含;某张图取不到就保留原引用,不拦保存。 */
+/** 导出前把笔记里的配图引用(含 ::screenshot 块的 src)换成 data URI,让文件自包含;某张图取不到就保留原引用,不拦保存。 */
 async function inlineFigures(content: string, jobId: string | undefined, baseUrl: string): Promise<string> {
   if (!jobId) return content
-  const names = [...new Set([...content.matchAll(FIGURE_REFERENCE)].map((match) => match[2]))]
+  const names = [...new Set([
+    ...[...content.matchAll(FIGURE_REFERENCE)].map((match) => match[2]),
+    ...[...content.matchAll(SCREENSHOT_FIGURE_SRC)].map((match) => match[2]),
+  ])]
   if (names.length === 0) return content
   const dataUrls = new Map<string, string>()
   await Promise.all(names.map(async (name) => {
@@ -61,10 +57,15 @@ async function inlineFigures(content: string, jobId: string | undefined, baseUrl
       dataUrls.set(name, await blobToDataUrl(await fetchVkFigure(jobId, name, baseUrl)))
     } catch { /* 保留原引用 */ }
   }))
-  return content.replace(FIGURE_REFERENCE, (reference, alt: string, name: string) => {
-    const dataUrl = dataUrls.get(name)
-    return dataUrl ? `![${alt}](${dataUrl})` : reference
-  })
+  return content
+    .replace(FIGURE_REFERENCE, (reference, alt: string, name: string) => {
+      const dataUrl = dataUrls.get(name)
+      return dataUrl ? `![${alt}](${dataUrl})` : reference
+    })
+    .replace(SCREENSHOT_FIGURE_SRC, (reference, head: string, name: string, tail: string) => {
+      const dataUrl = dataUrls.get(name)
+      return dataUrl ? `${head}${dataUrl}${tail}` : reference
+    })
 }
 
 export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion, baseUrl, onClose, cache }: {

@@ -474,3 +474,118 @@ describe('TermHintMarkdown 配图', () => {
     })
   })
 })
+
+describe('TermHintMarkdown 批注原图', () => {
+  const JPEG_DATA_URL = 'data:image/jpeg;base64,anBn'   // 'jpg' 的 base64
+  const block = (name: string, alt: string) => [
+    `::screenshot{src="figures/${name}.jpg" alt="${alt}" viewport="1080x1440"}`,
+    ':::annotation{x=6.5 y=20.5 w=72.2 h=5.3 mark="underline" color="red"}',
+    '投入 18 万，浮盈约 37%',
+    ':::',
+    '::',
+    '',
+  ].join('\n')
+  const BLOCK = block('3fa9c1d2e4b5', '图3')
+  let objectUrls = 0
+
+  // 批注原图要把图转成 data URL,jsdom 的 FileReader 只认 jsdom 的 Blob,所以直接给出带 blob() 的响应。
+  function stubFigureFetch() {
+    const fetchMock = vi.fn(async () => ({ ok: true, blob: async () => new Blob(['jpg'], { type: 'image/jpeg' }) }) as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  beforeEach(() => {
+    objectUrls = 0
+    Object.assign(URL, { createObjectURL: vi.fn(() => `blob:figure-${++objectUrls}`), revokeObjectURL: vi.fn() })
+  })
+  afterEach(() => {
+    cleanup()
+    Reflect.deleteProperty(URL, 'createObjectURL')
+    Reflect.deleteProperty(URL, 'revokeObjectURL')
+  })
+
+  it('混排时普通段的术语提示照常生效,块渲染成带批注的原图', async () => {
+    const fetchMock = stubFigureFetch()
+    const { container } = render(
+      <TermHintMarkdown terms={[hint]} note={null} figureJobId="run:r1" baseUrl="http://host">
+        {`先理解渐进式超负荷。\n\n${BLOCK}\n收尾。`}
+      </TermHintMarkdown>,
+    )
+    await waitFor(() => expect(container.querySelector('.vk-annotated .ca-mark')).toBeInTheDocument())
+
+    expect(fetchMock).toHaveBeenCalledWith('http://host/vk/v1/outputs/run:r1/figure-3fa9c1d2e4b5')
+    expect(screen.getByRole('button', { name: '渐进式超负荷' })).toHaveClass('vk-term')
+    expect(container.querySelector('.vk-annotated img')).toHaveAttribute('src', JPEG_DATA_URL)
+    expect(container.querySelector('.vk-annotated .ca-notes li')).toHaveTextContent('投入 18 万，浮盈约 37%')
+    expect(container).toHaveTextContent('先理解渐进式超负荷。')
+    expect(container).toHaveTextContent('收尾。')
+    expect(container).not.toHaveTextContent('::screenshot')
+    expect(container.querySelector('pre')).not.toBeInTheDocument()
+  })
+
+  it('术语额度和首次出现按整篇算,不随块分段重新计', async () => {
+    stubFigureFetch()
+    const terms = ['甲术语', '乙术语', '丙术语', '丁术语', '戊术语', '己术语', '庚术语'].map((term) => ({ term, explanation: `${term}解释`, in_video: '' }))
+    const text = `己术语、庚术语、甲术语\n\n${BLOCK}\n${block('a1b2c3d4e5f6', '图4')}\n乙术语、丙术语、丁术语、戊术语、甲术语`
+    const { container } = render(<TermHintMarkdown terms={terms} note={null} figureJobId="run:r1">{text}</TermHintMarkdown>)
+    await waitFor(() => expect(container.querySelectorAll('.vk-annotated')).toHaveLength(2))
+    expect([...container.querySelectorAll('.vk-term')].map((element) => element.textContent))
+      .toEqual(['甲术语', '乙术语', '丙术语', '丁术语', '戊术语'])
+  })
+
+  it('没有 figureJobId 时块按普通文本显示,不取图', () => {
+    const fetchMock = stubFigureFetch()
+    const { container } = render(<TermHintMarkdown terms={[hint]} note={null}>{`先理解渐进式超负荷。\n\n${BLOCK}`}</TermHintMarkdown>)
+    expect(container.querySelector('.vk-annotated, .vk-annotated-placeholder, pre')).not.toBeInTheDocument()
+    expect(container).toHaveTextContent('::screenshot{src="figures/3fa9c1d2e4b5.jpg" alt="图3" viewport="1080x1440"}')
+    expect(container).toHaveTextContent(':::annotation{x=6.5 y=20.5')
+    expect(screen.getByRole('button', { name: '渐进式超负荷' })).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('代码块里的块和笔记自己写的同名围栏都不当批注原图', () => {
+    stubFigureFetch()
+    const { container } = render(
+      <TermHintMarkdown terms={[]} note={null} figureJobId="run:r1">{`\`\`\`md\n${BLOCK}\`\`\`\n\n\`\`\`vk-screenshot\n0\n\`\`\`\n`}</TermHintMarkdown>,
+    )
+    expect(container.querySelector('.vk-annotated, .vk-annotated-placeholder')).not.toBeInTheDocument()
+    expect(container.querySelectorAll('pre')).toHaveLength(2)
+    expect(container.querySelector('pre code')).toHaveTextContent('::screenshot{src="figures/3fa9c1d2e4b5.jpg"')
+  })
+
+  it('取图失败时退回普通配图,同篇笔记的其他内容照常', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('missing', { status: 404 })))
+    const { container } = render(
+      <TermHintMarkdown terms={[hint]} note={null} figureJobId="run:r1">{`先理解渐进式超负荷。\n\n${BLOCK}`}</TermHintMarkdown>,
+    )
+    expect(await screen.findByText('配图加载失败')).toBeInTheDocument()
+    expect(container.querySelector('.vk-annotated')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '渐进式超负荷' })).toBeInTheDocument()
+  })
+
+  it('带批注的原图和普通配图在灯箱里按笔记顺序连着翻页', async () => {
+    stubFigureFetch()
+    const text = `![第一张](figures/aaaaaaaaaaaa.jpg)\n\n${BLOCK}\n![第三张](figures/cccccccccccc.jpg)\n`
+    const { container } = render(<TermHintMarkdown terms={[]} note={null} figureJobId="job-1" baseUrl="http://host">{text}</TermHintMarkdown>)
+    const firstThumbnail = await screen.findByAltText('第一张')
+    await screen.findByAltText('第三张')
+    await waitFor(() => expect(container.querySelector('.vk-annotated .ca-mark')).toBeInTheDocument())
+    const slide = () => screen.getByRole('dialog').querySelector('.yarl__slide_current img')!
+
+    await userEvent.click(screen.getByRole('button', { name: '查看大图：第一张' }))
+    expect(slide()).toHaveAttribute('src', firstThumbnail.getAttribute('src'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '下一张' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '图3' })).toBeInTheDocument())
+    expect(slide()).toHaveAttribute('src', JPEG_DATA_URL)
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '下一张' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '第三张' })).toBeInTheDocument())
+    await userEvent.keyboard('{Escape}')
+
+    // 从批注原图点开,同样能往前后翻
+    await userEvent.click(screen.getByAltText('图3'))
+    expect(screen.getByRole('dialog', { name: '图3' })).toBeInTheDocument()
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '上一张' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '第一张' })).toBeInTheDocument())
+  })
+})

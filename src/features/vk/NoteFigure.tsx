@@ -3,6 +3,7 @@ import Lightbox from 'yet-another-react-lightbox'
 import Zoom from 'yet-another-react-lightbox/plugins/zoom'
 import 'yet-another-react-lightbox/styles.css'
 import { fetchVkFigure } from '../../host/vkClient'
+import { SCREENSHOT_FIGURE_SRC } from './screenshotBlocks'
 import './NoteFigure.css'
 
 /** 笔记里的配图引用:`figures/<12 位十六进制>.jpg`。 */
@@ -10,9 +11,13 @@ export const FIGURE_SRC = /^figures\/([0-9a-f]{12})\.jpg$/
 
 const FIGURE_REF = /!\[[^\]]*\]\(figures\/([0-9a-f]{12})\.jpg\)/g
 
-/** 笔记 Markdown 里配图的名字,按出现顺序、去重。 */
+/** 笔记 Markdown 里配图的名字(含 ::screenshot 块里的原图),按出现顺序、去重。 */
 export function listNoteFigureNames(markdown: string): string[] {
-  return [...new Set([...markdown.matchAll(FIGURE_REF)].map((match) => match[1]))]
+  const found = [
+    ...[...markdown.matchAll(FIGURE_REF)].map((match) => ({ index: match.index, name: match[1] })),
+    ...[...markdown.matchAll(SCREENSHOT_FIGURE_SRC)].map((match) => ({ index: match.index, name: match[2] })),
+  ]
+  return [...new Set(found.sort((left, right) => left.index - right.index).map((item) => item.name))]
 }
 
 type Slide = { name: string; url: string; alt: string }
@@ -80,6 +85,34 @@ function FigureLightbox({ slides, index, onClose }: { slides: readonly Slide[]; 
 }
 
 /**
+ * 把一张已取回的图登记到同一篇笔记的图集(name 为空则不登记),并给出打开灯箱的方法;
+ * 灯箱元素由调用方渲染。灯箱按笔记里的顺序翻页,只含已取回的图。
+ */
+export function useFigureLightbox(name: string | null, url: string | null, alt: string) {
+  const gallery = useContext(NoteFigureGalleryContext)
+  const [state, setState] = useState<{ slides: Slide[]; index: number } | null>(null)
+  const close = useCallback(() => setState(null), [])
+
+  useEffect(() => {
+    if (!gallery || !name || !url) return undefined
+    gallery.urls.set(name, { url, alt })
+    return () => { gallery.urls.delete(name) }
+  }, [gallery, name, url, alt])
+
+  const open = () => {
+    if (!url) return
+    const slides = (gallery?.names ?? []).flatMap((item) => {
+      const entry = gallery?.urls.get(item)
+      return entry ? [{ name: item, ...entry }] : []
+    })
+    const index = slides.findIndex((slide) => slide.name === name)
+    setState(index >= 0 ? { slides, index } : { slides: [{ name: name ?? '', url, alt }], index: 0 })
+  }
+  const lightbox = state ? <FigureLightbox slides={state.slides} index={state.index} onClose={close} /> : null
+  return { open, lightbox }
+}
+
+/**
  * 一张笔记配图,显示为缩略图,点开进灯箱翻看同一篇笔记的所有配图。
  * Host 要求请求带白名单 Origin,<img src> 不带,所以用 fetch 取回 blob 再显示;
  * 对象 URL 随图片地址变化或卸载释放。
@@ -91,10 +124,7 @@ export function NoteFigure({ jobId, baseUrl, name, alt }: {
   alt: string
 }) {
   const key = JSON.stringify([baseUrl, jobId, name])
-  const gallery = useContext(NoteFigureGalleryContext)
   const [loaded, setLoaded] = useState<{ key: string; url: string | null } | null>(null)
-  const [lightbox, setLightbox] = useState<{ slides: Slide[]; index: number } | null>(null)
-  const close = useCallback(() => setLightbox(null), [])
 
   useEffect(() => {
     let current = true
@@ -115,24 +145,10 @@ export function NoteFigure({ jobId, baseUrl, name, alt }: {
   // 上一张图的结果不能挂到换了地址的这张上。
   const state = loaded?.key === key ? loaded : null
   const url = state?.url ?? null
-
-  useEffect(() => {
-    if (!gallery || !url) return undefined
-    gallery.urls.set(name, { url, alt })
-    return () => { gallery.urls.delete(name) }
-  }, [gallery, name, url, alt])
+  const { open: openLightbox, lightbox } = useFigureLightbox(name, url, alt)
 
   if (!state) return <span className="vk-figure is-loading">配图加载中…</span>
   if (!url) return <span className="vk-figure is-failed" title={alt || undefined}>配图加载失败</span>
-
-  const openLightbox = () => {
-    const slides = (gallery?.names ?? []).flatMap((item) => {
-      const entry = gallery?.urls.get(item)
-      return entry ? [{ name: item, ...entry }] : []
-    })
-    const index = slides.findIndex((slide) => slide.name === name)
-    setLightbox(index >= 0 ? { slides, index } : { slides: [{ name, url, alt }], index: 0 })
-  }
 
   return (
     <>
@@ -151,7 +167,7 @@ export function NoteFigure({ jobId, baseUrl, name, alt }: {
         <img src={url} alt={alt} />
         <span className="vk-figure-caption" title={alt || undefined}>{alt}</span>
       </span>
-      {lightbox && <FigureLightbox slides={lightbox.slides} index={lightbox.index} onClose={close} />}
+      {lightbox}
     </>
   )
 }

@@ -601,6 +601,67 @@ describe('笔记配图', () => {
     expect(screen.getByTestId('vk-output-viewer-save-library')).toHaveAccessibleName('已收进灵感库')
   })
 
+  describe('带批注的原图', () => {
+    const SHOT = 'cccccccccccc'
+    const screenshotBlock = (name: string) => [
+      `::screenshot{src="figures/${name}.jpg" alt="图3" viewport="1080x1440"}`,
+      ':::annotation{x=6.5 y=20.5 w=72.2 h=5.3 mark="underline" color="red"}',
+      '投入 18 万 → 24.6 万，浮盈约 37%',
+      ':::',
+      '::',
+    ].join('\n')
+    const annotatedNote = [
+      '# 复盘',
+      '',
+      `![接缝特写（01:23）](figures/${FIGURE_A}.jpg)`,
+      '',
+      screenshotBlock(SHOT),
+      '',
+      screenshotBlock(FIGURE_B),
+      '',
+      '结尾',
+    ].join('\n')
+
+    beforeEach(() => {
+      vi.mocked(fetchVkOutputText).mockImplementation(async () => annotatedNote)
+    })
+
+    it('结果窗口把 ::screenshot 块渲染成带批注的原图', async () => {
+      render(<Harness items={figureTabs} />)
+      const content = await screen.findByTestId('vk-output-viewer-content')
+      await waitFor(() => expect(content.querySelectorAll('.vk-annotated .ca-mark')).toHaveLength(2))
+      expect(fetchVkFigure).toHaveBeenCalledWith('run:a', SHOT, 'http://host')
+      expect(content.querySelector('.vk-annotated img')).toHaveAttribute('src', `data:image/jpeg;base64,${JPEG_BASE64}`)
+      expect(content).not.toHaveTextContent('::screenshot')
+    })
+
+    it('下载时块里的 src 也内联成 data URI,其余语法逐字保留,取不到的保留原引用', async () => {
+      vi.mocked(fetchVkFigure).mockImplementation(async (_job, name) => {
+        if (name === FIGURE_B) throw new HostRequestError('配图读取失败', undefined, 404)
+        return new Blob(['jpg'], { type: 'image/jpeg' })
+      })
+      render(<Harness items={figureTabs} />)
+      await waitFor(() => expect(document.querySelector('.vk-annotated .ca-mark')).toBeInTheDocument())
+      await userEvent.click(screen.getByTestId('vk-output-viewer-download'))
+      await waitFor(() => expect(saveTextFileAs).toHaveBeenCalled())
+      const [, content] = vi.mocked(saveTextFileAs).mock.calls.at(-1)!
+      expect(content).toBe(annotatedNote
+        .replace(`![接缝特写（01:23）](figures/${FIGURE_A}.jpg)`, `![接缝特写（01:23）](data:image/jpeg;base64,${JPEG_BASE64})`)
+        .replace(`::screenshot{src="figures/${SHOT}.jpg"`, `::screenshot{src="data:image/jpeg;base64,${JPEG_BASE64}"`))
+      expect(content).toContain(`::screenshot{src="figures/${FIGURE_B}.jpg" alt="图3" viewport="1080x1440"}`)
+    })
+
+    it('收进灵感库时块里的原图同样内联', async () => {
+      render(<Harness items={figureTabs} />)
+      await waitFor(() => expect(document.querySelector('.vk-annotated .ca-mark')).toBeInTheDocument())
+      await userEvent.click(screen.getByTestId('vk-output-viewer-save-library'))
+      await waitFor(() => expect(loadInspirationLibrary().items).toHaveLength(1))
+      const { content } = loadInspirationLibrary().items[0]
+      expect(content).toContain(`::screenshot{src="data:image/jpeg;base64,${JPEG_BASE64}" alt="图3" viewport="1080x1440"}`)
+      expect(content).not.toContain('figures/')
+    })
+  })
+
   it('灯箱打开时 Esc 只关灯箱,不关结果窗口', async () => {
     render(<Harness items={figureTabs} />)
     await userEvent.click(await screen.findByRole('button', { name: '查看大图：接缝特写（01:23）' }))
