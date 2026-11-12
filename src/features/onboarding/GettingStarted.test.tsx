@@ -82,6 +82,19 @@ describe('开始使用清单', () => {
     expect(host.count('GET /vk/v1/providers')).toBe(0)
   })
 
+  test('模型配置一步说明 Jev 可选,以及没配 Jev 时笔记缺什么', async () => {
+    stubHost({
+      'GET /browser-bridge/health': { body: bridgeNoExtension },
+      'GET /vk/v1/runtime/status': { body: runtime() },
+    })
+    connected()
+    render(<GettingStarted baseUrl={BASE} />)
+
+    expect(await screen.findByTestId('gs-step-providers')).toHaveTextContent(
+      '给基础处理和深度分析各选一个模型，视频解析才能出结果；Jev 可选，配上后笔记才有行情图、预测核验、来源核对、配图和观点对比',
+    )
+  })
+
   test('扩展连上即完成:不再给安装扩展和检测并修复', async () => {
     stubHost({
       'GET /browser-bridge/health': { body: bridgeOk },

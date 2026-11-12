@@ -543,6 +543,12 @@ export async function postVkBatchCancel(
   return parseVkResponse(response, '任务操作失败')
 }
 
+/** 后台预加载语音模型:引擎立即回 202,模型在后台线程里加载;重复调用只回当前状态。 */
+export async function postVkAsrPrepare(baseUrl = DEFAULT_BASE_URL): Promise<{ state: 'loading' | 'ready' | 'failed' }> {
+  const response = await fetch(`${baseUrl}/vk/v1/asr/prepare`, jsonInit({}))
+  return parseVkResponse(response, '语音模型预加载失败')
+}
+
 export async function fetchVkDiagnostic(baseUrl = DEFAULT_BASE_URL): Promise<Record<string, unknown>> {
   const response = await fetch(`${baseUrl}/vk/v1/diagnostic`)
   return parseVkResponse(response, '诊断获取失败')
@@ -785,6 +791,22 @@ export async function fetchVkChartBars(
   const data = await parseVkResponse<VkChartBars>(await fetch(vkChartBarsUrl(jobId, name, period, baseUrl)), '行情数据读取失败')
   if (!data || !Array.isArray(data.bars) || data.bars.length === 0) throw new HostRequestError('行情数据为空')
   return data
+}
+
+/**
+ * 笔记里生成时的预测核验行 → 用最新行情重算后的行(都不含引用块的 `> ` 前缀)。
+ * 引擎取不到行情的核验不在其中;任务不存在或请求失败时抛错,调用方按原文显示。
+ */
+export async function fetchVkForecasts(jobId: string, baseUrl = DEFAULT_BASE_URL): Promise<Record<string, string>> {
+  const data = await parseVkResponse<{ lines?: Record<string, unknown> }>(
+    await fetch(`${baseUrl}/vk/v1/jobs/${encodePathSegment(jobId)}/forecasts`),
+    '预测核验刷新失败',
+  )
+  const lines: Record<string, string> = {}
+  for (const [stale, fresh] of Object.entries(data?.lines ?? {})) {
+    if (typeof fresh === 'string' && fresh) lines[stale] = fresh
+  }
+  return lines
 }
 
 // 产物下载:fetch(带 Origin,过 Host 白名单)→ blob → 对象 URL 新开页。

@@ -19,6 +19,7 @@ import { positionMenu, useGlassMenuSurface } from '../../components/GlassMenu'
 import { addKnownTerm, loadKnownTerms, normalizeTerm } from '../../data/knownTerms'
 import { NOTE_REMARK_PLUGINS, noteUrlTransform } from '../../lib/noteMarkdown'
 import { ScreenshotBlocksContext, ScreenshotCodeBlock } from './AnnotatedFigure'
+import { applyForecastLines, useRefreshedForecasts } from './forecastLines'
 import { CHART_SRC, MarketChart } from './MarketChart'
 import { NoteBlockquote, NoteParagraph } from './NoteEvidence'
 import { FIGURE_SRC, listNoteFigureNames, NoteFigure, NoteFigureGalleryContext } from './NoteFigure'
@@ -255,8 +256,11 @@ export function TermHintMarkdown({ children, terms, note, figureJobId, baseUrl }
     () => ({ terms, note, onKnown: markKnown, figure: figureJobId ? { jobId: figureJobId, baseUrl } : null }),
     [terms, note, markKnown, figureJobId, baseUrl],
   )
-  const gallery = useMemo(() => ({ names: listNoteFigureNames(children), urls: new Map() }), [children])
-  const folded = useMemo(() => (figureJobId ? foldScreenshotBlocks(children) : { markdown: children, blocks: [] }), [children, figureJobId])
+  // 预测核验行在笔记生成时就定格了:有任务可查时换成用最新行情重算后的行,取不到就是原文。
+  const refreshed = useRefreshedForecasts(figureJobId, baseUrl, children)
+  const text = useMemo(() => applyForecastLines(children, refreshed), [children, refreshed])
+  const gallery = useMemo(() => ({ names: listNoteFigureNames(text), urls: new Map() }), [text])
+  const folded = useMemo(() => (figureJobId ? foldScreenshotBlocks(text) : { markdown: text, blocks: [] }), [text, figureJobId])
   const screenshots = useMemo(() => ({ blocks: folded.blocks, jobId: figureJobId, baseUrl }), [folded.blocks, figureJobId, baseUrl])
   return (
     <TermHintContext.Provider value={context}>

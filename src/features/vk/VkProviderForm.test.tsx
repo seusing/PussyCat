@@ -63,7 +63,7 @@ function settings(over: Record<string, unknown> = {}) {
     role_routes: { deep_analysis: ['cheap'], basic: ['cheap'] },
     role_route_warnings: {},
     role_labels: { deep_analysis: '深度分析', basic: '基础处理' },
-    role_hints: { deep_analysis: '提炼观点', basic: '章节划分、质检等其余步骤' },
+    role_hints: { deep_analysis: '速览正文、观点提炼、读图、故事线与观点对比', basic: '章节划分、质检、系列摘要等其余步骤' },
     unassigned_roles: [],
     api_styles: [
       { id: 'openai_completions', label: 'OpenAI 兼容（chat/completions）' },
@@ -405,6 +405,19 @@ test('Jev 测试失败时原样显示引擎返回的提示', async () => {
   const alert = await screen.findByTestId('vk-provider-error')
   expect(alert).toHaveTextContent(message)
   expect(alert).toHaveTextContent('HTTP 451')
+})
+
+test('Jev配置标题下说明它是可选的,以及没配时哪些步骤会跳过', async () => {
+  stubRoutes({
+    'GET /vk/v1/providers': { body: settings() },
+    'GET /vk/v1/jev/configs': { body: { configured: false, configs: [], active_id: null } },
+  })
+  render(<VkProviderForm baseUrl={BASE} />)
+
+  expect(await screen.findByText('暂无 Jev 配置')).toBeInTheDocument()
+  expect(screen.getByTestId('vk-jev-note')).toHaveTextContent(
+    '可选。行情图、预测核验、来源核对、关键画面配图和跨博主观点对比都要用到 Jev；不配置时这些步骤跳过，笔记照常生成。',
+  )
 })
 
 test('Jev 配置列表读取失败时静默显示空列表', async () => {

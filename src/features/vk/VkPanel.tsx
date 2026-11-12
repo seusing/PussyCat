@@ -48,6 +48,7 @@ import type {
 } from '../../host/vkClient'
 import { fetchBridgeHealth, repairBridge, type BridgeHealth } from '../../host/bridgeClient'
 import { BorderGlow } from '../../components/BorderGlow'
+import { requestAsrPrepareOnce } from './asrPrepare'
 import { runtimeToAdopt } from './runtimePick'
 import { vkErrorNote, vkErrorText, type VkErrorNote } from './vkErrors'
 import { describeVkFailure } from './vkFailure'
@@ -532,6 +533,11 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     const timer = setInterval(() => { void refreshRuntime() }, 2000)
     return () => clearInterval(timer)
   }, [runtime, runtimeSettled, refreshRuntime])
+  // 引擎就绪后顺手把语音模型加载好,第一条视频不必再等模型加载(每个应用会话一次,失败静默)。
+  const engineReady = runtime?.state === 'installed' && (health?.status === 'ok' || health?.status === 'ready')
+  useEffect(() => {
+    if (engineReady) requestAsrPrepareOnce(base)
+  }, [engineReady, base])
   // —— 自动体检:进入面板就把环境查清楚并挑最强的,不让用户去点「检测」再去「选」 ——
   // 用户的原话是"能自动获取就自动获取"。检测本身零副作用;挑出来的若不是当前环境
   // 才 adopt(runtimeToAdopt 已经把"已经最强了"过滤掉了,避免无谓地重启 sidecar)。

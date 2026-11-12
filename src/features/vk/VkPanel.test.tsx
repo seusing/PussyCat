@@ -7,8 +7,10 @@ import { saveTextFileAs } from '../../lib/saveTextFile'
 import { VK_OPEN_OUTPUT_EVENT } from './taskUiState'
 import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
 import { useNotificationHistory } from '../../store/notificationHistory'
+import { requestAsrPrepareOnce } from './asrPrepare'
 
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
+vi.mock('./asrPrepare', () => ({ requestAsrPrepareOnce: vi.fn() }))
 
 const desktopNotifications = vi.hoisted(() => ({ send: vi.fn() }))
 vi.mock('@tauri-apps/plugin-notification', () => ({
@@ -22,6 +24,7 @@ beforeEach(() => {
   vi.useRealTimers()
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   vi.mocked(saveTextFileAs).mockReset().mockResolvedValue(true)
+  vi.mocked(requestAsrPrepareOnce).mockClear()
   useAppStore.setState(initialState, true)
   const layer = document.createElement('div')
   layer.dataset.testid = 'app-notification-layer'
@@ -120,6 +123,27 @@ describe('VkPanel', () => {
     apiVersion: '1.4.0', schemaVersion: '1.1.0', compatible: true, reason: null,
     capabilities: [{ capability: 'query_ready', runtime: 'ready', detail: null }],
     ...over,
+  })
+
+  it('引擎就绪后预加载一次语音模型,引擎没准备好时不触发', async () => {
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: { ...RUNTIME_INSTALLED, state: 'not-installed', summary: '尚未安装' } },
+    })
+    const first = render(<VkPanel baseUrl={BASE} />)
+    await screen.findByTestId('vk-verdict')
+    expect(requestAsrPrepareOnce).not.toHaveBeenCalled()
+    first.unmount()
+
+    stubRoutes({
+      'GET /vk/v1/health': { body: HEALTH },
+      'GET /vk/v1/jobs': { body: [] },
+      'GET /vk/v1/runtime/status': { body: RUNTIME_INSTALLED },
+    })
+    render(<VkPanel baseUrl={BASE} />)
+    await waitFor(() => expect(requestAsrPrepareOnce).toHaveBeenCalledWith(BASE))
+    expect(requestAsrPrepareOnce).toHaveBeenCalledTimes(1)
   })
 
   it('引擎和模型通道都就绪时不渲染健康状态条', async () => {

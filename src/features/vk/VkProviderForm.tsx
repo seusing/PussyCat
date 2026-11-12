@@ -1259,7 +1259,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     <div data-testid="vk-provider-form" className="space-y-4">
       {alertSlot('form')}
       <section data-testid="vk-jev-settings" className="rounded-xl p-4" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-        <div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-medium">Jev配置</div><ActionIconButton testId="vk-jev-add" label="新增配置" onClick={openNewJev} disabled={jevBusy} appearance="primary" size="md"><MorphActionGlyph icon={MorphPlus} size={16} /></ActionIconButton></div>
+        <div className="mb-3 flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Jev配置</div><div data-testid="vk-jev-note" className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>可选。行情图、预测核验、来源核对、关键画面配图和跨博主观点对比都要用到 Jev；不配置时这些步骤跳过，笔记照常生成。</div></div><ActionIconButton testId="vk-jev-add" label="新增配置" onClick={openNewJev} disabled={jevBusy} appearance="primary" size="md"><MorphActionGlyph icon={MorphPlus} size={16} /></ActionIconButton></div>
         <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
           <div className="grid min-w-[48rem] grid-cols-[1fr_1.3fr_.8fr_1fr_minmax(16rem,auto)] gap-3 px-3 py-2 text-xs font-medium" style={{ color: 'var(--color-fg-dim)', borderBottom: '1px solid var(--color-line)' }}><span>名称</span><span>API Key</span><span>模型</span><span>累计消费估算</span><span className="text-right pr-2">操作</span></div>
           {jevConfigs.length === 0 && <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无 Jev 配置</div>}

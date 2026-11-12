@@ -38,6 +38,10 @@ const VK_ROUTES = [
   { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/charts\/([^/]+)$/, target: (m) => `/api/jobs/${m[1]}/charts/${m[2]}` },
   // 同一张图换 K 线周期取数。透传 ?period=,周期是否在图的 intervals 里由引擎判断。
   { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/charts\/([^/]+)\/bars$/, target: (m, url) => `/api/jobs/${m[1]}/charts/${m[2]}/bars${url.search}` },
+  // 笔记里的预测核验行用最新行情重算:{lines: {旧行文字: 新行文字}}。引擎取不到行情的核验不在其中。
+  { method: 'GET', pattern: /^\/vk\/v1\/jobs\/([^/]+)\/forecasts$/, target: (m) => `/api/jobs/${m[1]}/forecasts` },
+  // 后台预加载语音模型,引擎立即回 202 {state};重复调用只回状态。
+  { method: 'POST', pattern: /^\/vk\/v1\/asr\/prepare$/, target: () => '/api/asr/prepare', kind: 'json' },
   { method: 'GET', pattern: /^\/vk\/v1\/diagnostic$/, target: () => '/api/diagnostic' },
   { method: 'POST', pattern: /^\/vk\/v1\/preview$/, target: () => '/api/preview', kind: 'json' },
   { method: 'GET', pattern: /^\/vk\/v1\/jev\/configs$/, target: () => '/api/jev/configs' },

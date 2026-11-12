@@ -291,7 +291,7 @@ export function GettingStarted({ baseUrl }: { baseUrl?: string }) {
           index={3}
           testId="gs-step-providers"
           title="模型配置"
-          description="给基础处理和深度分析各选一个模型，视频解析才能出结果"
+          description="给基础处理和深度分析各选一个模型，视频解析才能出结果；Jev 可选，配上后笔记才有行情图、预测核验、来源核对、配图和观点对比"
           status={providers}
           actions={providers && !providers.done && (
             <button

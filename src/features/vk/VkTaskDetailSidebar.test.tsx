@@ -236,6 +236,24 @@ describe('VkTaskDetailSidebar', () => {
     expect(steps).toHaveTextContent('分层汇总')
   })
 
+  it('速览正文的调用显示「速览」,旧任务记录里的 chapter 仍显示「理解视频」', async () => {
+    const { details } = memberProgressFixture()
+    const detail = details.get('member-a')!
+    detail.status = 'running'
+    detail.progress = {
+      completed_stages: ['chapter'], current_stage: 'quick_summary',
+      stage_metrics: ['chapter', 'quick_summary'].map((stage) => ({
+        stage, status: stage === 'quick_summary' ? 'running' : 'success',
+        elapsed_s: 2, input_tokens: 10, output_tokens: 5, cached_tokens: 0, model_calls: 1,
+      })),
+    }
+    render(<VkTaskDetailSidebar jobId="member-a" baseUrl={BASE} onClose={() => {}} />)
+    await userEvent.click(await screen.findByTestId('vk-task-detail-task-row-member-a'))
+    const steps = screen.getByRole('list', { name: '解析阶段' })
+    expect(steps.querySelector('[data-stage="chapter"]')).toHaveTextContent('理解视频')
+    expect(steps.querySelector('[data-stage="quick_summary"]')).toHaveTextContent('速览')
+  })
+
   it.each(['failed', 'cancelled', 'running'])('最新尝试为 %s 时仍能打开单任务parent链的历史结果', async (status) => {
     resultHistoryFixture(status)
     const dispatched = vi.spyOn(window, 'dispatchEvent')

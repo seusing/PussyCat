@@ -255,6 +255,57 @@ describe('/vk/v1 proxy', () => {
     expect(vkSidecar.requests).toHaveLength(0)
   })
 
+  it('proxies the forecasts route with the encoded job id, without touching job shadow', async () => {
+    const vkJobShadow = createVkJobShadow({})
+    const { baseUrl, vkSidecar } = await setup({ vkJobShadow })
+    const refreshed = { lines: { '预测核验 · 尚未到期：旧': '预测核验 · 应验：新（行情截至 2026-11-03）' } }
+    vkSidecar.respond('GET /api/jobs/run:r1/forecasts', refreshed)
+
+    const denied = await fetch(`${baseUrl}/vk/v1/jobs/run:r1/forecasts`)
+    expect(denied.status).toBe(403)
+    expect(vkSidecar.requests).toHaveLength(0)
+
+    const response = await fetch(`${baseUrl}/vk/v1/jobs/run:r1/forecasts`, { headers: { Origin: ORIGIN } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(refreshed)
+    const forwarded = vkSidecar.requests.at(-1)
+    expect(forwarded.path).toBe('/api/jobs/run:r1/forecasts')
+    expect(forwarded.init.method ?? 'GET').toBe('GET')
+    expect(vkJobShadow.list()).toHaveLength(0)
+
+    vkSidecar.respond('GET /api/jobs/job%201/forecasts', refreshed)
+    const encoded = await fetch(`${baseUrl}/vk/v1/jobs/job%201/forecasts`, { headers: { Origin: ORIGIN } })
+    expect(encoded.status).toBe(200)
+    expect(vkSidecar.requests.at(-1).path).toBe('/api/jobs/job%201/forecasts')
+  })
+
+  it('forecasts route is GET only and does not open extra paths under it', async () => {
+    const { baseUrl, vkSidecar } = await setup()
+    const post = await fetch(`${baseUrl}/vk/v1/jobs/job-1/forecasts`, { method: 'POST', headers: jsonHeaders(), body: '{}' })
+    expect(post.status).toBe(404)
+    const nested = await fetch(`${baseUrl}/vk/v1/jobs/job-1/forecasts/a`, { headers: { Origin: ORIGIN } })
+    expect(nested.status).toBe(404)
+    expect(vkSidecar.requests).toHaveLength(0)
+  })
+
+  it('proxies the asr prepare route as a POST and passes the 202 through', async () => {
+    const { baseUrl, vkSidecar } = await setup()
+    vkSidecar.respond('POST /api/asr/prepare', { state: 'loading' }, { status: 202 })
+
+    const denied = await fetch(`${baseUrl}/vk/v1/asr/prepare`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    expect(denied.status).toBe(403)
+    expect(vkSidecar.requests).toHaveLength(0)
+
+    const response = await fetch(`${baseUrl}/vk/v1/asr/prepare`, { method: 'POST', headers: jsonHeaders(), body: '{}' })
+    expect(response.status).toBe(202)
+    expect(await response.json()).toEqual({ state: 'loading' })
+    expect(vkSidecar.requests.at(-1).path).toBe('/api/asr/prepare')
+
+    const get = await fetch(`${baseUrl}/vk/v1/asr/prepare`, { headers: { Origin: ORIGIN } })
+    expect(get.status).toBe(404)
+    expect(vkSidecar.requests).toHaveLength(1)
+  })
+
   it('forwards binary uploads with the name query and content type, bypassing the JSON body limit', async () => {
     const { baseUrl, vkSidecar } = await setup()
     vkSidecar.respond('POST /api/uploads?name=a.srt', { upload_id: 'up_1', is_manifest: false, bytes: 5 }, { status: 201 })

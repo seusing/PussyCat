@@ -135,6 +135,7 @@ const STAGE_LABELS: Record<string, string> = {
   acquire: '采集与转写',
   normalize: '整理字幕',
   chapter: '理解视频',
+  quick_summary: '速览',
   jev_terms: 'Jev 筛选术语',
   summary_map: '分段提取',
   summary_reduce: '分层汇总',
