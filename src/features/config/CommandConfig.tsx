@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Lock, Send, Loader2 } from 'lucide-react'
-import { useAppStore } from '../../store/appStore'
+import { MANUAL_RUN_CONCURRENCY, activeRunCount, useAppStore } from '../../store/appStore'
 import { buildTokens, commandPreview, quote } from '../../data/command'
 import { validate } from './validation'
 import { DynamicField } from './DynamicField'
@@ -17,6 +17,7 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
   const values = useAppStore((s) => s.values)
   const setValue = useAppStore((s) => s.setValue)
   const currentRun = useAppStore((s) => s.currentRun)
+  const runLimitReached = useAppStore((s) => activeRunCount(s) >= MANUAL_RUN_CONCURRENCY)
   const decision = useAppStore((s) => (s.selected ? s.decisionFor(s.selected.command) : undefined))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const handleRunRef = useRef<(() => void) | null>(null)
@@ -38,6 +39,7 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
     const live = s.currentRun
     // 读实时 store 而非渲染期闭包快照:与 executeSelected 的权威守卫同源,消除 commit 前的陈旧窗口(M-2)
     if (live && (live.state === 'starting' || live.state === 'running' || live.state === 'cancelling')) return
+    if (activeRunCount(s) >= MANUAL_RUN_CONCURRENCY) return
     const errs = validate(cmd, s.values)
     setErrors(errs)
     if (Object.keys(errs).length > 0) {
@@ -106,12 +108,17 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
           <kbd className="cmd-kbd">Enter</kbd>
           提交
         </span>
-        <button data-testid="run-button" className="cmd-run-btn" disabled={running || !runnable} onClick={handleRun}>
+        <button data-testid="run-button" className="cmd-run-btn" disabled={running || !runnable || runLimitReached} onClick={handleRun}>
           {running
             ? <><Loader2 size={15} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />运行中…</>
             : <><Send size={14} strokeWidth={1.5} aria-hidden="true" />运行任务</>}
         </button>
       </div>
+      {!running && runLimitReached && (
+        <p data-testid="run-limit-reason" className="cmd-decision-reason">
+          已有 {MANUAL_RUN_CONCURRENCY} 条命令在运行，等其中一条结束后再试
+        </p>
+      )}
       {!runnable && (
         <p data-testid="decision-reason" className="cmd-decision-reason">
           <Lock size={13} strokeWidth={1.5} aria-hidden="true" />

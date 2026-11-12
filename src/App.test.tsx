@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
-import { useAppStore } from './store/appStore'
+import { activeRunCount, useAppStore } from './store/appStore'
 import type { CommandManifest } from './data/types'
-import type { HostBridge, RunRequest } from './host/types'
+import type { DoneEvent, HostBridge, OutputEvent, RunRequest } from './host/types'
 import { liveCatalogSource, type CatalogSource } from './host'
 import { createNodeBridgeHost, type EventSourceLike } from './host/nodeBridgeHost'
 import { normalizeHostError } from './App'
@@ -11,6 +11,7 @@ import { HostRequestError } from './host/errors'
 import type { OpencliRelease, OpencliUpdateJob } from './host/opencliRelease'
 import type { PolicyDecision } from './data/policy'
 import { renderWithHost } from './testing/renderWithHost'
+import { loadLayout, saveRunPaneLayout } from './data/layout'
 
 const initialState = useAppStore.getState()
 beforeEach(() => { useAppStore.setState(initialState, true) })  // true = replace，每个用例前恢复初始态
@@ -1484,6 +1485,29 @@ describe('登录状态检查的接线', () => {
     expect(starts.length).toBe(2)
   })
 
+  it('体检预算随各标签页的手动运行数变化:占几个位子就退让几个,运行结束后补回', async () => {
+    const sites = ['xiaohongshu', 'bilibili', 'github', 'zhihu']
+    const { starts } = renderApp(sites)
+    await waitFor(() => expect(useAppStore.getState().commands.length).toBe(sites.length))
+    act(() => {
+      const store = useAppStore.getState()
+      // 两个标签页各有一条在跑(一个在后台):活跃手动运行数 2
+      store.selectCommand(store.commands[0]); store.beginRun('manual-1')
+      useAppStore.getState().selectCommand(store.commands[1]); useAppStore.getState().beginRun('manual-2')
+      for (const site of sites) useAppStore.getState().acknowledgeCommand(`${site}/whoami`, `fp-${site}`, 1)
+      useAppStore.getState().enqueueLoginChecks(sites)
+    })
+    expect(activeRunCount(useAppStore.getState())).toBe(2)
+
+    await waitFor(() => expect(starts.length).toBe(1))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(starts.length).toBe(1)
+
+    // 后台那条结束:预算多出一个位子,排队的体检补上
+    act(() => { useAppStore.getState().finishRun({ runId: 'manual-1', at: 2, outcome: 'success' }) })
+    await waitFor(() => expect(starts.length).toBe(2))
+  })
+
   it('acknowledgement 随请求提交 —— 否则 Host 返 428', async () => {
     const { starts } = renderApp(['xiaohongshu'])
     await waitFor(() => expect(useAppStore.getState().commands.length).toBe(1))
@@ -1502,5 +1526,243 @@ describe('登录状态检查的接线', () => {
     act(() => { useAppStore.getState().enqueueLoginChecks(['xiaohongshu']) })
     await waitFor(() => expect(useAppStore.getState().loginChecks.xiaohongshu?.state).toBe('needs-ack'))
     expect(starts.length).toBe(0)
+  })
+})
+
+describe('灵感库执行页的运行面板开关', () => {
+  const hostWith = (startCommand: (req: RunRequest) => Promise<{ runId: string }>): HostBridge => ({
+    startCommand, cancelCommand: async () => {}, onOutput: () => () => {}, onDone: () => () => {},
+  })
+  const setupExecute = () => {
+    const startCommand = vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId }))
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: cmd, values: {}, currentRun: undefined, commands: [cmd],
+      decisions: new Map([[cmd.command, readyDecision(cmd.command)]]),
+    })
+    return startCommand
+  }
+
+  test('执行页顶栏有开关:点击收起 col-runs 并写入 localStorage,再点恢复', async () => {
+    setupExecute()
+    render(<App />)
+
+    const toggle = screen.getByTestId('toggle-run-pane')
+    expect(screen.getByTestId('app-header-actions')).toContainElement(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('col-runs')).toBeInTheDocument()
+    expect(screen.getByTestId('separator-run-pane')).toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(screen.queryByTestId('col-runs')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('separator-run-pane')).not.toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveAttribute('title', '显示运行面板')
+    expect(loadLayout().runPaneHidden).toBe(true)
+
+    fireEvent.click(toggle)
+    expect(screen.getByTestId('col-runs')).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveAttribute('title', '隐藏运行面板')
+    expect(loadLayout().runPaneHidden).toBe(false)
+  })
+
+  test('localStorage 里已收起 → 挂载时就不渲染 col-runs', () => {
+    setupExecute()
+    saveRunPaneLayout({ runPaneHidden: true })
+    render(<App />)
+
+    expect(screen.queryByTestId('col-runs')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-run-pane')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('站点页没有该按钮', () => {
+    useAppStore.setState({ catalogStatus: 'ready' })
+    render(<App />)
+
+    expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
+    expect(screen.queryByTestId('toggle-run-pane')).not.toBeInTheDocument()
+  })
+
+  test('切到别的模块时按钮消失,切回灵感库后恢复', async () => {
+    setupExecute()
+    render(<App />)
+    expect(screen.getByTestId('toggle-run-pane')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('module-tab-login'))
+    expect(screen.queryByTestId('toggle-run-pane')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('module-tab-commands'))
+    expect(screen.getByTestId('toggle-run-pane')).toBeInTheDocument()
+  })
+
+  test('面板收起时点「运行任务」发起运行 → 自动展开并写回 localStorage', async () => {
+    const startCommand = setupExecute()
+    saveRunPaneLayout({ runPaneHidden: true })
+    render(<App host={hostWith(startCommand)} mode="connected" />)
+    expect(screen.queryByTestId('col-runs')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('run-button'))
+
+    expect(startCommand).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('col-runs')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-run-pane')).toHaveAttribute('aria-pressed', 'true')
+    expect(loadLayout().runPaneHidden).toBe(false)
+  })
+
+  test('面板收起时 Ctrl+Enter 起跑同样自动展开', async () => {
+    const startCommand = setupExecute()
+    saveRunPaneLayout({ runPaneHidden: true })
+    render(<App host={hostWith(startCommand)} mode="connected" />)
+    await screen.findByTestId('run-button')
+
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+
+    expect(startCommand).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('col-runs')).toBeInTheDocument()
+    expect(loadLayout().runPaneHidden).toBe(false)
+  })
+
+  test('起跑被拒(表单非法)时不改变收起状态', async () => {
+    const required: CommandManifest = { ...cmd, command: 'x/need', name: 'need', args: [{ name: 'must', type: 'str', required: true }] }
+    useAppStore.setState({
+      catalogStatus: 'ready', selected: required, values: {}, currentRun: undefined, commands: [required],
+      decisions: new Map([[required.command, readyDecision(required.command)]]),
+    })
+    saveRunPaneLayout({ runPaneHidden: true })
+    render(<App host={hostWith(vi.fn((req: RunRequest) => Promise.resolve({ runId: req.runId })))} mode="connected" />)
+
+    await userEvent.click(screen.getByTestId('run-button'))
+
+    expect(screen.queryByTestId('col-runs')).not.toBeInTheDocument()
+    expect(loadLayout().runPaneHidden).toBe(true)
+  })
+})
+
+describe('命令标签页并行运行', () => {
+  const tabCommands = ['a', 'b', 'c', 'd'].map((name): CommandManifest => ({
+    command: `x/${name}`, site: 'x', name, description: '', access: 'read', browser: false, args: [],
+  }))
+  const [cmdA, cmdB, cmdC, cmdD] = tabCommands
+
+  async function setupTabs() {
+    const starts: RunRequest[] = []
+    const outputCbs = new Set<(e: OutputEvent) => void>()
+    const doneCbs = new Set<(e: DoneEvent) => void>()
+    const cancelCommand = vi.fn(async (_runId: string) => {})
+    const host: HostBridge = {
+      startCommand: vi.fn(async (req: RunRequest) => { starts.push(req); return { runId: req.runId } }),
+      cancelCommand,
+      onOutput: (cb) => { outputCbs.add(cb); return () => { outputCbs.delete(cb) } },
+      onDone: (cb) => { doneCbs.add(cb); return () => { doneCbs.delete(cb) } },
+    }
+    const catalogSource = {
+      kind: 'live' as const,
+      load: async () => ({
+        snapshot: {
+          schemaVersion: 1, generatedAt: 1, opencliVersion: 't', source: 't',
+          listSha256: 't', manifestSha256: 't', commands: tabCommands,
+        },
+        decisions: tabCommands.map((c) => readyDecision(c.command)),
+      }),
+    }
+    render(<App host={host} catalogSource={catalogSource as never} mode="connected" />)
+    await waitFor(() => expect(useAppStore.getState().commands).toHaveLength(tabCommands.length))
+    return {
+      starts, cancelCommand,
+      open: (command: CommandManifest) => act(() => { useAppStore.getState().selectCommand(command) }),
+      output: (runId: string, text: string, seq = 0) => act(() => {
+        outputCbs.forEach((cb) => cb({ runId, seq, at: 1, stream: 'stdout', text }))
+      }),
+      done: (runId: string) => act(() => {
+        doneCbs.forEach((cb) => cb({ runId, at: 2, outcome: 'success', result: [] }))
+      }),
+    }
+  }
+  const run = () => userEvent.click(screen.getByTestId('run-button'))
+
+  test('A 运行中切到 B 可再发起一次;切回 A 看到 A 的日志(含后台时收到的输出)', async () => {
+    const t = await setupTabs()
+    t.open(cmdA)
+    await run()
+    expect(t.starts).toHaveLength(1)
+    t.output(t.starts[0].runId, 'log-of-a')
+    expect(screen.getByTestId('stream-log')).toHaveTextContent('log-of-a')
+
+    t.open(cmdB)
+    expect(screen.getByText('暂无任务')).toBeInTheDocument()
+    expect(screen.getByTestId('run-button')).toBeEnabled()
+    await run()
+    expect(t.starts.map((s) => s.commandKey)).toEqual(['x/a', 'x/b'])
+    t.output(t.starts[1].runId, 'log-of-b')
+    t.output(t.starts[0].runId, 'late-of-a', 1)          // A 在后台继续出日志
+    expect(screen.getByTestId('stream-log')).toHaveTextContent('log-of-b')
+    expect(screen.getByTestId('stream-log')).not.toHaveTextContent('log-of-a')
+
+    await userEvent.click(screen.getByTestId('command-tab-x/a'))
+    expect(screen.getByTestId('command-tab-x/a')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('stream-log')).toHaveTextContent('log-of-a')
+    expect(screen.getByTestId('stream-log')).toHaveTextContent('late-of-a')
+  })
+
+  test('同一标签页内不重复发起', async () => {
+    const t = await setupTabs()
+    t.open(cmdA)
+    await run()
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    expect(t.starts).toHaveLength(1)
+    t.open(cmdB)
+    await run()
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    expect(t.starts).toHaveLength(2)
+  })
+
+  test('同时运行满 3 条后第 4 条被拦(按钮、快捷键都不发起),有一条结束就恢复', async () => {
+    const t = await setupTabs()
+    for (const command of [cmdA, cmdB, cmdC]) {
+      t.open(command)
+      await run()
+    }
+    expect(t.starts).toHaveLength(3)
+    t.open(cmdD)
+    expect(screen.getByTestId('run-button')).toBeDisabled()
+    expect(screen.getByTestId('run-limit-reason')).toHaveTextContent('已有 3 条命令在运行')
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    expect(t.starts).toHaveLength(3)
+
+    t.done(t.starts[0].runId)
+    await waitFor(() => expect(screen.getByTestId('run-button')).toBeEnabled())
+    expect(screen.queryByTestId('run-limit-reason')).not.toBeInTheDocument()
+    await run()
+    expect(t.starts).toHaveLength(4)
+  })
+
+  test('关闭运行中的标签页:确认后取消该次运行并移除标签', async () => {
+    const t = await setupTabs()
+    t.open(cmdA)
+    await run()
+    t.open(cmdB)                                          // A 退到后台,仍在运行
+    await userEvent.click(screen.getByTestId('close-tab-x/a'))
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('关闭运行中的命令？')
+    expect(t.cancelCommand).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: '取消并关闭' }))
+
+    expect(t.cancelCommand).toHaveBeenCalledOnce()
+    expect(t.cancelCommand).toHaveBeenCalledWith(t.starts[0].runId)
+    expect(screen.queryByTestId('command-tab-x/a')).not.toBeInTheDocument()
+    expect(useAppStore.getState().selected?.command).toBe('x/b')
+    expect(useAppStore.getState().backgroundTabs).toHaveLength(0)
+  })
+
+  test('关闭未运行的当前标签:不弹确认也不取消,邻居标签顶上来', async () => {
+    const t = await setupTabs()
+    t.open(cmdA)
+    await run()
+    t.open(cmdB)
+    await userEvent.click(screen.getByTestId('close-tab-x/b'))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(t.cancelCommand).not.toHaveBeenCalled()
+    expect(useAppStore.getState().selected?.command).toBe('x/a')
+    expect(useAppStore.getState().currentRun?.id).toBe(t.starts[0].runId)
+    expect(screen.getByTestId('command-tab-x/a')).toHaveAttribute('aria-selected', 'true')
   })
 })

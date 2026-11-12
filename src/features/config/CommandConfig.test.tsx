@@ -24,7 +24,7 @@ const readyDecisions = new Map([
   [cmdB.command, { commandKey: cmdB.command, state: 'ready' as const, decisionSource: 'tier-evaluation' as const }],
 ])
 
-beforeEach(() => useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined, decisions: readyDecisions }))
+beforeEach(() => useAppStore.setState({ selected: cmd, values: {}, currentRun: undefined, backgroundTabs: [], activeTabSlot: 0, decisions: readyDecisions }))
 
 test('无选中命令时提示', () => {
   useAppStore.setState({ selected: undefined })
@@ -286,5 +286,54 @@ describe('命令说明:四个站点的命令用中文,其余回落 manifest 原�
     const heading = screen.getByRole('heading', { name: '首页时间线' })
     expect(heading).toBeInTheDocument()
     expect(heading.parentElement).toHaveTextContent('timeline')
+  })
+})
+
+describe('手动运行并发上限', () => {
+  const mk = (name: string): CommandManifest => ({
+    command: `z/${name}`, site: 'z', name, description: '', access: 'read', browser: false, args: [],
+  })
+  const runningTab = (name: string) => {
+    const command = mk(name)
+    return { command, values: {}, run: { id: `run-${name}`, command, values: {}, state: 'running' as const, startedAt: 0, lines: [] } }
+  }
+  afterEach(() => { useAppStore.setState({ backgroundTabs: [], activeTabSlot: 0 }) })
+
+  test('已有 3 条在跑且当前标签没在跑:运行任务置灰并显示原因,经 ref 提交也被拦住', () => {
+    const onRun = vi.fn()
+    let submit: (() => void) | null = null
+    useAppStore.setState({ selected: cmdB, values: {}, currentRun: undefined, backgroundTabs: ['a', 'b', 'c'].map(runningTab), activeTabSlot: 3 })
+    render(<CommandConfig onRun={onRun} registerSubmit={(fn) => { submit = fn }} />)
+
+    expect(screen.getByTestId('run-button')).toBeDisabled()
+    expect(screen.getByTestId('run-button')).toHaveTextContent('运行任务')
+    expect(screen.getByTestId('run-limit-reason')).toHaveTextContent('已有 3 条命令在运行，等其中一条结束后再试')
+    expect(screen.getByTestId('run-limit-reason')).toHaveClass('cmd-decision-reason')
+    act(() => { submit!() })
+    expect(onRun).not.toHaveBeenCalled()
+  })
+
+  test('只有 2 条在跑:按钮可点,不显示原因', () => {
+    useAppStore.setState({ selected: cmdB, values: {}, currentRun: undefined, backgroundTabs: ['a', 'b'].map(runningTab), activeTabSlot: 2 })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.getByTestId('run-button')).toBeEnabled()
+    expect(screen.queryByTestId('run-limit-reason')).not.toBeInTheDocument()
+  })
+
+  test('当前标签自己在跑时按钮显示「运行中…」,不叠加上限提示', () => {
+    useAppStore.setState({
+      selected: cmdB, values: {}, backgroundTabs: ['a', 'b'].map(runningTab), activeTabSlot: 2,
+      currentRun: { id: 'r', command: cmdB, values: {}, state: 'running', startedAt: 0, lines: [] },
+    })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.getByTestId('run-button')).toHaveTextContent('运行中…')
+    expect(screen.queryByTestId('run-limit-reason')).not.toBeInTheDocument()
+  })
+
+  test('已结束的后台运行不占名额', () => {
+    const finished = { ...runningTab('c'), run: { ...runningTab('c').run, state: 'succeeded' as const } }
+    useAppStore.setState({ selected: cmdB, values: {}, currentRun: undefined, backgroundTabs: [runningTab('a'), runningTab('b'), finished], activeTabSlot: 3 })
+    render(<CommandConfig onRun={() => {}} />)
+    expect(screen.getByTestId('run-button')).toBeEnabled()
   })
 })

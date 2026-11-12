@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import AppShell from './components/AppShell'
 import { SiteCommandNav } from './features/nav/SiteCommandNav'
 import { CommandConfig } from './features/config/CommandConfig'
 import { RunPanel } from './features/runs/RunPanel'
 import { ModuleErrorBoundary } from './components/ModuleErrorBoundary'
 import { AcknowledgeDialog } from './features/config/AcknowledgeDialog'
-import { useAppStore, isTerminal } from './store/appStore'
+import { useAppStore, isTerminal, activeRunCount, commandTabs, MANUAL_RUN_CONCURRENCY } from './store/appStore'
 import { buildArgv } from './data/command'
 import { createMockHost } from './host/mockHost'
 import { snapshotCatalogSource, type CatalogSource } from './host'
@@ -28,8 +29,10 @@ import { useOpencliUpdate, type OpencliUpdate } from './components/useOpencliUpd
 import { isRunnable } from './data/policy'
 import { isAcknowledged } from './data/preferences'
 import { visibleCommands } from './data/supportedSites'
+import { loadLayout, saveRunPaneLayout } from './data/layout'
 
-// 后台登录体检同时在飞的上限。必须 ≤ Host 的 maxConcurrentRuns(server/run-manager.mjs),
+// 后台登录体检同时在飞的上限。它与手动运行上限 MANUAL_RUN_CONCURRENCY(appStore.ts)之和
+// 必须 ≤ Host 的 maxConcurrentRuns(server/run-manager-options.mjs,默认 6 = 3 后台 + 3 手动),
 // 否则多出来的那些只会拿到 429。取 3 是因为这些命令等的是浏览器往返而不是本机算力;
 // 真机上若观察到标签页抢焦点或 daemon 吃不消,把这个数字调小即可,不必改结构。
 const LOGIN_CHECK_CONCURRENCY = 3
@@ -80,6 +83,16 @@ export default function App({
   const searchInputRef = useRef<HTMLInputElement>(null)
   const submitFormRef = useRef<(() => void) | null>(null)
   const registerSubmit = useCallback((fn: (() => void) | null) => { submitFormRef.current = fn }, [])
+  // 灵感库执行页右侧运行面板的显隐。ref 供 executeSelected 读最新值(提交回调可能是旧渲染的闭包)。
+  const [runPaneHidden, setRunPaneHidden] = useState(() => loadLayout().runPaneHidden)
+  const runPaneHiddenRef = useRef(runPaneHidden)
+  const [executeVisible, setExecuteVisible] = useState(false)
+  const updateRunPaneHidden = useCallback((hidden: boolean) => {
+    runPaneHiddenRef.current = hidden
+    setRunPaneHidden(hidden)
+    saveRunPaneLayout({ runPaneHidden: hidden })
+  }, [])
+  const toggleRunPane = useCallback(() => updateRunPaneHidden(!runPaneHiddenRef.current), [updateRunPaneHidden])
 
   const fetchCatalog = () => {
     const gen = ++loadGen.current
@@ -134,18 +147,17 @@ export default function App({
   //
   // 曾经是严格串行,理由是 Host 侧 maxConcurrentRuns=1。但目录里有 65 个 whoami、
   // 全是浏览器命令,串行跑完要好几分钟;实测单次进程启动只有 45ms,时间几乎全在
-  // 浏览器往返上 —— 那是等待,不是算力,同时跑几个正合适。Host 的上限已提到
-  // HOST_MAX_CONCURRENT_RUNS,这里始终**少用一个**,把最后那个位子留给用户手动
-  // 发起的命令:用户的操作永远不该排在一堆后台体检后面。
+  // 浏览器往返上 —— 那是等待,不是算力,同时跑几个正合适。Host 的上限是 6 = 3 后台 + 3 手动,
+  // 用户手动运行占着的位子(每个标签页最多一条)从体检预算里扣掉:用户的操作永远不该排在
+  // 一堆后台体检后面。
   const loginQueue = useAppStore((s) => s.loginQueue)
   const loginInFlights = useAppStore((s) => s.loginInFlights)
-  const currentRun = useAppStore((s) => s.currentRun)
+  const activeRuns = useAppStore(activeRunCount)
   const loginRetryRef = useRef(new Map<string, number>())
   useEffect(() => {
     if (loginQueue.length === 0) return
-    const manualBusy = !!currentRun && !isTerminal(currentRun.state)
-    // 用户的运行占着一个位子时,后台体检就再退让一个,免得把 Host 塞满。
-    const budget = LOGIN_CHECK_CONCURRENCY - (manualBusy ? 1 : 0) - loginInFlights.length
+    // 用户的运行(任何标签页里的)占着几个位子,后台体检就退让几个,免得把 Host 塞满。
+    const budget = LOGIN_CHECK_CONCURRENCY - activeRuns - loginInFlights.length
     if (budget <= 0) return
 
     let launched = 0
@@ -200,7 +212,7 @@ export default function App({
         store.finishLoginCheck(runId, 'error', normalizeHostError(err, 'start').summary, Date.now())
       })
     }
-  }, [host, loginQueue, loginInFlights, currentRun])
+  }, [host, loginQueue, loginInFlights, activeRuns])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -295,6 +307,7 @@ export default function App({
     const s = useAppStore.getState()
     if (s.catalogStatus !== 'ready') return false
     if (s.currentRun && !isTerminal(s.currentRun.state)) return false   // 键盘路径绕过按钮 disabled,权威兜底
+    if (activeRunCount(s) >= MANUAL_RUN_CONCURRENCY) return false         // 各标签页并行运行的总上限
     if (!s.selected) return false
     const decision = s.decisionFor(s.selected.command)
     if (!isRunnable(decision)) return false   // Host 判决闸(I-P1):置灰只是体验,这里才是权威;覆盖键盘路径
@@ -311,6 +324,7 @@ export default function App({
 
     const runId = crypto.randomUUID()
     s.beginRun(runId)
+    if (runPaneHiddenRef.current) updateRunPaneHidden(false)   // 面板收起时发起运行,结果要看得见
     const argv = buildArgv(cmd, s.values)
     // acknowledgement 已进 RunRequest(types.ts)的类型声明:内联字面量因此受**多余属性检查**管辖,
     // 字段名写错会当场 tsc 报错。此前靠"拆成局部变量绕过检查"的写法能跑,但拼错一个字母就变成
@@ -328,6 +342,13 @@ export default function App({
       .catch((err) => useAppStore.getState().finishRun({ runId: run.id, at: Date.now(), outcome: 'error', error: normalizeHostError(err, 'cancel') }))
   }
 
+  // 关标签页:里面的运行还没结束就先取消,再移除标签。标签移除后取消失败无处可显示,忽略即可。
+  const closeCommandTab = (commandKey: string) => {
+    const tab = commandTabs(useAppStore.getState()).find((t) => t.command.command === commandKey)
+    if (tab?.run && !isTerminal(tab.run.state)) void host.cancelCommand(tab.run.id).catch(() => {})
+    useAppStore.getState().closeTab(commandKey)
+  }
+
   const pendingAcknowledgement = useAppStore((s) => s.pendingAcknowledgement)
 
   const fullPage = (
@@ -339,8 +360,11 @@ export default function App({
               baseUrl={baseUrl}
               onRun={executeSelected}
               onCancel={onCancel}
+              onCloseTab={closeCommandTab}
               registerSubmit={registerSubmit}
               searchRef={searchInputRef}
+              runPaneHidden={runPaneHidden}
+              onExecuteVisibleChange={setExecuteVisible}
             />
           </ModuleErrorBoundary>
         )}
@@ -403,6 +427,21 @@ export default function App({
         onRetryCatalog={() => { setCatalogStatus('loading'); fetchCatalog() }}
         headerActions={activeModule === 'commands'
           ? <CatalogHeaderActions refresh={refresh} release={release} showRelease={mode === 'connected'} onCheck={checkRelease} update={opencliUpdate} />
+          : undefined}
+        headerTrailing={activeModule === 'commands' && executeVisible
+          ? (
+            <button
+              type="button"
+              data-testid="toggle-run-pane"
+              aria-label="显示/隐藏运行面板"
+              aria-pressed={!runPaneHidden}
+              onClick={toggleRunPane}
+              className="app-icon-button"
+              title={runPaneHidden ? '显示运行面板' : '隐藏运行面板'}
+            >
+              {runPaneHidden ? <PanelRightOpen size={17} /> : <PanelRightClose size={17} />}
+            </button>
+          )
           : undefined}
         baseUrl={baseUrl}
       />

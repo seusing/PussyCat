@@ -62,7 +62,7 @@ function ModuleNavigation() {
 
 export default function AppShell({
   nav, config, runs, fullPage, rightPanel, rightPanelOpen = false, onRightPanelOpenChange,
-  catalogStatus, catalogError, onRetryCatalog, headerActions, baseUrl,
+  catalogStatus, catalogError, onRetryCatalog, headerActions, headerTrailing, baseUrl,
 }: {
   nav: ReactNode
   config: ReactNode
@@ -75,6 +75,7 @@ export default function AppShell({
   catalogError?: string
   onRetryCatalog: () => void
   headerActions?: ReactNode
+  headerTrailing?: ReactNode
   baseUrl?: string
 }) {
   const activeModule = useAppStore((state) => state.activeModule)
@@ -315,6 +316,7 @@ export default function AppShell({
           <div ref={actionsRef} data-testid="app-header-actions" className="app-header-actions">
             {headerActions}
             <NotificationBell />
+            {headerTrailing}
             {!fullPage && (
               <button
                 type="button"

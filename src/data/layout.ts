@@ -22,6 +22,11 @@ export const DETAILS_MIN = 260
 export const DETAILS_MAX = 560
 export const DETAILS_DEFAULT = 380
 
+// 灵感库命令执行页右侧的运行面板:与外壳的 runs 栏互不相干,宽度/折叠各存各的。
+export const RUN_PANE_MIN = 320
+export const RUN_PANE_DEFAULT = 480
+export const RUN_PANE_MAX = 1400
+
 // 中栏(命令详情)最小宽度——不持久化、不可独立拖拽,只作为左右两栏拖拽时的挤压下限。
 export const CONFIG_MIN = 400
 // 外壳中栏的硬下限。CSS 那道 minmax 原先写的是 0,等于允许中栏被压成零宽——
@@ -64,6 +69,9 @@ export type LayoutSnapshot = {
   autoLoginRefreshMinutes: number
   navHidden: boolean
   runsHidden: boolean
+  /** 灵感库命令执行页的运行面板。不进 saveShellLayout 的写入集,由 saveRunPaneLayout 单独写。 */
+  runPaneWidth: number
+  runPaneHidden: boolean
 }
 
 export function defaultLayout(): LayoutSnapshot {
@@ -77,6 +85,8 @@ export function defaultLayout(): LayoutSnapshot {
     detailsWidth: DETAILS_DEFAULT,
     navHidden: false,
     runsHidden: false,
+    runPaneWidth: RUN_PANE_DEFAULT,
+    runPaneHidden: false,
   }
 }
 
@@ -123,6 +133,8 @@ export function normalizeLayout(raw: unknown): LayoutSnapshot {
   const navHidden = isBool(o.navHidden) ? o.navHidden : fallback.navHidden
   const runsHidden = isBool(o.runsHidden) ? o.runsHidden : fallback.runsHidden
   const moduleSidebarHidden = isBool(o.moduleSidebarHidden) ? o.moduleSidebarHidden : fallback.moduleSidebarHidden
+  const runPaneWidth = isFiniteNum(o.runPaneWidth) ? clamp(o.runPaneWidth, RUN_PANE_MIN, RUN_PANE_MAX) : fallback.runPaneWidth
+  const runPaneHidden = isBool(o.runPaneHidden) ? o.runPaneHidden : fallback.runPaneHidden
   return {
     navWidth,
     runsWidth,
@@ -131,6 +143,8 @@ export function normalizeLayout(raw: unknown): LayoutSnapshot {
     detailsWidth,
     navHidden,
     runsHidden,
+    runPaneWidth,
+    runPaneHidden,
     autoLoginRefresh,
     autoLoginRefreshMinutes,
   }
@@ -167,6 +181,14 @@ export function saveShellLayout(layout: LayoutSnapshot, storage?: Storage): bool
     { ...loadLayout(storage), navWidth, runsWidth, moduleSidebarWidth, moduleSidebarHidden, detailsWidth, navHidden, runsHidden },
     storage,
   )
+}
+
+// 灵感库执行页运行面板的写入:同样合并到存储里的最新快照上,只动自己的两个字段。
+export function saveRunPaneLayout(
+  patch: Partial<Pick<LayoutSnapshot, 'runPaneWidth' | 'runPaneHidden'>>,
+  storage?: Storage,
+): boolean {
+  return saveLayout({ ...loadLayout(storage), ...patch }, storage)
 }
 
 // 拖拽时把"提议宽度"夹到合法区间,并在已知容器宽度时额外防止把中栏挤到 CONFIG_MIN 以下。

@@ -1,4 +1,4 @@
-import { redactValues, useAppStore } from './appStore'
+import { activeRunCount, commandTabs, MANUAL_RUN_CONCURRENCY, redactValues, useAppStore } from './appStore'
 import type { CommandManifest } from '../data/types'
 
 const cmd: CommandManifest = {
@@ -249,4 +249,215 @@ test('appendOutput 单调快路径:100 事件顺序与内容等价', () => {
   const lines = useAppStore.getState().currentRun!.lines
   expect(lines).toHaveLength(100)
   expect(lines.map((l) => l.seq)).toEqual(Array.from({ length: 100 }, (_, i) => i))
+})
+
+describe('命令标签页', () => {
+  beforeEach(() => { useAppStore.setState(initialState, true); localStorage.clear() })
+  const mk = (name: string, args: CommandManifest['args'] = [{ name: 'q', type: 'str' }]): CommandManifest => ({
+    command: 'x/' + name, site: 'x', name, description: '', access: 'read', browser: false, args,
+  })
+  const [a, b, c] = [mk('a'), mk('b'), mk('c')]
+  const keys = () => commandTabs(useAppStore.getState()).map((t) => t.command.command)
+  const out = (runId: string, seq = 0, text = 't') => ({ runId, seq, at: 1, stream: 'stdout' as const, text })
+  const openThree = () => {
+    const s = useAppStore.getState()
+    s.selectCommand(a); s.selectCommand(b); s.selectCommand(c)
+  }
+  const openThreeRunning = () => {
+    useAppStore.getState().selectCommand(a); useAppStore.getState().beginRun('run-a')
+    useAppStore.getState().selectCommand(b); useAppStore.getState().beginRun('run-b')
+    useAppStore.getState().selectCommand(c); useAppStore.getState().beginRun('run-c')
+  }
+
+  test('切到别的命令后,原标签的 values 与 run 都还在,切回来原样恢复', () => {
+    const s = useAppStore.getState()
+    s.selectCommand(a)
+    s.setValue('q', 'alice')
+    s.beginRun('run-a')
+    s.appendOutput(out('run-a'))
+    s.selectCommand(b)
+    expect(useAppStore.getState().values).toEqual({})
+    expect(useAppStore.getState().currentRun).toBeUndefined()
+    useAppStore.getState().setValue('q', 'bob')
+    useAppStore.getState().selectCommand(a)
+    const back = useAppStore.getState()
+    expect(back.values).toEqual({ q: 'alice' })
+    expect(back.currentRun?.id).toBe('run-a')
+    expect(back.currentRun?.lines).toHaveLength(1)
+    expect(back.backgroundTabs[0].values).toEqual({ q: 'bob' })
+  })
+
+  test('重复 selectCommand 当前命令是 no-op,不重置 values', () => {
+    const withDefault = mk('a', [{ name: 'limit', type: 'int', default: 10 }])
+    useAppStore.getState().selectCommand(withDefault)
+    useAppStore.getState().setValue('limit', 99)
+    const before = useAppStore.getState()
+    useAppStore.getState().selectCommand(withDefault)
+    expect(useAppStore.getState()).toBe(before)
+    expect(useAppStore.getState().values).toEqual({ limit: 99 })
+  })
+
+  test('新命令追加到标签栏末尾;来回切换后标签顺序不变', () => {
+    openThree()
+    expect(keys()).toEqual(['x/a', 'x/b', 'x/c'])
+    for (const target of [a, c, b, a, c, c, b]) {
+      useAppStore.getState().selectCommand(target)
+      expect(keys()).toEqual(['x/a', 'x/b', 'x/c'])
+      expect(useAppStore.getState().selected?.command).toBe(target.command)
+    }
+  })
+
+  test('当前标签在中间时选最左的后台标签,顺序不乱、activeTabSlot 指向被选标签的位置', () => {
+    openThree()
+    useAppStore.getState().selectCommand(b)
+    useAppStore.getState().selectCommand(a)
+    expect(keys()).toEqual(['x/a', 'x/b', 'x/c'])
+    expect(useAppStore.getState().activeTabSlot).toBe(0)
+  })
+
+  test('切换标签不改 runPanelCollapsed', () => {
+    useAppStore.getState().selectCommand(a)
+    useAppStore.getState().setRunPanelCollapsed(true)
+    useAppStore.getState().selectCommand(b)
+    expect(useAppStore.getState().runPanelCollapsed).toBe(true)
+  })
+
+  test('直接 setState({ selected }) 时,标签列表就是当前这一个', () => {
+    useAppStore.setState({ selected: a })
+    expect(keys()).toEqual(['x/a'])
+  })
+
+  test('后台标签继续收到 appendOutput / finishRun,当前标签不受影响', () => {
+    const s = useAppStore.getState()
+    s.selectCommand(a); s.beginRun('run-a')
+    useAppStore.getState().selectCommand(b); useAppStore.getState().beginRun('run-b')
+    useAppStore.getState().appendOutput(out('run-a', 0, 'from-a'))
+    let st = useAppStore.getState()
+    expect(st.currentRun?.id).toBe('run-b')
+    expect(st.currentRun?.lines).toHaveLength(0)
+    expect(st.backgroundTabs[0].run?.state).toBe('running')
+    expect(st.backgroundTabs[0].run?.lines.map((l) => l.text)).toEqual(['from-a'])
+
+    useAppStore.getState().finishRun({ runId: 'run-a', at: 5, outcome: 'success', result: [{ ok: 1 }] })
+    st = useAppStore.getState()
+    expect(st.backgroundTabs[0].run?.state).toBe('succeeded')
+    expect(st.backgroundTabs[0].run?.result).toEqual([{ ok: 1 }])
+    expect(st.currentRun?.state).toBe('starting')
+
+    useAppStore.getState().appendOutput(out('run-a', 1, 'late'))   // 终态后迟到的输出仍被抑制
+    expect(useAppStore.getState().backgroundTabs[0].run?.lines).toHaveLength(1)
+    useAppStore.getState().appendOutput(out('nobody'))             // 不属于任何标签的 runId 忽略
+    expect(useAppStore.getState().currentRun?.lines).toHaveLength(0)
+  })
+
+  test('activeRunCount 计入当前与后台标签里未终态的运行', () => {
+    expect(activeRunCount(useAppStore.getState())).toBe(0)
+    const s = useAppStore.getState()
+    s.selectCommand(a); s.beginRun('run-a')
+    expect(activeRunCount(useAppStore.getState())).toBe(1)
+    useAppStore.getState().selectCommand(b); useAppStore.getState().beginRun('run-b')
+    useAppStore.getState().selectCommand(c)
+    expect(activeRunCount(useAppStore.getState())).toBe(2)
+    useAppStore.getState().finishRun({ runId: 'run-a', at: 2, outcome: 'success' })
+    expect(activeRunCount(useAppStore.getState())).toBe(1)
+    useAppStore.getState().finishRun({ runId: 'run-b', at: 2, outcome: 'error', error: { summary: 'x' } })
+    expect(activeRunCount(useAppStore.getState())).toBe(0)
+    expect(MANUAL_RUN_CONCURRENCY).toBe(3)
+  })
+
+  describe('closeTab', () => {
+    test('关后台标签:移除并校正 activeTabSlot,当前标签不变', () => {
+      openThree()
+      useAppStore.getState().closeTab('x/a')
+      expect(keys()).toEqual(['x/b', 'x/c'])
+      expect(useAppStore.getState().selected?.command).toBe('x/c')
+      expect(useAppStore.getState().activeTabSlot).toBe(1)
+      useAppStore.getState().selectCommand(b)
+      useAppStore.getState().closeTab('x/c')
+      expect(keys()).toEqual(['x/b'])
+      expect(useAppStore.getState().activeTabSlot).toBe(0)
+    })
+
+    test('关当前标签:右邻优先,带出它的 values 与 run', () => {
+      openThree()
+      useAppStore.getState().setValue('q', 'from-c')
+      useAppStore.getState().beginRun('run-c')
+      useAppStore.getState().selectCommand(b)
+      useAppStore.getState().closeTab('x/b')
+      const st = useAppStore.getState()
+      expect(st.selected?.command).toBe('x/c')
+      expect(st.values).toEqual({ q: 'from-c' })
+      expect(st.currentRun?.id).toBe('run-c')
+      expect(keys()).toEqual(['x/a', 'x/c'])
+      expect(st.activeTabSlot).toBe(1)
+    })
+
+    test('关最右的当前标签:激活左邻', () => {
+      openThree()
+      useAppStore.getState().closeTab('x/c')
+      expect(useAppStore.getState().selected?.command).toBe('x/b')
+      expect(keys()).toEqual(['x/a', 'x/b'])
+      expect(useAppStore.getState().activeTabSlot).toBe(1)
+    })
+
+    test('关最后一个标签:selected / currentRun 清空,values 归 {}', () => {
+      useAppStore.getState().selectCommand(a)
+      useAppStore.getState().setValue('q', 'v')
+      useAppStore.getState().beginRun('run-a')
+      useAppStore.getState().closeTab('x/a')
+      const st = useAppStore.getState()
+      expect(st.selected).toBeUndefined()
+      expect(st.currentRun).toBeUndefined()
+      expect(st.values).toEqual({})
+      expect(keys()).toEqual([])
+    })
+
+    test('不存在的 key 是 no-op', () => {
+      openThree()
+      const before = useAppStore.getState()
+      useAppStore.getState().closeTab('x/nope')
+      expect(useAppStore.getState()).toBe(before)
+    })
+  })
+
+  describe('setCommands 对后台标签', () => {
+    test('后台标签按同规则校正:新 manifest、活值∩新参数、新默认', () => {
+      useAppStore.getState().selectCommand(mk('a', [{ name: 'user', type: 'str' }, { name: 'limit', type: 'int', default: 10 }]))
+      useAppStore.getState().setValue('user', 'alice')
+      useAppStore.getState().selectCommand(b)
+      useAppStore.getState().setCommands([
+        { ...mk('a', [{ name: 'user', type: 'str' }, { name: 'page', type: 'int', default: 1 }]), description: 'v2' },
+        b,
+      ])
+      const tab = useAppStore.getState().backgroundTabs[0]
+      expect(tab.command.description).toBe('v2')
+      expect(tab.values).toEqual({ user: 'alice', page: 1 })
+    })
+
+    test('目录里没了的后台标签被移除,activeTabSlot 随之校正,它的运行不再计数', () => {
+      openThreeRunning()
+      useAppStore.getState().setCommands([b, c])
+      expect(keys()).toEqual(['x/b', 'x/c'])
+      expect(useAppStore.getState().selected?.command).toBe('x/c')
+      expect(useAppStore.getState().activeTabSlot).toBe(1)
+      expect(activeRunCount(useAppStore.getState())).toBe(2)
+    })
+
+    test('当前标签被删而还有标签:右邻顶上来', () => {
+      openThree()
+      useAppStore.getState().selectCommand(b)
+      useAppStore.getState().setCommands([a, c])
+      expect(useAppStore.getState().selected?.command).toBe('x/c')
+      expect(keys()).toEqual(['x/a', 'x/c'])
+    })
+
+    test('当前标签被删且没有别的标签:清 selected/values,currentRun 不动', () => {
+      useAppStore.getState().selectCommand(a)
+      useAppStore.getState().beginRun('run-a')
+      const run = useAppStore.getState().currentRun
+      useAppStore.getState().setCommands([])
+      expect(useAppStore.getState().selected).toBeUndefined()
+      expect(useAppStore.getState().currentRun).toBe(run)
+    })
+  })
 })

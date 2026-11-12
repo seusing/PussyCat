@@ -191,6 +191,21 @@ test('通知铃铛是顶栏按钮组的直接子按钮,排在各模块的按钮�
   expect(children.map((child) => child.getAttribute('data-testid'))).toEqual(['module-action', 'notification-bell', 'toggle-runs'])
 })
 
+test('headerTrailing 紧跟通知铃铛渲染,在运行面板开关之前', () => {
+  render(
+    <AppShell
+      nav={<div>NAV</div>} config={<div>CONFIG</div>} runs={<div>RUNS</div>}
+      catalogStatus="ready" onRetryCatalog={() => {}}
+      headerActions={<span data-testid="module-action">模块按钮</span>}
+      headerTrailing={<button type="button" data-testid="trailing-action">尾部按钮</button>}
+    />,
+  )
+  const children = Array.from(screen.getByTestId('app-header-actions').children)
+
+  expect(children.map((child) => child.getAttribute('data-testid')))
+    .toEqual(['module-action', 'notification-bell', 'trailing-action', 'toggle-runs'])
+})
+
 test('桌面健康状态浮层不被应用侧栏裁切', () => {
   expect(indexCss).toMatch(/\.app-sidebar-health\s*\{[^}]*overflow:\s*visible;/s)
 })

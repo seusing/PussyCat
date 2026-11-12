@@ -9,6 +9,7 @@ import type { InspirationItem } from './inspirationLibrary'
 import type { SupportedSite } from '../../data/supportedSites'
 import type { CommandManifest } from '../../data/types'
 import { useAppStore } from '../../store/appStore'
+import { RUN_PANE_DEFAULT, RUN_PANE_MAX, RUN_PANE_MIN, loadLayout, saveRunPaneLayout } from '../../data/layout'
 
 const sites: SupportedSite[] = ['a', 'b', 'c', 'd', 'e'].map((id) => ({
   id,
@@ -340,6 +341,109 @@ describe('inspiration execute header', () => {
   })
 })
 
+describe('inspiration execute run pane', () => {
+  const renderExecute = (props: Partial<Parameters<typeof InspirationPanel>[0]> = {}) => {
+    useAppStore.setState({ commands: [commands[0]], selected: commands[0] })
+    return render(<InspirationPanel onRun={() => {}} onCancel={() => {}} {...props} />)
+  }
+  // jsdom 没有 PointerEvent 构造器:手动造 MouseEvent 并改 type,与 ResizableSplit.test.tsx 同款写法。
+  const pointer = (type: 'pointerdown' | 'pointermove' | 'pointerup', clientX: number) =>
+    new MouseEvent(type, { clientX, button: 0, bubbles: true, cancelable: true })
+
+  it('执行页在配置区与运行面板之间渲染分隔条,宽度默认取 RUN_PANE_DEFAULT', () => {
+    renderExecute()
+
+    const workspace = screen.getByTestId('col-config').parentElement!
+    const separator = screen.getByTestId('separator-run-pane')
+    expect(separator).toHaveAttribute('aria-label', '调整运行面板宽度')
+    expect(separator).toHaveAttribute('aria-valuenow', String(RUN_PANE_DEFAULT))
+    expect(separator).toHaveAttribute('aria-valuemin', String(RUN_PANE_MIN))
+    expect(separator).toHaveAttribute('aria-valuemax', String(RUN_PANE_MAX))
+    expect(Array.from(workspace.children)).toEqual([
+      screen.getByTestId('col-config'), separator, screen.getByTestId('col-runs'),
+    ])
+    expect(workspace).toHaveAttribute('data-run-pane', 'shown')
+    expect(workspace.style.getPropertyValue('--run-pane-width')).toBe(`${RUN_PANE_DEFAULT}px`)
+  })
+
+  it('已存的运行面板宽度在挂载时读入', () => {
+    saveRunPaneLayout({ runPaneWidth: 700 })
+    renderExecute()
+
+    expect(screen.getByTestId('separator-run-pane')).toHaveAttribute('aria-valuenow', '700')
+    expect(screen.getByTestId('col-config').parentElement!.style.getPropertyValue('--run-pane-width')).toBe('700px')
+  })
+
+  it('runPaneHidden 时没有分隔条和 col-runs,配置区独占整行', () => {
+    renderExecute({ runPaneHidden: true })
+
+    expect(screen.queryByTestId('separator-run-pane')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('col-runs')).not.toBeInTheDocument()
+    expect(screen.getByTestId('col-config')).toBeInTheDocument()
+    expect(screen.getByTestId('col-config').parentElement).toHaveAttribute('data-run-pane', 'hidden')
+  })
+
+  it('向左拖变宽,并在松手时才落盘', () => {
+    renderExecute()
+    const separator = screen.getByTestId('separator-run-pane')
+
+    fireEvent(separator, pointer('pointerdown', 500))
+    fireEvent(window, pointer('pointermove', 400))
+    expect(separator).toHaveAttribute('aria-valuenow', String(RUN_PANE_DEFAULT + 100))
+    expect(loadLayout().runPaneWidth).toBe(RUN_PANE_DEFAULT)
+
+    fireEvent(window, pointer('pointerup', 400))
+    expect(loadLayout().runPaneWidth).toBe(RUN_PANE_DEFAULT + 100)
+  })
+
+  it('宽度夹在 [RUN_PANE_MIN, RUN_PANE_MAX] 内;Home/End 跳到两端,双击恢复默认值', () => {
+    renderExecute()
+    const separator = screen.getByTestId('separator-run-pane')
+
+    fireEvent.keyDown(separator, { key: 'End' })
+    expect(separator).toHaveAttribute('aria-valuenow', String(RUN_PANE_MAX))
+    expect(loadLayout().runPaneWidth).toBe(RUN_PANE_MAX)
+
+    fireEvent.keyDown(separator, { key: 'Home' })
+    expect(separator).toHaveAttribute('aria-valuenow', String(RUN_PANE_MIN))
+    expect(loadLayout().runPaneWidth).toBe(RUN_PANE_MIN)
+
+    fireEvent.doubleClick(separator)
+    expect(separator).toHaveAttribute('aria-valuenow', String(RUN_PANE_DEFAULT))
+    expect(loadLayout().runPaneWidth).toBe(RUN_PANE_DEFAULT)
+  })
+
+  it('进入/离开执行页时回报 onExecuteVisibleChange,卸载时回报 false', () => {
+    useAppStore.setState({ commands: [commands[0]], selected: undefined })
+    const onExecuteVisibleChange = vi.fn()
+    const { unmount } = render(
+      <InspirationPanel onRun={() => {}} onCancel={() => {}} onExecuteVisibleChange={onExecuteVisibleChange} />,
+    )
+    expect(onExecuteVisibleChange).toHaveBeenLastCalledWith(false)
+
+    act(() => { useAppStore.setState({ selected: commands[0] }) })
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(onExecuteVisibleChange).toHaveBeenLastCalledWith(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+    expect(screen.getByTestId('inspiration-commands')).toBeInTheDocument()
+    expect(onExecuteVisibleChange).toHaveBeenLastCalledWith(false)
+
+    act(() => { useAppStore.setState({ selected: commands[1] }) })
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(onExecuteVisibleChange).toHaveBeenLastCalledWith(true)
+
+    fireEvent.click(screen.getByTestId('open-inspiration-library'))
+    expect(onExecuteVisibleChange).toHaveBeenLastCalledWith(false)
+
+    fireEvent.click(screen.getByTestId('inspiration-sources-tab'))
+    expect(onExecuteVisibleChange).toHaveBeenLastCalledWith(true)
+
+    unmount()
+    expect(onExecuteVisibleChange).toHaveBeenLastCalledWith(false)
+  })
+})
+
 describe('inspiration command search', () => {
   const likedCommand: CommandManifest = {
     command: 'xiaohongshu/liked',
@@ -445,5 +549,166 @@ describe('inspiration command search', () => {
     fireEvent.change(screen.getByTestId('nav-search'), { target: { value: '点赞' } })
     expect(screen.getByTestId('command-row-xiaohongshu/liked')).toBeInTheDocument()
     expect(screen.queryByTestId('command-row-xiaohongshu/feed')).not.toBeInTheDocument()
+  })
+})
+
+describe('inspiration command tabs', () => {
+  const tabCommands: CommandManifest[] = ['alpha', 'beta', 'gamma'].map((name) => ({
+    command: `site/${name}`, site: 'site', name, description: `${name} cmd`, access: 'read', browser: true, args: [],
+  }))
+  const [alpha, beta, gamma] = tabCommands
+  const resetStore = () => useAppStore.setState({
+    commands: tabCommands, selected: undefined, values: {}, currentRun: undefined, backgroundTabs: [], activeTabSlot: 0,
+  })
+  const renderPanel = () => render(
+    <InspirationPanel onRun={() => {}} onCancel={() => {}} onCloseTab={(key) => useAppStore.getState().closeTab(key)} />,
+  )
+  const openTabs = (...list: CommandManifest[]) => act(() => {
+    for (const command of list) useAppStore.getState().selectCommand(command)
+  })
+  const selectedKey = () => useAppStore.getState().selected?.command
+
+  beforeEach(() => { act(() => { resetStore() }) })
+  afterEach(() => { act(() => { resetStore() }) })
+
+  it('sites / commands / execute 三个阶段都显示标签栏,没有标签时不显示,灵感库工作区不显示', () => {
+    renderPanel()
+    expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+
+    openTabs(alpha, beta)
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(within(screen.getByRole('tablist')).getAllByRole('tab')).toHaveLength(2)
+    expect(screen.getByTestId('command-tab-site/beta')).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+    expect(screen.getByTestId('inspiration-commands')).toBeInTheDocument()
+    expect(within(screen.getByRole('tablist')).getAllByRole('tab')).toHaveLength(2)
+    // 不在执行页时没有标签处于选中态
+    expect(screen.getByTestId('command-tab-site/beta')).toHaveAttribute('aria-selected', 'false')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回站点' }))
+    expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
+    expect(within(screen.getByRole('tablist')).getAllByRole('tab')).toHaveLength(2)
+
+    fireEvent.click(screen.getByTestId('open-inspiration-library'))
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+  })
+
+  it('点标签进入执行页并切换到该标签的命令,标签顺序不变', () => {
+    renderPanel()
+    openTabs(alpha, beta)
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+
+    fireEvent.click(screen.getByTestId('command-tab-site/alpha'))
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(screen.getByTestId('command-title')).toHaveTextContent('alpha')
+    expect(selectedKey()).toBe('site/alpha')
+    expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('data-testid'))).toEqual([
+      'command-tab-site/alpha', 'command-tab-site/beta',
+    ])
+    expect(screen.getByTestId('command-tab-site/alpha')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('点当前标签也能从命令列表回到执行页', () => {
+    renderPanel()
+    openTabs(alpha)
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+    fireEvent.click(screen.getByTestId('command-tab-site/alpha'))
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+  })
+
+  it('「+」回到站点页,标签保留', () => {
+    renderPanel()
+    openTabs(alpha)
+    fireEvent.click(screen.getByTestId('new-command-tab'))
+    expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
+    expect(screen.getByTestId('command-tab-site/alpha')).toBeInTheDocument()
+  })
+
+  it('在 commands 阶段关当前标签:邻居顶上来,但不跳页', () => {
+    renderPanel()
+    openTabs(alpha, beta)
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+
+    fireEvent.click(screen.getByTestId('close-tab-site/beta'))
+    expect(selectedKey()).toBe('site/alpha')
+    expect(screen.getByTestId('inspiration-commands')).toBeInTheDocument()
+    expect(screen.queryByTestId('inspiration-execute')).not.toBeInTheDocument()
+  })
+
+  it('在 sites 阶段关当前标签:不跳页', () => {
+    renderPanel()
+    openTabs(alpha, beta)
+    fireEvent.click(screen.getByTestId('new-command-tab'))
+
+    fireEvent.click(screen.getByTestId('close-tab-site/beta'))
+    expect(selectedKey()).toBe('site/alpha')
+    expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
+    expect(screen.queryByTestId('inspiration-execute')).not.toBeInTheDocument()
+  })
+
+  it('在 execute 阶段关当前标签:邻居顶上来并留在执行页', () => {
+    renderPanel()
+    openTabs(alpha, beta)
+    fireEvent.click(screen.getByTestId('close-tab-site/beta'))
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(screen.getByTestId('command-title')).toHaveTextContent('alpha')
+  })
+
+  it('关后台标签不换页也不换当前命令', () => {
+    renderPanel()
+    openTabs(alpha, beta)
+    fireEvent.click(screen.getByTestId('close-tab-site/alpha'))
+    expect(selectedKey()).toBe('site/beta')
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(screen.queryByTestId('command-tab-site/alpha')).not.toBeInTheDocument()
+  })
+
+  it('在 execute 阶段关掉最后一个标签:回到该站点的命令列表', () => {
+    renderPanel()
+    openTabs(alpha)
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('close-tab-site/alpha'))
+    expect(selectedKey()).toBeUndefined()
+    expect(screen.getByTestId('inspiration-commands')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'site 命令' })).toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+  })
+
+  it('回到命令列表时清掉之前的搜索词,列表不被旧搜索筛空', () => {
+    renderPanel()
+    openTabs(alpha)
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+    fireEvent.change(screen.getByTestId('nav-search'), { target: { value: 'no-such-command' } })
+    fireEvent.click(screen.getByTestId('command-tab-site/alpha'))
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('close-tab-site/alpha'))
+    expect(screen.getByTestId('nav-search')).toHaveValue('')
+    expect(screen.getByTestId('command-row-site/alpha')).toBeInTheDocument()
+  })
+
+  it('外部(如登录状态页)选中一条新命令时仍进入执行页', () => {
+    renderPanel()
+    openTabs(alpha)
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+
+    openTabs(gamma)
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(screen.getByTestId('command-title')).toHaveTextContent('gamma')
+  })
+
+  it('没接 onCloseTab 时关闭按钮不改变选中,之后的选择照常进入执行页', () => {
+    render(<InspirationPanel onRun={() => {}} onCancel={() => {}} />)
+    openTabs(alpha)
+    fireEvent.click(screen.getByRole('button', { name: '返回命令集合' }))
+    fireEvent.click(screen.getByTestId('close-tab-site/alpha'))
+    expect(selectedKey()).toBe('site/alpha')
+
+    openTabs(beta)
+    expect(screen.getByTestId('inspiration-execute')).toBeInTheDocument()
+    expect(screen.getByTestId('command-title')).toHaveTextContent('beta')
   })
 })

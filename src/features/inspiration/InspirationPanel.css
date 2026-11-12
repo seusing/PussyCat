@@ -13,3 +13,73 @@
 .command-search:focus-within { border-color: #6f8fd8; outline: 2px solid #8fb2ff; outline-offset: 2px; }
 .command-search input:focus-visible { outline: 0; }
 .inspiration-empty { margin: 24px 0; }
+
+/* 命令标签页栏:同一条命令一个标签,各标签的参数与运行互不影响 */
+.command-tabs {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.command-tabs-list {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.command-tab {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 220px;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 4%);
+  color: var(--color-fg-dim);
+}
+.command-tab:hover { background: rgb(255 255 255 / 7%); }
+.command-tab[data-active='true'] {
+  border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-line));
+  background: rgb(255 255 255 / 8%);
+  color: var(--color-fg);
+}
+.command-tab-main {
+  display: flex;
+  height: 32px;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px 0 10px;
+  border-radius: 7px;
+  color: inherit;
+  font-size: 13px;
+}
+.command-tab-logo { width: 16px; height: 16px; flex: 0 0 16px; border-radius: 3px; object-fit: contain; }
+.command-tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-tab-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; }
+.command-tab-dot[data-tone='running'] { background: var(--color-accent); animation: command-tab-pulse 1.2s ease-in-out infinite; }
+.command-tab-dot[data-tone='success'] { background: var(--color-success); }
+.command-tab-dot[data-tone='danger'] { background: var(--color-danger); }
+.command-tab-dot[data-tone='dim'] { background: var(--color-fg-dim); }
+@keyframes command-tab-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .command-tab-dot[data-tone='running'] { animation: none; }
+}
+.command-tab-close,
+.command-tab-new {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--color-fg-dim);
+}
+.command-tab-close { width: 22px; height: 22px; margin-right: 5px; }
+.command-tab-close:hover { background: rgb(255 255 255 / 10%); color: var(--color-fg); }
+.command-tab-new { width: 30px; height: 30px; }
+.command-tab-new:hover { background: rgb(255 255 255 / 8%); color: var(--color-fg); }

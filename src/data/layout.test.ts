@@ -1,7 +1,7 @@
 import {
-  defaultLayout, normalizeLayout, loadLayout, saveLayout, saveShellLayout, clamp, clampColumnWidth,
+  defaultLayout, normalizeLayout, loadLayout, saveLayout, saveShellLayout, saveRunPaneLayout, clamp, clampColumnWidth,
   LAYOUT_KEY, NAV_MIN, NAV_MAX, NAV_DEFAULT, RUNS_MIN, RUNS_MAX, RUNS_DEFAULT, CONFIG_MIN,
-  MODULE_SIDEBAR_DEFAULT, DETAILS_DEFAULT,
+  MODULE_SIDEBAR_DEFAULT, DETAILS_DEFAULT, RUN_PANE_MIN, RUN_PANE_DEFAULT, RUN_PANE_MAX,
   MODULE_SIDEBAR_COLLAPSED,
   GETTING_STARTED_DISMISSED_KEY, loadGettingStartedDismissed, saveGettingStartedDismissed,
 } from './layout'
@@ -27,6 +27,8 @@ const expectedLayout = (overrides: Partial<ReturnType<typeof defaultLayout>> = {
   detailsWidth: DETAILS_DEFAULT,
   navHidden: false,
   runsHidden: false,
+  runPaneWidth: RUN_PANE_DEFAULT,
+  runPaneHidden: false,
   autoLoginRefresh: false,
   autoLoginRefreshMinutes: 30,
   ...overrides,
@@ -61,6 +63,44 @@ test('saveShellLayout:存储里还没有布局时,外壳字段照常落盘', () 
   const s = fakeStorage()
   expect(saveShellLayout({ ...defaultLayout(), moduleSidebarWidth: 250, detailsWidth: 400 }, s)).toBe(true)
   expect(loadLayout(s)).toEqual({ ...defaultLayout(), moduleSidebarWidth: 250, detailsWidth: 400 })
+})
+
+test('saveShellLayout:不写运行面板字段,外壳的旧内存快照冲不掉它们', () => {
+  const s = fakeStorage()
+  saveLayout(defaultLayout(), s)
+  const shellInMemory = loadLayout(s)   // AppShell 挂载时读到的:运行面板还是默认值
+  saveRunPaneLayout({ runPaneWidth: 700, runPaneHidden: true }, s)   // 灵感库执行页之后写入
+
+  saveShellLayout({ ...shellInMemory, navWidth: 300 }, s)
+
+  expect(loadLayout(s)).toEqual({ ...defaultLayout(), navWidth: 300, runPaneWidth: 700, runPaneHidden: true })
+})
+
+describe('saveRunPaneLayout', () => {
+  test('合并到存储里的最新快照:只改传入的字段,其余原样保留', () => {
+    const s = fakeStorage()
+    saveLayout({ ...defaultLayout(), navWidth: 300, autoLoginRefresh: true, autoLoginRefreshMinutes: 15 }, s)
+
+    expect(saveRunPaneLayout({ runPaneWidth: 640 }, s)).toBe(true)
+    expect(loadLayout(s)).toEqual({
+      ...defaultLayout(), navWidth: 300, autoLoginRefresh: true, autoLoginRefreshMinutes: 15, runPaneWidth: 640,
+    })
+
+    saveRunPaneLayout({ runPaneHidden: true }, s)
+    expect(loadLayout(s)).toEqual(expect.objectContaining({ runPaneWidth: 640, runPaneHidden: true, navWidth: 300 }))
+  })
+
+  test('存储里还没有布局时照常落盘', () => {
+    const s = fakeStorage()
+    saveRunPaneLayout({ runPaneHidden: true }, s)
+    expect(loadLayout(s)).toEqual({ ...defaultLayout(), runPaneHidden: true })
+  })
+
+  test('存储写入失败返回 false 不抛', () => {
+    const s = fakeStorage()
+    s.setItem = () => { throw new Error('QuotaExceededError') }
+    expect(saveRunPaneLayout({ runPaneWidth: 500 }, s)).toBe(false)
+  })
 })
 
 test('loadLayout:空存储→default', () => {
@@ -136,6 +176,26 @@ describe('normalizeLayout 守卫', () => {
   it('合法布尔值→原样透传(包括 true)', () => {
     expect(normalizeLayout({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true, autoLoginRefresh: false, autoLoginRefreshMinutes: 30 }))
       .toEqual(expectedLayout({ navWidth: 300, runsWidth: 400, navHidden: true, runsHidden: true }))
+  })
+
+  it('runPaneWidth:越界夹到 [RUN_PANE_MIN, RUN_PANE_MAX],非数值回退默认值', () => {
+    expect(normalizeLayout({ runPaneWidth: 10 }).runPaneWidth).toBe(RUN_PANE_MIN)
+    expect(normalizeLayout({ runPaneWidth: 99999 }).runPaneWidth).toBe(RUN_PANE_MAX)
+    expect(normalizeLayout({ runPaneWidth: 640 }).runPaneWidth).toBe(640)
+    expect(normalizeLayout({ runPaneWidth: 'wide' }).runPaneWidth).toBe(RUN_PANE_DEFAULT)
+    expect(normalizeLayout({ runPaneWidth: NaN }).runPaneWidth).toBe(RUN_PANE_DEFAULT)
+  })
+
+  it('runPaneHidden:非布尔→false,合法布尔原样透传', () => {
+    expect(normalizeLayout({ runPaneHidden: 'yes' }).runPaneHidden).toBe(false)
+    expect(normalizeLayout({ runPaneHidden: 1 }).runPaneHidden).toBe(false)
+    expect(normalizeLayout({ runPaneHidden: true }).runPaneHidden).toBe(true)
+  })
+
+  it('老数据(无运行面板字段)→宽度取默认值、不收起,其余字段不受影响', () => {
+    const s = fakeStorage()
+    s.setItem(LAYOUT_KEY, JSON.stringify({ navWidth: 300, runsWidth: 400, navHidden: true }))
+    expect(loadLayout(s)).toEqual(expectedLayout({ navWidth: 300, runsWidth: 400, navHidden: true }))
   })
 
   // 向后兼容:老数据只有 navWidth/runsWidth 两个字段(折叠开关上线前写入的 JSON),读出来

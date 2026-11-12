@@ -60,6 +60,89 @@ function reconcileSelection(
   return { selected: next, values: merged }
 }
 
+/** 一个命令标签页:命令、表单值、最近一次运行。同一条命令只会有一个标签页。 */
+export type CommandTab = { command: CommandManifest; values: Record<string, unknown>; run?: CommandRun }
+
+/** 用户手动发起的命令同时在跑的上限。Host 的 maxConcurrentRuns(server/run-manager-options.mjs)= 它 + 后台体检并发。 */
+export const MANUAL_RUN_CONCURRENCY = 3
+
+type TabFields = Pick<AppState, 'selected' | 'values' | 'currentRun' | 'backgroundTabs' | 'activeTabSlot'>
+
+/** 标签栏的完整列表:当前标签插在 backgroundTabs 的 activeTabSlot 位置。 */
+export function commandTabs(s: TabFields): CommandTab[] {
+  if (!s.selected) return s.backgroundTabs
+  const tabs = s.backgroundTabs.slice()
+  tabs.splice(Math.min(s.activeTabSlot, tabs.length), 0, { command: s.selected, values: s.values, run: s.currentRun })
+  return tabs
+}
+
+/** 当前 + 后台标签里还没到终态的运行数。 */
+export function activeRunCount(s: Pick<AppState, 'currentRun' | 'backgroundTabs'>): number {
+  let count = s.currentRun && !isTerminal(s.currentRun.state) ? 1 : 0
+  for (const tab of s.backgroundTabs) if (tab.run && !isTerminal(tab.run.state)) count += 1
+  return count
+}
+
+/** 把 tabs[index] 提成当前标签,其余顺序不变;activeTabSlot 落在它原来的显示位置。 */
+function activateTab(tabs: CommandTab[], index: number) {
+  const tab = tabs[index]
+  return {
+    selected: tab.command,
+    values: tab.values,
+    currentRun: tab.run,
+    backgroundTabs: tabs.filter((_, i) => i !== index),
+    activeTabSlot: index,
+  }
+}
+
+/** 当前标签没了:右邻优先、无则左邻;一个邻居都没有就清空。slot 是当前标签原来在 background 里的插入位。 */
+function activateNeighbor(background: CommandTab[], slot: number) {
+  const index = slot < background.length ? slot : slot - 1
+  if (index < 0) return { selected: undefined, values: {}, currentRun: undefined, backgroundTabs: [], activeTabSlot: 0 }
+  return activateTab(background, index)
+}
+
+function applyOutput(run: CommandRun, e: OutputEvent): CommandRun | null {
+  if (run.id !== e.runId || isTerminal(run.state)) return null
+  const lines = run.lines
+  const last = lines[lines.length - 1]
+  // 快路径:seq 单调(P0-B 硬前提#3)时免 some/sort——数组恒有序,尾后新 seq 不可能重复。
+  // 口径:剔除 some/sort 的常数优化(基准 8-13×@≤10k,spec §4),渐近仍 O(n²) 复制;不可变约定保留。
+  let next: OutputEvent[]
+  if (!last || e.seq > last.seq) {
+    next = [...lines, e]
+  } else if (lines.some((l) => l.seq === e.seq)) {
+    return null
+  } else {
+    next = [...lines, e].sort((a, b) => a.seq - b.seq)
+  }
+  return { ...run, state: transition(run.state, { type: 'OUTPUT' }), lines: next }
+}
+
+function applyDone(run: CommandRun, e: DoneEvent): CommandRun | null {
+  if (run.id !== e.runId || isTerminal(run.state)) return null
+  return { ...run, state: transition(run.state, { type: 'DONE', outcome: e.outcome }), endedAt: e.at, result: e.result, error: e.error }
+}
+
+// 事件按 runId 找到所属的运行:先看当前标签,否则在后台标签里找。update 返回 null 表示不改。
+function patchRun(
+  s: Pick<AppState, 'currentRun' | 'backgroundTabs'>,
+  runId: string,
+  update: (run: CommandRun) => CommandRun | null,
+): Pick<AppState, 'currentRun'> | Pick<AppState, 'backgroundTabs'> | null {
+  if (s.currentRun?.id === runId) {
+    const run = update(s.currentRun)
+    return run ? { currentRun: run } : null
+  }
+  const index = s.backgroundTabs.findIndex((tab) => tab.run?.id === runId)
+  if (index < 0) return null
+  const run = update(s.backgroundTabs[index].run!)
+  if (!run) return null
+  const backgroundTabs = s.backgroundTabs.slice()
+  backgroundTabs[index] = { ...backgroundTabs[index], run }
+  return { backgroundTabs }
+}
+
 type AppState = {
   commands: CommandManifest[]
   setCommands: (cmds: CommandManifest[], decisions?: PolicyDecision[]) => void
@@ -69,9 +152,14 @@ type AppState = {
   catalogStatus: 'loading' | 'ready' | 'error'
   catalogError?: string
   setCatalogStatus: (status: 'loading' | 'ready' | 'error', error?: string) => void
+  // selected / values / currentRun 是**当前标签页**。其余标签页放 backgroundTabs(按标签栏顺序),
+  // activeTabSlot 是当前标签插在其中的位置 —— 完整列表见 commandTabs(),只有这一份状态、不双写。
   selected?: CommandManifest
   values: Record<string, unknown>
+  backgroundTabs: CommandTab[]
+  activeTabSlot: number
   selectCommand: (cmd: CommandManifest) => void
+  closeTab: (commandKey: string) => void
   setValue: (name: string, value: unknown) => void
   currentRun?: CommandRun
   beginRun: (runId: string) => void
@@ -127,12 +215,27 @@ type AppState = {
 
 export const useAppStore = create<AppState>((set, get) => ({
   commands: [],
-  setCommands: (commands, decisions) => set((s) => ({
-    commands, catalogStatus: 'ready', catalogError: undefined,
-    decisions: new Map((decisions ?? []).map((d) => [d.commandKey, d])),
-    stale: staleKeys(s.preferences, commands),
-    ...reconcileSelection(s.selected, s.values, commands),
-  })),
+  setCommands: (commands, decisions) => set((s) => {
+    // 后台标签同规则校正;key 已从目录消失的标签直接移除,activeTabSlot 随之左移
+    const background: CommandTab[] = []
+    let slot = s.activeTabSlot
+    s.backgroundTabs.forEach((tab, i) => {
+      const next = reconcileSelection(tab.command, tab.values, commands)
+      if (next.selected) background.push({ ...tab, command: next.selected, values: next.values })
+      else if (i < s.activeTabSlot) slot -= 1
+    })
+    const current = reconcileSelection(s.selected, s.values, commands)
+    const shared = {
+      commands, catalogStatus: 'ready' as const, catalogError: undefined,
+      decisions: new Map((decisions ?? []).map((d) => [d.commandKey, d])),
+      stale: staleKeys(s.preferences, commands),
+    }
+    // 当前标签被删而还有别的标签:让邻居顶上来。没有别的标签则只清 selected/values,currentRun 不动。
+    if (s.selected && !current.selected && background.length > 0) {
+      return { ...shared, ...activateNeighbor(background, slot) }
+    }
+    return { ...shared, ...current, backgroundTabs: background, activeTabSlot: slot }
+  }),
   decisions: new Map(),
   decisionFor: (commandKey) => get().decisions.get(commandKey),
   catalogStatus: 'loading',
@@ -140,7 +243,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCatalogStatus: (status, error) => set({ catalogStatus: status, catalogError: error }),
   selected: undefined,
   values: {},
-  selectCommand: (cmd) => set({ selected: cmd, values: defaultsOf(cmd) }),
+  backgroundTabs: [],
+  activeTabSlot: 0,
+  selectCommand: (cmd) => set((s) => {
+    if (s.selected?.command === cmd.command) return s
+    const tabs = commandTabs(s)
+    const index = tabs.findIndex((tab) => tab.command.command === cmd.command)
+    // 已有标签:切过去,标签栏顺序不变(当前标签留在原位变成后台标签)
+    if (index >= 0) return activateTab(tabs, index)
+    return { selected: cmd, values: defaultsOf(cmd), currentRun: undefined, backgroundTabs: tabs, activeTabSlot: tabs.length }
+  }),
+  closeTab: (commandKey) => set((s) => {
+    if (s.selected?.command === commandKey) return activateNeighbor(s.backgroundTabs, s.activeTabSlot)
+    const index = s.backgroundTabs.findIndex((tab) => tab.command.command === commandKey)
+    if (index < 0) return s
+    return {
+      backgroundTabs: s.backgroundTabs.filter((_, i) => i !== index),
+      activeTabSlot: index < s.activeTabSlot ? s.activeTabSlot - 1 : s.activeTabSlot,
+    }
+  }),
   setValue: (name, value) => set((s) => ({ values: { ...s.values, [name]: value } })),
   currentRun: undefined,
   beginRun: (runId) => {
@@ -158,26 +279,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     })
   },
-  appendOutput: (e) => set((s) => {
-    if (!s.currentRun || s.currentRun.id !== e.runId || isTerminal(s.currentRun.state)) return s
-    const lines = s.currentRun.lines
-    const last = lines[lines.length - 1]
-    // 快路径:seq 单调(P0-B 硬前提#3)时免 some/sort——数组恒有序,尾后新 seq 不可能重复。
-    // 口径:剔除 some/sort 的常数优化(基准 8-13×@≤10k,spec §4),渐近仍 O(n²) 复制;不可变约定保留。
-    let next: OutputEvent[]
-    if (!last || e.seq > last.seq) {
-      next = [...lines, e]
-    } else if (lines.some((l) => l.seq === e.seq)) {
-      return s
-    } else {
-      next = [...lines, e].sort((a, b) => a.seq - b.seq)
-    }
-    return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'OUTPUT' }), lines: next } }
-  }),
-  finishRun: (e) => set((s) => {
-    if (!s.currentRun || s.currentRun.id !== e.runId || isTerminal(s.currentRun.state)) return s
-    return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'DONE', outcome: e.outcome }), endedAt: e.at, result: e.result, error: e.error } }
-  }),
+  appendOutput: (e) => set((s) => patchRun(s, e.runId, (run) => applyOutput(run, e)) ?? s),
+  finishRun: (e) => set((s) => patchRun(s, e.runId, (run) => applyDone(run, e)) ?? s),
   markCancelling: () => set((s) => {
     if (!s.currentRun) return s
     return { currentRun: { ...s.currentRun, state: transition(s.currentRun.state, { type: 'CANCEL' }) } }
