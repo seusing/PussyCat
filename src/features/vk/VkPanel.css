@@ -137,13 +137,11 @@
 
 .vk-smart-mode-heading {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 4px;
 }
 
 .vk-smart-mode-heading strong { color: var(--color-fg); font-weight: 600; }
-.vk-smart-mode-heading span { color: var(--color-accent); font-size: 11px; }
-.vk-smart-mode p { margin-top: 3px; line-height: 1.5; }
 
 .vk-manual-settings {
   border-top: 1px solid var(--color-line);
@@ -244,8 +242,6 @@
 @media (max-width: 640px) {
   .vk-source-input-shell textarea { padding-right: 68px; }
   .vk-source-input-shell > .video-source-coverflow { right: 5px; transform: translateY(-50%) scale(.82); transform-origin: right center; }
-  .vk-smart-mode-heading { display: block; }
-  .vk-smart-mode-heading span { display: block; margin-top: 2px; }
   .vk-preset-settings { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
 
@@ -253,4 +249,14 @@
   .vk-source-file-input { transition: none; }
   .vk-source-file-input::after { transition: none; }
   .vk-jobs-refresh-button.is-refreshing svg { animation: none; }
+}
+
+/* 页脚:免责与数据去向说明只在这里出现一次 */
+.vk-page-footer {
+  margin-top: 24px;
+  border-top: 1px solid var(--color-hairline, var(--color-line));
+  padding-top: 12px;
+  color: var(--color-fg-dim);
+  font-size: 11px;
+  line-height: 1.6;
 }

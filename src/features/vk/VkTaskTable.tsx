@@ -12,6 +12,8 @@ import './VkTaskTable.css'
 export type VkTaskNotifications = Readonly<Record<string, boolean>>
 
 export interface VkTaskTableProps {
+  /** 还没有任何任务时,空状态里的「添加视频链接」把焦点送回链接输入框。 */
+  onAddSource?: () => void
   jobs: VkJobRow[]
   loading?: boolean
   selectedJobId?: string
@@ -138,6 +140,7 @@ export function VkTaskTable({
   onSave,
   canSaveResult,
   onDelete,
+  onAddSource,
 }: VkTaskTableProps) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [timeFilter, setTimeFilter] = useState('all')
@@ -307,7 +310,9 @@ export function VkTaskTable({
           {visible.length === 0 && (
             <tr>
               <td className="vk-task-empty" colSpan={5}>
-                {jobs.length === 0 ? '暂无任务' : '没有符合筛选条件的任务'}
+                {jobs.length === 0
+                  ? <>还没有解析任务{onAddSource && <button type="button" data-testid="vk-task-empty-add" onClick={onAddSource}>添加视频链接</button>}</>
+                  : <>没有符合筛选条件的任务<button type="button" data-testid="vk-task-empty-clear" onClick={() => { setStatusFilter('all'); setTimeFilter('all'); setPage(1) }}>清除筛选</button></>}
               </td>
             </tr>
           )}

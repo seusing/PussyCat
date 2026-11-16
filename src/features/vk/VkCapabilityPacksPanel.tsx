@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { InfoTip } from '../../components/InfoTip'
 import { CircleCheck, Download, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import {
   fetchVkCapabilityPacks,
@@ -150,10 +151,10 @@ export function VkCapabilityPacksPanel({
   return (
     <section data-testid="vk-capability-packs" className="mt-2 rounded-lg p-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
       <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>能力中心</h3>
-          <p className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>按需安装本地能力；大模型通道配置不会受影响。</p>
-        </div>
+        <h3 className="flex items-center gap-1 text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>
+          能力中心
+          <InfoTip label="能力中心说明"><p>按需安装本地能力；大模型通道配置不会受影响。</p></InfoTip>
+        </h3>
         <button
           type="button"
           aria-label="刷新能力状态"
@@ -222,10 +223,10 @@ export function VkCapabilityPacksPanel({
       {runtimeVersions && runtimeVersions.versions.length > 1 && (
         <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--color-line)' }}>
           <div className="mb-2 flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>解析引擎版本（用于回滚）</h3>
-              <p className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>这里是独立的 Python 运行环境，不是 ASR/WhisperX 模型；只清理非活动且非保留回滚版本。</p>
-            </div>
+            <h3 className="flex items-center gap-1 text-sm font-semibold" style={{ color: 'var(--color-fg)' }}>
+              解析引擎版本
+              <InfoTip label="解析引擎版本说明"><p>用于回滚。这里是独立的 Python 运行环境，不是 ASR/WhisperX 模型；只清理非活动且非保留回滚版本。</p></InfoTip>
+            </h3>
             {runtimeVersions.reclaimableBytes > 0 && (
               <button
                 type="button"

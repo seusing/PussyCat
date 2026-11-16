@@ -8,6 +8,7 @@ import { AppAlert, type AppAlertTone } from '../../components/AppAlert'
 import { AppNotificationPortal } from '../../components/AppNotificationPortal'
 import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { EmptyState } from '../../components/EmptyState'
+import { InfoTip } from '../../components/InfoTip'
 import { GlassSelect } from '../../components/GlassMenu'
 import { NOTE_REMARK_PLUGINS, noteUrlTransform } from '../../lib/noteMarkdown'
 import { saveTextFileAs } from '../../lib/saveTextFile'
@@ -504,9 +505,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
 
       <header className="inspiration-library-header">
         <div className="inspiration-library-heading">
-          <span>PERSONAL LIBRARY</span>
           <h1>灵感库</h1>
-          <p>把值得回看的视频、来源和想法放在一个地方。</p>
         </div>
         <div className="inspiration-library-header-actions">
           <div className="inspiration-library-switch" role="group" aria-label="灵感工作区">
@@ -557,7 +556,7 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
                     {suggestion.kind === 'folder' ? <Folder size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
                     <span><strong>{suggestion.label}</strong><small>{suggestion.detail}</small></span>
                   </div>
-                )) : <EmptyState className="inspiration-library-search-empty" icon={<Search size={18} />} title="暂无匹配建议" description="请尝试其他关键词" />}
+                )) : <EmptyState className="inspiration-library-search-empty" icon={<Search size={18} />} title="没有匹配的建议" />}
               </div>
             )}
           </div>
@@ -607,30 +606,10 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
       ) : libraryState.phase === 'error' ? (
         <section data-testid="inspiration-library-load-error" className="inspiration-library-empty" role="alert">
           <div className="inspiration-library-empty-icon"><TriangleAlert size={30} aria-hidden="true" /></div>
-          <h2>灵感库没能读取</h2>
-          <p>{libraryState.error}</p>
+          <h2>灵感库没能读取<InfoTip label="错误详情"><p>{libraryState.error}</p></InfoTip></h2>
           <div className="inspiration-library-empty-actions">
             <button type="button" className="inspiration-library-primary-action" onClick={retryInspirationLibraryLoad}><RotateCw size={16} aria-hidden="true" />重试</button>
           </div>
-        </section>
-      ) : !hasContent ? (
-        <section data-testid="inspiration-library-empty" className="inspiration-library-empty">
-          <div className="inspiration-library-empty-icon"><FolderOpen size={30} aria-hidden="true" /></div>
-          <h2>还没有灵感</h2>
-          <p>先去获取灵感，或写下一个想法。视频解析结果也可以直接收进这里。</p>
-          <div className="inspiration-library-empty-actions">
-            <button type="button" className="inspiration-library-primary-action" onClick={createNote}><FilePlus2 size={16} aria-hidden="true" />新建笔记</button>
-            <button type="button" className="inspiration-library-secondary-action" onClick={openArticleDialog}><Newspaper size={16} aria-hidden="true" />添加公众号文章</button>
-            <button type="button" className="inspiration-library-secondary-action" onClick={() => openFolderForm(null)}><FolderPlus size={16} aria-hidden="true" />新建文件夹</button>
-            <button type="button" className="inspiration-library-secondary-action" onClick={() => importInputRef.current?.click()}><Upload size={16} aria-hidden="true" />导入备份</button>
-            <button type="button" className="inspiration-library-secondary-action" onClick={onOpenSources}><BookOpen size={16} aria-hidden="true" />去找灵感</button>
-          </div>
-          {showFolderForm && (
-            <form className="inspiration-library-empty-folder-form" onSubmit={createFolder}>
-              <input autoFocus value={folderDraft} onChange={(event) => setFolderDraft(event.target.value)} placeholder="文件夹名称" aria-label="文件夹名称" />
-              <button type="submit" className="inspiration-library-primary-action"><Check size={14} aria-hidden="true" />创建</button>
-            </form>
-          )}
         </section>
       ) : (
         <div className="inspiration-library-workspace">
@@ -655,7 +634,10 @@ export function InspirationLibraryPanel({ baseUrl, onOpenSources, searchRef }: {
               </form>
             )}
             <div className="inspiration-library-items scroll-fade">
-              {listCount === 0 ? <EmptyState className="inspiration-library-no-results" icon={normalizedQuery ? <Search size={22} /> : <FolderOpen size={22} />} title={normalizedQuery ? '没有匹配的灵感' : '此文件夹为空'} description={normalizedQuery ? '请尝试其他关键词' : '新建笔记或文件夹，开始整理灵感'} /> : (
+              {listCount === 0 ? (normalizedQuery
+                ? <EmptyState className="inspiration-library-no-results" icon={<Search size={22} />} title="没有匹配的灵感" action={{ label: '清除搜索', onClick: () => setQuery('') }} />
+                : <EmptyState className="inspiration-library-no-results" icon={<FolderOpen size={22} />} title={hasContent ? '这个文件夹是空的' : '还没有灵感'} action={{ label: '新建笔记', onClick: createNote, testId: 'inspiration-empty-new-note' }} />
+              ) : (
                 <>
                   {visibleFolders.map((folder) => (
                     <div key={folder.id} className="inspiration-library-folder-item-row">

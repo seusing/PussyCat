@@ -48,6 +48,7 @@ import type {
 } from '../../host/vkClient'
 import { fetchBridgeHealth, repairBridge, type BridgeHealth } from '../../host/bridgeClient'
 import { BorderGlow } from '../../components/BorderGlow'
+import { InfoTip } from '../../components/InfoTip'
 import { requestAsrPrepareOnce } from './asrPrepare'
 import { runtimeToAdopt } from './runtimePick'
 import { vkErrorNote, vkErrorText, type VkErrorNote } from './vkErrors'
@@ -360,12 +361,12 @@ function errorParts(error: unknown, fallback: string): { text: string; code?: st
 }
 
 /** 横幅里给用户看的话；host 给的原文（可能带环境变量名、英文）只放进 title 供排障。 */
-function healthNote(health: VkHealth | null): string {
+function healthNote(health: VkHealth | null): string | undefined {
   switch (health?.status) {
     case 'starting': return '解析引擎正在启动，稍等几秒后重新检测。'
     case 'failed': return '解析引擎启动失败，可以重新检测；反复失败请重启爪爪。'
     case 'not-configured': return '本机还没有可用的解析环境，需要先完成一次准备。'
-    default: return '暂时联系不上解析引擎。'
+    default: return undefined
   }
 }
 
@@ -1360,11 +1361,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   )
   const selectedAutoRouteReason = autoRouteReasonText(selectedJob?.auto_route?.reason_codes)
 
-  const verdict: { text: string; color: string; note?: string; hint?: string; action?: { label: string; run: () => void } } | null =
+  // error 是失败原因,直接显示;note 是补充说明,收进 ⓘ;hint 是 host 原文,只在 ⓘ 里供排障。
+  const verdict: { text: string; color: string; error?: string; note?: string; hint?: string; action?: { label: string; run: () => void } } | null =
     runtime?.state === 'not-available'
       ? {
         text: '解析引擎不可用', color: 'var(--color-danger)',
-        note: '缺少随应用分发的安装件,请重新安装爪爪。',
+        error: '缺少随应用分发的安装件,请重新安装爪爪。',
         hint: runtime.summary ?? undefined,
       }
       : runtime?.state === 'installing'
@@ -1372,21 +1374,22 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         : runtime?.state === 'failed'
           ? {
             text: '解析环境没装成功', color: 'var(--color-danger)',
-            note: installError?.text ?? runtime.summary ?? undefined,
+            error: installError?.text ?? runtime.summary ?? undefined,
             hint: installError?.code ?? runtime.reasonCode ?? undefined,
             action: { label: '重试', run: () => { void startInstall({ rebuild: false }) } },
           }
           : runtime?.state === 'not-installed'
             ? {
               text: '解析引擎还没准备好', color: 'var(--color-warning)',
-              note: installError?.text ?? '缺少本机解析运行环境，需要先完成一次准备。',
+              error: installError?.text,
               hint: installError?.code,
               action: { label: '一键准备', run: () => { void startInstall({ rebuild: false }) } },
             }
             : runtime?.state === 'installed' && runtime.current === false
               ? {
                 text: '解析引擎有更新', color: 'var(--color-warning)',
-                note: installError?.text ?? '更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移。',
+                error: installError?.text,
+                note: '更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移。',
                 hint: installError?.code,
                 action: { label: '立即更新', run: () => { void startInstall({ rebuild: false }) } },
               }
@@ -1405,7 +1408,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
                   // 通道不通要在**第 1 秒**说,不是第 7.5 分钟。按钮已经说清了下一步,
                   // 再补一段解释后果的话只是噪声 —— 结论 + 动作,到此为止。
                    text: '请完成模型配置选择', color: 'var(--color-warning)',
-                  note: '请选择基础处理和深度分析使用的模型配置。',
                   action: { label: '去配置', run: () => useAppStore.getState().setActiveModule('providers') },
                 }
                 : null
@@ -1425,14 +1427,20 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       )}
       {verdict && (
         <InstallingBeam on={runtime?.state === 'installing'}>
-          <div className="vk-verdict-card flex flex-col gap-2 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
+          <div data-testid="vk-verdict-card" className="vk-verdict-card flex flex-col gap-2 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-3" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
             <div className="min-w-0 flex-1">
               <span data-testid="vk-verdict" className="text-sm font-medium" style={{ color: verdict.color }}>
                 {verdict.text}
               </span>
-              {verdict.note && (
-                <span data-testid="vk-verdict-note" title={verdict.hint} className="ml-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-                  {verdict.note}
+              {(verdict.note || verdict.hint) && (
+                <InfoTip label="状态说明" className="ml-1">
+                  {verdict.note && <p data-testid="vk-verdict-note">{verdict.note}</p>}
+                  {verdict.hint && <p data-testid="vk-verdict-hint" style={{ color: 'var(--color-fg-dim)' }}>{verdict.hint}</p>}
+                </InfoTip>
+              )}
+              {verdict.error && (
+                <span data-testid="vk-verdict-error" className="ml-2 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+                  {verdict.error}
                 </span>
               )}
             </div>
@@ -1556,9 +1564,13 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             </p>
           )}
         </div>
-        <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-          你想重点了解什么（选填）
+        <label className="mb-2 block text-xs" style={{ color: 'var(--color-fg-dim)' }} htmlFor="vk-user-goal-input">
+          <span className="inline-flex items-center gap-1">
+            你想重点了解什么（选填）
+            <InfoTip label="重点说明"><p>这里填写的内容会作为本次分析目标，应用于分段提取和最终汇总；不会替换系统处理规则。</p></InfoTip>
+          </span>
           <textarea
+            id="vk-user-goal-input"
             data-testid="vk-user-goal"
             value={userGoal}
             onChange={(event) => {
@@ -1572,14 +1584,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             className={`${fieldClass} mt-1 resize-y`}
             style={fieldStyle}
           />
-          <span className="mt-1 block text-[11px]">这里填写的内容会作为本次分析目标，应用于分段提取和最终汇总；不会替换系统处理规则。</span>
         </label>
         <div data-testid="vk-smart-mode" className="vk-smart-mode text-xs">
           <div className="vk-smart-mode-heading">
             <strong>智能处理已开启</strong>
-            <span>一般无需修改设置</span>
+            <InfoTip label="智能处理说明"><p>自动判断内容类型、字幕或语音质量、是否需要画面，以及处理深度。</p></InfoTip>
           </div>
-          <p>自动判断内容类型、字幕或语音质量、是否需要画面，以及处理深度。</p>
         </div>
         {diagnosticOverridesOpen && diagnosticOverridesHost.current && createPortal(<details open data-testid="vk-advanced-settings" className="vk-manual-settings mt-3 text-xs">
           <summary className="vk-settings-summary">手动覆盖</summary>
@@ -1683,9 +1693,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             </details>
           </div>
         </details>, diagnosticOverridesHost.current)}
-        <div data-testid="vk-third-party-data-notice" className="mb-3 rounded-lg px-3 py-2 text-[11px] leading-relaxed" style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg-dim)' }}>
-          为完成解析，视频中提取的字幕或语音转写会发送到你在“模型配置”中选择的第三方模型服务；爪爪不会替该服务改变其数据处理规则。
-        </div>
         {hasXiaohongshu && bridgeHealth && bridgeHealth.reasonCode !== 'ok' && (
           <div data-testid="vk-xhs-bridge-warning" role="status" className="vk-submit-notice is-warning">
             <span>检测到小红书链接：浏览器扩展没连上时，需要登录才能看的笔记会下载失败。</span>
@@ -1698,6 +1705,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         {channelBlocked && (
           <div data-testid="vk-channel-blocked" role="alert" className="vk-submit-notice is-danger">
             <span>{CHANNEL_AUTH_BLOCK.headline}</span>
+            <InfoTip label="模型通道检查说明"><p>{CHANNEL_AUTH_BLOCK.advice}。有的中转站不开放模型列表，确认 key 没问题时可以仍然提交，本次不再检查。</p></InfoTip>
             {CHANNEL_AUTH_BLOCK.action && (
               <button type="button" data-testid="vk-channel-blocked-action" onClick={CHANNEL_AUTH_BLOCK.action.run}>
                 {CHANNEL_AUTH_BLOCK.action.label}
@@ -1706,7 +1714,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             <button type="button" data-testid="vk-channel-blocked-override" disabled={previewing} onClick={() => { void requestSubmit({ skipChannelCheck: true }) }}>
               仍然提交
             </button>
-            <p>{CHANNEL_AUTH_BLOCK.advice}。有的中转站不开放模型列表，确认 key 没问题时可以仍然提交，本次不再检查。</p>
           </div>
         )}
         <div className="flex items-center gap-2">
@@ -1765,6 +1772,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           onSave={(row) => { void saveTaskOutput(row) }}
           canSaveResult={(row) => resultTaskIds.has(row.logicalTaskId ?? row.job_id)}
           onDelete={hideTaskRecord}
+          onAddSource={() => document.getElementById('vk-source-input')?.focus()}
         />
       </div>
 
@@ -1869,6 +1877,9 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           }))}
           baseUrl={base ?? DEFAULT_BASE_URL} onClose={() => { openGeneration.current += 1; setActiveTabId(null) }} />
       )}
+      <footer data-testid="vk-third-party-data-notice" className="vk-page-footer">
+        为完成解析，视频中提取的字幕或语音转写会发送到你在“模型配置”中选择的第三方模型服务；爪爪不会替该服务改变其数据处理规则。
+      </footer>
     </div>
   )
 }

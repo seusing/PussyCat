@@ -340,8 +340,7 @@ export function LoginStatusPanel() {
 
   return (
     <div className="login-status-page">
-      <h2 className="login-status-title">登录状态</h2>
-      <p className="login-status-subtitle">请持续保持你已登录的浏览器会话</p>
+      <h2 className="login-status-title">登录信息</h2>
 
       <div className="login-status-toolbar">
         <button
@@ -469,7 +468,7 @@ export function LoginStatusPanel() {
             })}
           </tbody>
         </table>
-        {rows.length === 0 && <div className="login-table-empty">目录里没有 whoami 命令</div>}
+        {rows.length === 0 && <div className="login-table-empty">没有可检查登录的站点</div>}
       </div>
     </div>
   )

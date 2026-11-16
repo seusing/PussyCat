@@ -15,19 +15,21 @@ beforeEach(() => {
 })
 
 describe('灵感库', () => {
-  it('空状态可以跳转到灵感来源', async () => {
+  it('空库只有一句话和「新建笔记」,灵感来源从顶部切换进入', async () => {
     const onOpenSources = vi.fn()
     render(<InspirationLibraryPanel onOpenSources={onOpenSources} />)
 
-    expect(screen.getByTestId('inspiration-library-empty')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /去找灵感/ }))
+    const empty = screen.getByRole('status', { name: '还没有灵感' })
+    expect(within(empty).getAllByRole('button')).toHaveLength(1)
+    expect(within(empty).getByTestId('inspiration-empty-new-note')).toHaveTextContent('新建笔记')
+    await userEvent.click(screen.getByTestId('inspiration-sources-tab'))
     expect(onOpenSources).toHaveBeenCalledTimes(1)
   })
 
   it('新建笔记、编辑内容并保存到本地库', async () => {
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
 
-    await userEvent.click(screen.getByRole('button', { name: /新建笔记/ }))
+    await userEvent.click(screen.getByTestId('inspiration-empty-new-note'))
     const title = await screen.findByTestId('inspiration-title-input')
     const content = screen.getByTestId('inspiration-content-input')
     await userEvent.clear(title)
@@ -48,7 +50,7 @@ describe('灵感库', () => {
   it('新建笔记以空正文开始并可保存为空正文', async () => {
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
 
-    await userEvent.click(screen.getByRole('button', { name: /新建笔记/ }))
+    await userEvent.click(screen.getByTestId('inspiration-empty-new-note'))
     const content = await screen.findByTestId('inspiration-content-input')
     expect(content).toHaveValue('')
     expect(content).toHaveAttribute('placeholder', '写点什么...')
@@ -66,9 +68,9 @@ describe('灵感库', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /新建文件夹/ }))
     await userEvent.type(screen.getByRole('textbox', { name: '文件夹名称' }), '视频选题')
-    await userEvent.click(screen.getByRole('button', { name: /创建/ }))
+    await userEvent.click(screen.getByRole('button', { name: '确认新建文件夹' }))
 
-    expect(screen.queryByTestId('inspiration-library-empty')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: '还没有灵感' })).not.toBeInTheDocument()
     expect(screen.getByRole('navigation', { name: '文件夹路径' })).toHaveTextContent('视频选题')
     expect(loadInspirationLibrary().folders.map((folder) => folder.name)).toEqual(['视频选题'])
   })
@@ -116,7 +118,7 @@ describe('灵感库', () => {
     expect(screen.getByText('来源：视频解析任务')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '返回目录' }))
     await userEvent.type(screen.getByTestId('nav-search'), '不存在')
-    expect(screen.getByText('没有匹配的灵感')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: '没有匹配的灵感' })).toBeInTheDocument()
   })
 
   it('根目录只显示不可点击的当前面包屑', () => {
@@ -170,7 +172,7 @@ describe('灵感库', () => {
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
 
     await userEvent.type(screen.getByRole('combobox', { name: '搜索灵感' }), '不存在')
-    expect(screen.getByRole('status', { name: '暂无匹配建议' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: '没有匹配的建议' })).toBeInTheDocument()
     expect(screen.getByRole('status', { name: '没有匹配的灵感' })).toBeInTheDocument()
   })
 
@@ -335,14 +337,16 @@ describe('灵感库', () => {
     expect(loadInspirationLibrary().items.find((candidate) => candidate.id === item.id)?.content).toBe('after')
   })
 
-  it('空文件夹显示创建提示，搜索为空时保留搜索提示', async () => {
+  it('空文件夹给出「新建笔记」,搜索为空时给出「清除搜索」', async () => {
     const folder = addInspirationFolder('空目录')!
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
     await userEvent.click(screen.getByTestId(`inspiration-folder-item-${folder.id}`))
-    expect(screen.getByRole('status', { name: '此文件夹为空' })).toHaveTextContent('新建笔记或文件夹')
+    expect(within(screen.getByRole('status', { name: '这个文件夹是空的' })).getByRole('button')).toHaveTextContent('新建笔记')
 
     await userEvent.type(screen.getByRole('combobox', { name: '搜索灵感' }), '无结果')
-    expect(screen.getByRole('status', { name: '没有匹配的灵感' })).toHaveTextContent('请尝试其他关键词')
+    const noMatch = screen.getByRole('status', { name: '没有匹配的灵感' })
+    await userEvent.click(within(noMatch).getByRole('button', { name: '清除搜索' }))
+    expect(screen.getByRole('combobox', { name: '搜索灵感' })).toHaveValue('')
   })
 
   it('可以从编辑器导出当前草稿', async () => {

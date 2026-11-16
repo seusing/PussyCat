@@ -189,12 +189,14 @@ describe('收藏与最近分组', () => {
     expect(screen.queryByTestId('group-recent')).not.toBeInTheDocument()
   })
 
-  test('无搜索结果使用结构化空状态', async () => {
+  test('无搜索结果时一句话加「清除搜索」', async () => {
     render(<SiteCommandNav />)
     await userEvent.type(screen.getByTestId('nav-search'), 'not-a-command')
-    const empty = screen.getByRole('status', { name: '无匹配命令' })
+    const empty = screen.getByRole('status', { name: '没有匹配的命令' })
     expect(empty).toHaveClass('empty-state')
     expect(empty.querySelector('.empty-state-icon')).toBeInTheDocument()
+    await userEvent.click(within(empty).getByRole('button', { name: '清除搜索' }))
+    expect(screen.getByTestId('nav-search')).toHaveValue('')
   })
 })
 

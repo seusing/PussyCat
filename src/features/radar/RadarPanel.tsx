@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { fetchRadarRatings, type RadarModel, type RadarRatings } from '../../host/radarClient'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
+import { InfoTip } from '../../components/InfoTip'
 
 /** 档位从高到低 —— 界面按它对齐成列,同一档位在同一竖排上才好横向比。 */
 const TIERS = ['ultra', 'max', 'xhigh', 'high', 'medium', 'low']
@@ -171,27 +172,17 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
     <div data-testid="radar-panel" className="h-full space-y-4 overflow-auto p-4">
       {/* —— Station Picks —— */}
       <section data-testid="radar-picks" className="radar-glass-section rounded-lg p-3">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <h2 className="text-sm font-medium">◎ 电台精选</h2>
-          <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            实测结果里挑出的实用组合
-          </span>
-        </div>
-        <div className="mt-1 flex items-center gap-2">
-          {data && (
-            <span data-testid="radar-picks-time" className="rounded px-1.5 py-0.5 text-[11px] tabular-nums"
-              style={{ border: '1px solid var(--color-success)', color: 'var(--color-success)' }}>
-              {clock(data.updatedAt)}
-            </span>
-          )}
           <RefreshButton onClick={refresh} busy={loading} testId="radar-refresh-picks" />
         </div>
         <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
           {(data?.picks ?? []).map((pick) => (
             <div key={pick.key} data-testid={`radar-pick-${pick.key}`} className="radar-glass-card rounded-lg">
               <div className="px-2 py-1 text-xs font-medium"
-                style={{ borderBottom: '1px solid var(--color-line)' }} title={pick.rule}>
-                {pick.title} <span style={{ color: 'var(--color-fg-dim)' }}>ⓘ</span>
+                style={{ borderBottom: '1px solid var(--color-line)' }}>
+                {pick.title}
+                {pick.rule && <InfoTip label={`${pick.title}的挑选规则`}><p>{pick.rule}</p></InfoTip>}
               </div>
               {pick.items.map((item) => (
                 <div key={item.id} className="flex items-baseline gap-2 px-2 py-1 text-xs tabular-nums">
@@ -210,17 +201,10 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
 
       {/* —— Intelligence Efficiency —— */}
       <section data-testid="radar-efficiency" className="radar-glass-section rounded-lg p-3">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <h2 className="text-sm font-medium">🧠 智能效率</h2>
-          {data && (
-            <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-              更新于 {clock(data.metricsUpdatedAt || data.updatedAt)}
-            </span>
-          )}
+          <InfoTip label="智能效率数据说明"><p>社区实测数据，每一次贡献都让结果更准。</p></InfoTip>
           <RefreshButton onClick={refresh} busy={loading} testId="radar-refresh-efficiency" />
-          <span className="ml-auto text-xs" style={{ color: 'var(--color-fg-dim)' }}>
-            社区实测数据 · 每一次贡献都让结果更准
-          </span>
         </div>
         {data && (
           <div className="mt-1">
@@ -249,10 +233,9 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
       {/* —— Combined cost × IQ —— */}
       {data && data.models.length > 0 && (
         <section data-testid="radar-chart-section" className="radar-glass-section rounded-lg p-3">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h2 className="text-sm font-medium">综合成本 × IQ</h2>
-            <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>更新于 {clock(data.updatedAt)}</span>
-            <span className="ml-auto text-xs" style={{ color: 'var(--color-fg-dim)' }}>越靠左上越划算</span>
+            <InfoTip label="图表读法"><p>越靠左上越划算。</p></InfoTip>
           </div>
           <div className="mt-1 flex flex-wrap gap-3 text-xs">
             {[...new Map(data.models.map((m) => [m.family, m.color])).entries()].map(([family, color]) => (
@@ -291,6 +274,13 @@ export function RadarPanel({ baseUrl }: { baseUrl?: string }) {
       )}
 
       {!data && !error && <div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>读取中…</div>}
+
+      {data && (
+        <footer data-testid="radar-updated" className="pt-2 text-[11px] tabular-nums" style={{ color: 'var(--color-fg-dim)' }}>
+          更新于 {clock(data.updatedAt)}
+          {data.metricsUpdatedAt && data.metricsUpdatedAt !== data.updatedAt && ` · 实测数据更新于 ${clock(data.metricsUpdatedAt)}`}
+        </footer>
+      )}
     </div>
   )
 }

@@ -11,6 +11,7 @@ import { ChevronRight, Plus } from 'lucide-react'
 import type { CommandManifest } from '../../data/types'
 import { commandDescription, commandTitle } from '../../data/zhCopy'
 import { BookDemoButton } from '../../components/BookDemoButton'
+import { InfoTip } from '../../components/InfoTip'
 
 /** 列表里的一组命令。title 为空表示不画分组标题(整张列表只有一组时)。 */
 export type CommandSection = {
@@ -77,7 +78,6 @@ function CommandRow({
       >
         <span>
           <strong>{zhTitle ?? command.name}</strong>
-          {zhTitle && <span className="fisheye-command-name">{command.name}</span>}
           <small>{command.access === 'write' ? '写入' : '读取'}</small>
         </span>
         <motion.span animate={{ rotate: active ? 45 : 0 }} transition={ICON_SPRING}>
@@ -173,7 +173,7 @@ export function FisheyeCommandList({ commands, sections, onSubmit, canSubmit = (
                   </button>
                 ) : <span className="fisheye-group-title">{block.title}</span>}
                 <small>{block.commands.length} 个</small>
-                {block.note && <em>{block.note}</em>}
+                {block.note && <InfoTip label={`${block.title}说明`}><p>{block.note}</p></InfoTip>}
               </div>
             )}
             {!block.collapsed && block.commands.map((command, offset) => {

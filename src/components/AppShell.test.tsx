@@ -34,7 +34,7 @@ test('侧栏模块导航 + 首页固定为灵感来源并显示演示模式', ()
 test('灵感来源可以打开灵感库并切回', () => {
   render(<App />)
   fireEvent.click(screen.getByTestId('open-inspiration-library'))
-  expect(screen.getByTestId('inspiration-library-empty')).toBeInTheDocument()
+  expect(screen.getByRole('status', { name: '还没有灵感' })).toBeInTheDocument()
   fireEvent.click(screen.getByTestId('inspiration-sources-tab'))
   expect(screen.getByTestId('inspiration-sites')).toBeInTheDocument()
 })

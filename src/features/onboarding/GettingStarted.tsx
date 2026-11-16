@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, LoaderCircle } from 'lucide-react'
+import { InfoTip } from '../../components/InfoTip'
 import { useAppStore } from '../../store/appStore'
 import { loadGettingStartedDismissed, saveGettingStartedDismissed } from '../../data/layout'
 import {
@@ -34,7 +35,7 @@ type Snapshot = {
 type StepStatus = { done: boolean; busy?: boolean; text: string; title?: string }
 
 function bridgeStatus(bridge: BridgeHealth | null): StepStatus {
-  if (!bridge) return { done: false, text: '暂时检测不到，点「检测并修复」重试' }
+  if (!bridge) return { done: false, text: '暂时检测不到' }
   switch (bridge.reasonCode) {
     case 'ok': return { done: true, text: '已连接' }
     case 'extension-disconnected': return { done: false, text: '还没连上扩展' }
@@ -80,8 +81,10 @@ function Step({ index, title, description, status, actions, children, testId }: 
         {status?.done ? <Check size={14} /> : index}
       </span>
       <div className="getting-started-main">
-        <div className="getting-started-title">{title}</div>
-        <div className="getting-started-desc">{description}</div>
+        <div className="getting-started-title">
+          {title}
+          <InfoTip label={`${title}说明`}><p>{description}</p></InfoTip>
+        </div>
         <div
           className="getting-started-status"
           data-tone={status?.done ? 'done' : 'todo'}
@@ -232,10 +235,7 @@ export function GettingStarted({ baseUrl }: { baseUrl?: string }) {
   return (
     <section className="getting-started" data-testid="getting-started" aria-label="开始使用">
       <header className="getting-started-header">
-        <div>
-          <h2>开始使用</h2>
-          <p>三步准备好，就能采集灵感并解析视频</p>
-        </div>
+        <h2>开始使用</h2>
         <button type="button" data-testid="gs-dismiss" className="getting-started-dismiss" onClick={dismiss}>不再显示</button>
       </header>
       <ol className="getting-started-steps">
@@ -277,7 +277,7 @@ export function GettingStarted({ baseUrl }: { baseUrl?: string }) {
           index={2}
           testId="gs-step-engine"
           title="解析引擎"
-          description="解析视频要用到，一键准备即可，不用自己装 Python"
+          description="解析视频要用到，不用自己装 Python"
           status={engine}
           actions={engine && !engine.done && snapshot?.runtime?.state !== 'not-available' && (
             <button type="button" data-testid="gs-install-engine" className="getting-started-primary" disabled={busy !== null || installing} onClick={() => { void installEngine() }}>

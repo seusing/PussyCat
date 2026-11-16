@@ -266,3 +266,10 @@
 .vk-provider-modal-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / 55%); }
 .vk-provider-modal-shell { width: min(32rem, 100%); max-height: 90vh; }
 .vk-provider-modal { max-height: 90vh; overflow-y: auto; border: 1px solid var(--glass-edge); border-radius: 0.75rem; padding: 1.25rem; background: var(--glass-overlay-fill); box-shadow: var(--glass-highlight), var(--glass-overlay-shadow); backdrop-filter: var(--glass-blur); }
+
+/* 空列表:一句话 + 一个操作 */
+.vk-empty-row { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 22px 12px; color: var(--color-fg-dim); font-size: 13px; }
+.vk-empty-row button { border: 1px solid var(--color-line); border-radius: 8px; padding: 5px 12px; color: var(--color-fg); }
+.vk-empty-row button:hover:not(:disabled) { background: var(--color-hover); }
+.vk-empty-row button:disabled { opacity: .5; }
+.vk-role-label { display: inline-flex; width: 5.5rem; flex: 0 0 auto; align-items: center; gap: 2px; }

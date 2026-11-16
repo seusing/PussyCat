@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { InfoTip } from '../../components/InfoTip'
 import {
   CandlestickSeries,
   ColorType,
@@ -227,10 +228,12 @@ function ChartView({ jobId, baseUrl, name, alt, chart }: {
       )}
       <ChartCanvas chart={chart} data={data} markerTime={markerTime} />
       <span className="vk-chart-footer">
-        <span>数据来源：{chart.source}</span>
-        {minute && data.first && data.last && <span>数据覆盖 {data.first} 至 {data.last}</span>}
-        {markerTime === null && <span>视频发布日不在此周期的数据范围内</span>}
-        {undrawn.length > 0 && <span>博主提到的价位：{undrawn.join('；')}（单位与本图不同，未画出）</span>}
+        <InfoTip label="行情图说明">
+          <p>数据来源：{chart.source}</p>
+          {minute && data.first && data.last && <p>数据覆盖 {data.first} 至 {data.last}</p>}
+          {markerTime === null && <p>视频发布日不在此周期的数据范围内</p>}
+          {undrawn.length > 0 && <p>博主提到的价位：{undrawn.join('；')}（单位与本图不同，未画出）</p>}
+        </InfoTip>
         {tradingViewUrl && (
           <a href={tradingViewUrl} target="_blank" rel="noopener noreferrer">在 TradingView 中打开</a>
         )}

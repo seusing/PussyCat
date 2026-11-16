@@ -103,12 +103,7 @@ export function CommandConfig({ onRun, registerSubmit, compactHeader = false }: 
 
       {/* 操作栏 */}
       <div className="cmd-form-actions">
-        <span className="cmd-form-shortcut">
-          <kbd className="cmd-kbd">Ctrl</kbd>
-          <kbd className="cmd-kbd">Enter</kbd>
-          提交
-        </span>
-        <button data-testid="run-button" className="cmd-run-btn" disabled={running || !runnable || runLimitReached} onClick={handleRun}>
+        <button data-testid="run-button" className="cmd-run-btn" title="Ctrl + Enter" aria-keyshortcuts="Control+Enter" disabled={running || !runnable || runLimitReached} onClick={handleRun}>
           {running
             ? <><Loader2 size={15} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />运行中…</>
             : <><Send size={14} strokeWidth={1.5} aria-hidden="true" />运行任务</>}

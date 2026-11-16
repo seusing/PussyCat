@@ -30,7 +30,7 @@ export function RunPanel({ onCancel }: { onCancel: () => void }) {
       : { video: [], imageText: [], all: [] },
     [listingCollections, run?.result, run?.state],
   )
-  if (!run) return <div className="p-3 text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无任务</div>
+  if (!run) return <div className="p-3 text-sm" style={{ color: 'var(--color-fg-dim)' }}>还没有运行结果</div>
 
   const active = run.state === 'starting' || run.state === 'running' || run.state === 'cancelling'
   const columns = listingCollections

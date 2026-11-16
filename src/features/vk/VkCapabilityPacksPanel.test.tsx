@@ -180,8 +180,9 @@ describe('VkCapabilityPacksPanel', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<VkCapabilityPacksPanel onRuntimeChanged={changed} />)
 
-    await screen.findByRole('heading', { name: '解析引擎版本（用于回滚）' })
-    expect(screen.getByText(/独立的 Python 运行环境/)).toHaveTextContent('不是 ASR/WhisperX 模型')
+    await screen.findByRole('heading', { name: /^解析引擎版本/ })
+    fireEvent.mouseEnter(screen.getByRole('button', { name: '解析引擎版本说明' }))
+    expect(await screen.findByText(/独立的 Python 运行环境/)).toHaveTextContent('不是 ASR/WhisperX 模型')
     fireEvent.click(screen.getByTitle('回滚到 v2'))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/runtime/rollback'),

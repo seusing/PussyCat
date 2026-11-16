@@ -203,7 +203,7 @@ export function SiteCommandNav({ searchRef }: { searchRef?: Ref<HTMLInputElement
             </div>
           )
         })}
-        {groups.length === 0 && <EmptyState className="nav-empty-state" icon={<SearchX size={20} />} title="无匹配命令" description="请尝试其他关键词" />}
+        {groups.length === 0 && <EmptyState className="nav-empty-state" icon={<SearchX size={20} />} title="没有匹配的命令" action={{ label: '清除搜索', onClick: () => setQ('') }} />}
       </nav>
     </div>
   )

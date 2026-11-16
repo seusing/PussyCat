@@ -16,7 +16,6 @@
   margin-bottom: 6px;
 }
 .getting-started-header h2 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: 0; }
-.getting-started-header p { margin: 4px 0 0; color: var(--color-fg-dim); font-size: 12px; }
 .getting-started-dismiss {
   flex: 0 0 auto;
   border-radius: 6px;
@@ -57,8 +56,7 @@
 }
 
 .getting-started-main { min-width: 0; flex: 1 1 260px; }
-.getting-started-title { font-size: 14px; font-weight: 600; }
-.getting-started-desc { margin-top: 2px; color: var(--color-fg-dim); font-size: 12px; line-height: 1.6; }
+.getting-started-title { display: flex; align-items: center; gap: 2px; font-size: 14px; font-weight: 600; }
 .getting-started-status {
   display: flex;
   align-items: center;

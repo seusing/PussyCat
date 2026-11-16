@@ -24,17 +24,12 @@ export class ModuleErrorBoundary extends Component<{ children: ReactNode }, Stat
     const message = (error.message || String(error)).split('\n')[0].slice(0, MESSAGE_MAX_LENGTH)
     return (
       <div data-testid="module-error-fallback">
-        <EmptyState icon={<TriangleAlert size={22} />} title="这个页面出错了" description={message}>
-          <button
-            type="button"
-            data-testid="module-error-reload"
-            onClick={() => this.setState({ error: null })}
-            className="mt-2 rounded-lg px-3 py-1.5 text-sm"
-            style={{ border: '1px solid var(--color-line)', color: 'var(--color-fg)' }}
-          >
-            重新加载此页
-          </button>
-        </EmptyState>
+        <EmptyState
+          icon={<TriangleAlert size={22} />}
+          title="这个页面出错了"
+          detail={message}
+          action={{ label: '重新加载此页', onClick: () => this.setState({ error: null }), testId: 'module-error-reload' }}
+        />
       </div>
     )
   }

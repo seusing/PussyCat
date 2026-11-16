@@ -13,6 +13,7 @@ import { AppNotificationStack } from '../../components/AppNotificationStack'
 import { GlassCombobox, GlassMultiSelect, GlassSelect } from '../../components/GlassMenu'
 import { useGlassMenuSurface } from '../../components/GlassMenu'
 import { OverflowTooltip } from '../../components/OverflowTooltip'
+import { InfoTip } from '../../components/InfoTip'
 import { useAppStore } from '../../store/appStore'
 import {
   fetchVkProviderSettings,
@@ -521,7 +522,10 @@ function ChannelEditor({
           options={settings.api_styles.map((style) => ({ value: style.id, label: style.label }))}
         />)}
         <div className={`vk-validation-field ${errors.reasoning_effort ? 'is-error' : ''}`}>
-          <div className="mb-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>推理强度</div>
+          <div className="mb-1 flex items-center gap-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>
+            推理强度
+            <InfoTip label="推理强度说明"><p data-testid={`vk-channel-reasoning-hint-${draft.id}`}>越高越慢、越贵，一般用 medium；high 或 max 在中转站上可能要等十几分钟</p></InfoTip>
+          </div>
           <GlassCombobox
             data-testid={`vk-channel-reasoning-${draft.id}`}
             aria-label="推理强度"
@@ -547,13 +551,6 @@ function ChannelEditor({
           >
             <MorphActionGlyph icon={MorphActivity} size={15} className={testBusy ? 'vk-provider-icon--busy' : ''} />
           </ActionIconButton>
-        </div>
-        <div
-          className="vk-provider-protocol-note text-xs"
-          data-testid={`vk-channel-reasoning-hint-${draft.id}`}
-          style={{ color: 'var(--color-fg-dim)' }}
-        >
-          越高越慢、越贵，一般用 medium；high 或 max 在中转站上可能要等十几分钟
         </div>
         {saved?.key_from_environment && (
           <span className="vk-provider-protocol-note text-xs" style={{ color: 'var(--color-fg-dim)' }} title="环境变量里的 key 会覆盖这里填的,要改得去环境变量改">key 来自系统环境变量，优先生效</span>
@@ -1259,10 +1256,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
     <div data-testid="vk-provider-form" className="space-y-4">
       {alertSlot('form')}
       <section data-testid="vk-jev-settings" className="rounded-xl p-4" style={{ background: 'var(--color-panel)', border: '1px solid var(--color-line)' }}>
-        <div className="mb-3 flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Jev配置</div><div data-testid="vk-jev-note" className="mt-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}>可选。行情图、预测核验、来源核对、关键画面配图和跨博主观点对比都要用到 Jev；不配置时这些步骤跳过，笔记照常生成。</div></div><ActionIconButton testId="vk-jev-add" label="新增配置" onClick={openNewJev} disabled={jevBusy} appearance="primary" size="md"><MorphActionGlyph icon={MorphPlus} size={16} /></ActionIconButton></div>
+        <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-1 text-sm font-medium">Jev配置<InfoTip label="Jev 配置说明"><p data-testid="vk-jev-note">可选。行情图、预测核验、来源核对、关键画面配图和跨博主观点对比都要用到 Jev；不配置时这些步骤跳过，笔记照常生成。</p></InfoTip></div><ActionIconButton testId="vk-jev-add" label="新增配置" onClick={openNewJev} disabled={jevBusy} appearance="primary" size="md"><MorphActionGlyph icon={MorphPlus} size={16} /></ActionIconButton></div>
         <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--color-line)' }}>
           <div className="grid min-w-[48rem] grid-cols-[1fr_1.3fr_.8fr_1fr_minmax(16rem,auto)] gap-3 px-3 py-2 text-xs font-medium" style={{ color: 'var(--color-fg-dim)', borderBottom: '1px solid var(--color-line)' }}><span>名称</span><span>API Key</span><span>模型</span><span>累计消费估算</span><span className="text-right pr-2">操作</span></div>
-          {jevConfigs.length === 0 && <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无 Jev 配置</div>}
+          {jevConfigs.length === 0 && <div className="vk-empty-row"><span>还没有 Jev 配置</span><button type="button" data-testid="vk-jev-empty-add" onClick={openNewJev} disabled={jevBusy}>新增配置</button></div>}
           {jevConfigs.map((item) => { const testing = Boolean(jevTesting[item.id]); const active = jevActiveId ? item.id === jevActiveId : item.enabled === true; return <div key={item.id} data-testid={`vk-jev-config-${item.id}`} className="grid min-w-[48rem] grid-cols-[1fr_1.3fr_.8fr_1fr_minmax(16rem,auto)] items-center gap-3 px-3 py-3" style={{ background: active ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-canvas))' : 'var(--color-canvas)', borderBottom: '1px solid var(--color-line)' }}><div><div className="text-sm font-medium">{item.name}</div>{active && <div className="flex items-center gap-1 text-xs" style={{ color: 'var(--color-fg-dim)' }}><span data-testid={`vk-jev-status-light-${item.id}`} className="inline-block h-2 w-2 rounded-full" style={{ background: '#22c55e' }} aria-hidden="true" />使用中</div>}</div><span className="text-sm">{item.masked_key}</span><span className="text-sm">jev-latest</span><div className="text-sm">${(item.estimated_cost_usd ?? 0).toFixed(6)}<div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{(item.input_tokens ?? 0).toLocaleString()} 输入 Token</div>{item.last_used_at && <div className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{`最近使用 ${new Date(item.last_used_at).toLocaleString()}`}</div>}</div><div className="flex justify-end gap-2"><EnableActionButton testId={`vk-jev-enable-${item.id}`} enabled={active} onClick={() => void enableJev(item.id)} disabled={jevBusy || testing || active} mutedWhenDisabled /><ActionIconButton testId={`vk-jev-test-${item.id}`} label="测试连接" onClick={() => void testJevItem(item.id)} disabled={jevBusy || testing} iconState="activity"><MorphActionGlyph icon={MorphActivity} size={14} className={testing ? 'vk-provider-icon--busy' : ''} /></ActionIconButton><EditActionButton testId={`vk-jev-edit-${item.id}`} onClick={() => openEditJev(item)} disabled={jevBusy || testing} /><DeleteActionButton testId={`vk-jev-delete-${item.id}`} onClick={() => void removeJev(item.id)} disabled={jevBusy || testing} /></div></div> })}
         </div>
       </section>
@@ -1346,7 +1343,7 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
         </div>
         <div className="divide-y" style={{ borderColor: 'var(--color-line)' }}>
           {drafts.length === 0 && (
-            <div className="px-3 py-8 text-center text-sm" style={{ color: 'var(--color-fg-dim)' }}>暂无模型配置</div>
+            <div className="vk-empty-row"><span>还没有模型配置</span><button type="button" data-testid="vk-channel-empty-add" onClick={addChannel} disabled={busy !== null || saving}>创建配置</button></div>
           )}
           {drafts.map((draft) => {
             const saved = settings.channels.find((channel) => channel.id === draft.id)
@@ -1586,7 +1583,10 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
             return (
             <div key={role} data-testid={`vk-role-routing-${role}`} className="rounded-lg p-2" style={{ border: '1px solid var(--color-line)' }}>
               <div className="vk-role-header">
-                <span className="w-16 shrink-0 text-sm">{settings.role_labels[role]}</span>
+                <span className="vk-role-label text-sm">
+                  {settings.role_labels[role]}
+                  {settings.role_hints[role] && <InfoTip label={`${settings.role_labels[role]}说明`}><p>{settings.role_hints[role]}</p></InfoTip>}
+                </span>
                 {compositeEnabled ? <GlassMultiSelect
                   data-testid={`vk-role-${role}`}
                   aria-label={`${settings.role_labels[role]}模型优先级`}
@@ -1606,13 +1606,12 @@ export function VkProviderForm({ baseUrl, onSaved }: { baseUrl?: string; onSaved
                   onChange={(value) => setRole(role, value)}
                   options={[{ value: '', label: '— 还没指定 —' }, ...available.map((draft) => ({ value: draft.id, label: draft.name }))]}
                 />}
-                <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>{settings.role_hints[role]}</span>
                 <div className="vk-role-composite">
                   <label className="vk-role-composite-toggle text-xs">
                     <input data-testid={`vk-role-composite-${role}`} type="checkbox" aria-label={`${settings.role_labels[role]}启用备用通道`} checked={compositeEnabled} disabled={saving} onChange={(event) => setCompositeEnabled(role, event.target.checked)} />
                     备用通道
                   </label>
-                  <span className="text-xs" style={{ color: 'var(--color-fg-dim)' }}>主通道超时、限流或上游 5xx 时自动切换到下一条</span>
+                  <InfoTip label="备用通道说明"><p>主通道超时、限流或上游 5xx 时自动切换到下一条。</p></InfoTip>
                 </div>
               </div>
               <div className="mt-2 space-y-1.5">

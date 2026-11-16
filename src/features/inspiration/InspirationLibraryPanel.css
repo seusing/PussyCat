@@ -18,9 +18,7 @@
   padding-bottom: 20px;
 }
 .inspiration-library-heading { min-width: 0; }
-.inspiration-library-heading > span { color: #7c8493; font-size: 11px; letter-spacing: 0; }
-.inspiration-library-heading h1 { margin: 3px 0 5px; color: #f1f3f6; font-size: 28px; font-weight: 650; letter-spacing: 0; }
-.inspiration-library-heading p { margin: 0; color: #8e97a6; font-size: 13px; }
+.inspiration-library-heading h1 { margin: 0; color: #f1f3f6; font-size: 28px; font-weight: 650; letter-spacing: 0; }
 .inspiration-library-header-actions { display: flex; min-width: 0; align-items: center; gap: 12px; }
 .inspiration-library-switch { display: flex; flex: 0 0 auto; gap: 3px; border: 1px solid #2b3039; border-radius: 8px; background: #171a20; padding: 3px; }
 .inspiration-library-switch button { display: inline-flex; align-items: center; gap: 6px; min-height: 31px; border-radius: 5px; color: #8d96a5; padding: 0 10px; font-size: 12px; }
@@ -57,11 +55,8 @@
   text-align: center;
 }
 .inspiration-library-empty-icon { display: grid; width: 62px; height: 62px; place-items: center; border: 1px solid #354054; border-radius: 14px; background: #20283a; color: #8fb2ff; }
-.inspiration-library-empty h2 { margin: 18px 0 6px; color: #eef0f4; font-size: 18px; font-weight: 650; }
-.inspiration-library-empty p { max-width: 410px; margin: 0; color: #8f98a7; font-size: 13px; line-height: 1.65; }
+.inspiration-library-empty h2 { display: inline-flex; align-items: center; gap: 4px; margin: 18px 0 6px; color: #eef0f4; font-size: 18px; font-weight: 650; }
 .inspiration-library-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 22px; }
-.inspiration-library-empty-folder-form { display: flex; width: min(360px, 100%); gap: 6px; margin-top: 12px; }
-.inspiration-library-empty-folder-form input { min-width: 0; flex: 1; border: 1px solid #3a4350; border-radius: 6px; outline: 0; background: #101217; color: #eef0f4; padding: 7px 9px; font-size: 12px; }
 
 .inspiration-library-primary-action,
 .inspiration-library-secondary-action {

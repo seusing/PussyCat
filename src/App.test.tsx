@@ -1178,7 +1178,7 @@ describe('前端不自行裁决(对抗 fixture)', () => {
     })
     await userEvent.click(await screen.findByTestId('site-row-y'))
     // 写入类命令默认收在「写入」组里,展开后才看得到。
-    await userEvent.click(within(await screen.findByTestId('command-group-write')).getByRole('button'))
+    await userEvent.click(within(await screen.findByTestId('command-group-write')).getByRole('button', { name: '写入' }))
     await userEvent.click(await screen.findByText('looks-bad'))
     expect(screen.getByRole('button', { name: /运行任务/ })).toBeEnabled()
   })
@@ -1689,7 +1689,7 @@ describe('命令标签页并行运行', () => {
     expect(screen.getByTestId('stream-log')).toHaveTextContent('log-of-a')
 
     t.open(cmdB)
-    expect(screen.getByText('暂无任务')).toBeInTheDocument()
+    expect(screen.getByText('还没有运行结果')).toBeInTheDocument()
     expect(screen.getByTestId('run-button')).toBeEnabled()
     await run()
     expect(t.starts.map((s) => s.commandKey)).toEqual(['x/a', 'x/b'])

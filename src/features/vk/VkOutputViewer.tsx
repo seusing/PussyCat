@@ -349,7 +349,7 @@ export function VkOutputViewer({ tabs, activeTabId, onSelectTab, onSelectVersion
             )}
             <span className="vk-output-download-content">
               {outputDownloadProgress !== null ? (
-                <span>{Math.round(outputDownloadProgress)}% · 点击取消</span>
+                <span>取消下载 {Math.round(outputDownloadProgress)}%</span>
               ) : (
                 <>
                   <span className="relative flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">

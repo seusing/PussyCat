@@ -43,15 +43,17 @@ const rowKeys = () => screen.queryAllByTestId(/^command-row-/).map((row) => row.
 beforeEach(() => { useAppStore.setState(initialState, true) })
 
 describe('站点命令列表:中文名与分组', () => {
-  it('小红书:先是「常用」再是「读取」,「写入」默认折叠并注明会改动账号内容或登录状态', async () => {
+  it('小红书:先是「常用」再是「读取」,「写入」默认折叠,说明收在 ⓘ 里', async () => {
     await openSite('xiaohongshu')
 
     expect(screen.getByTestId('command-group-common')).toHaveTextContent('常用')
     expect(screen.getByTestId('command-group-read')).toHaveTextContent('读取')
     const write = screen.getByTestId('command-group-write')
     expect(write).toHaveTextContent('写入')
-    expect(write).toHaveTextContent('会改动你的账号内容或登录状态')
-    expect(within(write).getByRole('button')).toHaveAttribute('aria-expanded', 'false')
+    expect(write).not.toHaveTextContent('会改动你的账号内容或登录状态')
+    expect(within(write).getByRole('button', { name: '写入' })).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.hover(within(write).getByRole('button', { name: '写入说明' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('会改动你的账号内容或登录状态')
 
     const keys = rowKeys()
     expect(keys.slice(0, 6)).toEqual([
@@ -68,7 +70,7 @@ describe('站点命令列表:中文名与分组', () => {
 
   it('展开「写入」后看到写入命令,再点收起', async () => {
     await openSite('xiaohongshu')
-    const toggle = within(screen.getByTestId('command-group-write')).getByRole('button')
+    const toggle = within(screen.getByTestId('command-group-write')).getByRole('button', { name: '写入' })
 
     fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
@@ -78,12 +80,12 @@ describe('站点命令列表:中文名与分组', () => {
     expect(rowKeys()).not.toContain('xiaohongshu/publish')
   })
 
-  it('每一行主标签是中文短名,英文命令名是次要小字', async () => {
+  it('每一行主标签是中文短名,不再附英文命令名', async () => {
     await openSite('xiaohongshu')
 
     const row = screen.getByTestId('command-row-xiaohongshu/search')
     expect(within(row).getByText('搜索笔记').tagName).toBe('STRONG')
-    expect(within(row).getByText('search')).toHaveClass('fisheye-command-name')
+    expect(within(row).queryByText('search')).not.toBeInTheDocument()
     expect(row).toHaveTextContent('读取')
   })
 
@@ -122,17 +124,17 @@ describe('站点命令列表:中文名与分组', () => {
 
   it('换一个站点进来,「写入」又是折叠的', async () => {
     await openSite('xiaohongshu')
-    fireEvent.click(within(screen.getByTestId('command-group-write')).getByRole('button'))
+    fireEvent.click(within(screen.getByTestId('command-group-write')).getByRole('button', { name: '写入' }))
     expect(rowKeys()).toContain('xiaohongshu/publish')
 
     fireEvent.click(screen.getByRole('button', { name: '返回站点' }))
     await clickSite('youtube')
 
-    expect(within(screen.getByTestId('command-group-write')).getByRole('button')).toHaveAttribute('aria-expanded', 'false')
+    expect(within(screen.getByTestId('command-group-write')).getByRole('button', { name: '写入' })).toHaveAttribute('aria-expanded', 'false')
     expect(rowKeys()).not.toContain('youtube/like')
   })
 
-  it('没有中文名的命令照常显示英文名,不重复出现次要小字', () => {
+  it('没有中文名的命令照常显示英文名', () => {
     const plain: CommandManifest = {
       command: 'github/trending', site: 'github', name: 'trending', description: 'List trending repositories',
       access: 'read', browser: false, args: [],
@@ -141,15 +143,16 @@ describe('站点命令列表:中文名与分组', () => {
 
     const row = screen.getByTestId('command-row-github/trending')
     expect(within(row).getByText('trending').tagName).toBe('STRONG')
-    expect(row.querySelector('.fisheye-command-name')).toBeNull()
   })
 
-  it('命令详情页顶部是中文短名,英文名作副标题', async () => {
+  it('命令详情页顶部是中文短名,说明收在 ⓘ 里', async () => {
     await openSite('xiaohongshu')
     // 第一行默认展开,再点一下它的标题行就进入详情
     await userEvent.click(within(screen.getByTestId('command-row-xiaohongshu/search')).getByRole('button', { name: /搜索笔记/ }))
 
     expect(screen.getByTestId('command-title')).toHaveTextContent('搜索笔记')
-    expect(screen.getByTestId('command-subtitle')).toHaveTextContent('search')
+    expect(within(screen.getByTestId('command-header')).queryByText('search')).not.toBeInTheDocument()
+    await userEvent.hover(screen.getByRole('button', { name: '命令说明' }))
+    expect(await screen.findByTestId('command-description')).toHaveTextContent('搜索小红书笔记')
   })
 })

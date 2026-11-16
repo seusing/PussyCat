@@ -9,6 +9,12 @@ import { loadInspirationLibrary } from '../inspiration/inspirationLibrary'
 import { useNotificationHistory } from '../../store/notificationHistory'
 import { requestAsrPrepareOnce } from './asrPrepare'
 
+/** 引擎横幅的补充说明和 host 原文收在「状态说明」ⓘ 里。 */
+async function openVerdictTip() {
+  await userEvent.hover(await screen.findByRole('button', { name: '状态说明' }))
+  return screen.findByRole('tooltip')
+}
+
 vi.mock('../../lib/saveTextFile', () => ({ saveTextFileAs: vi.fn() }))
 vi.mock('./asrPrepare', () => ({ requestAsrPrepareOnce: vi.fn() }))
 
@@ -190,7 +196,7 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
 
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎有更新'))
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移')
+    expect(await openVerdictTip()).toHaveTextContent('更新后才会启用快速路径、短超时和失败续跑；现有任务不会自动迁移')
     await user.click(screen.getByRole('button', { name: '立即更新' }))
 
     await waitFor(() => expect(calls.some((call) => call.key === 'POST /vk/v1/runtime/install')).toBe(true))
@@ -256,7 +262,7 @@ describe('VkPanel', () => {
     render(<VkPanel baseUrl={BASE} />)
 
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎尚未启动'))
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('重新检测会自动启动解析引擎')
+    expect(await openVerdictTip()).toHaveTextContent('重新检测会自动启动解析引擎')
     armed = true
     const callStart = calls.length
     await userEvent.click(screen.getByTestId('vk-verdict-action'))
@@ -290,7 +296,7 @@ describe('VkPanel', () => {
     expect(screen.getByTestId('app-notification-layer')).toContainElement(screen.getByTestId('vk-task-banner'))
     expect(screen.getByTestId('vk-panel')).not.toContainElement(screen.getByTestId('vk-task-banner'))
     expect(useAppStore.getState().activeModule).not.toBe('providers')
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('请选择基础处理和深度分析使用的模型配置。')
+    expect(screen.queryByRole('button', { name: '状态说明' })).not.toBeInTheDocument()
     // 只弹窗、不进铃铛的通知历史
     expect(useNotificationHistory.getState().entries).toEqual([])
   })
@@ -445,7 +451,7 @@ describe('VkPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析环境没装成功'))
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('重试')
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('磁盘空间不足')
+    expect(screen.getByTestId('vk-verdict-error')).toHaveTextContent('磁盘空间不足')
   })
 
   it('捆绑件缺失时不给按钮 —— 点了没用的按钮比没有按钮更糟', async () => {
@@ -508,9 +514,12 @@ describe('VkPanel', () => {
     await waitFor(() => expect(screen.queryByTestId('vk-verdict')).not.toBeInTheDocument())
 
     expect(screen.getByText('你想重点了解什么（选填）')).toBeInTheDocument()
-    expect(screen.getByText('这里填写的内容会作为本次分析目标，应用于分段提取和最终汇总；不会替换系统处理规则。')).toBeInTheDocument()
-    expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent('智能处理已开启')
-    expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent('一般无需修改设置')
+    expect(screen.queryByText('这里填写的内容会作为本次分析目标，应用于分段提取和最终汇总；不会替换系统处理规则。')).not.toBeInTheDocument()
+    await user.hover(screen.getByRole('button', { name: '重点说明' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('这里填写的内容会作为本次分析目标')
+    await user.unhover(screen.getByRole('button', { name: '重点说明' }))
+    expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent(/^智能处理已开启$/)
+    expect(screen.getByRole('textbox', { name: /你想重点了解什么/ })).toBe(screen.getByTestId('vk-user-goal'))
     expect(screen.queryByTestId('vk-advanced-settings')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('vk-capability-toggle'))
     await user.click(await screen.findByTestId('vk-diagnostic-overrides-toggle'))
@@ -1430,7 +1439,7 @@ describe('VkPanel', () => {
 
     request.resolve({ error: '磁盘空间不足' })
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎有更新'))
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('磁盘空间不足')
+    expect(screen.getByTestId('vk-verdict-error')).toHaveTextContent('磁盘空间不足')
     expect(screen.getByRole('button', { name: '立即更新' })).toBeInTheDocument()
   })
 
@@ -1450,7 +1459,7 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析环境没装成功'))
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('网络不可达')
+    expect(screen.getByTestId('vk-verdict-error')).toHaveTextContent('网络不可达')
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('重试')
   })
 
@@ -1475,7 +1484,7 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await waitFor(() => expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析环境没装成功'))
-    expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('安装失败')
+    expect(screen.getByTestId('vk-verdict-error')).toHaveTextContent('安装失败')
     expect(screen.getByTestId('vk-verdict-action')).toHaveTextContent('重试')
   })
 
@@ -1611,12 +1620,11 @@ describe('VkPanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('vk-verdict')).toHaveTextContent('解析引擎没有响应')
     })
-    await waitFor(() => {
-      expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('本机还没有可用的解析环境')
-    })
+    await openVerdictTip()
     const note = screen.getByTestId('vk-verdict-note')
+    expect(note).toHaveTextContent('本机还没有可用的解析环境')
     expect(note).not.toHaveTextContent('video-knowledge')
-    expect(note).toHaveAttribute('title', 'video-knowledge runtime 未配置')
+    expect(screen.getByTestId('vk-verdict-hint')).toHaveTextContent('video-knowledge runtime 未配置')
   })
 
   it('does not leak environment variable names from the health summary into the banner', async () => {
@@ -1631,27 +1639,29 @@ describe('VkPanel', () => {
       'GET /vk/v1/jobs': { status: 503, body: { error: 'video-knowledge sidecar 未接线', reasonCode: 'not-configured' } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    const note = await screen.findByTestId('vk-verdict-note')
-    expect(note.textContent).not.toMatch(/OPENCLI_HOST|video-knowledge|sidecar/)
-    expect(note).toHaveAttribute('title', summary)
+    expect((await screen.findByTestId('vk-verdict-card')).textContent).not.toMatch(/OPENCLI_HOST|video-knowledge|sidecar/)
+    await openVerdictTip()
+    expect(screen.getByTestId('vk-verdict-note').textContent).not.toMatch(/OPENCLI_HOST|video-knowledge|sidecar/)
+    expect(screen.getByTestId('vk-verdict-hint')).toHaveTextContent(summary)
   })
 
   it.each([
     ['starting', 'sidecar 启动中', '解析引擎正在启动'],
     ['failed', 'sidecar 协议版本不兼容', '解析引擎启动失败'],
-  ])('explains a %s engine in plain Chinese and keeps the raw summary in the title', async (status, summary, expected) => {
+  ])('explains a %s engine in plain Chinese and keeps the raw summary for troubleshooting', async (status, summary, expected) => {
     stubRoutes({
       'GET /vk/v1/health': { body: { ...HEALTH, status, reasonCode: status, summary } },
       'GET /vk/v1/jobs': { body: [] },
     })
     render(<VkPanel baseUrl={BASE} />)
-    const note = await screen.findByTestId('vk-verdict-note')
+    await openVerdictTip()
+    const note = screen.getByTestId('vk-verdict-note')
     expect(note).toHaveTextContent(expected)
     expect(note.textContent).not.toMatch(/sidecar/)
-    expect(note).toHaveAttribute('title', summary)
+    expect(screen.getByTestId('vk-verdict-hint')).toHaveTextContent(summary)
   })
 
-  it('keeps the install failure reason code out of the banner text but in its title', async () => {
+  it('keeps the install failure reason code out of the banner text but in the info tip', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured', reasonCode: 'not-installed', summary: '未安装' } },
       'GET /vk/v1/jobs': { status: 503, body: { error: '未安装', reasonCode: 'not-installed' } },
@@ -1660,23 +1670,24 @@ describe('VkPanel', () => {
     })
     render(<VkPanel baseUrl={BASE} />)
     await userEvent.click(await screen.findByTestId('vk-verdict-action'))
-    await waitFor(() => expect(screen.getByTestId('vk-verdict-note')).toHaveTextContent('安装包里没有解析引擎'))
-    const note = screen.getByTestId('vk-verdict-note')
-    expect(note.textContent).not.toContain('bundle-missing')
-    expect(note).toHaveAttribute('title', 'bundle-missing')
+    await waitFor(() => expect(screen.getByTestId('vk-verdict-error')).toHaveTextContent('安装包里没有解析引擎'))
+    expect(screen.getByTestId('vk-verdict-card').textContent).not.toContain('bundle-missing')
+    await openVerdictTip()
+    expect(screen.getByTestId('vk-verdict-hint')).toHaveTextContent('bundle-missing')
   })
 
-  it('shows a fixed message when the install bundle is missing and keeps the raw summary in the title', async () => {
+  it('shows a fixed message when the install bundle is missing and keeps the raw summary in the info tip', async () => {
     stubRoutes({
       'GET /vk/v1/health': { body: { ...HEALTH, status: 'not-configured' } },
       'GET /vk/v1/jobs': { body: [] },
       'GET /vk/v1/runtime/status': { body: { state: 'not-available', version: null, reasonCode: 'bundle-missing', summary: '安装包内没有解析引擎捆绑件(开发形态或包损坏)', log: [], checkedAt: 't' } },
     })
     render(<VkPanel baseUrl={BASE} />)
-    const note = await screen.findByTestId('vk-verdict-note')
-    expect(note).toHaveTextContent('请重新安装爪爪')
-    expect(note.textContent).not.toContain('开发形态')
-    expect(note).toHaveAttribute('title', '安装包内没有解析引擎捆绑件(开发形态或包损坏)')
+    const error = await screen.findByTestId('vk-verdict-error')
+    expect(error).toHaveTextContent('请重新安装爪爪')
+    expect(screen.getByTestId('vk-verdict-card').textContent).not.toContain('开发形态')
+    await openVerdictTip()
+    expect(screen.getByTestId('vk-verdict-hint')).toHaveTextContent('安装包内没有解析引擎捆绑件(开发形态或包损坏)')
   })
 
   it('replaces the raw engine-not-ready error in the task list with a neutral hint', async () => {

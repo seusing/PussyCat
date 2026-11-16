@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommandConfig } from './CommandConfig'
+import { DynamicField } from './DynamicField'
 import { useAppStore } from '../../store/appStore'
 import { commandPreview } from '../../data/command'
 import type { CommandManifest } from '../../data/types'
@@ -105,15 +106,25 @@ test('命令标题区域包含标签和说明,没有收藏按钮且不再渲染�
   expect(within(header).getByTestId('command-description')).toHaveTextContent('示例')
 })
 
-test('参数帮助与参数名同在标签头且输入下不再单独显示帮助', () => {
+test('参数帮助作标签,参数名收在 ⓘ 里;输入下不再单独显示帮助', async () => {
   render(<CommandConfig onRun={() => {}} />)
   const field = screen.getByTestId('field-url')
   const label = field.closest('label')
   expect(label).not.toBeNull()
   const fieldLabel = within(label as HTMLElement).getByTestId('field-label-url')
-  expect(within(fieldLabel).getByText('url')).toBeInTheDocument()
   expect(within(fieldLabel).getByTestId('field-help-url')).toHaveTextContent('请输入目标地址')
+  expect(within(fieldLabel).queryByText('url')).not.toBeInTheDocument()
   expect(field.nextElementSibling?.getAttribute('data-testid')).not.toBe('field-help-url')
+  await userEvent.hover(within(fieldLabel).getByRole('button', { name: '请输入目标地址说明' }))
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('参数名 url')
+})
+
+test('中文说明在第一个逗号处断开,其余收进 ⓘ', async () => {
+  render(<DynamicField arg={{ name: 'sort', type: 'str', required: false, choices: ['a'], help: '排序依据，默认综合' }} value="a" onChange={() => {}} />)
+  const fieldLabel = screen.getByTestId('field-label-sort')
+  expect(within(fieldLabel).getByTestId('field-help-sort')).toHaveTextContent(/^排序依据$/)
+  await userEvent.hover(within(fieldLabel).getByRole('button', { name: '排序依据说明' }))
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('默认综合')
 })
 
 test('preview 旁复制命令按钮,text=commandPreview', async () => {
@@ -221,14 +232,13 @@ describe('表单网格与布尔开关', () => {
     expect(useAppStore.getState().values.verbose).toBe(false)
   })
 
-  test('布尔磁贴:说明与参数名同在标签里,点磁贴任意位置(含文字)都切换', async () => {
+  test('布尔磁贴:点磁贴任意位置(含文字)都切换', async () => {
     render(<CommandConfig onRun={() => {}} />)
     const input = screen.getByTestId('field-verbose') as HTMLInputElement
     const tile = input.closest('.cmd-field-tile') as HTMLElement
     expect(tile).not.toBeNull()
     const label = within(tile).getByTestId('field-label-verbose')
     expect(within(label).getByTestId('field-help-verbose')).toHaveTextContent('输出详细日志')
-    expect(within(label).getByText('verbose')).toBeInTheDocument()
     await userEvent.click(within(label).getByTestId('field-help-verbose'))
     expect(useAppStore.getState().values.verbose).toBe(true)
     await userEvent.click(tile)

@@ -21,7 +21,7 @@ beforeEach(() => {
 })
 
 describe('ModuleErrorBoundary', () => {
-  test('子组件抛错时只有这一块显示兜底,同级的另一块照常', () => {
+  test('子组件抛错时只有这一块显示兜底,同级的另一块照常;错误原文收在 ⓘ 里', async () => {
     render(
       <div>
         <ModuleErrorBoundary><Boom message="Cannot read properties of undefined" /></ModuleErrorBoundary>
@@ -31,15 +31,18 @@ describe('ModuleErrorBoundary', () => {
 
     const fallback = screen.getByTestId('module-error-fallback')
     expect(fallback).toHaveTextContent('这个页面出错了')
-    expect(fallback).toHaveTextContent('Cannot read properties of undefined')
+    expect(fallback).not.toHaveTextContent('Cannot read properties of undefined')
+    await userEvent.hover(screen.getByRole('button', { name: '详细信息' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Cannot read properties of undefined')
     expect(screen.getByRole('button', { name: '重新加载此页' })).toBeInTheDocument()
     expect(screen.getByTestId('other-panel')).toHaveTextContent('另一页')
   })
 
-  test('错误信息只取第一行并截短', () => {
+  test('错误信息只取第一行并截短', async () => {
     render(<ModuleErrorBoundary><Boom message={`${'x'.repeat(300)}\nsecond line`} /></ModuleErrorBoundary>)
 
-    const text = screen.getByTestId('module-error-fallback').textContent ?? ''
+    await userEvent.hover(screen.getByRole('button', { name: '详细信息' }))
+    const text = (await screen.findByRole('tooltip')).textContent ?? ''
     expect(text).toContain('x'.repeat(160))
     expect(text).not.toContain('x'.repeat(161))
     expect(text).not.toContain('second line')

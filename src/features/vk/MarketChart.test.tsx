@@ -4,6 +4,12 @@ import { TimeBand, VerticalMarker } from './chartMarker'
 import { titleForPeriod } from './MarketChart'
 import { TermHintMarkdown } from './TermHint'
 
+/** 图下的数据来源、覆盖范围、未画出的价位都收在「行情图说明」ⓘ 里。 */
+async function chartNotes(): Promise<string> {
+  await userEvent.hover(await screen.findByRole('button', { name: '行情图说明' }))
+  return (await screen.findByRole('tooltip')).textContent ?? ''
+}
+
 const chartLib = vi.hoisted(() => {
   const setData = vi.fn()
   const attachPrimitive = vi.fn()
@@ -102,27 +108,27 @@ describe('MarketChart', () => {
     expect(chartLib.timeToCoordinate).toHaveBeenLastCalledWith('2026-04-27')
   })
 
-  it('图下一行写数据来源,「在 TradingView 中打开」走外链', async () => {
+  it('数据来源收在 ⓘ 里,「在 TradingView 中打开」走外链', async () => {
     stubChartFetch()
     renderNote()
     const link = await screen.findByRole('link', { name: '在 TradingView 中打开' })
     expect(link).toHaveAttribute('href', CHART.tradingview_url)
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
-    expect(link.parentElement).toHaveTextContent('数据来源：东方财富')
+    expect(await chartNotes()).toContain('数据来源：东方财富')
   })
 
   it('没有 TradingView 地址、或地址不是 https 时不出链接', async () => {
     stubChartFetch({ ...CHART, tradingview_url: 'javascript:alert(1)' })
     const first = renderNote()
     await waitFor(() => expect(chartLib.createChart).toHaveBeenCalledTimes(1))
-    expect(screen.getByText('数据来源：东方财富')).toBeInTheDocument()
+    expect(await chartNotes()).toContain('数据来源：东方财富')
     expect(screen.queryByRole('link', { name: '在 TradingView 中打开' })).not.toBeInTheDocument()
     first.unmount()
 
     stubChartFetch({ ...CHART, tradingview_url: null })
     renderNote()
-    await screen.findByText('数据来源：东方财富')
+    expect(await chartNotes()).toContain('数据来源：东方财富')
     expect(screen.queryByRole('link', { name: '在 TradingView 中打开' })).not.toBeInTheDocument()
   })
 
@@ -261,7 +267,7 @@ describe('MarketChart 周期按钮', () => {
     await waitFor(() => expect(chartLib.createChart).toHaveBeenCalledTimes(1))
 
     expect(screen.queryByRole('group', { name: 'K 线周期' })).not.toBeInTheDocument()
-    expect(container.querySelector('.vk-chart button')).toBeNull()
+    expect(container.querySelector('.vk-chart-periods')).toBeNull()
     expect(attachedBands()).toHaveLength(0)
     expect(attachedMarkers()).toHaveLength(1)
     expect(chartLib.createPriceLine).not.toHaveBeenCalled()
@@ -269,7 +275,8 @@ describe('MarketChart 周期按钮', () => {
     expect(chartLib.createChart).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       timeScale: expect.objectContaining({ timeVisible: false }),
     }))
-    expect(container.querySelector('.vk-chart-footer')).toHaveTextContent(/^数据来源：东方财富在 TradingView 中打开$/)
+    expect(container.querySelector('.vk-chart-footer')).toHaveTextContent(/^在 TradingView 中打开$/)
+    expect(await chartNotes()).toBe('数据来源：东方财富')
   })
 
   it('有 intervals 时图上方一行六个按钮,默认周期高亮;东方财富的图 4 时置灰并写明原因', async () => {
@@ -414,13 +421,13 @@ describe('MarketChart 周期按钮', () => {
     const user = userEvent.setup()
     renderNote()
     await waitFor(() => expect(chartLib.createChart).toHaveBeenCalledTimes(1))
-    expect(screen.queryByText(/数据覆盖/)).not.toBeInTheDocument()
+    expect(await chartNotes()).not.toContain('数据覆盖')
 
     await user.click(screen.getByRole('button', { name: '1时' }))
-    expect(await screen.findByText('数据覆盖 2026-10-26 10:30 至 2026-10-26 15:00')).toBeInTheDocument()
+    await waitFor(async () => expect(await chartNotes()).toContain('数据覆盖 2026-10-26 10:30 至 2026-10-26 15:00'))
 
     await user.click(screen.getByRole('button', { name: '日' }))
-    expect(screen.queryByText(/数据覆盖/)).not.toBeInTheDocument()
+    await waitFor(async () => expect(await chartNotes()).not.toContain('数据覆盖'))
   })
 
   it('发布日在分钟级数据范围内:竖线落在发布日当天或之后的第一根上,按秒数对齐', async () => {
@@ -434,7 +441,7 @@ describe('MarketChart 周期按钮', () => {
     await waitFor(() => expect(attachedMarkers()).toHaveLength(1))
     const { timeToCoordinate } = drawPrimitive(attachedMarkers()[0], () => 100)
     expect(timeToCoordinate).toHaveBeenLastCalledWith(HOURLY.bars[0].time)
-    expect(screen.queryByText('视频发布日不在此周期的数据范围内')).not.toBeInTheDocument()
+    expect(await chartNotes()).not.toContain('视频发布日不在此周期的数据范围内')
   })
 
   it.each([
@@ -446,17 +453,17 @@ describe('MarketChart 周期按钮', () => {
     renderNote()
     await waitFor(() => expect(chartLib.createChart).toHaveBeenCalledTimes(1))
     expect(attachedMarkers()).toHaveLength(1)
-    expect(screen.queryByText('视频发布日不在此周期的数据范围内')).not.toBeInTheDocument()
+    expect(await chartNotes()).not.toContain('视频发布日不在此周期的数据范围内')
 
     chartLib.attachPrimitive.mockClear()
     await user.click(screen.getByRole('button', { name: '1时' }))
-    expect(await screen.findByText('视频发布日不在此周期的数据范围内')).toBeInTheDocument()
+    await waitFor(async () => expect(await chartNotes()).toContain('视频发布日不在此周期的数据范围内'))
     await waitFor(() => expect(chartLib.createChart).toHaveBeenCalledTimes(2))
     expect(attachedMarkers()).toHaveLength(0)
 
     await user.click(screen.getByRole('button', { name: '日' }))
     expect(attachedMarkers()).toHaveLength(1)
-    expect(screen.queryByText('视频发布日不在此周期的数据范围内')).not.toBeInTheDocument()
+    await waitFor(async () => expect(await chartNotes()).not.toContain('视频发布日不在此周期的数据范围内'))
   })
 })
 
@@ -551,16 +558,16 @@ describe('MarketChart 时段与价位', () => {
     expect(chartLib.createPriceLine).toHaveBeenNthCalledWith(1, { price: 4000, title: '4000 关口', ...dashed })
     expect(chartLib.createPriceLine).toHaveBeenNthCalledWith(2, { price: 3800, title: '箱体 下沿', ...dashed })
     expect(chartLib.createPriceLine).toHaveBeenNthCalledWith(3, { price: 4200, title: '箱体 上沿', ...dashed })
-    expect(screen.queryByText(/博主提到的价位/)).not.toBeInTheDocument()
+    expect(await chartNotes()).not.toContain('博主提到的价位')
   })
 
-  it('drawable 为 false 的价位不画,在脚注里列出,多个用「；」分隔', async () => {
+  it('drawable 为 false 的价位不画,在 ⓘ 里列出,多个用「；」分隔', async () => {
     stubChartFetch({
       ...CHART,
       levels: [{ low: 4000, high: null, label: '4000 关口', drawable: false }],
     })
     const first = renderNote()
-    expect(await screen.findByText('博主提到的价位：4000 关口（单位与本图不同，未画出）')).toBeInTheDocument()
+    expect(await chartNotes()).toContain('博主提到的价位：4000 关口（单位与本图不同，未画出）')
     expect(chartLib.createPriceLine).not.toHaveBeenCalled()
     first.unmount()
 
@@ -573,7 +580,7 @@ describe('MarketChart 时段与价位', () => {
       ],
     })
     renderNote()
-    expect(await screen.findByText('博主提到的价位：4000 关口；5000 关口（单位与本图不同，未画出）')).toBeInTheDocument()
+    expect(await chartNotes()).toContain('博主提到的价位：4000 关口；5000 关口（单位与本图不同，未画出）')
     expect(chartLib.createPriceLine).toHaveBeenCalledTimes(2)
   })
 

@@ -189,7 +189,7 @@ test('保存接口 200 但未返回 configs 时刷新列表显示新配置', asy
     return { ok: false, status: 404, json: async () => ({ error: `no stub for ${key}` }) }
   }))
   render(<VkProviderForm baseUrl={BASE} />)
-  await userEvent.click(await screen.findByRole('button', { name: '新增配置' }))
+  await userEvent.click(await screen.findByTestId('vk-jev-add'))
   await userEvent.type(screen.getByLabelText('Jev 配置名称'), saved.name)
   await userEvent.type(await screen.findByTestId('vk-jev-key'), 'jev-private-key')
   await userEvent.click(screen.getByRole('button', { name: '保存' }))
@@ -380,7 +380,7 @@ test('保存 Jev Key 的普通接口错误原样显示且不检查或更新解�
     'POST /vk/v1/jev/configs': { status: 503, body: { error: 'Jev service unavailable' } },
   })
   render(<VkProviderForm baseUrl={BASE} />)
-  await userEvent.click(await screen.findByRole('button', { name: '新增配置' }))
+  await userEvent.click(await screen.findByTestId('vk-jev-add'))
   const input = await screen.findByTestId('vk-jev-key') as HTMLInputElement
   await userEvent.type(input, 'jev-key')
   await userEvent.click(screen.getByRole('button', { name: '保存' }))
@@ -407,15 +407,16 @@ test('Jev 测试失败时原样显示引擎返回的提示', async () => {
   expect(alert).toHaveTextContent('HTTP 451')
 })
 
-test('Jev配置标题下说明它是可选的,以及没配时哪些步骤会跳过', async () => {
+test('Jev配置标题旁的 ⓘ 说明它是可选的,以及没配时哪些步骤会跳过', async () => {
   stubRoutes({
     'GET /vk/v1/providers': { body: settings() },
     'GET /vk/v1/jev/configs': { body: { configured: false, configs: [], active_id: null } },
   })
   render(<VkProviderForm baseUrl={BASE} />)
 
-  expect(await screen.findByText('暂无 Jev 配置')).toBeInTheDocument()
-  expect(screen.getByTestId('vk-jev-note')).toHaveTextContent(
+  expect(await screen.findByText('还没有 Jev 配置')).toBeInTheDocument()
+  await userEvent.hover(screen.getByRole('button', { name: 'Jev 配置说明' }))
+  expect(await screen.findByTestId('vk-jev-note')).toHaveTextContent(
     '可选。行情图、预测核验、来源核对、关键画面配图和跨博主观点对比都要用到 Jev；不配置时这些步骤跳过，笔记照常生成。',
   )
 })
@@ -427,7 +428,7 @@ test('Jev 配置列表读取失败时静默显示空列表', async () => {
       'GET /vk/v1/jev/configs': { status, body: { error } },
     })
     const view = render(<VkProviderForm baseUrl={BASE} />)
-    expect(await screen.findByText('暂无 Jev 配置')).toBeInTheDocument()
+    expect(await screen.findByText('还没有 Jev 配置')).toBeInTheDocument()
     await waitFor(() => expect(calls.some((call) => call.key === 'GET /vk/v1/jev/configs')).toBe(true))
     expect(screen.queryByTestId('vk-provider-error')).not.toBeInTheDocument()
     expect(calls.some((call) => call.key.includes('/runtime/'))).toBe(false)
@@ -858,7 +859,7 @@ test('取消创建会丢弃草稿,取消编辑会恢复打开弹窗前的内容'
   await user.clear(screen.getByTestId('vk-modal-name'))
   await user.type(screen.getByTestId('vk-modal-name'), '不会保留')
   await user.click(screen.getByTestId('vk-provider-modal-cancel'))
-  expect(screen.getByText('暂无模型配置')).toBeInTheDocument()
+  expect(screen.getByText('还没有模型配置')).toBeInTheDocument()
 
   first.unmount()
   vi.unstubAllGlobals()
@@ -1348,14 +1349,16 @@ test('点标签上的 × 移除备用并立即提交,其余序号顺延', async 
   await waitFor(() => expect(routeTags()).toEqual(['1 GPT 5.6 Luna', '2 备用 B']))
 })
 
-test('「备用通道」开关旁说明切换时机', async () => {
+test('「备用通道」开关旁的 ⓘ 说明切换时机', async () => {
   stubRoutes({ 'GET /vk/v1/providers': { body: settings() } })
   render(<VkProviderForm baseUrl={BASE} />)
 
   const toggle = await screen.findByTestId('vk-role-composite-basic')
   expect(toggle.closest('label')).toHaveTextContent('备用通道')
   expect(toggle.closest('label')).not.toHaveTextContent('复合key')
-  expect(screen.getByTestId('vk-role-routing-basic')).toHaveTextContent('主通道超时、限流或上游 5xx 时自动切换到下一条')
+  expect(screen.getByTestId('vk-role-routing-basic')).not.toHaveTextContent('主通道超时、限流或上游 5xx 时自动切换到下一条')
+  await userEvent.hover(within(screen.getByTestId('vk-role-routing-basic')).getByRole('button', { name: '备用通道说明' }))
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('主通道超时、限流或上游 5xx 时自动切换到下一条')
   expect(screen.queryByText(/复合key/)).not.toBeInTheDocument()
 })
 
@@ -2344,9 +2347,10 @@ test('中转站或自定义:清空地址和名称,回到手填,协议重新随�
   expect(style()).toHaveAttribute('data-value', 'openai_responses')
 })
 
-test('推理强度字段下有一行说明', async () => {
+test('推理强度旁的 ⓘ 里有一行说明', async () => {
   const dialog = await openCreateDialog()
-  const hint = within(dialog).getByText('越高越慢、越贵，一般用 medium；high 或 max 在中转站上可能要等十几分钟')
+  await userEvent.hover(within(dialog).getByRole('button', { name: '推理强度说明' }))
+  const hint = await screen.findByText('越高越慢、越贵，一般用 medium；high 或 max 在中转站上可能要等十几分钟')
   expect(hint).toBeInTheDocument()
   expect(hint).toHaveAttribute('data-testid', expect.stringMatching(/^vk-channel-reasoning-hint-/))
 })

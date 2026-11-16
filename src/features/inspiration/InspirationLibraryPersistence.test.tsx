@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveTextFileAs } from '../../lib/saveTextFile'
@@ -26,10 +26,10 @@ describe('灵感库的读取与保存状态', () => {
 
     expect(screen.getByTestId('inspiration-library-loading')).toHaveTextContent('读取中…')
     expect(screen.queryByRole('button', { name: /新建笔记/ })).not.toBeInTheDocument()
-    expect(screen.queryByTestId('inspiration-library-empty')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: '还没有灵感' })).not.toBeInTheDocument()
 
     await act(async () => { release({ exists: false, library: null }) })
-    expect(await screen.findByTestId('inspiration-library-empty')).toBeInTheDocument()
+    expect(await screen.findByRole('status', { name: '还没有灵感' })).toBeInTheDocument()
     expect(screen.queryByTestId('inspiration-library-loading')).not.toBeInTheDocument()
   })
 
@@ -40,7 +40,9 @@ describe('灵感库的读取与保存状态', () => {
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
 
     const failure = await screen.findByTestId('inspiration-library-load-error')
-    expect(failure).toHaveTextContent('读取灵感库失败：无法连接爪爪本地服务，请稍后重试')
+    expect(failure).toHaveTextContent('灵感库没能读取')
+    await userEvent.hover(within(failure).getByRole('button', { name: '错误详情' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('读取灵感库失败：无法连接爪爪本地服务，请稍后重试')
     expect(screen.queryByRole('button', { name: /新建笔记/ })).not.toBeInTheDocument()
 
     persistence.loadError = null
@@ -53,7 +55,7 @@ describe('灵感库的读取与保存状态', () => {
     const persistence = fakeInspirationPersistence({ version: 1, folders: [], items: [] })
     connectInspirationLibrary(persistence)
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
-    await userEvent.click(await screen.findByRole('button', { name: /新建笔记/ }))
+    await userEvent.click(await screen.findByTestId('inspiration-empty-new-note'))
     persistence.saveError = new Error('HTTP 500')
     await userEvent.click(await screen.findByRole('button', { name: '返回目录' }))
 
@@ -114,12 +116,12 @@ describe('灵感库导出全部与导入', () => {
 
   it('空库时可以直接从备份文件恢复', async () => {
     render(<InspirationLibraryPanel onOpenSources={() => {}} />)
-    expect(screen.getByRole('button', { name: /导入备份/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '导入' })).toBeInTheDocument()
 
     await userEvent.upload(screen.getByTestId('inspiration-import-input'), backupFile({ version: 1, folders: [], items: [note('a'), note('b')] }))
 
     expect(await screen.findByText('导入 2 条，跳过 0 条重复')).toBeInTheDocument()
-    expect(screen.queryByTestId('inspiration-library-empty')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: '还没有灵感' })).not.toBeInTheDocument()
     expect(screen.getByTestId('inspiration-item-a')).toBeInTheDocument()
   })
 

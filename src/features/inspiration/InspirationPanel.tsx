@@ -20,6 +20,7 @@ import { addInspirationItem } from './inspirationLibrary'
 import { InspirationLibraryPanel } from './InspirationLibraryPanel'
 import { GettingStarted } from '../onboarding/GettingStarted'
 import { EmptyState } from '../../components/EmptyState'
+import { InfoTip } from '../../components/InfoTip'
 import ResizableSplit from '../../components/ResizableSplit'
 import {
   RUN_PANE_DEFAULT, RUN_PANE_MAX, RUN_PANE_MIN,
@@ -268,7 +269,7 @@ export function InspirationPanel({
             <div data-testid="command-header" className="inspiration-command-row">
               <div className="inspiration-command-title">
                 <strong data-testid="command-title">{commandTitle(selected.command) ?? selected.name}</strong>
-                {commandTitle(selected.command) && <small data-testid="command-subtitle">{selected.name}</small>}
+                <InfoTip label="命令说明"><p data-testid="command-description">{commandDescription(selected.command, selected.description)}</p></InfoTip>
               </div>
               <span className={selected.access === 'write' ? 'inspiration-command-tag is-write' : 'inspiration-command-tag'}>{selected.access === 'write' ? '写入' : '只读'}</span>
               {selected.browser && <span className="inspiration-command-tag">浏览器</span>}
@@ -276,9 +277,6 @@ export function InspirationPanel({
                 <BookmarkPlus size={15} strokeWidth={1.5} aria-hidden="true" />收进灵感库
               </button>
             </div>
-            <p data-testid="command-description" className="inspiration-command-description">
-              {commandDescription(selected.command, selected.description)}
-            </p>
           </div>
           <label className="command-search execution-search">
             <Search size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -338,10 +336,7 @@ export function InspirationPanel({
             <ArrowLeft size={17} />
           </button>
           <span className="inspiration-heading-logo"><img src={site.logo} alt="" /></span>
-          <div>
-            <span>{site.eyebrow}</span>
-            <h1>{site.label} 命令</h1>
-          </div>
+          <h1>{site.label} 命令</h1>
           <label className="command-search">
             <Search size={16} aria-hidden="true" />
             <input ref={searchRef} data-testid="nav-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索命令" aria-label="搜索命令" />
@@ -356,7 +351,7 @@ export function InspirationPanel({
             return decision?.state !== 'denied'
           }}
         />
-        {siteCommands.length === 0 && <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" description="请尝试其他关键词" />}
+        {siteCommands.length === 0 && <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" action={{ label: '清除搜索', onClick: () => setQuery('') }} />}
       </div>
     )
   }
@@ -365,10 +360,7 @@ export function InspirationPanel({
     <div data-testid="inspiration-sites" className="inspiration-page inspiration-sites">
       {tabBar}
       <div className="inspiration-page-heading inspiration-site-heading">
-        <div>
-          <span>INSPIRATION SOURCES</span>
-          <h1>灵感来源</h1>
-        </div>
+        <h1>灵感来源</h1>
         <div className="display-mode-switch" role="group" aria-label="站点展示方式">
           <button type="button" data-testid="open-inspiration-library" aria-label="灵感库" onClick={() => setWorkspace('library')} title="打开灵感库">
             <FolderOpen size={17} />
@@ -392,7 +384,7 @@ export function InspirationPanel({
                 return decision?.state !== 'denied'
               }}
             />
-          : <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" description="请尝试其他关键词" />
+          : <EmptyState className="inspiration-empty" icon={<SearchX size={22} />} title="没有匹配的命令" action={{ label: '清除搜索', onClick: () => setQuery('') }} />
         : (
           <>
             <GettingStarted baseUrl={baseUrl} />

@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ActivityWheel } from './ActivityWheel'
 import { FisheyeCommandList } from './FisheyeCommandList'
@@ -316,7 +317,7 @@ describe('inspiration execute header', () => {
     expect(screen.getByTestId('save-command-to-inspiration-library')).toBeInTheDocument()
   })
 
-  it('访问标签显示「只读」/「写入」,不出现 read/write 原文,写入带 is-write', () => {
+  it('访问标签显示「只读」/「写入」,不出现 read/write 原文,写入带 is-write', async () => {
     const readCommand: CommandManifest = { ...commands[0], command: 'site/browse', name: 'browse', description: '示例', browser: false }
     const writeCommand: CommandManifest = { ...readCommand, command: 'site/post', name: 'post', access: 'write' }
     const header = () => within(screen.getByTestId('command-header'))
@@ -337,7 +338,9 @@ describe('inspiration execute header', () => {
     expect(header().queryByText('WRITE')).not.toBeInTheDocument()
     expect(header().getByText('浏览器')).toHaveClass('inspiration-command-tag')
     expect(header().getByTestId('save-command-to-inspiration-library')).toBeInTheDocument()
-    expect(screen.getByTestId('command-description')).toHaveTextContent('示例')
+    expect(screen.queryByTestId('command-description')).not.toBeInTheDocument()
+    await userEvent.hover(header().getByRole('button', { name: '命令说明' }))
+    expect(await screen.findByTestId('command-description')).toHaveTextContent('示例')
   })
 })
 

@@ -64,13 +64,22 @@ test('推荐卡按站方的四类给出，每条带 IQ / 费用 / 耗时', async
   expect(card).toHaveTextContent('Luna max')
 })
 
-test('挑选规则挂在标题上 —— 不说清楚，推荐就是个黑箱', async () => {
+test('挑选规则收在标题旁的 ⓘ 里 —— 不说清楚，推荐就是个黑箱', async () => {
   stubFetch([{ body: ratings() }])
   render(<RadarPanel baseUrl={BASE} />)
 
   await waitFor(() => expect(screen.getByTestId('radar-pick-daily_development')).toBeInTheDocument())
-  const title = within(screen.getByTestId('radar-pick-daily_development')).getByTitle(/原始 IQ ≥90/)
-  expect(title).toBeInTheDocument()
+  await userEvent.hover(within(screen.getByTestId('radar-pick-daily_development')).getByRole('button', { name: /挑选规则/ }))
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(/原始 IQ ≥90/)
+})
+
+test('更新时间只在页脚出现一次', async () => {
+  stubFetch([{ body: ratings() }])
+  render(<RadarPanel baseUrl={BASE} />)
+
+  const footer = await screen.findByTestId('radar-updated')
+  expect(footer).toHaveTextContent(/^更新于/)
+  expect(screen.getAllByText(/更新于/)).toHaveLength(1)
 })
 
 // ── 智能效率 ────────────────────────────────────────────────────────────
@@ -159,7 +168,7 @@ test('缺相对成本的格子不画进图里 —— 不硬凑一个 0 放在最
   const { container } = render(<RadarPanel baseUrl={BASE} />)
 
   await waitFor(() => expect(screen.getByTestId('radar-chart')).toBeInTheDocument())
-  expect(container.querySelectorAll('svg circle')).toHaveLength(2)
+  expect(container.querySelectorAll('[data-testid="radar-chart"] circle')).toHaveLength(2)
   // 但它仍然出现在格子表里,只是费用一栏显示 —
   expect(screen.getByTestId('radar-model-b')).toHaveTextContent('—')
 })

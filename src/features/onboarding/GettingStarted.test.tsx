@@ -69,7 +69,7 @@ describe('开始使用清单', () => {
     await waitFor(() => expect(extension).toHaveTextContent('还没连上扩展'))
     expect(within(extension).getByTestId('gs-install-extension')).toBeEnabled()
     expect(within(extension).getByTestId('gs-repair')).toBeEnabled()
-    expect(extension).toHaveTextContent('灵感来源的命令、登录检查、部分小红书视频都需要它')
+    expect(extension).not.toHaveTextContent('灵感来源的命令、登录检查、部分小红书视频都需要它')
 
     const engine = screen.getByTestId('gs-step-engine')
     expect(engine).toHaveTextContent('还没准备')
@@ -82,7 +82,7 @@ describe('开始使用清单', () => {
     expect(host.count('GET /vk/v1/providers')).toBe(0)
   })
 
-  test('模型配置一步说明 Jev 可选,以及没配 Jev 时笔记缺什么', async () => {
+  test('模型配置一步的 ⓘ 说明 Jev 可选,以及没配 Jev 时笔记缺什么', async () => {
     stubHost({
       'GET /browser-bridge/health': { body: bridgeNoExtension },
       'GET /vk/v1/runtime/status': { body: runtime() },
@@ -90,7 +90,9 @@ describe('开始使用清单', () => {
     connected()
     render(<GettingStarted baseUrl={BASE} />)
 
-    expect(await screen.findByTestId('gs-step-providers')).toHaveTextContent(
+    const step = await screen.findByTestId('gs-step-providers')
+    await userEvent.hover(within(step).getByRole('button', { name: '模型配置说明' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
       '给基础处理和深度分析各选一个模型，视频解析才能出结果；Jev 可选，配上后笔记才有行情图、预测核验、来源核对、配图和观点对比',
     )
   })
