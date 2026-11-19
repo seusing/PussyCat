@@ -147,20 +147,6 @@
 .vk-submit-notice button:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 28%, transparent); }
 .vk-submit-notice button:disabled { opacity: .55; }
 
-.vk-smart-mode {
-  margin: 4px 0 8px;
-  border-left: 2px solid var(--color-accent);
-  padding: 7px 0 7px 12px;
-  color: var(--color-fg-dim);
-}
-
-.vk-smart-mode-heading {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.vk-smart-mode-heading strong { color: var(--color-fg); font-weight: 600; }
 
 .vk-manual-settings {
   border-top: 1px solid var(--color-line);

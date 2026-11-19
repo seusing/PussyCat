@@ -11,18 +11,27 @@ const OPEN_DELAY_MS = 400
 
 type Placement = { top: number; left: number }
 
-// 贴士画在 240×147 里,贴着链接框的右下角,让出右下角的上传按钮
+// 贴士画在 240×147 里。最末那颗小圆泡(镜像后在右上角)贴着链接框里的小红书图标,
+// 像是图标冒出来的念头;找不到图标时退回链接框右下角,让出上传按钮。
 const TIP_WIDTH = 240
 const TIP_HEIGHT = 147
+const SMALL_BUBBLE = { x: 210, y: 10.5, r: 4 }
 const RIGHT_INSET = 52
 const BOTTOM_INSET = 6
 const VIEWPORT_MARGIN = 8
 
 function placeInside(anchor: HTMLElement): Placement {
   const rect = anchor.getBoundingClientRect()
+  const logo = anchor.querySelector('.video-source-coverflow-card.is-primary')?.getBoundingClientRect()
+  const left = logo
+    ? logo.left - SMALL_BUBBLE.r - 1 - SMALL_BUBBLE.x
+    : rect.right - RIGHT_INSET - TIP_WIDTH
+  const top = logo
+    ? logo.top + logo.height / 2 - SMALL_BUBBLE.y
+    : rect.bottom - BOTTOM_INSET - TIP_HEIGHT
   return {
-    left: Math.max(VIEWPORT_MARGIN, Math.min(rect.right - RIGHT_INSET - TIP_WIDTH, window.innerWidth - VIEWPORT_MARGIN - TIP_WIDTH)),
-    top: Math.max(VIEWPORT_MARGIN, Math.min(rect.bottom - BOTTOM_INSET - TIP_HEIGHT, window.innerHeight - VIEWPORT_MARGIN - TIP_HEIGHT)),
+    left: Math.max(VIEWPORT_MARGIN, Math.min(left, window.innerWidth - VIEWPORT_MARGIN - TIP_WIDTH)),
+    top: Math.max(VIEWPORT_MARGIN, Math.min(top, window.innerHeight - VIEWPORT_MARGIN - TIP_HEIGHT)),
   }
 }
 
@@ -47,7 +56,7 @@ const CLOUD_FRAMES: ReadonlyArray<readonly [string, string, string]> = [
 ]
 
 /**
- * 链接框里出现小红书链接时,在链接框右下角冒出的手绘云朵贴士,问要不要用点点免费解析。
+ * 链接框里出现小红书链接时,从链接框里的小红书图标冒出的手绘云朵贴士,问要不要用点点免费解析。
  * 弹出期间描边逐帧抖动、整体分步上下浮动;不加遮罩、不锁页面、不抢输入框的焦点。
  * 点「用模型」、按 Esc、点贴士和链接框以外的地方,都等于继续用模型。
  * 出现前先停顿片刻,粘贴或输入告一段落再弹。

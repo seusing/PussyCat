@@ -518,7 +518,7 @@ describe('VkPanel', () => {
     await user.hover(screen.getByRole('button', { name: '重点说明' }))
     expect(await screen.findByRole('tooltip')).toHaveTextContent('这里填写的内容会作为本次分析目标')
     await user.unhover(screen.getByRole('button', { name: '重点说明' }))
-    expect(screen.getByTestId('vk-smart-mode')).toHaveTextContent(/^智能处理已开启$/)
+    expect(screen.queryByText('智能处理已开启')).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: /你想重点了解什么/ })).toBe(screen.getByTestId('vk-user-goal'))
     expect(screen.queryByTestId('vk-advanced-settings')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('vk-capability-toggle'))

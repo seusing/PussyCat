@@ -1603,12 +1603,6 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
             style={fieldStyle}
           />
         </label>
-        <div data-testid="vk-smart-mode" className="vk-smart-mode text-xs">
-          <div className="vk-smart-mode-heading">
-            <strong>智能处理已开启</strong>
-            <InfoTip label="智能处理说明"><p>自动判断内容类型、字幕或语音质量、是否需要画面，以及处理深度。</p></InfoTip>
-          </div>
-        </div>
         {diagnosticOverridesOpen && diagnosticOverridesHost.current && createPortal(<details open data-testid="vk-advanced-settings" className="vk-manual-settings mt-3 text-xs">
           <summary className="vk-settings-summary">手动覆盖</summary>
           <div className="vk-manual-settings-body">
