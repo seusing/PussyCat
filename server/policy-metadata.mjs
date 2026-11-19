@@ -296,6 +296,79 @@ export const REVIEWED_RECORDS = new Map([
       residues: [],
     },
   }],
+
+  // ── browser-account-switch ─────────────────────────────────────────────────
+  // 爪爪原生 switch-account(opencli-overrides/_shared/account-switch.js + 各站点 switch-account.js)。
+  // 先跑一次上游 whoami 记下当前账号,goto 站点首页(未登录则登录页),前台窗口里由用户自己退出、登录;
+  // 之后每 2s 只读该站会话 cookie(YouTube 读页面 ytcfg),变了才再跑一次 whoami。命令自身不写 cookie、不提交表单。
+  ['xiaohongshu/switch-account', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu/switch-account') },
+    // 命令内最多等 300s(account-switch.js 的 WAIT_SECONDS),Host 留 30s 收尾。
+    commandTimeoutMs: 330_000,
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 会话指纹:creator.xiaohongshu.com 的 web_session。
+      authorities: ['browser-profile', 'public-network'],
+      // 输出换号前后的账号名,即本机登录的是谁。
+      exposure: 'personal',
+      effects: [],
+      // 读现有登录态(consume),并等用户在页面里登录出新的登录态(produce)。
+      credentialFlow: 'both',
+      // siteSession:'persistent',与 whoami 共用 site:xiaohongshu 会话。
+      residues: ['persistent-session'],
+    },
+  }],
+  ['bilibili/switch-account', {
+    get reviewedAgainst() { return shapeOf('bilibili/switch-account') },
+    // 命令内最多等 300s(account-switch.js 的 WAIT_SECONDS),Host 留 30s 收尾。
+    commandTimeoutMs: 330_000,
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 会话指纹:www.bilibili.com 的 SESSDATA / DedeUserID。
+      authorities: ['browser-profile', 'public-network'],
+      // 输出换号前后的账号名,即本机登录的是谁。
+      exposure: 'personal',
+      effects: [],
+      // 读现有登录态(consume),并等用户在页面里登录出新的登录态(produce)。
+      credentialFlow: 'both',
+      // siteSession:'persistent',与 whoami 共用 site:bilibili 会话。
+      residues: ['persistent-session'],
+    },
+  }],
+  ['twitter/switch-account', {
+    get reviewedAgainst() { return shapeOf('twitter/switch-account') },
+    // 命令内最多等 300s(account-switch.js 的 WAIT_SECONDS),Host 留 30s 收尾。
+    commandTimeoutMs: 330_000,
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 会话指纹:x.com 的 auth_token / twid。
+      authorities: ['browser-profile', 'public-network'],
+      // 输出换号前后的账号名,即本机登录的是谁。
+      exposure: 'personal',
+      effects: [],
+      // 读现有登录态(consume),并等用户在页面里登录出新的登录态(produce)。
+      credentialFlow: 'both',
+      // siteSession:'persistent',与 whoami 共用 site:twitter 会话。
+      residues: ['persistent-session'],
+    },
+  }],
+  ['youtube/switch-account', {
+    get reviewedAgainst() { return shapeOf('youtube/switch-account') },
+    // 命令内最多等 300s(account-switch.js 的 WAIT_SECONDS),Host 留 30s 收尾。
+    commandTimeoutMs: 330_000,
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 会话指纹:www.youtube.com 页面上的 ytcfg LOGGED_IN / DATASYNC_ID。
+      authorities: ['browser-profile', 'public-network'],
+      // 输出换号前后的账号名,即本机登录的是谁。
+      exposure: 'personal',
+      effects: [],
+      // 读现有登录态(consume),并等用户在页面里登录出新的登录态(produce)。
+      credentialFlow: 'both',
+      // siteSession:'persistent',与 whoami 共用 site:youtube 会话。
+      residues: ['persistent-session'],
+    },
+  }],
 ])
 
 // reviewedCarry 同样惰性 + memo:基准快照里该命令的沿用比对哈希。
@@ -318,4 +391,12 @@ export const BROWSER_COOKIE_READ_PILOT = new Set([
   'bilibili/whoami', 'bilibili/hot',
   'twitter/whoami', 'twitter/timeline',
   'youtube/whoami', 'youtube/subscriptions',
+])
+
+/**
+ * browser-account-switch 的显式成员集:爪爪原生的四条切换账号命令。
+ * 与试点分开成组,因为它要 credentialFlow 'both'(用户在页面里登录出新会话),试点只收 consume。
+ */
+export const BROWSER_ACCOUNT_SWITCH = new Set([
+  'xiaohongshu/switch-account', 'bilibili/switch-account', 'twitter/switch-account', 'youtube/switch-account',
 ])

@@ -116,7 +116,7 @@ const defaultFindNpmCli = () => {
 }
 
 // 宿主根目录(仓库或 dist-host)下的原生命令源文件。
-const defaultOverridesDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'opencli-overrides', 'xiaohongshu')
+const defaultOverridesDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'opencli-overrides')
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 

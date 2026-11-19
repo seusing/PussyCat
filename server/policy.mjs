@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { isCompleteRecord } from './policy-types.mjs'
-import { BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
+import { BROWSER_ACCOUNT_SWITCH, BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
 import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewCarryHash, reviewShapeHash } from './policy-fingerprint.mjs'
 
 export class RequestPolicyError extends Error {
@@ -56,12 +56,20 @@ const TIER_ALLOWANCES = {
     credentialFlows: ['none', 'consume'],
     residues: ['persistent-session'],
   },
+  // 切换账号:在试点之上只多放 credentialFlow 的 produce / both;effects 仍须为 []。
+  'browser-account-switch': {
+    authorities: ['browser-profile', 'public-network'],
+    exposures: ['personal'],
+    credentialFlows: ['consume', 'produce', 'both'],
+    residues: ['persistent-session'],
+  },
 }
 
 function tierOf(command) {
   // 试点成员是**显式 key 集**,不是派生谓词(理由见 policy-metadata.mjs 的 BROWSER_COOKIE_READ_PILOT)。
   // 它先于 local-direct 判定,但二者集合天然不交(试点八条全是 browser===true)。
   if (BROWSER_COOKIE_READ_PILOT.has(command.command)) return 'browser-cookie-read-pilot'
+  if (BROWSER_ACCOUNT_SWITCH.has(command.command)) return 'browser-account-switch'
   if (command.browser === false && command.strategy === 'local') return 'local-direct'
   return null
 }
@@ -231,7 +239,7 @@ export function buildExecutionPolicy(snapshot) {
   // 这张表是 Host 内部的执行期约束,前端无从看见也不需要看见。
   const argvConstraintByKey = new Map()
   for (const command of snapshot.commands) {
-    if (!BROWSER_COOKIE_READ_PILOT.has(command.command)) continue
+    if (!BROWSER_COOKIE_READ_PILOT.has(command.command) && !BROWSER_ACCOUNT_SWITCH.has(command.command)) continue
     argvConstraintByKey.set(command.command, buildArgvConstraint(command))
   }
 

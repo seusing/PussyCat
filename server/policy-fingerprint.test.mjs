@@ -185,6 +185,11 @@ describe('decisionFingerprint', () => {
       ['twitter/timeline', '941d5b951e3d29dc3bb99e128191372fc28ca5f10e10149734004e7fdbf53430'],
       ['youtube/whoami', '9ba8a51c5ea84d624b8f77cc54279e82305fec8ef95cf640c8013e461316eb44'],
       ['youtube/subscriptions', 'c18ad0f50381a177a35da43cc560658b799698d7b3798c4a77f52cde8ed28224'],
+      // browser-account-switch 四条(爪爪原生 switch-account)
+      ['xiaohongshu/switch-account', '2d0eb01609ac95e25646fbca5b64d9290e67ff4dd09a252a6f2ad2ae0c70c35e'],
+      ['bilibili/switch-account', '796c51cc3b03d4e236862603acad4f7499a6a902f124b33609cdd9bd2480632b'],
+      ['twitter/switch-account', '66b00514205cd2e67bae14815d4276545a47e01bd2d6b3c209dee33a7da82878'],
+      ['youtube/switch-account', 'c2d3bea70ee5bb10f0d47a7c617b8b293b7c474de552c41969fdd697278111c2'],
     ])
     // 先证明冻结集就是 REVIEWED_RECORDS 的全部,否则将来再加记录时,
     // 这个冻结集会**静默地只覆盖一部分**。

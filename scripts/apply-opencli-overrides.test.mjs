@@ -24,6 +24,7 @@ const upstream = () => [
   { site: 'xiaohongshu', name: 'saved', args: [] },
   { site: 'xiaohongshu', name: 'search', args: [{ name: 'query', type: 'str', required: true, positional: true }], columns: ['rank', 'title', 'author', 'likes', 'published_at', 'url'] },
   { site: 'xiaohongshu', name: 'user', args: [] },
+  ...['xiaohongshu', 'bilibili', 'twitter', 'youtube'].map((site) => ({ site, name: 'login', args: [] })),
 ]
 
 test('saved 幂等追加收藏夹列表开关', () => {

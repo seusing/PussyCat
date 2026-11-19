@@ -743,16 +743,16 @@ describe('/start 状态码表逐格(HTTP 层)', () => {
     expect(await res.json()).toEqual({ runId: 'r-ready-1' })
   })
 
-  // 2026-10-29 起运行前不再确认:全部十八条审定命令不带 acknowledgement 也受理。
+  // 2026-10-29 起运行前不再确认:全部二十二条审定命令不带 acknowledgement 也受理。
   // 浏览器预检注入假实现,绝不碰本机真实的 daemon。
-  it('202:全部十八条审定命令不带 acknowledgement 也受理', async () => {
+  it('202:全部二十二条审定命令不带 acknowledgement 也受理', async () => {
     const browserBridgeRepair = vi.fn(async () => ({ steps: [], alreadyOk: true }))
     const { baseUrl } = await setup({
       policy: realPolicy,
       browserBridgeRepair,
       runManagerOptions: { spawnImpl: () => new FakeChild(), commandTimeoutMs: 60_000, maxConcurrentRuns: 50 },
     })
-    expect(realPolicy.allowedCommands.size).toBe(18)
+    expect(realPolicy.allowedCommands.size).toBe(22)
     let index = 0
     for (const commandKey of realPolicy.allowedCommands) {
       index += 1

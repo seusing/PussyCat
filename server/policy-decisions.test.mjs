@@ -61,9 +61,9 @@ describe('准入算法', () => {
     expect(decisions.size).toBe(snapshot.commands.length)
   })
 
-  it('可执行面 = 三条 local-direct + 十五条试点,且全部是 ready', () => {
+  it('可执行面 = 三条 local-direct + 十五条试点 + 四条切换账号,且全部是 ready', () => {
     const runnable = [...decisions.values()].filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
-    expect(runnable.length).toBe(3 + 15)
+    expect(runnable.length).toBe(3 + 15 + 4)
     expect(runnable.every((d) => d.state === 'ready')).toBe(true)
   })
 

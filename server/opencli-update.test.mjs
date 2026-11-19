@@ -16,8 +16,11 @@ const TARBALL_URL = `${MIRROR}/@jackwener/opencli/-/opencli-${VERSION}.tgz`
 const CHUNKS = [Buffer.from('aaaa'), Buffer.from('bbbb'), Buffer.from('cccc')]
 const TARBALL = Buffer.concat(CHUNKS)
 const integrityOf = (bytes) => `sha512-${createHash('sha512').update(bytes).digest('base64')}`
-const OVERRIDES_DIR = resolve('opencli-overrides/xiaohongshu')
-const OVERRIDE_FILES = readdirSync(OVERRIDES_DIR).filter((name) => name.endsWith('.js') && !name.includes('.test.'))
+const OVERRIDES_DIR = resolve('opencli-overrides')
+// 相对 opencli-overrides/ 的路径,如 xiaohongshu/search.js、_shared/account-switch.js
+const OVERRIDE_FILES = readdirSync(OVERRIDES_DIR, { recursive: true })
+  .map((name) => String(name).replaceAll('\\', '/'))
+  .filter((name) => name.endsWith('.js') && !name.includes('.test.'))
 const REVIEWED_RETAINED = [...REVIEWED_RECORDS.keys()].filter((key) => RETAINED_SITE_KEYS.includes(key.split('/')[0]))
 
 const dirs = []
@@ -45,9 +48,12 @@ function writePackage(dir, { version = VERSION, extraSites = ['hupu', 'mercury']
     mkdirSync(join(root, 'clis', site), { recursive: true })
     writeFileSync(join(root, 'clis', site, 'hot.js'), '')
   }
-  // 上游包里小红书适配器目录本来就有与原生命令同名的文件,套补丁时要覆盖它们。
-  for (const name of OVERRIDE_FILES) writeFileSync(join(root, 'clis', 'xiaohongshu', name), 'upstream content')
+  // 上游包里本来就有与原生命令同名的文件,套补丁时要覆盖它们。
   mkdirSync(join(root, 'clis', '_shared'), { recursive: true })
+  for (const name of OVERRIDE_FILES) {
+    mkdirSync(dirname(join(root, 'clis', name)), { recursive: true })
+    writeFileSync(join(root, 'clis', name), 'upstream content')
+  }
   writeFileSync(join(root, 'clis', '_shared', 'util.js'), '')
   return root
 }
@@ -252,7 +258,7 @@ describe('更新成功', () => {
     expect(xiaohongshu).toEqual(expect.arrayContaining(['collections', 'search', 'user-posts', 'note', 'comments', 'saved']))
     expect(manifest.find((entry) => entry.name === 'search').args.map((arg) => arg.name)).toEqual(['query', 'limit', 'sort', 'time', 'type'])
     for (const name of OVERRIDE_FILES) {
-      expect(readFileSync(join(installedRoot(ctx.root), 'clis', 'xiaohongshu', name), 'utf8'), name).toBe(readFileSync(join(OVERRIDES_DIR, name), 'utf8'))
+      expect(readFileSync(join(installedRoot(ctx.root), 'clis', name), 'utf8'), name).toBe(readFileSync(join(OVERRIDES_DIR, name), 'utf8'))
     }
   })
 

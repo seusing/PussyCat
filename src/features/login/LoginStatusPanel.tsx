@@ -59,7 +59,7 @@ function AccountOperationMenu({
   site,
   state,
   busy,
-  loginCommand,
+  switchCommand,
   logoutCommand,
   onRefresh,
   onOpenCommand,
@@ -67,7 +67,7 @@ function AccountOperationMenu({
   site: string
   state: LoginCheckState
   busy: boolean
-  loginCommand?: CommandManifest
+  switchCommand?: CommandManifest
   logoutCommand?: CommandManifest
   onRefresh: () => void
   onOpenCommand: (command: CommandManifest) => void
@@ -225,10 +225,10 @@ function AccountOperationMenu({
             role="menuitem"
             tabIndex={-1}
             className="login-operation-item"
-            disabled={!loginCommand}
-            title={loginCommand ? '进入登录命令详情以切换账号' : '当前站点暂未提供登录命令'}
+            disabled={!switchCommand}
+            title={switchCommand ? '进入切换账号命令详情' : '当前站点暂未提供切换账号命令'}
             onPointerMove={focusOnHover}
-            onClick={() => loginCommand && runAction(() => onOpenCommand(loginCommand))}
+            onClick={() => switchCommand && runAction(() => onOpenCommand(switchCommand))}
           >
             <SwitchCamera size={15} aria-hidden="true" />
             <span>切换账号</span>
@@ -280,7 +280,7 @@ export function LoginStatusPanel() {
           state,
           entry: tracked,
           supportedSite: siteForCommand(command.site),
-          loginCommand: siteCommands.find((candidate) => ['login', 'signin', 'sign-in'].includes(candidate.name)),
+          switchCommand: siteCommands.find((candidate) => candidate.name === 'switch-account'),
           logoutCommand: siteCommands.find((candidate) => ['logout', 'signout', 'sign-out'].includes(candidate.name)),
         }
       })
@@ -451,7 +451,7 @@ export function LoginStatusPanel() {
                       site={row.site}
                       state={row.state}
                       busy={busy}
-                      loginCommand={row.loginCommand}
+                      switchCommand={row.switchCommand}
                       logoutCommand={row.logoutCommand}
                       onRefresh={() => refreshRow(row)}
                       onOpenCommand={openAccountCommand}

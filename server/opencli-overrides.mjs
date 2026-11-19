@@ -1,20 +1,26 @@
-// 把爪爪的原生命令(opencli-overrides/xiaohongshu/)套进 OpenCLI 包:拷适配器文件,并改写 cli-manifest.json。
+// 把爪爪的原生命令(opencli-overrides/<站点>/)套进 OpenCLI 包:拷适配器文件,并改写 cli-manifest.json。
 // 构建宿主 runtime 和运行时更新 OpenCLI 共用这一份逻辑,幂等。
 import { copyFileSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
+// 相对 opencli-overrides/ 与包内 clis/ 的路径
 const FILES = [
-  'collection-helpers.js',
-  'saved.js',
-  'collections.js',
-  'search.js',
-  'user-posts.js',
-  'user-posts-helpers.js',
-  'short-link.js',
-  'note-helpers.js',
-  'note.js',
-  'comments.js',
-  'download.js',
+  'xiaohongshu/collection-helpers.js',
+  'xiaohongshu/saved.js',
+  'xiaohongshu/collections.js',
+  'xiaohongshu/search.js',
+  'xiaohongshu/user-posts.js',
+  'xiaohongshu/user-posts-helpers.js',
+  'xiaohongshu/short-link.js',
+  'xiaohongshu/note-helpers.js',
+  'xiaohongshu/note.js',
+  'xiaohongshu/comments.js',
+  'xiaohongshu/download.js',
+  '_shared/account-switch.js',
+  'xiaohongshu/switch-account.js',
+  'bilibili/switch-account.js',
+  'twitter/switch-account.js',
+  'youtube/switch-account.js',
 ]
 
 const browserCommand = {
@@ -35,6 +41,28 @@ const ARG_PATCHES = {
 }
 
 // 整条写入：新增命令插在 after 指向的命令之后；上游已有的同名条目（如 search）原位整条替换，不保留上游的参数。
+// 切换账号:各站点同一套流程(_shared/account-switch.js),插在上游 login 后面
+const switchAccountEntry = (site, domain, columns) => ({
+  after: 'login',
+  entry: {
+    site,
+    name: 'switch-account',
+    description: `Open ${site} in the browser and wait until a different account is logged in`,
+    access: 'write',
+    domain,
+    strategy: 'cookie',
+    browser: true,
+    args: [],
+    columns: ['status', 'previous', 'logged_in', 'site', ...columns],
+    type: 'js',
+    modulePath: `${site}/switch-account.js`,
+    sourceFile: `${site}/switch-account.js`,
+    navigateBefore: false,
+    siteSession: 'persistent',
+    defaultWindowMode: 'foreground',
+  },
+})
+
 const NEW_ENTRIES = [
   {
     after: 'saved',
@@ -90,30 +118,34 @@ const NEW_ENTRIES = [
       sourceFile: 'xiaohongshu/user-posts.js',
     },
   },
+  switchAccountEntry('xiaohongshu', 'creator.xiaohongshu.com', ['username', 'followers']),
+  switchAccountEntry('bilibili', 'www.bilibili.com', ['id', 'username', 'level']),
+  switchAccountEntry('twitter', 'x.com', ['username', 'url']),
+  switchAccountEntry('youtube', 'www.youtube.com', ['name']),
 ]
 
 /**
  * @param {object} options
  * @param {string} options.packageRoot OpenCLI 包根目录(含 cli-manifest.json 与 clis/)
- * @param {string} options.sourceDir 原生命令源文件目录(opencli-overrides/xiaohongshu)
+ * @param {string} options.sourceDir 原生命令源文件目录(opencli-overrides)
  */
 export function applyOpencliOverrides({ packageRoot, sourceDir }) {
   if (!existsSync(packageRoot)) {
     throw new Error(`[opencli-overrides] package not found: ${packageRoot}`)
   }
 
-  const destination = join(packageRoot, 'clis/xiaohongshu')
-  mkdirSync(destination, { recursive: true })
-  for (const name of FILES) {
-    copyFileSync(join(sourceDir, name), join(destination, name))
+  for (const file of FILES) {
+    const destination = join(packageRoot, 'clis', file)
+    mkdirSync(dirname(destination), { recursive: true })
+    copyFileSync(join(sourceDir, file), destination)
   }
 
   const manifestPath = join(packageRoot, 'cli-manifest.json')
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-  const findEntry = (name) => manifest.find((entry) => entry.site === 'xiaohongshu' && entry.name === name)
+  const findEntry = (site, name) => manifest.find((entry) => entry.site === site && entry.name === name)
 
   for (const [name, args] of Object.entries(ARG_PATCHES)) {
-    const entry = findEntry(name)
+    const entry = findEntry('xiaohongshu', name)
     if (!entry) throw new Error(`[opencli-overrides] xiaohongshu/${name} is missing from cli-manifest.json`)
     for (const arg of args) {
       const index = entry.args.findIndex((existing) => existing.name === arg.name)
@@ -123,13 +155,13 @@ export function applyOpencliOverrides({ packageRoot, sourceDir }) {
   }
 
   for (const { after, entry } of NEW_ENTRIES) {
-    const existing = findEntry(entry.name)
+    const existing = findEntry(entry.site, entry.name)
     if (existing) {
       manifest[manifest.indexOf(existing)] = entry
       continue
     }
-    const anchor = findEntry(after)
-    if (!anchor) throw new Error(`[opencli-overrides] xiaohongshu/${after} is missing from cli-manifest.json`)
+    const anchor = findEntry(entry.site, after)
+    if (!anchor) throw new Error(`[opencli-overrides] ${entry.site}/${after} is missing from cli-manifest.json`)
     manifest.splice(manifest.indexOf(anchor) + 1, 0, entry)
   }
 

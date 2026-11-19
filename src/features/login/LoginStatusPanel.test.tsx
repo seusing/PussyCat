@@ -27,6 +27,7 @@ function setup(over: Partial<Parameters<typeof useAppStore.setState>[0]> = {}) {
   useAppStore.setState({
     commands: [
       command('xiaohongshu', 'whoami'), command('xiaohongshu', 'login', 'write'),
+      command('xiaohongshu', 'switch-account', 'write'),
       command('bilibili', 'whoami'), command('bilibili', 'login', 'write'),
       command('chatgpt', 'whoami'),
     ],
@@ -172,14 +173,21 @@ test('已确认站点选择刷新状态只把该站入队', async () => {
   expect(useAppStore.getState().loginQueue).toEqual(['xiaohongshu'])
 })
 
-test('切换账号进入该站点真实 login 命令详情；无 logout 命令时退出项置灰', async () => {
+test('切换账号进入该站点的 switch-account 命令详情；无 logout 命令时退出项置灰', async () => {
   render(<LoginStatusPanel />)
   await userEvent.click(screen.getByTestId('login-operation-xiaohongshu'))
   const menu = screen.getByRole('menu', { name: '小红书账号操作' })
   expect(within(menu).getByRole('menuitem', { name: '退出当前账号' })).toBeDisabled()
   await userEvent.click(within(menu).getByRole('menuitem', { name: '切换账号' }))
-  expect(useAppStore.getState().selected?.command).toBe('xiaohongshu/login')
+  expect(useAppStore.getState().selected?.command).toBe('xiaohongshu/switch-account')
   expect(useAppStore.getState().activeModule).toBe('commands')
+})
+
+test('站点没有切换账号命令时切换项置灰，不拿 login 顶替', async () => {
+  render(<LoginStatusPanel />)
+  await userEvent.click(screen.getByTestId('login-operation-bilibili'))
+  const menu = screen.getByRole('menu', { name: 'B站账号操作' })
+  expect(within(menu).getByRole('menuitem', { name: '切换账号' })).toBeDisabled()
 })
 
 test('菜单支持方向键与 Escape，并将焦点归还触发器', async () => {

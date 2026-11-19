@@ -96,6 +96,10 @@ const ZH: Record<string, CommandCopy> = {
     title: '登录账号',
     description: '打开小红书登录页，等浏览器完成登录',
   },
+  'xiaohongshu/switch-account': {
+    title: '切换账号',
+    description: '在浏览器里打开小红书，退出当前账号并登录另一个，换好后自动结束',
+  },
   'xiaohongshu/note': {
     title: '笔记详情',
     description: '读取小红书笔记的正文和互动数据',
@@ -220,6 +224,10 @@ const ZH: Record<string, CommandCopy> = {
   'bilibili/login': {
     title: '登录账号',
     description: '打开 B站登录页，等浏览器完成登录',
+  },
+  'bilibili/switch-account': {
+    title: '切换账号',
+    description: '在浏览器里打开 B站，退出当前账号并登录另一个，换好后自动结束',
   },
   'bilibili/me': {
     title: '我的资料',
@@ -372,6 +380,10 @@ const ZH: Record<string, CommandCopy> = {
     title: '登录账号',
     description: '打开 X 登录页，等浏览器完成登录',
   },
+  'twitter/switch-account': {
+    title: '切换账号',
+    description: '在浏览器里打开 X，退出当前账号并登录另一个，换好后自动结束',
+  },
   'twitter/mute-word': {
     title: '添加屏蔽词',
     description: '给你的 X 账号添加一个屏蔽词或短语',
@@ -481,6 +493,10 @@ const ZH: Record<string, CommandCopy> = {
   'youtube/login': {
     title: '登录账号',
     description: '打开 YouTube 登录页，等浏览器完成登录',
+  },
+  'youtube/switch-account': {
+    title: '切换账号',
+    description: '在浏览器里打开 YouTube，退出当前账号并登录另一个，换好后自动结束',
   },
   'youtube/playlist': {
     title: '播放列表内容',

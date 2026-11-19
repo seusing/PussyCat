@@ -1,10 +1,11 @@
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createHostServer } from './host-server.mjs'
 import { resolveOpenCliEntry, resolveManifestPath } from './opencli-entry.mjs'
 import { createOpencliRuntime } from './opencli-runtime.mjs'
+import { applyOpencliOverrides } from './opencli-overrides.mjs'
 import { loadExecutionPolicy } from './policy.mjs'
 import { createCatalogService } from './catalog-service.mjs'
 import { VkSidecarManager } from './vk-sidecar.mjs'
@@ -98,6 +99,15 @@ try {
   })
   // 打包快照是内置版本的目录;启动时生效的是更新装下的版本,就在后台按它的目录重算策略。
   if (opencliRuntime.active()) {
+    // 更新装下的版本套的是当时那版爪爪的原生命令;爪爪升级后先按本版重套一次(幂等),新增的原生命令才进目录。
+    try {
+      applyOpencliOverrides({
+        packageRoot: resolve(dirname(opencliRuntime.entry()), '..', '..'),
+        sourceDir: resolve(projectRoot, 'opencli-overrides'),
+      })
+    } catch (error) {
+      console.warn(`[opencli-host] re-applying native commands to OpenCLI ${opencliRuntime.version()} failed: ${error instanceof Error ? error.message : error}`)
+    }
     catalogService.refresh().catch((error) => {
       console.warn(`[opencli-host] catalog refresh for OpenCLI ${opencliRuntime.version()} failed: ${error instanceof Error ? error.message : error}`)
     })

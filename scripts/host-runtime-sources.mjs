@@ -16,7 +16,7 @@ export const HOST_SOURCE_SETS = [
   { from: 'src/shared', to: 'src/shared', skip: (rel) => rel.includes('.test.') },
   { from: 'public/catalog.snapshot.json', to: 'public/catalog.snapshot.json' },
   // 运行时更新 OpenCLI 后,原生命令要重新套进新包,源文件得随宿主走(测试与测试样本不进包)。
-  { from: 'opencli-overrides/xiaohongshu', to: 'opencli-overrides/xiaohongshu', skip: (rel) => rel.includes('.test.') || rel === 'xhs-link-samples.json' },
+  { from: 'opencli-overrides', to: 'opencli-overrides', skip: (rel) => rel.includes('.test.') || rel.endsWith('xhs-link-samples.json') },
 ]
 
 function walk(dir, acc = []) {

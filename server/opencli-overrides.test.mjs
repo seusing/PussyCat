@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { applyOpencliOverrides } from './opencli-overrides.mjs'
 
-const sourceDir = resolve('opencli-overrides/xiaohongshu')
+const sourceDir = resolve('opencli-overrides')
 const dirs = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
@@ -21,7 +21,11 @@ function packageWith(entries) {
 const upstream = () => [
   { site: 'xiaohongshu', name: 'saved', args: [] },
   { site: 'xiaohongshu', name: 'user', args: [] },
+  { site: 'xiaohongshu', name: 'login', args: [] },
   { site: 'bilibili', name: 'hot', args: [] },
+  { site: 'bilibili', name: 'login', args: [] },
+  { site: 'twitter', name: 'login', args: [] },
+  { site: 'youtube', name: 'login', args: [] },
 ]
 
 describe('applyOpencliOverrides', () => {
@@ -30,9 +34,25 @@ describe('applyOpencliOverrides', () => {
     applyOpencliOverrides({ packageRoot, sourceDir })
     const manifest = JSON.parse(readFileSync(join(packageRoot, 'cli-manifest.json'), 'utf8'))
     expect(manifest.filter((entry) => entry.site === 'xiaohongshu').map((entry) => entry.name))
-      .toEqual(['saved', 'collections', 'search', 'user', 'user-posts'])
+      .toEqual(['saved', 'collections', 'search', 'user', 'user-posts', 'login', 'switch-account'])
     expect(manifest.find((entry) => entry.site === 'bilibili')).toEqual({ site: 'bilibili', name: 'hot', args: [] })
-    expect(readFileSync(join(packageRoot, 'clis', 'xiaohongshu', 'search.js'), 'utf8')).toBe(readFileSync(join(sourceDir, 'search.js'), 'utf8'))
+    expect(readFileSync(join(packageRoot, 'clis', 'xiaohongshu', 'search.js'), 'utf8')).toBe(readFileSync(join(sourceDir, 'xiaohongshu', 'search.js'), 'utf8'))
+  })
+
+  it('四个站点各加一条切换账号,插在上游 login 后面,共用 _shared 流程', () => {
+    const packageRoot = packageWith(upstream())
+    applyOpencliOverrides({ packageRoot, sourceDir })
+    const manifest = JSON.parse(readFileSync(join(packageRoot, 'cli-manifest.json'), 'utf8'))
+    for (const site of ['xiaohongshu', 'bilibili', 'twitter', 'youtube']) {
+      const login = manifest.findIndex((entry) => entry.site === site && entry.name === 'login')
+      expect(manifest[login + 1], site).toMatchObject({
+        site, name: 'switch-account', access: 'write', browser: true, args: [],
+        modulePath: `${site}/switch-account.js`, siteSession: 'persistent', defaultWindowMode: 'foreground',
+      })
+      expect(readFileSync(join(packageRoot, 'clis', site, 'switch-account.js'), 'utf8')).toContain('_shared/account-switch.js')
+    }
+    expect(readFileSync(join(packageRoot, 'clis', '_shared', 'account-switch.js'), 'utf8'))
+      .toBe(readFileSync(join(sourceDir, '_shared', 'account-switch.js'), 'utf8'))
   })
 
   it('幂等:套两次结果一样', () => {
@@ -56,15 +76,19 @@ describe('applyOpencliOverrides', () => {
     const packageRoot = mkdtempSync(join(tmpdir(), '爪爪-overrides-'))
     dirs.push(packageRoot)
     writeFileSync(join(packageRoot, 'cli-manifest.json'), JSON.stringify(upstream()))
-    const files = readdirSync(sourceDir).filter((name) => name.endsWith('.js') && !name.includes('.test.'))
-    mkdirSync(join(packageRoot, 'clis', 'xiaohongshu'), { recursive: true })
-    for (const name of files) writeFileSync(join(packageRoot, 'clis', 'xiaohongshu', name), 'old content')
+    const files = readdirSync(sourceDir, { recursive: true })
+      .map((name) => String(name).replaceAll('\\', '/'))
+      .filter((name) => name.endsWith('.js') && !name.includes('.test.'))
+    for (const name of files) {
+      mkdirSync(dirname(join(packageRoot, 'clis', name)), { recursive: true })
+      writeFileSync(join(packageRoot, 'clis', name), 'old content')
+    }
 
     expect(() => applyOpencliOverrides({ packageRoot, sourceDir })).not.toThrow()
 
-    expect(files).toHaveLength(11)
+    expect(files).toHaveLength(16)
     for (const name of files) {
-      expect(readFileSync(join(packageRoot, 'clis', 'xiaohongshu', name), 'utf8'), name).toBe(readFileSync(join(sourceDir, name), 'utf8'))
+      expect(readFileSync(join(packageRoot, 'clis', name), 'utf8'), name).toBe(readFileSync(join(sourceDir, name), 'utf8'))
     }
     const manifest = JSON.parse(readFileSync(join(packageRoot, 'cli-manifest.json'), 'utf8'))
     expect(manifest.map((entry) => entry.name)).toEqual(expect.arrayContaining(['collections', 'search', 'user-posts']))
