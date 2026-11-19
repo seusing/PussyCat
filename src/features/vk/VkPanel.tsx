@@ -72,6 +72,7 @@ import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow, isXiaohongshuSource } from './VideoSourceCoverFlow'
 import { DotSuggestTip, type XhsParser } from './DotSuggestTip'
 import { DotMascot } from './DotMascot'
+import { XhsParserLabel } from './XhsParserLabel'
 import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { VkTaskTable } from './VkTaskTable'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
@@ -1738,7 +1739,8 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         <div className="flex items-center gap-2">
           {hasXiaohongshu && (
             <ToggleSwitch
-              label="用点点"
+              label={<XhsParserLabel dot={dotSelected} />}
+              ariaLabel={dotSelected ? '用点点' : '用模型'}
               tone="success"
               testId="vk-xhs-dot-switch"
               className="vk-xhs-dot-switch"

@@ -97,8 +97,24 @@
   line-height: 1.5;
 }
 
-/* 提交行里的「用点点」开关,只在链接框里有小红书链接时出现;打开时右边冒出点点。 */
+/* 提交行里的「用模型 / 用点点」开关,只在链接框里有小红书链接时出现;打开时右边冒出点点。 */
 .vk-xhs-dot-switch { min-height: 28px; color: var(--color-fg-dim); font-size: 13px; }
+.vk-parser-label { display: inline-flex; align-items: baseline; }
+/* 荧光笔:只铺字的下半截,模型蓝、点点绿;注册成颜色属性,切换时才能渐变 */
+@property --vk-marker { syntax: '<color>'; inherits: false; initial-value: transparent; }
+.vk-parser-word {
+  --vk-marker: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  display: inline-flex;
+  margin-left: 1px;
+  padding: 0 3px;
+  background: linear-gradient(transparent 52%, var(--vk-marker) 52%, var(--vk-marker) 90%, transparent 90%);
+  color: var(--color-fg);
+  font-weight: 600;
+  transition: --vk-marker 200ms ease;
+}
+.vk-parser-word.is-dot { --vk-marker: color-mix(in srgb, var(--color-success) 50%, transparent); }
+.vk-parser-word-chars { display: inline-flex; }
+.vk-parser-char { display: inline-block; }
 
 /* 提交按钮上方的预检提示:只提醒(warning)或说明为什么暂停了提交(danger)。 */
 .vk-submit-notice {

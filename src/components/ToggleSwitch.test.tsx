@@ -29,4 +29,10 @@ describe('ToggleSwitch', () => {
     expect(container.querySelector('.toggle-switch')).toHaveClass('is-accent')
     expect(container.querySelector('.toggle-switch-indicator')).not.toBeNull()
   })
+
+  test('文字可以是节点,读屏名字用 ariaLabel', async () => {
+    render(<ToggleSwitch label={<span>用<b>模型</b></span>} ariaLabel="用模型" checked={false} onChange={() => {}} />)
+    expect(screen.getByRole('switch', { name: '用模型' })).not.toBeChecked()
+    expect(screen.getByText('模型')).toBeInTheDocument()
+  })
 })

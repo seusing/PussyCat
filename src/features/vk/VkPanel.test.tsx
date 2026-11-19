@@ -2902,9 +2902,11 @@ describe('小红书链接:点点贴士与解析方式', () => {
     expect(screen.queryByTestId('vk-xhs-dot-switch')).not.toBeInTheDocument()
 
     typeLinks(`${BILI}\n${XHS_A}`)
-    expect(await tip()).toHaveTextContent('用点点免费解析？')
+    expect(await tip()).toHaveTextContent('要用点点吗？')
     expect(document.activeElement).toBe(field)
     expect(screen.getByTestId('vk-xhs-dot-switch')).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: '用模型' })).not.toBeChecked()
+    expect(screen.queryByTestId('vk-dot-mascot')).not.toBeInTheDocument()
   })
 
   it('选「用点点」后小红书链接交给点点,没配模型也能提交,批量不自动串联', async () => {

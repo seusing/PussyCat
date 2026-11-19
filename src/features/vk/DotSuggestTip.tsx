@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from 'motion/react'
-import { glassPopMotion, positionMenu } from '../../components/GlassMenu'
+import { glassPopMotion } from '../../components/GlassMenu'
 import './DotSuggestTip.css'
 
 /** 小红书链接用什么解析:模型通道(付费)或点点速览(免费)。 */
@@ -9,10 +9,25 @@ export type XhsParser = 'model' | 'dot'
 
 const OPEN_DELAY_MS = 400
 
-type Placement = { top: number; left: number; above: boolean }
+type Placement = { top: number; left: number }
+
+// 贴士画在 240×147 里,贴着链接框的右下角,让出右下角的上传按钮
+const TIP_WIDTH = 240
+const TIP_HEIGHT = 147
+const RIGHT_INSET = 52
+const BOTTOM_INSET = 6
+const VIEWPORT_MARGIN = 8
+
+function placeInside(anchor: HTMLElement): Placement {
+  const rect = anchor.getBoundingClientRect()
+  return {
+    left: Math.max(VIEWPORT_MARGIN, Math.min(rect.right - RIGHT_INSET - TIP_WIDTH, window.innerWidth - VIEWPORT_MARGIN - TIP_WIDTH)),
+    top: Math.max(VIEWPORT_MARGIN, Math.min(rect.bottom - BOTTOM_INSET - TIP_HEIGHT, window.innerHeight - VIEWPORT_MARGIN - TIP_HEIGHT)),
+  }
+}
 
 // 手绘云朵的三帧描边(云朵本体 + 两颗思考小圆泡),轮流显示就是手绘动画里的「线条抖动」。
-// 画在 320×196 里,小圆泡在左上角,指向上方的链接框;贴士放在链接框上方时整幅上下翻转。
+// 原稿画在 320×196 里、小圆泡在左上;用的时候缩到 0.75 倍并左右镜像,小圆泡朝右上指向链接框里的小红书图标。
 const CLOUD_FRAMES: ReadonlyArray<readonly [string, string, string]> = [
   [
     'M159.3 51.8 A38.9 38.9 0 0 1 233.1 61.0 A28.9 28.9 0 0 1 280.8 80.4 A20.3 20.3 0 0 1 304.4 108.0 A21.0 21.0 0 0 1 297.9 142.6 A24.9 24.9 0 0 1 260.1 165.1 A35.4 35.4 0 0 1 201.4 182.4 A44.2 44.2 0 0 1 123.2 180.2 A40.0 40.0 0 0 1 55.6 166.4 A23.8 23.8 0 0 1 21.9 140.6 A15.5 15.5 0 0 1 18.2 112.4 A24.2 24.2 0 0 1 42.8 81.2 A30.7 30.7 0 0 1 89.1 61.3 A42.2 42.2 0 0 1 159.3 51.8Z',
@@ -32,7 +47,7 @@ const CLOUD_FRAMES: ReadonlyArray<readonly [string, string, string]> = [
 ]
 
 /**
- * 链接框里出现小红书链接时,从链接框冒出的手绘云朵贴士,问要不要用点点免费解析。
+ * 链接框里出现小红书链接时,在链接框右下角冒出的手绘云朵贴士,问要不要用点点免费解析。
  * 弹出期间描边逐帧抖动、整体分步上下浮动;不加遮罩、不锁页面、不抢输入框的焦点。
  * 点「用模型」、按 Esc、点贴士和链接框以外的地方,都等于继续用模型。
  * 出现前先停顿片刻,粘贴或输入告一段落再弹。
@@ -65,24 +80,22 @@ export function DotSuggestTip({ anchorRef, active, onChoose }: {
 
 function CloudBubble({ anchor, onChoose }: { anchor: HTMLElement; onChoose: (choice: XhsParser) => void }) {
   const titleId = useId()
-  const bodyId = useId()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const [placement, setPlacement] = useState<Placement | null>(null)
   const reduceMotion = useReducedMotion()
 
   useLayoutEffect(() => {
-    const update = () => {
-      const surface = surfaceRef.current
-      if (!surface) return
-      const { top, left } = positionMenu(anchor, surface)
-      setPlacement({ top, left, above: top < anchor.getBoundingClientRect().top })
-    }
+    const update = () => setPlacement(placeInside(anchor))
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
+    // 链接框可以拖高拖矮,右下角跟着变
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    observer?.observe(anchor)
     return () => {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
+      observer?.disconnect()
     }
   }, [anchor])
 
@@ -118,26 +131,25 @@ function CloudBubble({ anchor, onChoose }: { anchor: HTMLElement; onChoose: (cho
       role="dialog"
       aria-modal="false"
       aria-labelledby={titleId}
-      aria-describedby={bodyId}
       data-testid="vk-dot-tip"
-      data-placement={placement?.above ? 'above' : 'below'}
       className="dot-tip"
       style={placement
-        ? { top: placement.top, left: placement.left, visibility: 'visible', originY: placement.above ? 1 : 0 }
+        ? { top: placement.top, left: placement.left, visibility: 'visible', originX: 0.85, originY: 0.1 }
         : { top: 0, left: 0, visibility: 'hidden' }}
       {...glassPopMotion(reduceMotion)}
     >
       <div className="dot-tip-float">
-        <svg className="dot-tip-art" viewBox="0 0 320 196" width="320" height="196" aria-hidden="true">
-          {CLOUD_FRAMES.map((frame, index) => (
-            <g key={index} className={`dot-tip-frame dot-tip-frame-${index + 1}`}>
-              {frame.map((d) => <path key={d} d={d} />)}
-            </g>
-          ))}
+        <svg className="dot-tip-art" viewBox={`0 0 ${TIP_WIDTH} ${TIP_HEIGHT}`} width={TIP_WIDTH} height={TIP_HEIGHT} aria-hidden="true">
+          <g transform={`translate(${TIP_WIDTH} 0) scale(-0.75 0.75)`}>
+            {CLOUD_FRAMES.map((frame, index) => (
+              <g key={index} className={`dot-tip-frame dot-tip-frame-${index + 1}`}>
+                {frame.map((d) => <path key={d} d={d} />)}
+              </g>
+            ))}
+          </g>
         </svg>
         <div className="dot-tip-content">
-          <p id={titleId} className="dot-tip-title">用点点免费解析？</p>
-          <p id={bodyId} className="dot-tip-body">约半分钟出总结 · 没有时间轴和行情图</p>
+          <p id={titleId} className="dot-tip-title">要用点点吗？</p>
           <div className="dot-tip-actions">
             <button type="button" data-testid="vk-dot-tip-model" onClick={() => onChoose('model')}>用模型</button>
             <button type="button" data-testid="vk-dot-tip-dot" className="dot-tip-primary" onClick={() => onChoose('dot')}>用点点</button>

@@ -25,7 +25,9 @@ describe('DotSuggestTip', () => {
     const tip = await screen.findByTestId('vk-dot-tip')
     expect(tip).toHaveAttribute('role', 'dialog')
     expect(tip).toHaveAttribute('aria-modal', 'false')
-    expect(tip).toHaveTextContent('用点点免费解析？')
+    expect(tip).toHaveTextContent('要用点点吗？')
+    expect(tip).not.toHaveAttribute('aria-describedby')
+    expect(tip.querySelectorAll('p')).toHaveLength(1)
     expect(document.activeElement).toBe(field)
 
     rerender(<Harness active={false} onChoose={() => {}} />)

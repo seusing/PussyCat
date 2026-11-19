@@ -1,8 +1,8 @@
 .dot-tip {
   position: fixed;
   z-index: 70;
-  width: 320px;
-  height: 196px;
+  width: 240px;
+  height: 147px;
   pointer-events: none;
 }
 
@@ -10,11 +10,11 @@
 .dot-tip-float { position: relative; width: 100%; height: 100%; animation: dot-tip-bob 1.6s steps(1, end) infinite; }
 
 .dot-tip-art { position: absolute; inset: 0; overflow: visible; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, .45)); }
-.dot-tip[data-placement='above'] .dot-tip-art { transform: scaleY(-1); }
 .dot-tip-art path {
   fill: #1f2229;
   stroke: #e6e1d3;
-  stroke-width: 2.2;
+  /* 外层缩到 0.75 倍,2.9 看起来仍是 2.2 */
+  stroke-width: 2.9;
   stroke-linejoin: round;
   pointer-events: auto;
 }
@@ -27,17 +27,15 @@
 
 .dot-tip-content {
   position: absolute;
-  top: 72px;
-  left: 50px;
-  width: 226px;
+  top: 56px;
+  left: 42px;
+  width: 158px;
   pointer-events: auto;
 }
-.dot-tip[data-placement='above'] .dot-tip-content { top: 31px; }
 
-.dot-tip-title { margin: 0 0 6px; color: #f1ede2; font-size: 15px; font-weight: 650; }
-.dot-tip-body { margin: 0; color: #b9b4a7; font-size: 12px; line-height: 1.5; }
+.dot-tip-title { margin: 0; color: #f1ede2; font-size: 15px; font-weight: 650; }
 
-.dot-tip-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.dot-tip-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .dot-tip-actions button {
   min-height: 26px;
   border: 1.8px solid #e6e1d3;
