@@ -2390,6 +2390,16 @@ describe('提交前预检:小红书与浏览器扩展', () => {
     expect(bridgeReads(calls)).toHaveLength(1)
   })
 
+  it('选了点点时,扩展提示改说点点要靠扩展', async () => {
+    routes(bridge('extension-disconnected'))
+    render(<VkPanel baseUrl={BASE} />)
+    fireEvent.change(screen.getByTestId('vk-source'), { target: { value: XHS } })
+    await userEvent.click(await screen.findByTestId('vk-dot-tip-dot', undefined, { timeout: 3000 }))
+
+    expect(await screen.findByTestId('vk-xhs-bridge-warning', undefined, { timeout: 3000 }))
+      .toHaveTextContent('用点点解析需要浏览器扩展连上并登录小红书')
+  })
+
   it('点「检测并修复」走修复请求,修好后提醒消失;没修好就显示下一步', async () => {
     const repaired = bridge('ok')
     const result = { steps: [], health: repaired, repaired: true }
@@ -2858,5 +2868,113 @@ describe('提交时的弹窗哪些进历史', () => {
     expect(history().map((item) => item.message)).toEqual(['任务已提交'])
     expect(history()[0]).toMatchObject({ tone: 'info', read: false })
     expect(history()[0].id).toMatch(/^submitted:/)
+  })
+})
+
+describe('小红书链接:点点贴士与解析方式', () => {
+  const XHS_A = 'https://www.xiaohongshu.com/explore/aaa'
+  const XHS_B = 'https://www.xiaohongshu.com/explore/bbb'
+  const BILI = 'https://www.bilibili.com/video/BV1xx'
+  const routes = (configured = true) => stubRoutes({
+    'GET /vk/v1/health': { body: HEALTH },
+    'GET /vk/v1/jobs': { body: [] },
+    'GET /vk/v1/providers': { body: { relay_base_url: '', tiers: {}, stage_tiers: {}, price_snapshot_id: 'v14', configured } },
+    'POST /vk/v1/preview': { body: resolvedRequest() },
+    'POST /vk/v1/jobs': { status: 201, body: { job_id: 'job-1', kind: 'request' } },
+  })
+  const bodies = (calls: Array<{ key: string; init?: RequestInit }>, key: string) => calls
+    .filter((call) => call.key === key)
+    .map((call) => JSON.parse(String(call.init?.body)) as Record<string, unknown>)
+  const typeLinks = (value: string) => fireEvent.change(screen.getByTestId('vk-source'), { target: { value } })
+  // 贴士收起后的退场动画在本文件里不一定播得完(前面有用例开过假时钟),这里只看选择结果;
+  // 贴士本身的出现与收起由 DotSuggestTip.test 覆盖
+  const tip = () => screen.findByTestId('vk-dot-tip', undefined, { timeout: 2000 })
+
+  it('出现小红书链接时弹出贴士,不抢输入框焦点;B 站链接不弹', async () => {
+    routes()
+    render(<VkPanel baseUrl={BASE} />)
+    const field = screen.getByTestId('vk-source')
+    field.focus()
+
+    typeLinks(BILI)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)) })
+    expect(screen.queryByTestId('vk-dot-tip')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-xhs-parser')).not.toBeInTheDocument()
+
+    typeLinks(`${BILI}\n${XHS_A}`)
+    expect(await tip()).toHaveTextContent('用点点免费解析小红书链接？')
+    expect(document.activeElement).toBe(field)
+    expect(screen.getByTestId('vk-xhs-parser-model')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('选「用点点」后小红书链接交给点点,没配模型也能提交,批量不自动串联', async () => {
+    const { calls } = routes(false)
+    render(<VkPanel baseUrl={BASE} />)
+    typeLinks(`${XHS_A}\n${XHS_B}`)
+    await userEvent.click(within(await tip()).getByTestId('vk-dot-tip-dot'))
+
+    expect(screen.getByTestId('vk-xhs-parser-dot')).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+
+    await waitFor(() => expect(bodies(calls, 'POST /vk/v1/jobs')).toHaveLength(2))
+    expect(bodies(calls, 'POST /vk/v1/preview').map((body) => body.provider_profile))
+      .toEqual(['xiaohongshu_dot', 'xiaohongshu_dot'])
+    expect(bodies(calls, 'POST /vk/v1/jobs').some((job) => 'storyline' in job)).toBe(false)
+    expect(screen.queryByText('请先完成模型配置选择')).not.toBeInTheDocument()
+  })
+
+  it('混合链接时只有小红书那条走点点,其余仍要模型配置', async () => {
+    const { calls } = routes(true)
+    render(<VkPanel baseUrl={BASE} />)
+    typeLinks(`${XHS_A}\n${BILI}`)
+    await tip()
+    await userEvent.click(screen.getByTestId('vk-xhs-parser-dot'))
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+
+    await waitFor(() => expect(bodies(calls, 'POST /vk/v1/jobs')).toHaveLength(2))
+    const previews = bodies(calls, 'POST /vk/v1/preview')
+    expect(previews.map((body) => [body.source, body.provider_profile])).toEqual([
+      [XHS_A, 'xiaohongshu_dot'],
+      [BILI, undefined],
+    ])
+    expect(bodies(calls, 'POST /vk/v1/jobs').some((job) => 'storyline' in job)).toBe(false)
+  })
+
+  it('混合链接且没配模型时照常拦下', async () => {
+    const { calls } = routes(false)
+    render(<VkPanel baseUrl={BASE} />)
+    typeLinks(`${XHS_A}\n${BILI}`)
+    await tip()
+    await userEvent.click(screen.getByTestId('vk-xhs-parser-dot'))
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+
+    expect(await screen.findByText('请先完成模型配置选择')).toBeInTheDocument()
+    expect(calls.some((call) => call.key === 'POST /vk/v1/preview')).toBe(false)
+  })
+
+  it('Esc 关掉贴士等于继续用模型', async () => {
+    const { calls } = routes(true)
+    render(<VkPanel baseUrl={BASE} />)
+    typeLinks(XHS_A)
+    await tip()
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.getByTestId('vk-xhs-parser-model')).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(screen.getByTestId('vk-submit-button'))
+    await waitFor(() => expect(bodies(calls, 'POST /vk/v1/preview')).toHaveLength(1))
+    expect(bodies(calls, 'POST /vk/v1/preview')[0]).not.toHaveProperty('provider_profile')
+  })
+
+  it('小红书链接删光后再出现会再问一次', async () => {
+    routes(true)
+    render(<VkPanel baseUrl={BASE} />)
+    typeLinks(XHS_A)
+    await userEvent.click(within(await tip()).getByTestId('vk-dot-tip-dot'))
+    expect(screen.getByTestId('vk-xhs-parser-dot')).toHaveAttribute('aria-pressed', 'true')
+
+    typeLinks('')
+    typeLinks(XHS_B)
+    expect(screen.getByTestId('vk-xhs-parser-model')).toHaveAttribute('aria-pressed', 'true')
+    expect(await tip()).toBeInTheDocument()
   })
 })

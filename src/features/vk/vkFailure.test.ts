@@ -197,3 +197,17 @@ describe('describeVkFailure 文案与动作', () => {
     expect(useAppStore.getState().activeModule).toBe('providers')
   })
 })
+
+describe('点点速览的失败原因', () => {
+  it.each([
+    ['小红书没有登录，点点用不了：请在浏览器里登录小红书后重试', 'login-required', '小红书没有登录，点点用不了'],
+    ['浏览器扩展没连上，点点用不了：请在视频解析页点「检测并修复」', 'login-required', '浏览器扩展没连上，点点用不了'],
+    ['点点没读到这条笔记，回答是从别的笔记拼来的，请改用模型解析', 'bad-source', '点点没法总结这条链接'],
+    ['点点只能解析小红书笔记链接', 'bad-source', '点点没法总结这条链接'],
+    ['点点没有在规定时间内回答，可以稍后重试', 'timeout', '点点没有按时回答'],
+    ['点点调用失败：boom', 'empty', '点点这次没有给出总结'],
+    ['没有找到 OpenCLI，点点用不了', 'empty', '点点这次没有给出总结'],
+  ] as Array<[string, VkFailureKind, string]>)('%s', (raw, kind, headline) => {
+    expect(describeVkFailure(raw)).toMatchObject({ kind, headline })
+  })
+})

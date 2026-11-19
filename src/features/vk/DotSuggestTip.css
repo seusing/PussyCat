@@ -1,0 +1,73 @@
+.dot-tip {
+  position: fixed;
+  z-index: 70;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+
+/* 进出由 motion 驱动,关掉 .glass-menu-effect 自带的 glass-menu-enter,免得它盖住 opacity / transform。 */
+.dot-tip.glass-menu-effect { animation: none; }
+
+/* 指向链接框的小尖角:贴士在下方时朝上,在上方时朝下 */
+.dot-tip::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-menu-fill);
+  transform: rotate(45deg);
+}
+.dot-tip[data-placement='below']::before { top: -5.5px; border-right: 0; border-bottom: 0; }
+.dot-tip[data-placement='above']::before { bottom: -5.5px; border-top: 0; border-left: 0; }
+
+.dot-tip-title {
+  margin: 0 0 4px;
+  color: var(--color-fg);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.dot-tip-body {
+  margin: 0;
+  color: var(--color-fg-dim);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.dot-tip-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dot-tip-actions button {
+  min-height: 28px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: #20232a;
+  color: var(--color-fg);
+  padding: 0 12px;
+  font-size: 12px;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.dot-tip-actions button:hover { background: #292d35; }
+.dot-tip-actions button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.dot-tip-actions .dot-tip-primary {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
+  background: color-mix(in srgb, var(--color-accent) 18%, #20232a);
+}
+
+.dot-tip-actions .dot-tip-primary:hover {
+  background: color-mix(in srgb, var(--color-accent) 28%, #20232a);
+}

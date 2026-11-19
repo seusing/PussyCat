@@ -137,6 +137,16 @@ describe('VkTaskTable', () => {
     expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: '存到本地' })).toBeEnabled()
   })
 
+  it('点点速览的任务在状态旁标「点点」;同批里有点点视频时折叠行也标', () => {
+    const dot = { ...JOBS[1], job_id: 'job-dot', provider_profile: 'xiaohongshu_dot' }
+    const batch = { ...JOBS[2], job_id: 'job-batch', batchMembers: [{ ...JOBS[2], job_id: 'm1' }, { ...dot, job_id: 'm2' }] }
+    render(<VkTaskTable {...makeProps({ jobs: [dot, JOBS[0], batch] })} />)
+
+    expect(screen.getByTestId('vk-task-dot-job-dot')).toHaveTextContent('点点')
+    expect(screen.getByTestId('vk-task-dot-job-batch')).toHaveAttribute('title', '本次提交里 1 个视频用点点解析')
+    expect(screen.queryByTestId('vk-task-dot-job-running')).not.toBeInTheDocument()
+  })
+
   it('selects a row by click and keyboard', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()

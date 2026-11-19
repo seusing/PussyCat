@@ -34,6 +34,7 @@ import {
   isVkEngineNotReady,
   isVkRuntimeSettled,
   testVkProvider,
+  XHS_DOT_PROFILE,
 } from '../../host/vkClient'
 import type {
   VkHealth,
@@ -68,7 +69,8 @@ import {
 import { aggregateBatchStatus, subtaskNumbers } from './batchMembers'
 import { STORYLINE_IN_PROGRESS, VK_STORYLINE_STARTED_EVENT } from './storyline'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
-import { VideoSourceCoverFlow, detectVideoSources } from './VideoSourceCoverFlow'
+import { VideoSourceCoverFlow, isXiaohongshuSource } from './VideoSourceCoverFlow'
+import { DotSuggestTip, type XhsParser } from './DotSuggestTip'
 import { VkTaskTable } from './VkTaskTable'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { vkJobRowFromView, vkPrimaryOutput as primaryOutput, vkTaskResultGroups } from './taskResults'
@@ -655,6 +657,10 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   const [provenance, setProvenance] = useState<{ commandKey: string; collectedAt: number } | null>(null)
   const sourceList = useMemo(() => sourceLines(source), [source])
   const sourceCount = sourceList.length
+  const sourceShellRef = useRef<HTMLDivElement>(null)
+  // 小红书链接用点点(免费)还是模型(付费):null 表示这批链接还没选过,贴士会来问一次。
+  // 链接框里的小红书链接全删掉后回到 null,下次再出现会再问。
+  const [xhsParser, setXhsParser] = useState<XhsParser | null>(null)
   const [pasteNotice, setPasteNotice] = useState<{ sources: number; dropped: number; profiles: number } | null>(null)
   const sourceFileInputRef = useRef<HTMLInputElement>(null)
   const hasManualOverrides = preset !== 'quick-summary'
@@ -746,10 +752,14 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
 
   // —— 提交前预检 ——
   // 小红书笔记常要登录才能读:输入里出现小红书链接时看一眼浏览器扩展连没连上。只提醒,不拦提交。
-  const hasXiaohongshu = useMemo(
-    () => detectVideoSources(sourceList.join('\n')).some((item) => item.id === 'xiaohongshu'),
-    [sourceList],
-  )
+  const hasXiaohongshu = useMemo(() => sourceList.some(isXiaohongshuSource), [sourceList])
+  useEffect(() => {
+    if (!hasXiaohongshu) setXhsParser(null)
+  }, [hasXiaohongshu])
+  const dotSelected = hasXiaohongshu && xhsParser === 'dot'
+  const usesDot = (sourceValue: string) => dotSelected && isXiaohongshuSource(sourceValue)
+  // 这一批全交给点点时不需要模型通道:不拦「没配模型」,也不提示通道 key 失效
+  const allDot = sourceCount > 0 && sourceList.every(usesDot)
   const [bridgeHealth, setBridgeHealth] = useState<BridgeHealth | null>(null)
   const [bridgeRepairing, setBridgeRepairing] = useState(false)
   const [bridgeRepairNote, setBridgeRepairNote] = useState<string | null>(null)
@@ -814,7 +824,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
   }
 
   // preview 只负责校验并生成费用确认信息；真正提交仍使用原始投影，不能把脱敏回显当载荷。
-  const buildProjection = (sourceValue = source.trim(), goalValue = userGoal): VkPreviewProjection => {
+  const buildProjection = (sourceValue = source.trim(), goalValue = userGoal, dot = false): VkPreviewProjection => {
     const userMetadata = {
       processing_strategy: 'auto',
       ...(goalValue.trim() ? { user_goal: goalValue.trim() } : {}),
@@ -839,6 +849,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
       ...(maxCost.trim() ? { max_cost_cny: Number(maxCost) } : {}),
       ...(reasoningEffort.trim() ? { reasoning_effort: reasoningEffort.trim() } : {}),
       ...(Object.keys(userMetadata).length ? { user_metadata: userMetadata } : {}),
+      ...(dot ? { provider_profile: XHS_DOT_PROFILE } : {}),
     }
   }
 
@@ -857,9 +868,12 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
     // 列表据此把它们归为一个任务编号，详情页据此说清"这次共几个视频、进度到哪"。
     // 单个视频也带上：批量与否是提交时的事实，不该让下游去猜。
     const batchId = crypto.randomUUID()
-    const chainStoryline = sources.length >= 2
+    const dotSources = new Set(sources.filter(usesDot))
+    // 串联分析要用每条视频的结构化摘要,点点笔记没有,批里有点点链接就不自动串联
+    const chainStoryline = sources.length >= 2 && dotSources.size === 0
+    const needsModel = dotSources.size < sources.length
     try {
-      if (await refreshProviders() === false) {
+      if (needsModel && await refreshProviders() === false) {
         addTaskBanners([{
           id: `provider-required:${crypto.randomUUID()}`,
           message: '请先完成模型配置选择',
@@ -868,7 +882,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         }])
         return
       }
-      const channel = skipChannelCheck ? { verdict: 'ok' as const } : await probeBasicChannel()
+      const channel = skipChannelCheck || !needsModel ? { verdict: 'ok' as const } : await probeBasicChannel()
       setChannelBlocked(channel.verdict === 'auth')
       if (channel.verdict === 'auth') return
       if (channel.verdict === 'warn') {
@@ -881,7 +895,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         }])
       }
       for (const [index, sourceValue] of sources.entries()) {
-        const previewedRequest = await postVkPreview(buildProjection(sourceValue, goalSnapshot), base)
+        const previewedRequest = await postVkPreview(buildProjection(sourceValue, goalSnapshot, dotSources.has(sourceValue)), base)
         const request = { ...previewedRequest, source: sourceValue }
         // 同批有 2 个及以上来源就自动串联。引擎在「该批没有排队/运行中的任务」时触发串联,且每批只触发
         // 一次。job 是逐条提交的,前几条若很快跑完(如命中缓存),串联会带着已完成的成员提前跑掉、之后
@@ -1518,7 +1532,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         )}
         <div className="mb-2">
           <BorderGlow className="vk-source-border-glow" testId="vk-source-border-glow">
-            <div className="vk-source-input-shell">
+            <div ref={sourceShellRef} className="vk-source-input-shell">
               <textarea
                 id="vk-source-input"
                 data-testid="vk-source"
@@ -1554,6 +1568,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               />
             </div>
           </BorderGlow>
+          <DotSuggestTip anchorRef={sourceShellRef} active={hasXiaohongshu && xhsParser === null} onChoose={setXhsParser} />
           {pasteNotice && (
             <p data-testid="vk-paste-notice" role="status" className="vk-paste-notice">
               {[
@@ -1695,14 +1710,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         </details>, diagnosticOverridesHost.current)}
         {hasXiaohongshu && bridgeHealth && bridgeHealth.reasonCode !== 'ok' && (
           <div data-testid="vk-xhs-bridge-warning" role="status" className="vk-submit-notice is-warning">
-            <span>检测到小红书链接：浏览器扩展没连上时，需要登录才能看的笔记会下载失败。</span>
+            <span>{dotSelected
+              ? '用点点解析需要浏览器扩展连上并登录小红书'
+              : '检测到小红书链接：浏览器扩展没连上时，需要登录才能看的笔记会下载失败。'}</span>
             <button type="button" data-testid="vk-xhs-bridge-repair" disabled={bridgeRepairing} onClick={() => { void repairBridgeNow() }}>
               {bridgeRepairing ? '检测中…' : '检测并修复'}
             </button>
             {bridgeRepairNote && <p data-testid="vk-xhs-bridge-note">{bridgeRepairNote}</p>}
           </div>
         )}
-        {channelBlocked && (
+        {channelBlocked && !allDot && (
           <div data-testid="vk-channel-blocked" role="alert" className="vk-submit-notice is-danger">
             <span>{CHANNEL_AUTH_BLOCK.headline}</span>
             <InfoTip label="模型通道检查说明"><p>{CHANNEL_AUTH_BLOCK.advice}。有的中转站不开放模型列表，确认 key 没问题时可以仍然提交，本次不再检查。</p></InfoTip>
@@ -1717,6 +1734,22 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
           </div>
         )}
         <div className="flex items-center gap-2">
+          {hasXiaohongshu && (
+            <div role="group" aria-label="小红书链接的解析方式" data-testid="vk-xhs-parser" className="vk-xhs-parser">
+              <span className="vk-xhs-parser-label">小红书链接</span>
+              {(['model', 'dot'] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={(xhsParser ?? 'model') === value}
+                  data-testid={`vk-xhs-parser-${value}`}
+                  onClick={() => setXhsParser(value)}
+                >
+                  {value === 'dot' ? '点点' : '模型'}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             data-testid="vk-submit-button"

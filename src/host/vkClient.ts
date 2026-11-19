@@ -3,6 +3,9 @@
 import { HostRequestError } from './errors'
 import { DEFAULT_BASE_URL } from './nodeBridgeHost'
 
+/** 请求里选中「点点速览」的 provider_profile:小红书笔记交给点点总结,不走模型通道。 */
+export const XHS_DOT_PROFILE = 'xiaohongshu_dot'
+
 export interface VkHealth {
   status: string
   reasonCode: string
@@ -54,6 +57,7 @@ export interface VkPreviewProjection {
   max_cost_cny?: number
   user_metadata?: Record<string, unknown>
   reasoning_effort?: string
+  provider_profile?: string
 }
 
 export interface VkJobRow {
@@ -69,6 +73,8 @@ export interface VkJobRow {
   source?: string
   /** 帖子标题。引擎知道时才带,采集前、旧引擎都没有。 */
   title?: string
+  /** 不是默认值时才带,如点点速览的 XHS_DOT_PROFILE。 */
+  provider_profile?: string
   cache_bypass: boolean
   run_id?: string
   cost_cny?: number

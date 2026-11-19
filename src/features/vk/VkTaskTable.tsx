@@ -3,7 +3,7 @@ import type { KeyboardEvent, MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { InlineLoader } from 'generative-loaders'
 import { Bell, BellOff, ChevronDown, Download, Trash2 } from 'lucide-react'
-import type { VkJobRow } from '../../host/vkClient'
+import { XHS_DOT_PROFILE, type VkJobRow } from '../../host/vkClient'
 import { GlassSelect, useGlassMenuSurface } from '../../components/GlassMenu'
 import { describeVkFailure } from './vkFailure'
 import 'generative-loaders/styles.css'
@@ -323,6 +323,8 @@ export function VkTaskTable({
             const canSaveOutput = canSaveResult?.(row) ?? OUTPUT_STATUSES.has(row.status.trim().toLowerCase())
             const selected = row.job_id === selectedJobId
             const menuOpen = row.job_id === menuJobId
+            const members = row.batchMembers ?? [row]
+            const dotCount = members.filter((member) => member.provider_profile === XHS_DOT_PROFILE).length
             return (
               <tr
                 key={row.job_id}
@@ -380,6 +382,15 @@ export function VkTaskTable({
                   >
                     {STATUS_LABELS[status]}
                   </span>
+                  {dotCount > 0 && (
+                    <span
+                      className="vk-task-dot-tag"
+                      data-testid={`vk-task-dot-${row.job_id}`}
+                      title={members.length > 1 ? `本次提交里 ${dotCount} 个视频用点点解析` : '用点点解析'}
+                    >
+                      点点
+                    </span>
+                  )}
                 </td>
                 <td>
                   <div className="vk-task-operation" onClick={stopRowSelection}>

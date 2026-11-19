@@ -101,6 +101,11 @@ export function detectVideoSources(source: string): DetectedVideoSource[] {
     .map(({ id, label, logo, count }) => ({ id, label, logo, count }))
 }
 
+/** 这一行来源是不是小红书链接(域名规则与上面的识别一致)。 */
+export function isXiaohongshuSource(line: string): boolean {
+  return detectVideoSources(line).some((item) => item.id === 'xiaohongshu')
+}
+
 function coverOffset(rank: number) {
   if (rank === 0) return 0
   const distance = Math.ceil(rank / 2)

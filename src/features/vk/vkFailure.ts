@@ -37,7 +37,38 @@ function withFallbackAdvice(raw: string, failure: Omit<VkFailure, 'action'>): Vk
   return { ...failure, advice: `${failure.advice}。${NO_FALLBACK_ADVICE}`, action: goToProviders() }
 }
 
+// 点点速览的失败原因由引擎写成中文(adapters/acquisition/xiaohongshu_dot.py),这里拆成标题和建议
+const DOT_FAILURES: ReadonlyArray<readonly [RegExp, VkFailure]> = [
+  [/小红书没有登录，点点用不了/, {
+    kind: 'login-required',
+    headline: '小红书没有登录，点点用不了',
+    advice: '在浏览器里登录小红书后重试',
+  }],
+  [/浏览器扩展没连上，点点用不了/, {
+    kind: 'login-required',
+    headline: '浏览器扩展没连上，点点用不了',
+    advice: '打开 Chrome 并确认 OpenCLI 扩展已连接，或在视频解析页点「检测并修复」',
+  }],
+  [/点点没读到这条笔记|点点只能解析小红书笔记链接/, {
+    kind: 'bad-source',
+    headline: '点点没法总结这条链接',
+    advice: '这条链接改用模型解析',
+  }],
+  [/点点没有在规定时间内回答/, {
+    kind: 'timeout',
+    headline: '点点没有按时回答',
+    advice: '稍后重试',
+  }],
+  [/点点调用失败|点点没有返回总结|点点用不了/, {
+    kind: 'empty',
+    headline: '点点这次没有给出总结',
+    advice: '可以重试，或改用模型解析',
+  }],
+]
+
 export function describeVkFailure(raw: string): VkFailure {
+  const dot = DOT_FAILURES.find(([pattern]) => pattern.test(raw))
+  if (dot) return dot[1]
   if (/不是小红书笔记链接/.test(raw)) {
     return {
       kind: 'bad-source',

@@ -231,6 +231,14 @@
   color: #d9e6ff;
 }
 
+/* 点点速览(免费)的任务在状态旁带一个小标记,和模型解析的结果分得开 */
+.vk-task-dot-tag {
+  margin-left: 6px;
+  color: var(--color-fg-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .vk-task-badge {
   display: inline-flex;
   min-height: 24px;

@@ -133,6 +133,7 @@ const STORYLINE_PHASES: readonly TaskPhase[] = [
 
 const STAGE_LABELS: Record<string, string> = {
   acquire: '采集与转写',
+  dot_summary: '点点总结',
   normalize: '整理字幕',
   chapter: '理解视频',
   quick_summary: '速览',
