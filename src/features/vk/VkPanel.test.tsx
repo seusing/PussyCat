@@ -2899,12 +2899,12 @@ describe('小红书链接:点点贴士与解析方式', () => {
     typeLinks(BILI)
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)) })
     expect(screen.queryByTestId('vk-dot-tip')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('vk-xhs-parser')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('vk-xhs-dot-switch')).not.toBeInTheDocument()
 
     typeLinks(`${BILI}\n${XHS_A}`)
-    expect(await tip()).toHaveTextContent('用点点免费解析小红书链接？')
+    expect(await tip()).toHaveTextContent('用点点免费解析？')
     expect(document.activeElement).toBe(field)
-    expect(screen.getByTestId('vk-xhs-parser-model')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('vk-xhs-dot-switch')).not.toBeChecked()
   })
 
   it('选「用点点」后小红书链接交给点点,没配模型也能提交,批量不自动串联', async () => {
@@ -2913,7 +2913,9 @@ describe('小红书链接:点点贴士与解析方式', () => {
     typeLinks(`${XHS_A}\n${XHS_B}`)
     await userEvent.click(within(await tip()).getByTestId('vk-dot-tip-dot'))
 
-    expect(screen.getByTestId('vk-xhs-parser-dot')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('vk-xhs-dot-switch')).toBeChecked()
+    expect(screen.getByRole('switch', { name: '用点点' })).toBeChecked()
+    expect(screen.getByTestId('vk-dot-mascot')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('vk-submit-button'))
 
     await waitFor(() => expect(bodies(calls, 'POST /vk/v1/jobs')).toHaveLength(2))
@@ -2928,7 +2930,7 @@ describe('小红书链接:点点贴士与解析方式', () => {
     render(<VkPanel baseUrl={BASE} />)
     typeLinks(`${XHS_A}\n${BILI}`)
     await tip()
-    await userEvent.click(screen.getByTestId('vk-xhs-parser-dot'))
+    await userEvent.click(screen.getByTestId('vk-xhs-dot-switch'))
     await userEvent.click(screen.getByTestId('vk-submit-button'))
 
     await waitFor(() => expect(bodies(calls, 'POST /vk/v1/jobs')).toHaveLength(2))
@@ -2945,7 +2947,7 @@ describe('小红书链接:点点贴士与解析方式', () => {
     render(<VkPanel baseUrl={BASE} />)
     typeLinks(`${XHS_A}\n${BILI}`)
     await tip()
-    await userEvent.click(screen.getByTestId('vk-xhs-parser-dot'))
+    await userEvent.click(screen.getByTestId('vk-xhs-dot-switch'))
     await userEvent.click(screen.getByTestId('vk-submit-button'))
 
     expect(await screen.findByText('请先完成模型配置选择')).toBeInTheDocument()
@@ -2959,7 +2961,7 @@ describe('小红书链接:点点贴士与解析方式', () => {
     await tip()
     fireEvent.keyDown(document, { key: 'Escape' })
 
-    expect(screen.getByTestId('vk-xhs-parser-model')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('vk-xhs-dot-switch')).not.toBeChecked()
     await userEvent.click(screen.getByTestId('vk-submit-button'))
     await waitFor(() => expect(bodies(calls, 'POST /vk/v1/preview')).toHaveLength(1))
     expect(bodies(calls, 'POST /vk/v1/preview')[0]).not.toHaveProperty('provider_profile')
@@ -2970,11 +2972,11 @@ describe('小红书链接:点点贴士与解析方式', () => {
     render(<VkPanel baseUrl={BASE} />)
     typeLinks(XHS_A)
     await userEvent.click(within(await tip()).getByTestId('vk-dot-tip-dot'))
-    expect(screen.getByTestId('vk-xhs-parser-dot')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('vk-xhs-dot-switch')).toBeChecked()
 
     typeLinks('')
     typeLinks(XHS_B)
-    expect(screen.getByTestId('vk-xhs-parser-model')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('vk-xhs-dot-switch')).not.toBeChecked()
     expect(await tip()).toBeInTheDocument()
   })
 })

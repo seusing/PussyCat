@@ -88,7 +88,7 @@ export function positionMenu(trigger: HTMLElement, menu: HTMLElement): MenuPosit
   return { top, left, width, maxHeight }
 }
 
-function usePortalMenu(
+export function usePortalMenu(
   open: boolean,
   triggerRef: RefObject<HTMLElement | null>,
   menuRef: RefObject<HTMLDivElement | null>,
@@ -136,7 +136,7 @@ function nextEnabled(options: readonly GlassOption[], current: number, direction
   return enabled[(position + direction + enabled.length) % enabled.length]
 }
 
-function menuStyle(position: MenuPosition | null): CSSProperties {
+export function menuStyle(position: MenuPosition | null): CSSProperties {
   return position
     ? { top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight, visibility: 'visible' }
     : { top: 0, left: 0, visibility: 'hidden' }

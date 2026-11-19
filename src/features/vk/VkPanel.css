@@ -97,29 +97,8 @@
   line-height: 1.5;
 }
 
-/* 提交行里「小红书链接:模型 / 点点」的两段选择,只在链接框里有小红书链接时出现。 */
-.vk-xhs-parser {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  padding: 2px;
-  font-size: 12px;
-}
-.vk-xhs-parser-label { padding: 0 6px; color: var(--color-fg-dim); }
-.vk-xhs-parser button {
-  border-radius: 6px;
-  padding: 6px 10px;
-  color: var(--color-fg-dim);
-  line-height: 1;
-}
-.vk-xhs-parser button:hover { color: var(--color-fg); }
-.vk-xhs-parser button[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-  color: var(--color-fg);
-}
-.vk-xhs-parser button:focus-visible { outline: 1px solid var(--color-accent); outline-offset: 1px; }
+/* 提交行里的「用点点」开关,只在链接框里有小红书链接时出现;打开时右边冒出点点。 */
+.vk-xhs-dot-switch { min-height: 28px; color: var(--color-fg-dim); font-size: 13px; }
 
 /* 提交按钮上方的预检提示:只提醒(warning)或说明为什么暂停了提交(danger)。 */
 .vk-submit-notice {

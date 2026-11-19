@@ -11,6 +11,7 @@ import {
   getInspirationLibraryState,
   inspirationKindLabel,
   loadInspirationLibrary,
+  moveInspirationEntry,
   retryInspirationLibraryLoad,
   saveInspirationLibrary,
   type InspirationLibrary,
@@ -333,5 +334,52 @@ describe('宿主持久化', () => {
         expect(localStorage.getItem(INSPIRATION_MIGRATED_KEY)).toBeNull()
       }
     })
+  })
+})
+
+describe('moveInspirationEntry', () => {
+  const tree = (): InspirationLibrary => ({
+    version: 1,
+    folders: [
+      { id: 'a', name: '甲', createdAt: 1, parentId: null },
+      { id: 'a1', name: '甲一', createdAt: 2, parentId: 'a' },
+      { id: 'b', name: '乙', createdAt: 3, parentId: null },
+      { id: 'b-dup', name: '甲一', createdAt: 4, parentId: 'b' },
+    ],
+    items: [
+      { id: 'n1', ...item('想法'), createdAt: 5, updatedAt: 5 },
+      { id: 'n2', ...item('想法', 'a'), createdAt: 6, updatedAt: 6 },
+    ],
+  })
+
+  test('把笔记移进文件夹和移回根目录', () => {
+    const moved = moveInspirationEntry(tree(), { kind: 'item', id: 'n2' }, null)
+    expect(moved?.library.items.find((entry) => entry.id === 'n2')?.folderId).toBeNull()
+    const into = moveInspirationEntry(tree(), { kind: 'item', id: 'n1' }, 'b')
+    expect(into?.library.items.find((entry) => entry.id === 'n1')).toMatchObject({ folderId: 'b', title: '想法' })
+    expect(into?.renamedTo).toBeUndefined()
+  })
+
+  test('把文件夹连同子孙移进另一个文件夹', () => {
+    const moved = moveInspirationEntry(tree(), { kind: 'folder', id: 'a' }, 'b')
+    expect(moved?.library.folders.find((entry) => entry.id === 'a')?.parentId).toBe('b')
+    expect(moved?.library.folders.find((entry) => entry.id === 'a1')?.parentId).toBe('a')
+    expect(moved?.library.items.find((entry) => entry.id === 'n2')?.folderId).toBe('a')
+  })
+
+  test('目标里有同名的就改名', () => {
+    const note = moveInspirationEntry(tree(), { kind: 'item', id: 'n1' }, 'a')
+    expect(note?.renamedTo).toBe('想法(1)')
+    expect(note?.library.items.find((entry) => entry.id === 'n1')?.title).toBe('想法(1)')
+    const folder = moveInspirationEntry(tree(), { kind: 'folder', id: 'a1' }, 'b')
+    expect(folder?.renamedTo).toBe('甲一(1)')
+  })
+
+  test('拒绝移进自己或子孙、原地不动和不存在的目标', () => {
+    expect(moveInspirationEntry(tree(), { kind: 'folder', id: 'a' }, 'a')).toBeNull()
+    expect(moveInspirationEntry(tree(), { kind: 'folder', id: 'a' }, 'a1')).toBeNull()
+    expect(moveInspirationEntry(tree(), { kind: 'folder', id: 'a1' }, 'a')).toBeNull()
+    expect(moveInspirationEntry(tree(), { kind: 'item', id: 'n2' }, 'a')).toBeNull()
+    expect(moveInspirationEntry(tree(), { kind: 'item', id: 'n1' }, 'missing')).toBeNull()
   })
 })

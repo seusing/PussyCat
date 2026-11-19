@@ -353,6 +353,47 @@ export function addInspirationFolder(name: string, parentId: string | null = nul
   return saveInspirationLibrary(next) ? actual : null
 }
 
+export type InspirationEntryRef = { kind: 'item' | 'folder'; id: string }
+
+// 把笔记或文件夹移到 targetFolderId(null 为根目录)。目标里有同名的就改名,renamedTo 给出新名字。
+// 原地不动、目标不存在、把文件夹移进它自己或子孙时返回 null。
+export function moveInspirationEntry(
+  library: InspirationLibrary,
+  entry: InspirationEntryRef,
+  targetFolderId: string | null,
+): { library: InspirationLibrary; renamedTo?: string } | null {
+  if (targetFolderId !== null && !library.folders.some((folder) => folder.id === targetFolderId)) return null
+  const occupiedNames = (excludeId: string) => [
+    ...library.folders.filter((folder) => folder.parentId === targetFolderId && folder.id !== excludeId).map((folder) => folder.name),
+    ...library.items.filter((item) => item.folderId === targetFolderId && item.id !== excludeId).map((item) => item.title),
+  ]
+  if (entry.kind === 'item') {
+    const item = library.items.find((candidate) => candidate.id === entry.id)
+    if (!item || item.folderId === targetFolderId) return null
+    const title = makeUniqueInspirationName(item.title, occupiedNames(item.id), '未命名灵感')
+    return {
+      library: {
+        ...library,
+        items: library.items.map((candidate) => candidate.id === item.id ? { ...candidate, title, folderId: targetFolderId, updatedAt: Date.now() } : candidate),
+      },
+      ...(title !== item.title ? { renamedTo: title } : {}),
+    }
+  }
+  const folder = library.folders.find((candidate) => candidate.id === entry.id)
+  if (!folder || folder.parentId === targetFolderId) return null
+  for (let cursor = targetFolderId; cursor; cursor = library.folders.find((candidate) => candidate.id === cursor)?.parentId ?? null) {
+    if (cursor === folder.id) return null
+  }
+  const name = makeUniqueInspirationName(folder.name, occupiedNames(folder.id), '未命名文件夹')
+  return {
+    library: {
+      ...library,
+      folders: library.folders.map((candidate) => candidate.id === folder.id ? { ...candidate, name, parentId: targetFolderId } : candidate),
+    },
+    ...(name !== folder.name ? { renamedTo: name } : {}),
+  }
+}
+
 export function findInspirationItemBySource(source: string): InspirationItem | null {
   return loadInspirationLibrary().items.find((item) => item.source === source) ?? null
 }

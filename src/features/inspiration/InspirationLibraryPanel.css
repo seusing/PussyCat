@@ -176,6 +176,24 @@
 .inspiration-library-card-meta strong { overflow: hidden; color: #edf0f4; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .inspiration-library-card-meta small { color: #858e9d; font-size: 10px; }
 .inspiration-library-items > .inspiration-library-no-results { grid-column: 1 / -1; }
+.inspiration-folder-card.is-dragging,
+.inspiration-file-card.is-dragging { opacity: 0.35; }
+.inspiration-folder-card.is-drop-target { border-color: #526b9d; background: #1d2433; }
+.inspiration-library-breadcrumb-label.is-drop-target { background: #2b3a5a; color: #e5e9f0; box-shadow: inset 0 0 0 1px #526b9d; }
+.inspiration-drag-overlay { display: grid; place-items: center; pointer-events: none; }
+.inspiration-drag-preview { display: inline-flex; max-width: 220px; align-items: center; gap: 8px; border: 1px solid #3a4350; border-radius: 8px; background: #1d2129; color: #edf0f4; padding: 8px 12px; font-size: 13px; box-shadow: 0 12px 28px rgb(0 0 0 / 45%); transform: translate(calc(50% + 14px), calc(50% + 14px)) rotate(-3deg); }
+.inspiration-drag-preview svg { flex: 0 0 auto; color: #9ba5b4; }
+.inspiration-drag-preview strong { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+
+.inspiration-move-menu { min-width: 220px; }
+.inspiration-move-menu .glass-menu-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspiration-move-menu .glass-menu-option:disabled { cursor: default; color: var(--color-fg-dim, #a8abb2); }
+.inspiration-move-menu .glass-menu-option:disabled:hover { background: transparent; }
+.inspiration-move-menu-new { justify-content: flex-start; }
+.inspiration-move-menu-divider { height: 1px; margin: 4px 6px; background: rgb(255 255 255 / 10%); }
+.inspiration-move-menu-create { padding: 2px; }
+.inspiration-move-menu-create input { width: 100%; box-sizing: border-box; border: 1px solid #3a4350; border-radius: 6px; outline: 0; background: #101217; color: #eef0f4; padding: 6px 8px; font: inherit; font-size: 13px; }
+.inspiration-move-menu-create input:focus { border-color: var(--color-accent, #8fb2ff); }
 
 .inspiration-library-editor { display: flex; flex-direction: column; overflow: hidden; }
 .inspiration-library-editor-heading { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #292f39; padding: 0 14px; }

@@ -1,73 +1,70 @@
 .dot-tip {
   position: fixed;
   z-index: 70;
-  box-sizing: border-box;
-  width: max-content;
-  max-width: min(320px, calc(100vw - 16px));
-  border-radius: 9px;
-  padding: 10px 12px;
+  width: 320px;
+  height: 196px;
+  pointer-events: none;
 }
 
-/* 进出由 motion 驱动,关掉 .glass-menu-effect 自带的 glass-menu-enter,免得它盖住 opacity / transform。 */
-.dot-tip.glass-menu-effect { animation: none; }
+/* 整体按 4 个固定位置一帧一帧地上下浮动,不是平滑漂移 */
+.dot-tip-float { position: relative; width: 100%; height: 100%; animation: dot-tip-bob 1.6s steps(1, end) infinite; }
 
-/* 指向链接框的小尖角:贴士在下方时朝上,在上方时朝下 */
-.dot-tip::before {
-  content: '';
+.dot-tip-art { position: absolute; inset: 0; overflow: visible; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, .45)); }
+.dot-tip[data-placement='above'] .dot-tip-art { transform: scaleY(-1); }
+.dot-tip-art path {
+  fill: #1f2229;
+  stroke: #e6e1d3;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  pointer-events: auto;
+}
+
+/* 三帧描边轮流显示,约每秒 7 帧:手绘动画里的线条抖动 */
+.dot-tip-frame { opacity: 0; }
+.dot-tip-frame-1 { animation: dot-tip-boil-1 .42s steps(1, end) infinite; }
+.dot-tip-frame-2 { animation: dot-tip-boil-2 .42s steps(1, end) infinite; }
+.dot-tip-frame-3 { animation: dot-tip-boil-3 .42s steps(1, end) infinite; }
+
+.dot-tip-content {
   position: absolute;
-  left: 22px;
-  width: 9px;
-  height: 9px;
-  border: 1px solid var(--glass-edge);
-  background: var(--glass-menu-fill);
-  transform: rotate(45deg);
+  top: 72px;
+  left: 50px;
+  width: 226px;
+  pointer-events: auto;
 }
-.dot-tip[data-placement='below']::before { top: -5.5px; border-right: 0; border-bottom: 0; }
-.dot-tip[data-placement='above']::before { bottom: -5.5px; border-top: 0; border-left: 0; }
+.dot-tip[data-placement='above'] .dot-tip-content { top: 31px; }
 
-.dot-tip-title {
-  margin: 0 0 4px;
-  color: var(--color-fg);
-  font-size: 13px;
-  font-weight: 650;
-}
+.dot-tip-title { margin: 0 0 6px; color: #f1ede2; font-size: 15px; font-weight: 650; }
+.dot-tip-body { margin: 0; color: #b9b4a7; font-size: 12px; line-height: 1.5; }
 
-.dot-tip-body {
-  margin: 0;
-  color: var(--color-fg-dim);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.dot-tip-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 10px;
-}
-
+.dot-tip-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .dot-tip-actions button {
-  min-height: 28px;
-  border: 1px solid var(--color-line);
-  border-radius: 6px;
-  background: #20232a;
-  color: var(--color-fg);
-  padding: 0 12px;
+  min-height: 26px;
+  border: 1.8px solid #e6e1d3;
+  /* 不规则圆角:像手画的胶囊 */
+  border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  background: #2a2e36;
+  color: #f1ede2;
+  padding: 0 14px;
   font-size: 12px;
-  transition: background-color 150ms ease, border-color 150ms ease;
+  transition: background-color 150ms ease, transform 150ms ease;
 }
+.dot-tip-actions button:hover { background: #343944; transform: rotate(-1.5deg); }
+.dot-tip-actions button:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent); outline-offset: 2px; }
+.dot-tip-actions .dot-tip-primary { background: var(--color-success); color: #0d2a14; font-weight: 650; }
+.dot-tip-actions .dot-tip-primary:hover { background: color-mix(in srgb, var(--color-success) 85%, #fff); }
 
-.dot-tip-actions button:hover { background: #292d35; }
-.dot-tip-actions button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
-  outline-offset: 2px;
+@keyframes dot-tip-bob {
+  0% { transform: translateY(0); }
+  25% { transform: translateY(-2px); }
+  50% { transform: translateY(-4px); }
+  75% { transform: translateY(-2px); }
 }
+@keyframes dot-tip-boil-1 { 0% { opacity: 1; } 33.3% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes dot-tip-boil-2 { 0% { opacity: 0; } 33.3% { opacity: 1; } 66.6% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes dot-tip-boil-3 { 0% { opacity: 0; } 66.6% { opacity: 1; } 100% { opacity: 1; } }
 
-.dot-tip-actions .dot-tip-primary {
-  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-line));
-  background: color-mix(in srgb, var(--color-accent) 18%, #20232a);
-}
-
-.dot-tip-actions .dot-tip-primary:hover {
-  background: color-mix(in srgb, var(--color-accent) 28%, #20232a);
+@media (prefers-reduced-motion: reduce) {
+  .dot-tip-float, .dot-tip-frame-1, .dot-tip-frame-2, .dot-tip-frame-3 { animation: none; }
+  .dot-tip-frame-1 { opacity: 1; }
 }

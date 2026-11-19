@@ -10,6 +10,7 @@ import {
 import { createPortal } from 'react-dom'
 import { ChevronDown, LogOut, RefreshCw, SwitchCamera } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
+import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { siteLabel } from '../../data/zhCopy'
 import { isAcknowledged } from '../../data/preferences'
 import { stateFromDecision, type LoginCheckState } from '../../data/loginStatus'
@@ -363,20 +364,13 @@ export function LoginStatusPanel() {
           </button>
         )}
 
-        <label className="login-auto-toggle">
-          <span>定时检查</span>
-          <input
-            data-testid="auto-refresh-toggle"
-            className="login-auto-toggle-input"
-            type="checkbox"
-            checked={auto.enabled}
-            onChange={(event) => setAuto({ ...auto, enabled: event.target.checked })}
-          />
-          <span className="login-auto-toggle-track" aria-hidden="true">
-            <span className="login-auto-toggle-indicator" />
-            <span className="login-auto-toggle-thumb" />
-          </span>
-        </label>
+        <ToggleSwitch
+          label="定时检查"
+          testId="auto-refresh-toggle"
+          indicator
+          checked={auto.enabled}
+          onChange={(enabled) => setAuto({ ...auto, enabled })}
+        />
         <label className="login-auto-interval">
           每
           <input

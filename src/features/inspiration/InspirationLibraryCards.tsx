@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, Trash2, X } from "lucide-react";
+import { Check, FileText, Folder, Trash2, X } from "lucide-react";
+import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { inspirationKindLabel, type InspirationFolder, type InspirationItem } from "./inspirationLibrary";
 
 const papers = [
@@ -40,24 +41,34 @@ export function InspirationFolderCard({
   count,
   paperCount,
   onOpen,
+  dropDisabled,
 }: {
   folder: InspirationFolder;
   count: number;
   paperCount: number;
   onOpen: () => void;
+  dropDisabled: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const reduceMotion = useLiveReducedMotion();
   const filterId = `folder-shadow-${useId().replace(/:/g, "")}`;
+  const { active } = useDndContext();
+  const drag = useDraggable({ id: `folder:${folder.id}`, data: { kind: "folder", id: folder.id, label: folder.name } });
+  const drop = useDroppable({ id: `folder-drop:${folder.id}`, data: { folderId: folder.id }, disabled: dropDisabled });
+  const dropActive = drop.isOver && !dropDisabled;
+  // 拖动期间只有能放下的文件夹张开,免得经过的文件夹都像在接收。
+  const expanded = active ? dropActive : hovered;
   return (
     <button
+      ref={(element) => { drag.setNodeRef(element); drop.setNodeRef(element); }}
+      {...drag.listeners}
       type="button"
       data-testid={`inspiration-folder-item-${folder.id}`}
-      className="inspiration-folder-card"
-      onPointerEnter={() => setExpanded(true)}
-      onPointerLeave={() => setExpanded(false)}
-      onFocus={() => setExpanded(true)}
-      onBlur={() => setExpanded(false)}
+      className={`inspiration-folder-card${drag.isDragging ? " is-dragging" : ""}${dropActive ? " is-drop-target" : ""}`}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onBlur={() => setHovered(false)}
       onClick={onOpen}
     >
       <span className="inspiration-folder-art" aria-hidden="true">
@@ -122,6 +133,7 @@ export function InspirationFileCard({
   const filterId = `file-shadow-${useId().replace(/:/g, "")}`;
   const [confirming, setConfirming] = useState(false);
   const reduceMotion = useLiveReducedMotion();
+  const drag = useDraggable({ id: `item:${item.id}`, data: { kind: "item", id: item.id, label: item.title || "未命名灵感" } });
   useEffect(() => {
     if (!confirming) return;
     const cancel = (event: KeyboardEvent) => {
@@ -131,8 +143,10 @@ export function InspirationFileCard({
     return () => window.removeEventListener("keydown", cancel);
   }, [confirming]);
   return (
-    <div className={`inspiration-file-card${selected ? " is-selected" : ""}`}>
+    <div className={`inspiration-file-card${selected ? " is-selected" : ""}${drag.isDragging ? " is-dragging" : ""}`}>
       <button
+        ref={drag.setNodeRef}
+        {...drag.listeners}
         type="button"
         data-testid={`inspiration-item-${item.id}`}
         className="inspiration-file-card-open"
@@ -174,6 +188,15 @@ export function InspirationFileCard({
           )}
         </AnimatePresence>
       </div>
+    </div>
+  );
+}
+
+export function InspirationDragPreview({ kind, label }: { kind: "item" | "folder"; label: string }) {
+  return (
+    <div className={`inspiration-drag-preview is-${kind}`}>
+      {kind === "folder" ? <Folder size={16} aria-hidden="true" /> : <FileText size={16} aria-hidden="true" />}
+      <strong>{label}</strong>
     </div>
   );
 }

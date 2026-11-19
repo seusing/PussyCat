@@ -1,0 +1,20 @@
+.dot-mascot { display: inline-grid; flex: none; place-items: center; }
+.dot-mascot svg { display: block; overflow: visible; }
+.dot-mascot-eyes { transform-box: view-box; transform-origin: 20px 19px; animation: dot-mascot-blink 3.8s infinite; }
+.dot-mascot-gaze { animation: dot-mascot-gaze 6s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+@keyframes dot-mascot-blink {
+  0%, 91%, 100% { transform: scaleY(1); }
+  94% { transform: scaleY(.12); }
+}
+
+@keyframes dot-mascot-gaze {
+  0%, 28% { transform: translate(0, 0); }
+  36%, 58% { transform: translate(-2.2px, .6px); }
+  66%, 88% { transform: translate(2.2px, -.6px); }
+  96%, 100% { transform: translate(0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot-mascot-eyes, .dot-mascot-gaze { animation: none; }
+}

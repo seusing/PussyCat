@@ -4,7 +4,7 @@
 // token。进度只显示真实状态/已耗时/实际费用,不造百分比(拍板 4)。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent, ReactNode } from 'react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { createPortal } from 'react-dom'
 import { BorderBeam } from 'border-beam'
 import { LoaderCircle, RefreshCw, Upload } from 'lucide-react'
@@ -71,6 +71,8 @@ import { STORYLINE_IN_PROGRESS, VK_STORYLINE_STARTED_EVENT } from './storyline'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow, isXiaohongshuSource } from './VideoSourceCoverFlow'
 import { DotSuggestTip, type XhsParser } from './DotSuggestTip'
+import { DotMascot } from './DotMascot'
+import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { VkTaskTable } from './VkTaskTable'
 import { VkOutputViewer, type VkOutputCache, type VkOutputTab } from './VkOutputViewer'
 import { vkJobRowFromView, vkPrimaryOutput as primaryOutput, vkTaskResultGroups } from './taskResults'
@@ -1735,20 +1737,16 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
         )}
         <div className="flex items-center gap-2">
           {hasXiaohongshu && (
-            <div role="group" aria-label="小红书链接的解析方式" data-testid="vk-xhs-parser" className="vk-xhs-parser">
-              <span className="vk-xhs-parser-label">小红书链接</span>
-              {(['model', 'dot'] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={(xhsParser ?? 'model') === value}
-                  data-testid={`vk-xhs-parser-${value}`}
-                  onClick={() => setXhsParser(value)}
-                >
-                  {value === 'dot' ? '点点' : '模型'}
-                </button>
-              ))}
-            </div>
+            <ToggleSwitch
+              label="用点点"
+              tone="success"
+              testId="vk-xhs-dot-switch"
+              className="vk-xhs-dot-switch"
+              checked={dotSelected}
+              onChange={(on) => setXhsParser(on ? 'dot' : 'model')}
+            >
+              <AnimatePresence initial={false}>{dotSelected && <DotMascot key="dot-mascot" />}</AnimatePresence>
+            </ToggleSwitch>
           )}
           <button
             type="button"
