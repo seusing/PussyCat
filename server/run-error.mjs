@@ -20,6 +20,8 @@ const STDERR_TAIL_CHARS = 8000
 const BROWSER_NOT_CONNECTED = '浏览器没连上：点左下角的修复按钮，或打开装有 OpenCLI 扩展的 Chrome 后重试'
 const TIMED_OUT = '执行超时：网络较慢或页面卡住，稍后重试'
 const NEEDS_VERIFICATION = '网站要求验证：在 Chrome 里打开该网站完成验证后重试'
+// 同一站点同时只能跑一条写入命令;被取消、被杀掉的那条要约 45 秒后才让出(opencli session-lease.js 的 TTL)
+const SESSION_BUSY = '该网站上一条写入命令还没结束：等它结束或取消约 45 秒后再试'
 const GENERIC_FAILURE = '命令执行失败'
 
 function needsLogin(domain) {
@@ -32,6 +34,7 @@ const KIND_BY_CODE = {
   TIMEOUT: 'timeout',
   LOGIN_WALL: 'verify',
   SECURITY_BLOCK: 'verify',
+  SESSION_BUSY: 'busy',
 }
 
 // 没有可用 code 时才看文案。UNKNOWN 信封里装的是浏览器桥抛出的原始 Error。
@@ -110,6 +113,7 @@ export function describeRunError({ summary, detail, stderr = '', stdout = '', ex
     login: needsLogin(loginDomain(stdoutError?.hint, stdoutError?.message, tail)),
     timeout: TIMED_OUT,
     verify: NEEDS_VERIFICATION,
+    busy: SESSION_BUSY,
   }[kind] ?? GENERIC_FAILURE
   const original = stdoutError
     ? [[stdoutError.code, stdoutError.message].filter(Boolean).join(': '), stdoutError.hint].filter(Boolean).join('\n')

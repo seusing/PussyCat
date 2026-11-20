@@ -191,9 +191,15 @@ describe('describeRunError —— 2.0 的 stdout 失败信封', () => {
     ['TIMEOUT', TIMEOUT],
     ['LOGIN_WALL', VERIFY],
     ['SECURITY_BLOCK', VERIFY],
+    ['SESSION_BUSY', '该网站上一条写入命令还没结束：等它结束或取消约 45 秒后再试'],
     ['NO_DATA', GENERIC],
   ])('错误码 %s', (code, expected) => {
     expect(describeShell({ code, message: 'm', exitCode: 1 }, 1).summary).toBe(expected)
+  })
+
+  it('SESSION_BUSY 的退出码也是 75,不按退出码当成超时', () => {
+    const error = { code: 'SESSION_BUSY', message: 'Session "site:xiaohongshu" is busy', exitCode: 75 }
+    expect(describeShell(error, 75).summary).toBe('该网站上一条写入命令还没结束：等它结束或取消约 45 秒后再试')
   })
 
   it('AUTH_REQUIRED:hint 里的登录域名进 summary', () => {

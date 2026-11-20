@@ -39,6 +39,9 @@ export async function switchAccount(page, site, { whoami, accountKey, identify, 
     const before = await probe();
     let lastKey = await readKey();
     const beforeId = before ? identify(before, lastKey) : null;
+    // 扩展只在新建标签租约时把窗口调到前台;沿用 whoami 留下的后台标签,窗口会一直待在后面(或最小化)。
+    // 先释放该站会话,下一次跳转就新建租约,按本命令的 foreground 把窗口拉到前面。
+    await page.closeWindow();
     await page.goto(before ? homeUrl : loginUrl);
 
     const deadline = Date.now() + waitSeconds * 1000;

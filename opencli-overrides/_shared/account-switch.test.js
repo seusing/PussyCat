@@ -8,6 +8,7 @@ function harness({ account, key = account ? `k-${account}` : '', steps = [], who
     let tick = 0;
     let failures = whoamiFailures;
     const page = {
+        closeWindow: vi.fn(async () => {}),
         goto: vi.fn(async () => {}),
         wait: vi.fn(async () => {
             steps[tick]?.(browser);
@@ -41,6 +42,8 @@ describe('switchAccount', () => {
         const { page, whoami, options } = harness({ account: 'A', steps: [() => {}, logout, () => {}, login('B')] });
         const result = await switchAccount(page, 'example', options, { waitSeconds: 5 });
         expect(page.goto).toHaveBeenCalledWith('https://example.com/');
+        // 先释放后台会话再跳转,扩展才会新建租约并把窗口调到前台
+        expect(page.closeWindow.mock.invocationCallOrder[0]).toBeLessThan(page.goto.mock.invocationCallOrder[0]);
         expect(result).toMatchObject({ status: 'switched', previous: 'A', username: 'B' });
         // 会话指纹没变时不探测身份:开头一次 + 换号后一次
         expect(whoami).toHaveBeenCalledTimes(2);
