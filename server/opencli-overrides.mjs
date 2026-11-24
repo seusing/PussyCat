@@ -23,6 +23,7 @@ const FILES = [
   'bilibili/switch-account.js',
   'twitter/switch-account.js',
   'youtube/switch-account.js',
+  'xiaohongshu-dot/chat.js',
 ]
 
 const browserCommand = {
@@ -47,7 +48,8 @@ const COLUMN_PATCHES = {
   whoami: ['region'],
 }
 
-// 整条写入：新增命令插在 after 指向的命令之后；上游已有的同名条目（如 search）原位整条替换，不保留上游的参数。
+// 整条写入：新增命令插在 after 指向的命令之后（after 为 null 时追加到末尾，用于上游没有的站点）；
+// 上游已有的同名条目（如 search）原位整条替换，不保留上游的参数。
 // 切换账号:各站点同一套流程(_shared/account-switch.js),插在上游 login 后面
 const switchAccountEntry = (site, domain, columns) => ({
   after: 'login',
@@ -130,6 +132,49 @@ const NEW_ENTRIES = [
   switchAccountEntry('bilibili', 'www.bilibili.com', ['id', 'username', 'level']),
   switchAccountEntry('twitter', 'x.com', ['username', 'url']),
   switchAccountEntry('youtube', 'www.youtube.com', ['name']),
+  // 点点对话(xiaohongshu-dot/chat.js):chat 提问并流式回传,stop 调点点自己的停止生成
+  {
+    after: null,
+    entry: {
+      site: 'xiaohongshu-dot',
+      name: 'chat',
+      description: 'Ask Xiaohongshu 点点 in its web chat and stream the answer',
+      access: 'write',
+      domain: 'www.xiaohongshu.com',
+      strategy: 'cookie',
+      browser: true,
+      args: [
+        { name: 'query', type: 'str', required: true, positional: true, help: 'Question for 点点' },
+        { name: 'conversation', type: 'string', required: false, help: 'Conversation id to continue; empty starts a new one' },
+        { name: 'timeout', type: 'int', default: 180, required: false, help: 'Seconds to wait for the answer (max 180)' },
+      ],
+      columns: ['answer', 'source_total_text', 'source_count', 'conversation_id', 'message_id'],
+      type: 'js',
+      modulePath: 'xiaohongshu-dot/chat.js',
+      sourceFile: 'xiaohongshu-dot/chat.js',
+      navigateBefore: false,
+      siteSession: 'persistent',
+    },
+  },
+  {
+    after: 'chat',
+    entry: {
+      site: 'xiaohongshu-dot',
+      name: 'stop',
+      description: 'Stop the answer 点点 is generating in the chat tab',
+      access: 'read',
+      domain: 'www.xiaohongshu.com',
+      strategy: 'cookie',
+      browser: true,
+      args: [],
+      columns: ['stopped'],
+      type: 'js',
+      modulePath: 'xiaohongshu-dot/chat.js',
+      sourceFile: 'xiaohongshu-dot/chat.js',
+      navigateBefore: false,
+      siteSession: 'persistent',
+    },
+  },
 ]
 
 /**
@@ -173,6 +218,10 @@ export function applyOpencliOverrides({ packageRoot, sourceDir }) {
     const existing = findEntry(entry.site, entry.name)
     if (existing) {
       manifest[manifest.indexOf(existing)] = entry
+      continue
+    }
+    if (after === null) {
+      manifest.push(entry)
       continue
     }
     const anchor = findEntry(entry.site, after)

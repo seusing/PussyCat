@@ -384,6 +384,43 @@ export const REVIEWED_RECORDS = new Map([
       residues: ['persistent-session'],
     },
   }],
+
+  // ── browser-dot-chat ───────────────────────────────────────────────────────
+  // 爪爪原生点点对话(opencli-overrides/xiaohongshu-dot/chat.js)。在账号所在地区的网页里(大陆站 www.xiaohongshu.com/ai_chat,
+  // 国际版 www.rednote.com/explore)调页面点点会话模块的 createConversation / sendMessage / interruptCurrentMessage,
+  // 请求和签名都由页面自己发出、生成,不碰网络层。站点 key 单独成 xiaohongshu-dot,浏览器会话 site:xiaohongshu-dot
+  // 只放点点这一个标签;页面放久了会先刷新再问。
+  ['xiaohongshu-dot/chat', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu-dot/chat') },
+    // 命令内最多等 180s(chat.js 的 MAX_TIMEOUT_SECONDS),Host 留 30s 收尾。
+    commandTimeoutMs: 210_000,
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 用本机 Chrome 里小红书(大陆站或国际版)的登录态,由页面经长连接 / HTTP 发问、收答。
+      authorities: ['browser-profile', 'public-network'],
+      // 回答可能涉及本人账号的数据(例如收藏夹),按个人信息算。
+      exposure: 'personal',
+      // 每条提问都会存进点点那边的会话记录。
+      effects: ['remote-write'],
+      credentialFlow: 'consume',
+      // siteSession:'persistent' → 共享会话 site:xiaohongshu-dot + keepTab=true,点点页面常驻以接续多轮对话。
+      residues: ['persistent-session'],
+    },
+  }],
+  ['xiaohongshu-dot/stop', {
+    get reviewedAgainst() { return shapeOf('xiaohongshu-dot/stop') },
+    metadata: {
+      executionPath: 'browser-bridge',
+      // 在同一个点点标签里调会话对象的 interruptCurrentMessage(页面随之通知点点停止这一轮)。
+      authorities: ['browser-profile', 'public-network'],
+      // 只返回是否停掉了。
+      exposure: 'public',
+      // 停止生成会改动点点那边这一轮的状态;opencli 层记成 read 只为不被 chat 的写租约挡住。
+      effects: ['remote-write'],
+      credentialFlow: 'consume',
+      residues: ['persistent-session'],
+    },
+  }],
 ])
 
 // reviewedCarry 同样惰性 + memo:基准快照里该命令的沿用比对哈希。
@@ -415,3 +452,9 @@ export const BROWSER_COOKIE_READ_PILOT = new Set([
 export const BROWSER_ACCOUNT_SWITCH = new Set([
   'xiaohongshu/switch-account', 'bilibili/switch-account', 'twitter/switch-account', 'youtube/switch-account',
 ])
+
+/**
+ * browser-dot-chat 的显式成员集:爪爪原生的点点对话(提问 + 停止生成)。
+ * 单独成组,因为它要 effects 'remote-write'(提问会存进点点的会话记录),别的浏览器分组都只收 []。
+ */
+export const BROWSER_DOT_CHAT = new Set(['xiaohongshu-dot/chat', 'xiaohongshu-dot/stop'])

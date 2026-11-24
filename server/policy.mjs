@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { isCompleteRecord } from './policy-types.mjs'
-import { BROWSER_ACCOUNT_SWITCH, BROWSER_COOKIE_READ_PILOT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
+import { BROWSER_ACCOUNT_SWITCH, BROWSER_COOKIE_READ_PILOT, BROWSER_DOT_CHAT, REVIEWED_RECORDS, reviewBaselineVersion } from './policy-metadata.mjs'
 import { POLICY_SCHEMA_VERSION, decisionFingerprint, reviewCarryHash, reviewShapeHash } from './policy-fingerprint.mjs'
 
 export class RequestPolicyError extends Error {
@@ -41,18 +41,20 @@ export const COMMAND_POLICY_OVERRIDES = {
  *   · credentialFlow 从 none 放到允许 consume —— 消费浏览器登录态正是该 tier 的存在理由;
  *   · residues 从 [] 放到允许 persistent-session —— 四条 whoami 的 siteSession:'persistent'
  *     是上游 _shared/site-auth.js:59 写死的,绕不过。
- * effects 两个 tier 都必须为 [],不放宽。
+ * effects 只有 browser-dot-chat 放到允许 remote-write(每条提问都会存进点点的会话记录),其余 tier 都必须为 []。
  */
 const TIER_ALLOWANCES = {
   'local-direct': {
     authorities: ['public-network', 'explicit-local-input', 'ambient-local-files'],
     exposures: ['public', 'personal'],
+    effects: [],
     credentialFlows: ['none'],
     residues: [],
   },
   'browser-cookie-read-pilot': {
     authorities: ['browser-profile', 'public-network'],
     exposures: ['public', 'personal'],
+    effects: [],
     credentialFlows: ['none', 'consume'],
     residues: ['persistent-session'],
   },
@@ -60,7 +62,16 @@ const TIER_ALLOWANCES = {
   'browser-account-switch': {
     authorities: ['browser-profile', 'public-network'],
     exposures: ['personal'],
+    effects: [],
     credentialFlows: ['consume', 'produce', 'both'],
+    residues: ['persistent-session'],
+  },
+  // 点点对话:在试点之上只多放 effects 的 remote-write(提问与停止生成都会改动点点那边的会话)。
+  'browser-dot-chat': {
+    authorities: ['browser-profile', 'public-network'],
+    exposures: ['public', 'personal'],
+    effects: ['remote-write'],
+    credentialFlows: ['consume'],
     residues: ['persistent-session'],
   },
 }
@@ -70,6 +81,7 @@ function tierOf(command) {
   // 它先于 local-direct 判定,但二者集合天然不交(试点八条全是 browser===true)。
   if (BROWSER_COOKIE_READ_PILOT.has(command.command)) return 'browser-cookie-read-pilot'
   if (BROWSER_ACCOUNT_SWITCH.has(command.command)) return 'browser-account-switch'
+  if (BROWSER_DOT_CHAT.has(command.command)) return 'browser-dot-chat'
   if (command.browser === false && command.strategy === 'local') return 'local-direct'
   return null
 }
@@ -79,7 +91,7 @@ function withinTier(tier, m) {
   if (!allow) return false
   if (!m.authorities.every((a) => allow.authorities.includes(a))) return false
   if (!allow.exposures.includes(m.exposure)) return false
-  if (m.effects.length > 0) return false
+  if (!m.effects.every((e) => allow.effects.includes(e))) return false
   if (!allow.credentialFlows.includes(m.credentialFlow)) return false
   // 走到这里 residues 必是数组:isCompleteRecord 只放行 `'unknown'` 或 RESIDUES 子集数组,
   // 而 `'unknown'` 已被第 6 步拦掉。原先这里还有一个 `!Array.isArray(m.residues)` 前置判断,
@@ -239,7 +251,7 @@ export function buildExecutionPolicy(snapshot) {
   // 这张表是 Host 内部的执行期约束,前端无从看见也不需要看见。
   const argvConstraintByKey = new Map()
   for (const command of snapshot.commands) {
-    if (!BROWSER_COOKIE_READ_PILOT.has(command.command) && !BROWSER_ACCOUNT_SWITCH.has(command.command)) continue
+    if (![BROWSER_COOKIE_READ_PILOT, BROWSER_ACCOUNT_SWITCH, BROWSER_DOT_CHAT].some((tier) => tier.has(command.command))) continue
     argvConstraintByKey.set(command.command, buildArgvConstraint(command))
   }
 

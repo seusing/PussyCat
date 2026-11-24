@@ -268,10 +268,10 @@ describe('更新成功', () => {
     const packageRoot = installedRoot(ctx.root)
     const manifest = JSON.parse(readFileSync(join(packageRoot, 'cli-manifest.json'), 'utf8'))
     expect([...new Set(manifest.map((entry) => entry.site))].sort()).toEqual(
-      ['bilibili', 'binance', 'eastmoney', 'twitter', 'xiaohongshu', 'youtube'],
+      ['bilibili', 'binance', 'eastmoney', 'twitter', 'xiaohongshu', 'xiaohongshu-dot', 'youtube'],
     )
     const dirsLeft = readdirSync(join(packageRoot, 'clis')).sort()
-    expect(dirsLeft).toEqual(['_shared', 'bilibili', 'binance', 'eastmoney', 'twitter', 'xiaohongshu', 'youtube'])
+    expect(dirsLeft).toEqual(['_shared', 'bilibili', 'binance', 'eastmoney', 'twitter', 'xiaohongshu', 'xiaohongshu-dot', 'youtube'])
   })
 
   it('校验用的 OpenCLI 进程不碰用户目录:HOME/USERPROFILE 指向临时目录,CI=1', async () => {

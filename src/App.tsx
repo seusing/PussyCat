@@ -17,6 +17,9 @@ import { VkProviderForm } from './features/vk/VkProviderForm'
 import { VkTaskDetailSidebar } from './features/vk/VkTaskDetailSidebar'
 import { RadarPanel } from './features/radar/RadarPanel'
 import { InspirationPanel } from './features/inspiration/InspirationPanel'
+import { DotChatPanel } from './features/dot/DotChatPanel'
+import { useDotChat } from './features/dot/dotChatStore'
+import { isDotRunId } from './features/dot/dotProtocol'
 import {
   isLoginCheckRunId, loginCheckRunId, parseWhoamiResult,
 } from './data/loginStatus'
@@ -118,9 +121,18 @@ export default function App({
     // 写清楚以免后人以为这几行是防污染的唯一屏障。
     const offOut = host.onOutput((e) => {
       if (isLoginCheckRunId(e.runId)) return
+      // 点点对话的运行走它自己的通道,不进运行面板
+      if (isDotRunId(e.runId)) {
+        useDotChat.getState().handleOutput(e)
+        return
+      }
       useAppStore.getState().appendOutput(e)
     })
     const offDone = host.onDone((e) => {
+      if (isDotRunId(e.runId)) {
+        useDotChat.getState().handleDone(e)
+        return
+      }
       if (isLoginCheckRunId(e.runId)) {
         const { state, detail } = e.outcome === 'success'
           ? parseWhoamiResult(e.result)
@@ -136,6 +148,7 @@ export default function App({
   }, [host, catalogSource, mode, setCommands, setCatalogStatus, setMode])
 
   useEffect(() => { useAppStore.getState().hydratePreferences() }, [])
+  useEffect(() => { useDotChat.getState().bindHost(host) }, [host])
 
   useEffect(() => {
     setVisitedModules((current) => current.has(activeModule)
@@ -371,6 +384,9 @@ export default function App({
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'login'}>
         {(visitedModules.has('login') || activeModule === 'login') && <ModuleErrorBoundary><LoginStatusPanel /></ModuleErrorBoundary>}
+      </div>
+      <div className="app-page-stack-panel" hidden={activeModule !== 'dot'}>
+        {(visitedModules.has('dot') || activeModule === 'dot') && <ModuleErrorBoundary><DotChatPanel /></ModuleErrorBoundary>}
       </div>
       <div className="app-page-stack-panel" hidden={activeModule !== 'vk'}>
         {(visitedModules.has('vk') || activeModule === 'vk') && (

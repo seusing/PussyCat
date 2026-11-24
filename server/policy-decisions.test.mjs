@@ -61,9 +61,9 @@ describe('准入算法', () => {
     expect(decisions.size).toBe(snapshot.commands.length)
   })
 
-  it('可执行面 = 三条 local-direct + 十五条试点 + 四条切换账号,且全部是 ready', () => {
+  it('可执行面 = 三条 local-direct + 十五条试点 + 四条切换账号 + 两条点点对话,且全部是 ready', () => {
     const runnable = [...decisions.values()].filter((d) => d.state === 'ready' || d.state === 'acknowledgement-required')
-    expect(runnable.length).toBe(3 + 15 + 4)
+    expect(runnable.length).toBe(3 + 15 + 4 + 2)
     expect(runnable.every((d) => d.state === 'ready')).toBe(true)
   })
 
@@ -167,7 +167,7 @@ describe('browser-cookie-read-pilot', () => {
     }
   })
 
-  it('**同 cohort 的非成员一条都没被带出来** —— read+cookie+browser 里只放行这十五条', () => {
+  it('**同 cohort 的非成员一条都没被带出来** —— read+cookie+browser 里只放行这十五条和点点的停止生成', () => {
     const cohort = snapshot.commands
       .filter((c) => c.access === 'read' && c.strategy === 'cookie' && c.browser === true)
       .map((c) => c.command)
@@ -177,7 +177,8 @@ describe('browser-cookie-read-pilot', () => {
       const d = decisions.get(k)
       return d.state === 'ready' || d.state === 'acknowledgement-required'
     })
-    expect(runnable.sort()).toEqual([...PILOT].sort())
+    // xiaohongshu-dot/stop 在 opencli 层记成 read(为了不被 chat 的写租约挡住),走的是 browser-dot-chat 分组
+    expect(runnable.sort()).toEqual([...PILOT, 'xiaohongshu-dot/stop'].sort())
   })
 
   it.each([

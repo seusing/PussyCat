@@ -11,4 +11,8 @@ export const PRODUCT_SITE_KEYS = {
 
 export const ENGINE_SITE_KEYS = ['eastmoney', 'binance']
 
-export const RETAINED_SITE_KEYS = [...Object.values(PRODUCT_SITE_KEYS).flat(), ...ENGINE_SITE_KEYS]
+// 爪爪自己的站点 key(opencli-overrides 里新建的,上游没有):xiaohongshu-dot 是点点对话,
+// 单独成站是为了让它有自己的浏览器标签(会话名 site:<站点>)
+export const NATIVE_SITE_KEYS = ['xiaohongshu-dot']
+
+export const RETAINED_SITE_KEYS = [...Object.values(PRODUCT_SITE_KEYS).flat(), ...ENGINE_SITE_KEYS, ...NATIVE_SITE_KEYS]

@@ -138,7 +138,7 @@ describe('审定基准', () => {
   })
 
   it('每条审定记录都能拿到基准的沿用比对哈希', () => {
-    expect(REVIEWED_RECORDS.size).toBe(22)
+    expect(REVIEWED_RECORDS.size).toBe(24)
     for (const [key, record] of REVIEWED_RECORDS) {
       expect(record.reviewedCarry, key).toBe(reviewCarryHash(find(key)))
     }

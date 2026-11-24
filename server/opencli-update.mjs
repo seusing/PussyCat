@@ -37,6 +37,8 @@ const INSTALL_REGISTRY = 'https://registry.npmmirror.com'
 const SWITCHING_MESSAGE = '正在切换 OpenCLI，请稍候'
 // 这些命令是爪爪自己的原生命令(opencli-overrides),新包里必须在。
 const NATIVE_COMMANDS = ['collections', 'search', 'user-posts', 'note', 'comments', 'saved']
+  .map((name) => `xiaohongshu/${name}`)
+  .concat(['xiaohongshu-dot/chat'])
 const RETAINED_SITES = new Set(RETAINED_SITE_KEYS)
 // 扩展版本下限:OpenCLI 2.0.0 要 1.0.25,2.0.1 起要 1.0.26。
 const EXTENSION_MINIMUMS = [['2.0.1', '1.0.26'], ['2.0.0', '1.0.25']]
@@ -289,14 +291,14 @@ export function createOpencliUpdate({
 
     const manifestKeys = new Set(readManifest(packageRoot).map((item) => `${item.site}/${item.name}`))
     const reviewed = [...REVIEWED_RECORDS.keys()].filter((key) => RETAINED_SITES.has(key.split('/')[0]))
-    const required = [...reviewed, ...NATIVE_COMMANDS.map((name) => `xiaohongshu/${name}`)]
+    const required = [...reviewed, ...NATIVE_COMMANDS]
     const notInManifest = required.filter((key) => !manifestKeys.has(key))
     if (notInManifest.length) throw new StageError('校验失败：新版本缺少必需的命令', notInManifest.join(', '))
     const notLoadable = required.filter((key) => !listedKeys.has(key))
     if (notLoadable.length) throw new StageError('校验失败：必需的命令加载不了', notLoadable.join(', '))
 
-    for (const name of NATIVE_COMMANDS) {
-      const help = await run(['xiaohongshu', name, '--help', '-f', 'json'])
+    for (const key of NATIVE_COMMANDS) {
+      const help = await run([...key.split('/'), '--help', '-f', 'json'])
       let parsed
       try {
         parsed = JSON.parse(stripBom(help.stdout))
@@ -304,7 +306,7 @@ export function createOpencliUpdate({
         parsed = undefined
       }
       if (help.code !== 0 || !parsed || typeof parsed !== 'object') {
-        throw new StageError(`校验失败：原生命令 xiaohongshu ${name} 不能用`, tail(help.stderr))
+        throw new StageError(`校验失败：原生命令 ${key.replace('/', ' ')} 不能用`, tail(help.stderr))
       }
     }
   }

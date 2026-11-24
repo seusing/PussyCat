@@ -61,6 +61,21 @@ describe('applyOpencliOverrides', () => {
       .toBe(readFileSync(join(sourceDir, '_shared', 'account-switch.js'), 'utf8'))
   })
 
+  it('上游没有的站点 xiaohongshu-dot:chat、stop 追加到末尾,套第二次原位替换不重复', () => {
+    const packageRoot = packageWith(upstream())
+    applyOpencliOverrides({ packageRoot, sourceDir })
+    applyOpencliOverrides({ packageRoot, sourceDir })
+    const manifest = JSON.parse(readFileSync(join(packageRoot, 'cli-manifest.json'), 'utf8'))
+    const dot = manifest.filter((entry) => entry.site === 'xiaohongshu-dot')
+    expect(dot.map((entry) => entry.name)).toEqual(['chat', 'stop'])
+    expect(manifest.slice(-2)).toEqual(dot)
+    expect(dot[0]).toMatchObject({ access: 'write', siteSession: 'persistent', modulePath: 'xiaohongshu-dot/chat.js' })
+    // stop 记成 read,才不会被正在运行的 chat 的写租约挡住
+    expect(dot[1]).toMatchObject({ access: 'read', siteSession: 'persistent', modulePath: 'xiaohongshu-dot/chat.js' })
+    expect(readFileSync(join(packageRoot, 'clis', 'xiaohongshu-dot', 'chat.js'), 'utf8'))
+      .toBe(readFileSync(join(sourceDir, 'xiaohongshu-dot', 'chat.js'), 'utf8'))
+  })
+
   it('幂等:套两次结果一样', () => {
     const packageRoot = packageWith(upstream())
     applyOpencliOverrides({ packageRoot, sourceDir })
@@ -92,7 +107,7 @@ describe('applyOpencliOverrides', () => {
 
     expect(() => applyOpencliOverrides({ packageRoot, sourceDir })).not.toThrow()
 
-    expect(files).toHaveLength(18)
+    expect(files).toHaveLength(19)
     for (const name of files) {
       expect(readFileSync(join(packageRoot, 'clis', name), 'utf8'), name).toBe(readFileSync(join(sourceDir, name), 'utf8'))
     }

@@ -1,12 +1,14 @@
 import { SUPPORTED_SITES } from '../data/supportedSites'
-import { ENGINE_SITE_KEYS, PRODUCT_SITE_KEYS, RETAINED_SITE_KEYS } from './opencli-sites.mjs'
+import { ENGINE_SITE_KEYS, NATIVE_SITE_KEYS, PRODUCT_SITE_KEYS, RETAINED_SITE_KEYS } from './opencli-sites.mjs'
 
-test('保留清单 = 产品站点 + 引擎站点,没有重复', () => {
+test('保留清单 = 产品站点 + 引擎站点 + 爪爪自己的站点,没有重复', () => {
   expect([...RETAINED_SITE_KEYS].sort()).toEqual(
-    ['binance', 'bilibili', 'eastmoney', 'twitter', 'weixin', 'wechat-channels', 'xiaohongshu', 'youtube'].sort(),
+    ['binance', 'bilibili', 'eastmoney', 'twitter', 'weixin', 'wechat-channels', 'xiaohongshu', 'xiaohongshu-dot', 'youtube'].sort(),
   )
   expect(new Set(RETAINED_SITE_KEYS).size).toBe(RETAINED_SITE_KEYS.length)
   expect(ENGINE_SITE_KEYS).toEqual(['eastmoney', 'binance'])
+  // 点点对话单独成站,不进界面上的站点列表
+  expect(NATIVE_SITE_KEYS).toEqual(['xiaohongshu-dot'])
 })
 
 test('界面上的产品站点 key 全部来自这份清单', () => {

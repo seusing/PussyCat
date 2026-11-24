@@ -190,6 +190,9 @@ describe('decisionFingerprint', () => {
       ['bilibili/switch-account', '73977712bf5c2db68160a2278165a2475b5ff756f5cc7100f85bb92780fc7563'],
       ['twitter/switch-account', 'dac3a5565da1e9c303ac93e33fae56e08f5b57f605c249c9b5ecbd1423005df2'],
       ['youtube/switch-account', 'afb9be5dc5aa4d15922a2ddf6858a10145bcfa8400b7621ac68d92d3079abfdb'],
+      // browser-dot-chat 两条(爪爪原生点点对话)
+      ['xiaohongshu-dot/chat', 'fc8de1230c4e5c3f07cf7df78be15b0ab3958a92b70ae9a185cdc54d29d0727e'],
+      ['xiaohongshu-dot/stop', '964597386b54724b05812f3261785eff133265a0bbc50bdc94f363bf6d775dca'],
     ])
     // 先证明冻结集就是 REVIEWED_RECORDS 的全部,否则将来再加记录时,
     // 这个冻结集会**静默地只覆盖一部分**。

@@ -127,8 +127,8 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect(policy.allowedCommands.size).toBe(runnable.size)
   })
 
-  it('执行面恰为三条 local-direct、十五条试点加四条切换账号,原三条件派生集全部不可执行', () => {
-    // 只断言总数 22 挡不住「少一条、多进来别的一条」——必须钉住**成员本身**:二十二条**逐条列名**,任何额外命令都会红。
+  it('执行面恰为三条 local-direct、十五条试点、四条切换账号加两条点点对话,原三条件派生集全部不可执行', () => {
+    // 只断言总数 24 挡不住「少一条、多进来别的一条」——必须钉住**成员本身**:二十四条**逐条列名**,任何额外命令都会红。
     // 原三条件派生集(read+public+browser=false 减 deny)不再有基线承接,也没有人工审定,
     // opencli 1.8.8 升级时明确接受这部分执行面收缩(spec §4.1.2)。
     const threeConditionDerived = new Set(snapshot.commands
@@ -138,7 +138,7 @@ describe('判决与允许集的单一事实源(Task 4 新增守卫)', () => {
     expect([...policy.allowedCommands].sort()).toEqual([
       'antigravity/recent-paths', 'bilibili/hot', 'bilibili/switch-account', 'bilibili/whoami',
       'mercury/reimbursement-plan', 'trae-cn/setup', 'twitter/switch-account', 'twitter/timeline', 'twitter/whoami',
-      'xiaohongshu/collections', 'xiaohongshu/comments', 'xiaohongshu/feed', 'xiaohongshu/liked',
+      'xiaohongshu-dot/chat', 'xiaohongshu-dot/stop', 'xiaohongshu/collections', 'xiaohongshu/comments', 'xiaohongshu/feed', 'xiaohongshu/liked',
       'xiaohongshu/note', 'xiaohongshu/saved', 'xiaohongshu/search', 'xiaohongshu/switch-account', 'xiaohongshu/user-posts',
       'xiaohongshu/whoami', 'youtube/subscriptions', 'youtube/switch-account', 'youtube/whoami',
     ])
@@ -265,8 +265,8 @@ describe('确认校验与状态码', () => {
     expect(validateStartRequest(req({ acknowledgement: { fingerprint: 'fp-1' } }), ackPolicy).commandKey).toBe('x/ack')
   })
 
-  it('现行策略下全部二十二条审定命令不带 acknowledgement 也放行', () => {
-    expect(policy.allowedCommands.size).toBe(22)
+  it('现行策略下全部二十四条审定命令不带 acknowledgement 也放行', () => {
+    expect(policy.allowedCommands.size).toBe(24)
     for (const key of policy.allowedCommands) {
       const request = { runId: 'r', commandKey: key, argv: [...key.split('/'), '-f', 'json'] }
       expect(validateStartRequest(request, policy).commandKey, key).toBe(key)
@@ -374,7 +374,7 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
     }, policy).commandKey).toBe('trae-cn/setup')
   })
 
-  it('十五条试点命令和四条切换账号都挂上了约束,且 flags 与位置参数数恰为各自 manifest 声明的', () => {
+  it('十五条试点命令、四条切换账号和两条点点对话都挂上了约束,且 flags 与位置参数数恰为各自 manifest 声明的', () => {
     const expected = new Map([
       ['xiaohongshu/whoami', [[], 0]],
       ['xiaohongshu/feed', [['--limit'], 0]],
@@ -395,6 +395,8 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
       ['bilibili/switch-account', [['--timeout'], 0]],
       ['twitter/switch-account', [['--timeout'], 0]],
       ['youtube/switch-account', [['--timeout'], 0]],
+      ['xiaohongshu-dot/chat', [['--conversation', '--timeout'], 1]],
+      ['xiaohongshu-dot/stop', [[], 0]],
     ])
     expect([...policy.argvConstraintByKey.keys()].sort()).toEqual([...expected.keys()].sort())
     for (const [key, [flags, positionals]] of expected) {

@@ -13,6 +13,7 @@ import {
   RadioTower,
   SlidersHorizontal,
 } from 'lucide-react'
+import { DotNavIcon } from '../features/dot/DotNavIcon'
 import { SystemHealthPill } from './SystemHealthPill'
 import { NotificationBell } from './NotificationBell'
 import { computeToastLane } from './toastLane'
@@ -31,6 +32,7 @@ import type { LayoutSnapshot } from '../data/layout'
 const MODULES = [
   { key: 'commands' as const, label: '灵感库', icon: Lightbulb },
   { key: 'login' as const, label: '登录信息', icon: KeyRound },
+  { key: 'dot' as const, label: '点点', icon: DotNavIcon },
   { key: 'vk' as const, label: '视频解析', icon: Clapperboard },
   { key: 'providers' as const, label: '模型配置', icon: SlidersHorizontal },
   { key: 'radar' as const, label: 'Codex Radar', icon: RadioTower },

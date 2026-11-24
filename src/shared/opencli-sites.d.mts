@@ -6,4 +6,5 @@ export const PRODUCT_SITE_KEYS: {
   bilibili: string[]
 }
 export const ENGINE_SITE_KEYS: string[]
+export const NATIVE_SITE_KEYS: string[]
 export const RETAINED_SITE_KEYS: string[]
