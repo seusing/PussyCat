@@ -206,11 +206,13 @@ describe('xiaohongshu user-posts helpers', () => {
     });
 });
 
-function profilePage(states) {
+// cookies:账号所在地区由各网页版的 id_token 决定,默认大陆版和国际版都没登录
+function profilePage(states, cookies = {}) {
     let index = 0;
     return {
         goto: vi.fn(),
         wait: vi.fn(),
+        getCookies: vi.fn(async ({ url }) => cookies[new URL(url).hostname] ?? []),
         autoScroll: vi.fn(async () => { index = Math.min(index + 1, states.length - 1); }),
         evaluate: vi.fn(async () => states[index]),
     };
@@ -288,6 +290,18 @@ describe('xiaohongshu user-posts command', () => {
             'https://www.xiaohongshu.com/user/profile/63b98bad0000000026010302?xsec_token=YB0A8B0snagcgYQB8wcA8p4kfwLEul40CDqJU82B7JiR4%3D&xsec_source=app_share',
         ]);
         expect(rows.map((row) => row.title)).toEqual(['笔记a']);
+    });
+
+    it('opens the profile on www.rednote.com for an international account and still writes www.xiaohongshu.com links', async () => {
+        const page = profilePage([loaded([note('a', 30 * DAY)], false)], { 'www.rednote.com': [{ name: 'id_token', value: 'signed-in' }] });
+        const rows = await fetchUserPosts(page, { id: 'https://www.rednote.com/user/profile/u?xsec_token=T' }, { now: () => 31 * DAY, random: () => 0 });
+        expect(page.goto.mock.calls.map(([url]) => url)).toEqual([
+            'https://www.rednote.com/explore',
+            'https://www.rednote.com/user/profile/u?xsec_token=T&xsec_source=pc_note',
+        ]);
+        expect(rows.map((row) => row.url)).toEqual([buildNoteUrl('a', 't-a')]);
+        await expect(fetchUserPosts(profilePage([{ storePresent: true, loginWall: true, notes: [], hasMore: false }], { 'www.rednote.com': [{ name: 'id_token', value: 'x' }] }), { id: USER_ID }))
+            .rejects.toMatchObject({ domain: 'www.rednote.com' });
     });
 
     it('does not open the browser when the short link cannot be resolved or the options are wrong', async () => {

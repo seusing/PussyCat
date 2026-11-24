@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path'
 
 // 相对 opencli-overrides/ 与包内 clis/ 的路径
 const FILES = [
+  'xiaohongshu/region.js',
+  'xiaohongshu/auth.js',
   'xiaohongshu/collection-helpers.js',
   'xiaohongshu/saved.js',
   'xiaohongshu/collections.js',
@@ -40,6 +42,11 @@ const ARG_PATCHES = {
   ],
 }
 
+// 已有命令：追加输出列（已有则跳过）。whoami 换成了爪爪的 xiaohongshu/auth.js，多输出账号所在地区。
+const COLUMN_PATCHES = {
+  whoami: ['region'],
+}
+
 // 整条写入：新增命令插在 after 指向的命令之后；上游已有的同名条目（如 search）原位整条替换，不保留上游的参数。
 // 切换账号:各站点同一套流程(_shared/account-switch.js),插在上游 login 后面
 const switchAccountEntry = (site, domain, columns) => ({
@@ -52,7 +59,8 @@ const switchAccountEntry = (site, domain, columns) => ({
     domain,
     strategy: 'cookie',
     browser: true,
-    args: [],
+    // 与 _shared/account-switch.js 的 TIMEOUT_ARG 一致
+    args: [{ name: 'timeout', type: 'int', default: 300, required: false, help: 'Seconds to wait for the new login (max 300)' }],
     columns: ['status', 'previous', 'logged_in', 'site', ...columns],
     type: 'js',
     modulePath: `${site}/switch-account.js`,
@@ -118,7 +126,7 @@ const NEW_ENTRIES = [
       sourceFile: 'xiaohongshu/user-posts.js',
     },
   },
-  switchAccountEntry('xiaohongshu', 'creator.xiaohongshu.com', ['username', 'followers']),
+  switchAccountEntry('xiaohongshu', 'creator.xiaohongshu.com', ['username', 'followers', 'region']),
   switchAccountEntry('bilibili', 'www.bilibili.com', ['id', 'username', 'level']),
   switchAccountEntry('twitter', 'x.com', ['username', 'url']),
   switchAccountEntry('youtube', 'www.youtube.com', ['name']),
@@ -152,6 +160,13 @@ export function applyOpencliOverrides({ packageRoot, sourceDir }) {
       if (index >= 0) entry.args[index] = arg
       else entry.args.push(arg)
     }
+  }
+
+  for (const [name, columns] of Object.entries(COLUMN_PATCHES)) {
+    const entry = findEntry('xiaohongshu', name)
+    if (!entry) throw new Error(`[opencli-overrides] xiaohongshu/${name} is missing from cli-manifest.json`)
+    const existing = entry.columns ?? []
+    entry.columns = [...existing, ...columns.filter((column) => !existing.includes(column))]
   }
 
   for (const { after, entry } of NEW_ENTRIES) {

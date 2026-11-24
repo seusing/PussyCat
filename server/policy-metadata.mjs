@@ -92,13 +92,21 @@ export const REVIEWED_RECORDS = new Map([
   // --keep-tab / --window」为条件(审定 §1.2 口径 F)。这些是 opencli 的运行时全局选项
   // (commanderAdapter.js:49,53-55),不是 manifest args,因此**不进 reviewShapeHash**——
   // 它们的封堵由 policy.mjs 的 assertDeclaredArgvOnly 在 Host 侧兑现,不能只靠前端 buildArgv。
+  //
+  // **小红书分大陆版和国际版(rednote.com)**(opencli-overrides/xiaohongshu/region.js):爪爪原生的小红书读取命令
+  // (search/note/comments/user-posts/saved/collections)和复用其 collection-helpers 的上游 liked,先 getCookies 读 www.xiaohongshu.com / www.rednote.com
+  // 的 id_token(只看是否为空,region.js:31),大陆版没登录、国际版登录了就在 www.rednote.com 打开页面,
+  // 否则照旧在 www.xiaohongshu.com;输出的链接一律写成 www.xiaohongshu.com。manifest 的 domain 仍是
+  // www.xiaohongshu.com,与 twitter/timeline 一样,domain 不是出网面的完整表达。上游 feed 不分地区。
   ['xiaohongshu/whoami', {
     get reviewedAgainst() { return shapeOf('xiaohongshu/whoami') },
     metadata: {
       executionPath: 'browser-bridge',
-      // goto creator.xiaohongshu.com + 页内 credentials:'include' 取创作者资料(clis/xiaohongshu/auth.js:11,15)。
+      // 爪爪的 xiaohongshu/auth.js 换掉上游:读两个网页版的 id_token 定先查哪边,goto creator.xiaohongshu.com
+      // 或 creator.rednote.com 的 /new/home,页内 credentials:'include' 取创作者资料;一边 401/403 就查另一边
+      // (opencli-overrides/xiaohongshu/region.js:31,45,70)。
       authorities: ['browser-profile', 'public-network'],
-      // 输出 username/followers = 本机登录的是谁(auth.js:34-37),非公开事实。
+      // 输出 username/followers/region = 本机登录的是谁、登录在哪个地区,非公开事实。
       exposure: 'personal',
       effects: [],
       credentialFlow: 'consume',
@@ -158,7 +166,8 @@ export const REVIEWED_RECORDS = new Map([
     get reviewedAgainst() { return shapeOf('xiaohongshu/search') },
     metadata: {
       executionPath: 'browser-bridge',
-      // goto /search_result 后点页面筛选面板、滚动读 DOM(opencli-overrides/xiaohongshu/search.js:351,360,369-376)。
+      // goto /search_result 后点页面筛选面板、滚动读 DOM(opencli-overrides/xiaohongshu/search.js:364,373,383-390)。
+      // 筛选面板里有看不见、点不了的诱饵选项,只点用户看得见的那个(search.js:112)。
       authorities: ['browser-profile', 'public-network'],
       // 他人公开笔记的元数据;url 内嵌 note 级 xsec_token,按审定口径 D 不升 secret。
       exposure: 'public',
@@ -174,7 +183,7 @@ export const REVIEWED_RECORDS = new Map([
     commandTimeoutMs: 630_000,
     metadata: {
       executionPath: 'browser-bridge',
-      // goto /explore 再 goto 博主主页,读注水的 Pinia store 并滚动(opencli-overrides/xiaohongshu/user-posts.js:43-44,26,58)。
+      // goto /explore 再 goto 博主主页,读注水的 Pinia store 并滚动(opencli-overrides/xiaohongshu/user-posts.js:45-46,26,60)。
       // 标题关键词(--keyword)只在本地对已读到的笔记标题做筛选,不发额外请求。
       // xhslink 短链接先在 Node 里请求一次、不跟随跳转、只读 Location(opencli-overrides/xiaohongshu/short-link.js:32)。
       authorities: ['browser-profile', 'public-network'],
@@ -299,15 +308,21 @@ export const REVIEWED_RECORDS = new Map([
 
   // ── browser-account-switch ─────────────────────────────────────────────────
   // 爪爪原生 switch-account(opencli-overrides/_shared/account-switch.js + 各站点 switch-account.js)。
-  // 先跑一次上游 whoami 记下当前账号,goto 站点首页(未登录则登录页),前台窗口里由用户自己退出、登录;
-  // 之后每 2s 只读该站会话 cookie(YouTube 读页面 ytcfg),变了才再跑一次 whoami。命令自身不写 cookie、不提交表单。
+  // 先查一次身份记下当前账号(小红书查所在地区的创作者中心,其余复用上游 whoami);小红书 / B站 / X 再走站点自己的
+  // 退出入口登出(创作者中心头像菜单「退出登录」、passport /login/exit/v2、x.com/logout 的确认按钮),YouTube 不退出、
+  // 打开「添加 Google 账号」;然后在前台打开登录页,由用户扫码或输密码。之后每 2s 只读该站会话 cookie(YouTube 读页面
+  // ytcfg;小红书读两个地区的 id_token),变了才再查一次身份。
+  // 退出是登录态的变更,记在 credentialFlow 'both' 里;命令不发内容、不写文件,effects 仍为 []。
   ['xiaohongshu/switch-account', {
     get reviewedAgainst() { return shapeOf('xiaohongshu/switch-account') },
     // 命令内最多等 300s(account-switch.js 的 WAIT_SECONDS),Host 留 30s 收尾。
     commandTimeoutMs: 330_000,
     metadata: {
       executionPath: 'browser-bridge',
-      // 会话指纹:creator.xiaohongshu.com 的 web_session。
+      // 会话指纹:www.xiaohongshu.com 与 www.rednote.com(国际版)的 id_token(游客会话没有);
+      // 身份在所在地区的创作者中心请求 /api/galaxy/creator/home/personal_info,与上游 whoami 同一接口。
+      // 登录页是网页版 www.xiaohongshu.com/login:国际版账号扫码后,网页版自己带着这次扫码的 qrId/code 转到
+      // www.rednote.com 接着登录,用户只扫一次(创作者中心的登录页会丢掉这次扫码,要再扫一次)。
       authorities: ['browser-profile', 'public-network'],
       // 输出换号前后的账号名,即本机登录的是谁。
       exposure: 'personal',

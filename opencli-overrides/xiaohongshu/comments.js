@@ -7,7 +7,8 @@
  */
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { AuthRequiredError, CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
-import { parseNoteId, buildNoteUrl, resolveXhsNoteLink } from './note-helpers.js';
+import { parseNoteId, resolveXhsNoteLink } from './note-helpers.js';
+import { resolveXhsRegion, withXhsHost } from './region.js';
 import { readXhsDetailPage } from './risk-control.js';
 
 const XHS_PROFILE_HREF_SELECTOR = '.author-wrapper a[href*="/user/profile/"], a.name[href*="/user/profile/"], a.user-name[href*="/user/profile/"], a[href*="/user/profile/"]';
@@ -301,11 +302,12 @@ export const command = cli({
         const withReplies = Boolean(kwargs['with-replies']);
         const raw = await resolveXhsNoteLink(kwargs['note-id']);
         const noteId = parseNoteId(raw);
+        const { webHost } = await resolveXhsRegion(page);
         // readXhsDetailPage paces the navigation and retries once through a
         // cooldown if risk control soft-blocks the page (throws SECURITY_BLOCK
         // when still blocked after the retry).
         const data = await readXhsDetailPage(page, {
-            url: buildNoteUrl(raw, { commandName: 'xiaohongshu comments' }),
+            url: withXhsHost(raw, webHost),
             extractJs: buildCommentsExtractJs(withReplies, limit),
             securityHelp: /^https?:\/\//.test(raw)
                 ? 'The page may be temporarily restricted. Try again later or from a different session.'
@@ -315,7 +317,7 @@ export const command = cli({
             throw new EmptyResultError('xiaohongshu/comments', 'Unexpected evaluate response');
         }
         if (data.loginWall) {
-            throw new AuthRequiredError('www.xiaohongshu.com', 'Note comments require login');
+            throw new AuthRequiredError(webHost, 'Note comments require login');
         }
         // noteId currently unused after parsing — kept for symmetry with the note command
         void noteId;

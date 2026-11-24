@@ -33,8 +33,8 @@ export function rangeStartMs(range, now) {
     return now - RANGE_DAYS[range] * DAY_MS;
 }
 
-export function buildProfileUrl({ userId, xsecToken, xsecSource }) {
-    const base = `https://www.xiaohongshu.com/user/profile/${encodeURIComponent(userId)}`;
+export function buildProfileUrl({ userId, xsecToken, xsecSource }, webHost = 'www.xiaohongshu.com') {
+    const base = `https://${webHost}/user/profile/${encodeURIComponent(userId)}`;
     if (!xsecToken) return base;
     return `${base}?${new URLSearchParams({ xsec_token: xsecToken, xsec_source: xsecSource || 'pc_note' })}`;
 }

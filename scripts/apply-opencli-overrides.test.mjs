@@ -21,6 +21,7 @@ function applyTwice(entries) {
 }
 
 const upstream = () => [
+  { site: 'xiaohongshu', name: 'whoami', args: [], columns: ['logged_in', 'site', 'username', 'followers'] },
   { site: 'xiaohongshu', name: 'saved', args: [] },
   { site: 'xiaohongshu', name: 'search', args: [{ name: 'query', type: 'str', required: true, positional: true }], columns: ['rank', 'title', 'author', 'likes', 'published_at', 'url'] },
   { site: 'xiaohongshu', name: 'user', args: [] },
@@ -41,7 +42,7 @@ test('saved 幂等追加收藏夹列表开关', () => {
 
 test('已有参数的旧定义会被替换，而不是保留旧文案', () => {
   const entries = upstream()
-  entries[0].args.push({ name: 'list-collections', type: 'bool', default: false, required: false, help: '只列出收藏夹，不读取收藏笔记' })
+  entries[1].args.push({ name: 'list-collections', type: 'bool', default: false, required: false, help: '只列出收藏夹，不读取收藏笔记' })
   const manifest = applyTwice(entries)
   const saved = manifest.find((entry) => entry.name === 'saved')
   expect(saved.args.filter((arg) => arg.name === 'list-collections').map((arg) => arg.help)).toEqual(['只列出收藏夹，不读取笔记'])
@@ -49,7 +50,7 @@ test('已有参数的旧定义会被替换，而不是保留旧文案', () => {
 
 test('search 整条换成我们的定义：上游多出来的参数不保留', () => {
   const entries = upstream()
-  entries[1].args.push(
+  entries[2].args.push(
     { name: 'sort', type: 'string', default: 'comprehensive', required: false, help: 'Sort order', choices: ['comprehensive', 'latest', 'most-liked'] },
     { name: 'note-type', type: 'string', default: 'all', required: false, help: 'Note type', choices: ['all', 'video', 'image'] },
     { name: 'publish-time', type: 'string', default: 'anytime', required: false, help: 'Publish time range', choices: ['anytime', 'day'] },

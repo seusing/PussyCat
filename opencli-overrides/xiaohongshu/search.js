@@ -7,6 +7,7 @@
  */
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { ArgumentError, AuthRequiredError, CommandExecutionError } from '@jackwener/opencli/errors';
+import { resolveXhsRegion } from './region.js';
 /**
  * Wait for search results or login wall using MutationObserver (max 5s).
  * Returns 'content' if note items appeared, 'login_wall' if login gate
@@ -105,6 +106,8 @@ export function parseSearchFilters(kwargs) {
 /**
  * 打开筛选面板，按分组标题和选项文字点选；每点一次等第一张卡片换掉（最多 4 秒）再点下一个。
  * 找不到分组或选项时返回 missing，由调用方报错，避免把没筛过的结果当成筛过的返回。
+ * 国际版在每个选项前面插了一个文字相同、看不见也点不了的诱饵（aria-hidden、透明、pointer-events:none），
+ * 只认用户看得见、点得到的那个。
  */
 export function buildApplySearchFiltersJs(selections) {
     return `
@@ -112,18 +115,27 @@ export function buildApplySearchFiltersJs(selections) {
         const selections = ${JSON.stringify(selections)};
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const text = (el) => (el?.textContent || '').trim();
+        const usable = (el) => {
+          if (el.closest('[aria-hidden="true"]')) return false;
+          const style = getComputedStyle(el);
+          return style.pointerEvents !== 'none' && (style.opacity === '' || Number(style.opacity) > 0.1);
+        };
         const panel = () => document.querySelector('.filter-panel');
         if (!panel()) {
-          const toggle = [...document.querySelectorAll('.filter span, .filter')].find((el) => /^(筛选|已筛选)$/.test(text(el)));
+          const toggle = [...document.querySelectorAll('.filter span, .filter')].find((el) => usable(el) && /^(筛选|已筛选)$/.test(text(el)));
           if (!toggle) return { ok: false, missing: '筛选' };
           toggle.click();
           for (let i = 0; i < 30 && !panel(); i++) await sleep(100);
           if (!panel()) return { ok: false, missing: '筛选面板' };
         }
-        const firstNoteId = () => document.querySelector('section.note-item')?.getAttribute('data-note-id') || '';
+        // 国际版的卡片没有 data-note-id,用卡片的笔记链接认
+        const firstNoteId = () => {
+          const card = document.querySelector('section.note-item');
+          return card?.getAttribute('data-note-id') || card?.querySelector('a[href*="/search_result/"], a[href*="/explore/"]')?.getAttribute('href') || '';
+        };
         for (const { group, option } of selections) {
           const container = [...document.querySelectorAll('.filter-panel .filters')].find((el) => text(el.firstElementChild) === group);
-          const tag = container && [...container.querySelectorAll('.tags')].find((el) => text(el) === option);
+          const tag = container && [...container.querySelectorAll('.tags')].find((el) => usable(el) && text(el) === option);
           if (!tag) return { ok: false, missing: group + ' / ' + option };
           if (tag.classList.contains('active')) continue;
           const before = firstNoteId();
@@ -131,8 +143,8 @@ export function buildApplySearchFiltersJs(selections) {
           for (let i = 0; i < 40 && firstNoteId() === before; i++) await sleep(100);
           await sleep(600);
         }
-        const active = [...document.querySelectorAll('.filter-panel .tags.active')].map(text);
-        const collapse = [...document.querySelectorAll('.filter-panel *')].find((el) => el.children.length === 0 && text(el) === '收起');
+        const active = [...document.querySelectorAll('.filter-panel .tags.active')].filter(usable).map(text);
+        const collapse = [...document.querySelectorAll('.filter-panel *')].find((el) => el.children.length === 0 && usable(el) && text(el) === '收起');
         if (collapse) collapse.click();
         await sleep(300);
         return { ok: true, active };
@@ -348,13 +360,14 @@ export const command = cli({
         const limit = parseLimit(kwargs.limit);
         const selections = parseSearchFilters(kwargs);
         const keyword = encodeURIComponent(kwargs.query);
-        await page.goto(`https://www.xiaohongshu.com/search_result?keyword=${keyword}&source=web_search_result_notes`);
+        const { webHost } = await resolveXhsRegion(page);
+        await page.goto(`https://${webHost}/search_result?keyword=${keyword}&source=web_search_result_notes`);
         // Wait for search results to render (or login wall to appear).
         // Uses MutationObserver to resolve as soon as content appears,
         // instead of a fixed delay + blind retry.
         const waitResult = unwrapEvaluateResult(await page.evaluate(WAIT_FOR_CONTENT_JS));
         if (waitResult === 'login_wall') {
-            throw new AuthRequiredError('www.xiaohongshu.com', 'Xiaohongshu search results are blocked behind a login wall');
+            throw new AuthRequiredError(webHost, 'Xiaohongshu search results are blocked behind a login wall');
         }
         if (selections.length > 0) {
             const outcome = unwrapEvaluateResult(await page.evaluate(buildApplySearchFiltersJs(selections)));
@@ -365,7 +378,8 @@ export const command = cli({
         // Extract before scrolling. Xiaohongshu uses a virtualized masonry
         // layout, so scrolling to the bottom can evict the initially visible
         // note cards from the DOM and make extraction return [] even though the
-        // browser rendered results correctly.
+        // browser rendered results correctly. Relative hrefs are written out
+        // as www.xiaohongshu.com links whichever region the page is on.
         const initialPayload = requireSearchRows(await page.evaluate(buildSearchExtractJs('www.xiaohongshu.com')), 'initial extraction');
         const payload = [...initialPayload];
         if (payload.length < limit) {

@@ -391,10 +391,10 @@ describe('试点 argv 白名单:只接受声明过的 flag 加 -f json', () => {
       ['twitter/timeline', [['--limit', '--top-by-engagement', '--type'], 0]],
       ['youtube/whoami', [[], 0]],
       ['youtube/subscriptions', [['--limit'], 0]],
-      ['xiaohongshu/switch-account', [[], 0]],
-      ['bilibili/switch-account', [[], 0]],
-      ['twitter/switch-account', [[], 0]],
-      ['youtube/switch-account', [[], 0]],
+      ['xiaohongshu/switch-account', [['--timeout'], 0]],
+      ['bilibili/switch-account', [['--timeout'], 0]],
+      ['twitter/switch-account', [['--timeout'], 0]],
+      ['youtube/switch-account', [['--timeout'], 0]],
     ])
     expect([...policy.argvConstraintByKey.keys()].sort()).toEqual([...expected.keys()].sort())
     for (const [key, [flags, positionals]] of expected) {

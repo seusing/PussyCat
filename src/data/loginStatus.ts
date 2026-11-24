@@ -57,6 +57,9 @@ export function stateFromDecision(decision: PolicyDecision | undefined, acknowle
   return 'not-approved'   // denied / unknown
 }
 
+// 小红书 whoami 的 region 列:账号登录在大陆版还是国际版(rednote)。
+const REGION_LABELS: Record<string, string> = { xiaohongshu: '大陆版', rednote: '国际版' }
+
 /**
  * 解析 whoami 的返回行。四条试点 whoami 的 columns 都含 `logged_in`(实测),
  * 但**不假设它一定是布尔**:适配器可能给字符串。只认明确的真/假,其余一律判 error——
@@ -73,14 +76,15 @@ export function parseWhoamiResult(rows: Record<string, unknown>[] | undefined): 
   const falsy = raw === false || raw === 'false' || raw === 0 || raw === '0'
   if (!truthy && !falsy) return { state: 'error', detail: '返回体里没有可识别的登录状态字段' }
   if (!truthy) return { state: 'logged-out', detail: '需要重新登录' }
-  // 账号标识:各站字段名不同(username / name / id),取第一个非空的字符串值作展示。
+  // 账号标识:各站字段名不同(username / name / id),取第一个非空的字符串值作展示,有地区就跟在后面。
   // **不取全部字段**——那会把 whoami 的返回体整个摊到界面上。
+  const region = typeof row.region === 'string' ? REGION_LABELS[row.region] : undefined
   for (const key of ['username', 'name', 'id']) {
     const v = row[key]
-    if (typeof v === 'string' && v.trim()) return { state: 'logged-in', detail: v.trim() }
-    if (typeof v === 'number') return { state: 'logged-in', detail: String(v) }
+    const name = typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : ''
+    if (name) return { state: 'logged-in', detail: region ? `${name} · ${region}` : name }
   }
-  return { state: 'logged-in' }
+  return region ? { state: 'logged-in', detail: region } : { state: 'logged-in' }
 }
 
 /** 自动刷新的合法区间(分钟)。下限 5 分钟:whoami 会真的开浏览器标签,更密只会打扰用户。 */

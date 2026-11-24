@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { applyOpencliOverrides } from './opencli-overrides.mjs'
+import { TIMEOUT_ARG } from '../opencli-overrides/_shared/account-switch.js'
 
 const sourceDir = resolve('opencli-overrides')
 const dirs = []
@@ -19,6 +20,7 @@ function packageWith(entries) {
 }
 
 const upstream = () => [
+  { site: 'xiaohongshu', name: 'whoami', args: [], columns: ['logged_in', 'site', 'username', 'followers'] },
   { site: 'xiaohongshu', name: 'saved', args: [] },
   { site: 'xiaohongshu', name: 'user', args: [] },
   { site: 'xiaohongshu', name: 'login', args: [] },
@@ -34,7 +36,9 @@ describe('applyOpencliOverrides', () => {
     applyOpencliOverrides({ packageRoot, sourceDir })
     const manifest = JSON.parse(readFileSync(join(packageRoot, 'cli-manifest.json'), 'utf8'))
     expect(manifest.filter((entry) => entry.site === 'xiaohongshu').map((entry) => entry.name))
-      .toEqual(['saved', 'collections', 'search', 'user', 'user-posts', 'login', 'switch-account'])
+      .toEqual(['whoami', 'saved', 'collections', 'search', 'user', 'user-posts', 'login', 'switch-account'])
+    // whoami 换成爪爪的 auth.js(大陆版、国际版都查),多一列 region
+    expect(manifest.find((entry) => entry.name === 'whoami').columns).toEqual(['logged_in', 'site', 'username', 'followers', 'region'])
     expect(manifest.find((entry) => entry.site === 'bilibili')).toEqual({ site: 'bilibili', name: 'hot', args: [] })
     expect(readFileSync(join(packageRoot, 'clis', 'xiaohongshu', 'search.js'), 'utf8')).toBe(readFileSync(join(sourceDir, 'xiaohongshu', 'search.js'), 'utf8'))
   })
@@ -46,9 +50,11 @@ describe('applyOpencliOverrides', () => {
     for (const site of ['xiaohongshu', 'bilibili', 'twitter', 'youtube']) {
       const login = manifest.findIndex((entry) => entry.site === site && entry.name === 'login')
       expect(manifest[login + 1], site).toMatchObject({
-        site, name: 'switch-account', access: 'write', browser: true, args: [],
+        site, name: 'switch-account', access: 'write', browser: true,
         modulePath: `${site}/switch-account.js`, siteSession: 'persistent', defaultWindowMode: 'foreground',
       })
+      // manifest 的参数要与适配器里声明的一致,opencli 才按它给命令计时
+      expect(manifest[login + 1].args, site).toEqual([{ ...TIMEOUT_ARG, required: false }])
       expect(readFileSync(join(packageRoot, 'clis', site, 'switch-account.js'), 'utf8')).toContain('_shared/account-switch.js')
     }
     expect(readFileSync(join(packageRoot, 'clis', '_shared', 'account-switch.js'), 'utf8'))
@@ -86,7 +92,7 @@ describe('applyOpencliOverrides', () => {
 
     expect(() => applyOpencliOverrides({ packageRoot, sourceDir })).not.toThrow()
 
-    expect(files).toHaveLength(16)
+    expect(files).toHaveLength(18)
     for (const name of files) {
       expect(readFileSync(join(packageRoot, 'clis', name), 'utf8'), name).toBe(readFileSync(join(sourceDir, name), 'utf8'))
     }

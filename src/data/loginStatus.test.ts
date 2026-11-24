@@ -74,6 +74,14 @@ describe('whoami 返回体解析', () => {
     expect(parseWhoamiResult(undefined).state).toBe('error')
   })
 
+  test('小红书的账号后面标出登录在大陆版还是国际版', () => {
+    expect(parseWhoamiResult([{ logged_in: true, username: 'Lauseusing', followers: 27, region: 'rednote' }]))
+      .toEqual({ state: 'logged-in', detail: 'Lauseusing · 国际版' })
+    expect(parseWhoamiResult([{ logged_in: true, username: '阿猫', region: 'xiaohongshu' }]).detail).toBe('阿猫 · 大陆版')
+    expect(parseWhoamiResult([{ logged_in: true, region: 'rednote' }]).detail).toBe('国际版')
+    expect(parseWhoamiResult([{ logged_in: true, username: '阿猫', region: 'mars' }]).detail).toBe('阿猫')
+  })
+
   test('已登录但没有可展示的账号字段时不编造 detail', () => {
     expect(parseWhoamiResult([{ logged_in: true }])).toEqual({ state: 'logged-in' })
   })

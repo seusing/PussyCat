@@ -14,6 +14,7 @@ import {
     selectPostedNotes,
 } from './user-posts-helpers.js';
 import { resolveXhsProfileTarget } from './short-link.js';
+import { resolveXhsRegion } from './region.js';
 
 function unwrapEvaluateResult(payload) {
     if (payload && !Array.isArray(payload) && typeof payload === 'object' && 'session' in payload && 'data' in payload) {
@@ -39,16 +40,17 @@ export async function fetchUserPosts(page, kwargs, { now = Date.now, random = Ma
     // 留 20 秒给收尾，避免被 opencli 的命令超时直接中断而拿不到已加载的笔记。
     const deadline = startedAt + (parseTimeoutSeconds(kwargs.timeout) - 20) * 1000;
     const target = await resolveXhsProfileTarget(kwargs.id, { fetch });
+    const { webHost } = await resolveXhsRegion(page);
     // 浏览器扩展会拒绝新开的自动化标签页直接跳到他人主页，先进发现页再进主页就能打开。
-    await page.goto('https://www.xiaohongshu.com/explore');
-    await page.goto(buildProfileUrl(target));
+    await page.goto(`https://${webHost}/explore`);
+    await page.goto(buildProfileUrl(target, webHost));
     let state = await readPostedState(page);
     for (let attempt = 0; attempt < 8 && state.storePresent && !state.loginWall && state.notes.length === 0 && state.hasMore; attempt++) {
         await page.wait(2);
         state = await readPostedState(page);
     }
     if (state.loginWall) {
-        throw new AuthRequiredError('www.xiaohongshu.com', 'Xiaohongshu profile is behind a login wall');
+        throw new AuthRequiredError(webHost, 'Xiaohongshu profile is behind a login wall');
     }
     if (!state.storePresent) {
         throw new CommandExecutionError('Malformed Xiaohongshu profile snapshot: user store was not found');

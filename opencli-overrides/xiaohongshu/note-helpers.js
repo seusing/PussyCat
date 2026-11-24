@@ -1,5 +1,6 @@
 import { ArgumentError } from '@jackwener/opencli/errors';
 import { findXhsLink, isXhsShortLink, readXhsShortLink } from './short-link.js';
+import { XHS_REGIONS, regionOfHost, withXhsHost } from './region.js';
 
 /** Side-effect-free helpers shared by xiaohongshu note and comments commands. */
 /** Extract a bare note ID from a full URL or raw ID string. */
@@ -71,10 +72,12 @@ export function buildNoteUrl(input, options = {}) {
 
 const LINK_HINT = '请在小红书 App 里点「分享 → 复制链接」，或从搜索结果、博主主页复制完整链接';
 
+/** 大陆版或国际版（rednote）的链接，返回 URL 和所属地区。 */
 function parseXiaohongshuUrl(link) {
     try {
         const url = new URL(link);
-        return /^https?:$/.test(url.protocol) && isHostMatch(url.hostname, 'xiaohongshu.com') ? url : null;
+        const region = /^https?:$/.test(url.protocol) ? regionOfHost(url.hostname) : null;
+        return region ? { url, region } : null;
     } catch {
         return null;
     }
@@ -83,6 +86,7 @@ function parseXiaohongshuUrl(link) {
 /**
  * 笔记命令的链接入口：从分享文案或链接里取出小红书链接，一定返回带 xsec_token 的签名笔记链接，否则抛中文 ArgumentError。
  * xhslink 短链接先展开成它跳转到的签名笔记链接；完整链接交给 buildNoteUrl 校验；裸笔记 ID 已经打不开。
+ * 国际版（rednote.com）的笔记链接也认，返回时统一换成 www.xiaohongshu.com。
  */
 export async function resolveXhsNoteLink(input, { fetch } = {}) {
     const text = String(input);
@@ -99,15 +103,15 @@ export async function resolveXhsNoteLink(input, { fetch } = {}) {
             '请在小红书 App 打开笔记，点「分享 → 复制链接」；博主主页的短链接请用「博主全部笔记」，短链接失效时重新复制一次即可',
         );
     }
-    const url = parseXiaohongshuUrl(link);
-    if (url) {
+    const parsed = parseXiaohongshuUrl(link);
+    if (parsed) {
         try {
-            return buildNoteUrl(link);
+            return withXhsHost(buildNoteUrl(link, { cookieRoot: parsed.region.cookieRoot }), XHS_REGIONS[0].webHost);
         } catch {
             // 下面区分是缺 xsec_token 还是根本不是笔记链接。
         }
         throw new ArgumentError(
-            isSupportedNotePath(url.pathname)
+            isSupportedNotePath(parsed.url.pathname)
                 ? `这条笔记链接缺少 xsec_token，小红书只认带签名的链接：${link}`
                 : `这不是小红书笔记链接：${link}`,
             LINK_HINT,

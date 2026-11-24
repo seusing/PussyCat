@@ -170,7 +170,7 @@ describe('decisionFingerprint', () => {
       ['mercury/reimbursement-plan', '3539d68bac77006fdb696428eb87e84179902ab0f7f5373f507dfe7262988b10'],
       ['antigravity/recent-paths', '77b620beb544611d6a2fb7f97010a0c09505c9a16b93745a5f1e5d48884bfa5d'],
       // browser-cookie-read-pilot 十五条(审定见 docs/specs/2026-07-30-browser-cookie-read-pilot-review.md)
-      ['xiaohongshu/whoami', '50cc47e6271ff4c4301e9a2c724f84deb006173196db66c3c98630b7446259ed'],
+      ['xiaohongshu/whoami', 'a17a9ff96a222277662329418aba0e8ce0c547e7ea859d30ff8871fa93ae488c'],
       ['xiaohongshu/feed', '79c1582eb9e8c9f3838da803cefd3ceca3c21f965d83f4667b15bfd92540c677'],
       ['xiaohongshu/saved', 'edc77cb3ea323c3700c938e961387ce64412a1acaddbb3bca235770c5e477c82'],
       ['xiaohongshu/collections', '86db268efe6a2d33880ab34ba234f4baed6cd16cc253cb14f1a6ccfd4e0727f7'],
@@ -186,10 +186,10 @@ describe('decisionFingerprint', () => {
       ['youtube/whoami', '9ba8a51c5ea84d624b8f77cc54279e82305fec8ef95cf640c8013e461316eb44'],
       ['youtube/subscriptions', 'c18ad0f50381a177a35da43cc560658b799698d7b3798c4a77f52cde8ed28224'],
       // browser-account-switch 四条(爪爪原生 switch-account)
-      ['xiaohongshu/switch-account', '2d0eb01609ac95e25646fbca5b64d9290e67ff4dd09a252a6f2ad2ae0c70c35e'],
-      ['bilibili/switch-account', '796c51cc3b03d4e236862603acad4f7499a6a902f124b33609cdd9bd2480632b'],
-      ['twitter/switch-account', '66b00514205cd2e67bae14815d4276545a47e01bd2d6b3c209dee33a7da82878'],
-      ['youtube/switch-account', 'c2d3bea70ee5bb10f0d47a7c617b8b293b7c474de552c41969fdd697278111c2'],
+      ['xiaohongshu/switch-account', '04d7b1e2fd20822f4a5a3d22fe611a3e57f0f4f87bb3619ae7c9307614ebc39b'],
+      ['bilibili/switch-account', '73977712bf5c2db68160a2278165a2475b5ff756f5cc7100f85bb92780fc7563'],
+      ['twitter/switch-account', 'dac3a5565da1e9c303ac93e33fae56e08f5b57f605c249c9b5ecbd1423005df2'],
+      ['youtube/switch-account', 'afb9be5dc5aa4d15922a2ddf6858a10145bcfa8400b7621ac68d92d3079abfdb'],
     ])
     // 先证明冻结集就是 REVIEWED_RECORDS 的全部,否则将来再加记录时,
     // 这个冻结集会**静默地只覆盖一部分**。

@@ -8,7 +8,8 @@
  */
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { AuthRequiredError, EmptyResultError } from '@jackwener/opencli/errors';
-import { parseNoteId, buildNoteUrl, resolveXhsNoteLink } from './note-helpers.js';
+import { parseNoteId, resolveXhsNoteLink } from './note-helpers.js';
+import { resolveXhsRegion, withXhsHost } from './region.js';
 import { readXhsDetailPage } from './risk-control.js';
 /**
  * Host-agnostic IIFE that scrapes note title / author / counts / tags from a
@@ -77,7 +78,8 @@ export const command = cli({
     func: async (page, kwargs) => {
         const raw = await resolveXhsNoteLink(kwargs['note-id']);
         const noteId = parseNoteId(raw);
-        const url = buildNoteUrl(raw, { commandName: 'xiaohongshu note' });
+        const { webHost } = await resolveXhsRegion(page);
+        const url = withXhsHost(raw, webHost);
         // readXhsDetailPage paces the navigation and retries once through a
         // cooldown if risk control soft-blocks the page (throws SECURITY_BLOCK
         // when still blocked after the retry).
@@ -92,7 +94,7 @@ export const command = cli({
             throw new EmptyResultError('xiaohongshu/note', 'Unexpected evaluate response');
         }
         if (data.loginWall) {
-            throw new AuthRequiredError('www.xiaohongshu.com', 'Note content requires login');
+            throw new AuthRequiredError(webHost, 'Note content requires login');
         }
         if (data.notFound) {
             throw new EmptyResultError('xiaohongshu/note', `Note ${noteId} not found or unavailable — it may have been deleted or restricted`);

@@ -20,12 +20,14 @@ const profileLocation = { hostname: 'www.xiaohongshu.com', pathname: '/user/prof
 const USER_ID = '63b98bad0000000026010302';
 const redirectingFetch = (location) => vi.fn(async () => new Response(null, { status: location ? 302 : 200, headers: location ? { location } : {} }));
 
-function collectionPage(state) {
+// cookies:账号所在地区由各网页版的 id_token 决定,默认大陆版和国际版都没登录
+function collectionPage(state, { cookies = {}, location = profileLocation } = {}) {
   return {
     goto: vi.fn(), wait: vi.fn(), installInterceptor: vi.fn(), autoScroll: vi.fn(),
     getInterceptedRequests: vi.fn().mockResolvedValue([]),
+    getCookies: vi.fn(async ({ url }) => cookies[new URL(url).hostname] ?? []),
     evaluate: vi.fn(async (script) => script.includes('let notes, hasMore') ? state
-      : script.includes('location.href') ? profileLocation
+      : script.includes('location.href') ? location
         : script.includes('section.note-item') ? [] : false),
   };
 }
@@ -122,6 +124,16 @@ describe('xiaohongshu read-only collection adapter', () => {
     const options = { userId: 'user-1', profileTab: 'fav', apiPattern: 'note/collect/page', limit: 20, emptyLabel: 'saved' };
     await expect(fetchXhsCollectionNotes(collectionPage({ notes: [], hasMore: false }), options)).resolves.toEqual([]);
     await expect(fetchXhsCollectionNotes(collectionPage(null), options)).rejects.toBeInstanceOf(CommandExecutionError);
+  });
+
+  it('opens the saved list on www.rednote.com for an international account and still writes www.xiaohongshu.com links', async () => {
+    const page = collectionPage({ notes: [note], hasMore: false }, {
+      cookies: { 'www.rednote.com': [{ name: 'id_token', value: 'signed-in' }] },
+      location: { hostname: 'www.rednote.com', pathname: '/user/profile/user-1', href: 'https://www.rednote.com/user/profile/user-1' },
+    });
+    const rows = await fetchXhsCollectionNotes(page, { userId: 'user-1', profileTab: 'fav', apiPattern: 'note/collect/page', limit: 20, emptyLabel: 'saved' });
+    expect(page.goto).toHaveBeenCalledWith('https://www.rednote.com/user/profile/user-1?tab=fav&subTab=note');
+    expect(rows).toEqual([expect.objectContaining({ id: note.noteId, url: `https://www.xiaohongshu.com/user/profile/author-1/${note.noteId}?xsec_token=token&xsec_source=pc_user` })]);
   });
 
   it('reads the named board feed independently of the profile lists', () => {

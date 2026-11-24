@@ -1,5 +1,9 @@
 import { ArgumentError, AuthRequiredError, CommandExecutionError } from '@jackwener/opencli/errors';
 import { resolveXhsProfileTarget } from './short-link.js';
+import { resolveXhsRegion } from './region.js';
+
+// 页面在账号所在地区的网页版(大陆版或国际版 rednote)里打开;输出的链接一律写成 www.xiaohongshu.com。
+const OUTPUT_HOST = 'www.xiaohongshu.com';
 function buildXhsNoteUrl(userId, noteId, xsecToken) {
     const url = new URL(`https://www.xiaohongshu.com/user/profile/${String(userId).trim()}/${String(noteId).trim()}`);
     if (String(xsecToken ?? '').trim()) {
@@ -15,16 +19,16 @@ export const SAVED_PROFILE_TAB = 'fav';
 export const LIKED_PROFILE_TAB = 'liked';
 export const ALBUM_PROFILE_SUBTAB = 'board';
 
-export function buildProfileCollectionUrl(userId, tab, subTab = 'note') {
+export function buildProfileCollectionUrl(userId, tab, subTab = 'note', webHost = OUTPUT_HOST) {
     const cleanUserId = toCleanString(userId);
-    const url = new URL(`https://www.xiaohongshu.com/user/profile/${cleanUserId}`);
+    const url = new URL(`https://${webHost}/user/profile/${cleanUserId}`);
     url.searchParams.set('tab', toCleanString(tab));
     url.searchParams.set('subTab', toCleanString(subTab));
     return url.toString();
 }
 
-export function buildCollectionBoardUrl(boardId) {
-    return `https://www.xiaohongshu.com/board/${encodeURIComponent(toCleanString(boardId))}`;
+export function buildCollectionBoardUrl(boardId, webHost = OUTPUT_HOST) {
+    return `https://${webHost}/board/${encodeURIComponent(toCleanString(boardId))}`;
 }
 
 function toCleanString(value) {
@@ -149,7 +153,7 @@ export const EXTRACT_COLLECTIONS_DOM_JS = `
       const countMatch = text.match(/笔记[·・:]?\\s*(\\d+)$/);
       const count = countMatch ? countMatch[1] : '';
       const name = cleanText(countMatch ? text.slice(0, countMatch.index).replace(/笔记\\s*$/, '').trim() : text);
-      rows.push({ id, name, count, url: new URL('/board/' + encodeURIComponent(id) + '?source=web_user_page', location.origin).toString() });
+      rows.push({ id, name, count, url: 'https://${OUTPUT_HOST}/board/' + encodeURIComponent(id) + '?source=web_user_page' });
     });
     return rows;
   })()
@@ -158,28 +162,28 @@ export const EXTRACT_COLLECTIONS_DOM_JS = `
 const LOGIN_WALL_JS = `(() => { const pathName = location?.pathname || ''; const userStore = window.__INITIAL_STATE__?.user; const loggedInVal = userStore ? (userStore.loggedIn?._value ?? userStore.loggedIn) : undefined; const bodyText = document.body?.innerText || ''; return Boolean(pathName.indexOf('/login') === 0 || loggedInVal === false || /登录后|请先登录|登录后查看/.test(bodyText)); })()`;
 const CURRENT_LOCATION_JS = `(() => ({ href: location.href, hostname: location.hostname, pathname: location.pathname }))()`;
 
-async function throwIfLoginWall(page) {
+async function throwIfLoginWall(page, webHost) {
     if (unwrapBrowserResult(await page.evaluate(LOGIN_WALL_JS)) === true)
-        throw new AuthRequiredError('www.xiaohongshu.com', 'Xiaohongshu collection page requires login; re-login to xiaohongshu.com and retry.');
+        throw new AuthRequiredError(webHost, `Xiaohongshu collection page requires login; re-login to ${webHost} and retry.`);
 }
 
-export async function assertOnCollectionProfile(page, userId) {
-    await throwIfLoginWall(page);
+export async function assertOnCollectionProfile(page, userId, webHost = OUTPUT_HOST) {
+    await throwIfLoginWall(page, webHost);
     const payload = unwrapBrowserResult(await page.evaluate(CURRENT_LOCATION_JS));
     if (!isObject(payload)) throw new CommandExecutionError('xiaohongshu collection page returned malformed location');
     const hostname = toCleanString(payload.hostname).toLowerCase();
     const pathname = toCleanString(payload.pathname);
     const expectedPath = `/user/profile/${toCleanString(userId)}`;
-    if (hostname === 'www.xiaohongshu.com' && pathname === '/login') throw new AuthRequiredError('xiaohongshu collection page requires login');
-    if (hostname !== 'www.xiaohongshu.com' || pathname !== expectedPath)
+    if (hostname === webHost && pathname === '/login') throw new AuthRequiredError(webHost, 'xiaohongshu collection page requires login');
+    if (hostname !== webHost || pathname !== expectedPath)
         throw new CommandExecutionError(`xiaohongshu collection landed on unexpected page: ${toCleanString(payload.href) || `${hostname}${pathname}`}`);
 }
 
-async function assertOnBoardPage(page, boardId) {
-    await throwIfLoginWall(page);
+async function assertOnBoardPage(page, boardId, webHost) {
+    await throwIfLoginWall(page, webHost);
     const payload = unwrapBrowserResult(await page.evaluate(CURRENT_LOCATION_JS));
     const expectedPath = `/board/${toCleanString(boardId)}`;
-    if (!isObject(payload) || toCleanString(payload.hostname).toLowerCase() !== 'www.xiaohongshu.com' || toCleanString(payload.pathname) !== expectedPath)
+    if (!isObject(payload) || toCleanString(payload.hostname).toLowerCase() !== webHost || toCleanString(payload.pathname) !== expectedPath)
         throw new CommandExecutionError(`xiaohongshu collection board landed on unexpected page: ${toCleanString(payload?.href)}`);
 }
 
@@ -192,12 +196,13 @@ async function accumulateInterceptedNotes(page, bucket, fallbackUserId) {
 
 export async function resolveXhsUserId(page, rawId) {
     if (rawId) return (await resolveXhsProfileTarget(rawId)).userId;
-    await page.goto('https://www.xiaohongshu.com/explore');
+    const { webHost } = await resolveXhsRegion(page);
+    await page.goto(`https://${webHost}/explore`);
     await page.wait(2);
-    await throwIfLoginWall(page);
+    await throwIfLoginWall(page, webHost);
     const userId = unwrapBrowserResult(await page.evaluate(`() => { const user = window.__INITIAL_STATE__?.user?.userInfo; const info = user?._value ?? user ?? {}; return info.user_id || info.userId || info.userID || ''; }`));
     const clean = toCleanString(userId);
-    if (!clean) throw new AuthRequiredError('www.xiaohongshu.com', 'Not logged into Xiaohongshu (could not resolve current user id)');
+    if (!clean) throw new AuthRequiredError(webHost, 'Not logged into Xiaohongshu (could not resolve current user id)');
     return clean;
 }
 
@@ -246,7 +251,7 @@ const EXTRACT_COLLECTIONS_STATE_JS = `(() => {
   if (unwrap(state?.user?.activeTab)?.query !== 'fav' || unwrap(state?.user?.activeSubTab)?.query !== 'board') return null;
   const albums = unwrap(state?.board?.userBoardList);
   return Array.isArray(albums) ? JSON.parse(JSON.stringify(albums.map(({ id, name, total }) => ({
-    id, name, count: String(total ?? ''), url: new URL('/board/' + encodeURIComponent(id), location.origin).toString()
+    id, name, count: String(total ?? ''), url: 'https://${OUTPUT_HOST}/board/' + encodeURIComponent(id)
   })))) : null;
 })()`;
 
@@ -261,10 +266,10 @@ async function readCollectionAlbums(page) {
     return Array.isArray(albums) ? albums : extractCollectionAlbumsFromDom(page);
 }
 
-export async function resolveXhsCollection(page, userId, collectionName) {
-    await page.goto(buildProfileCollectionUrl(userId, SAVED_PROFILE_TAB, ALBUM_PROFILE_SUBTAB));
+export async function resolveXhsCollection(page, userId, collectionName, webHost = OUTPUT_HOST) {
+    await page.goto(buildProfileCollectionUrl(userId, SAVED_PROFILE_TAB, ALBUM_PROFILE_SUBTAB, webHost));
     await page.wait(2);
-    await assertOnCollectionProfile(page, userId);
+    await assertOnCollectionProfile(page, userId, webHost);
     const albums = await readCollectionAlbums(page);
     const wanted = toCleanString(collectionName);
     const match = albums.find((album) => album.name === wanted);
@@ -277,18 +282,19 @@ export async function resolveXhsCollection(page, userId, collectionName) {
 
 export async function fetchXhsCollectionNotes(page, { userId, profileTab, apiPattern, limit, emptyLabel, collection }) {
     const capturedRequests = [];
-    let targetUrl = buildProfileCollectionUrl(userId, profileTab);
+    const { webHost } = await resolveXhsRegion(page);
+    let targetUrl = buildProfileCollectionUrl(userId, profileTab, 'note', webHost);
     let boardId = '';
     if (toCleanString(collection)) {
-        const match = await resolveXhsCollection(page, userId, collection);
+        const match = await resolveXhsCollection(page, userId, collection, webHost);
         boardId = match.id;
-        targetUrl = buildCollectionBoardUrl(boardId);
+        targetUrl = buildCollectionBoardUrl(boardId, webHost);
     }
     await page.installInterceptor(apiPattern);
     await page.goto(targetUrl);
     await page.wait(2);
-    if (boardId) await assertOnBoardPage(page, boardId);
-    else await assertOnCollectionProfile(page, userId);
+    if (boardId) await assertOnBoardPage(page, boardId, webHost);
+    else await assertOnCollectionProfile(page, userId, webHost);
     let state = await readCollectionState(page, profileTab, boardId, userId);
     let notes = state?.notes ?? [];
     for (let i = 0; !notes.length && state?.hasMore !== false && i < 16; i++) {
@@ -315,9 +321,10 @@ export async function fetchXhsCollectionNotes(page, { userId, profileTab, apiPat
 }
 
 export async function fetchXhsCollections(page, { userId, limit }) {
-    await page.goto(buildProfileCollectionUrl(userId, SAVED_PROFILE_TAB, ALBUM_PROFILE_SUBTAB));
+    const { webHost } = await resolveXhsRegion(page);
+    await page.goto(buildProfileCollectionUrl(userId, SAVED_PROFILE_TAB, ALBUM_PROFILE_SUBTAB, webHost));
     await page.wait(2);
-    await assertOnCollectionProfile(page, userId);
+    await assertOnCollectionProfile(page, userId, webHost);
     const albums = await readCollectionAlbums(page);
     return albums.slice(0, limit).map((item, index) => ({ rank: index + 1, ...item }));
 }

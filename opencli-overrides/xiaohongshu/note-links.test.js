@@ -46,7 +46,7 @@ describe('findXhsLink', () => {
     });
 
     it('returns null when there is no Xiaohongshu http link', () => {
-        for (const text of ['', NOTE_ID, '无关文本', 'https://example.com/xhslink.cn/o/x', 'https://evilxhslink.com/x', 'https://xiaohongshu.com.evil.com/explore/x', 'ftp://xhslink.cn/x', 'xhslink.cn/o/AbCd']) {
+        for (const text of ['', NOTE_ID, '无关文本', 'https://example.com/xhslink.cn/o/x', 'https://evilxhslink.com/x', 'https://xiaohongshu.com.evil.com/explore/x', 'https://rednote.com.evil.com/explore/x', 'ftp://xhslink.cn/x', 'xhslink.cn/o/AbCd']) {
             expect(findXhsLink(text)).toBeNull();
         }
     });
@@ -93,6 +93,18 @@ describe('resolveXhsNoteLink', () => {
         ]) {
             await expect(resolveXhsNoteLink(input, { fetch })).resolves.toBe(expected);
         }
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('takes a signed international (rednote.com) note link and writes it as a www.xiaohongshu.com link', async () => {
+        const fetch = redirectingFetch(NOTE);
+        const rednote = `https://www.rednote.com/search_result/${NOTE_ID}?xsec_token=AB=&xsec_source=`;
+        const expected = `https://www.xiaohongshu.com/search_result/${NOTE_ID}?xsec_token=AB=&xsec_source=`;
+        for (const input of [rednote, `【测试】 ${rednote} 复制后打开【小红书】`]) {
+            await expect(resolveXhsNoteLink(input, { fetch })).resolves.toBe(expected);
+        }
+        const unsigned = `https://www.rednote.com/explore/${NOTE_ID}`;
+        await expect(resolveXhsNoteLink(unsigned, { fetch })).rejects.toThrow(`这条笔记链接缺少 xsec_token，小红书只认带签名的链接：${unsigned}`);
         expect(fetch).not.toHaveBeenCalled();
     });
 
