@@ -21,11 +21,13 @@ const DEADLINE_MARGIN_MS = 3000;
 const MAX_PAGE_AGE_MS = 4 * 60 * 1000;
 const LOCATE_ATTEMPTS = 8;
 const NOT_LOGGED_IN = '要先在 Chrome 里登录小红书（大陆站 xiaohongshu.com 或国际版 rednote.com 都可以）';
+const PAGE_UNREACHABLE = '打不开小红书网页：检查网络或代理后重试';
 
-// 各地区在哪个页面里用点点:大陆站有专门的点点页 /ai_chat;国际版的点点挂在 AI 搜索上,
-// 它的会话模块在发现页就已加载(/search_result_ai 一打开就会拿地址里的关键词自动发问,不用它)。
+// 各地区在哪个页面里用点点:大陆站打开点点页 /ai_chat,但有的账号会被直接跳回发现页;国际版的点点
+// 挂在 AI 搜索上(/search_result_ai 一打开就会拿地址里的关键词自动发问,不用它)。两边的会话模块在发现页
+// 就已加载,所以只要停在该地区的网页上就行,不要求具体路径;没登录的情况在打开页面前按 id_token 判断。
 export const DOT_PAGES = {
-    xiaohongshu: { url: 'https://www.xiaohongshu.com/ai_chat', host: 'www.xiaohongshu.com', path: '/ai_chat' },
+    xiaohongshu: { url: 'https://www.xiaohongshu.com/ai_chat', host: 'www.xiaohongshu.com', path: '/' },
     rednote: { url: 'https://www.rednote.com/explore', host: 'www.rednote.com', path: '/' },
 };
 
@@ -271,29 +273,57 @@ export async function dotRegion(page) {
     return null;
 }
 
+// 每次打开都带一个新参数:opencli 发现标签记着的地址和目标相同就不会重新加载,停在网络错误页、
+// 或页面放久了要刷新时都会因此卡住
+export function freshUrl(url, now = Date.now()) {
+    const target = new URL(url);
+    target.searchParams.set('_zz', String(now));
+    return target.toString();
+}
+
 /** 确保标签停在该地区的点点页面上、找得到会话模块;页面放久了先刷新。 */
 async function openDotPage(page, region, { settleMs }) {
     let located = await evaluateIn(page, buildLocateJs(region)).catch(() => null);
     if (located?.ok && located.age < MAX_PAGE_AGE_MS) return;
-    await page.goto(DOT_PAGES[region].url);
+    await page.goto(freshUrl(DOT_PAGES[region].url));
+    // 页面还在加载或跳转(大陆站 /ai_chat 会在前端再跳回发现页)时读到的地址不作数,等到找到模块或次数用完
     for (let attempt = 0; attempt < LOCATE_ATTEMPTS; attempt += 1) {
         await sleep(settleMs);
         located = await evaluateIn(page, buildLocateJs(region)).catch(() => null);
-        if (located?.ok || located?.error === 'not_on_page') break;
+        if (located?.ok) break;
     }
     if (located?.ok) return;
-    // 被跳去登录页、首页之类:登录失效了
+    // 网络错误页:不是登录问题
+    if (String(located?.href ?? '').startsWith('chrome-error:')) throw new CommandExecutionError(PAGE_UNREACHABLE);
+    // 被跳去别的站点(登录页之类):登录失效了
     if (located?.error === 'not_on_page') throw new AuthRequiredError(DOT_PAGES[region].host, NOT_LOGGED_IN);
     throw new CommandExecutionError('点点页面改版了，找不到会话模块；需要更新爪爪');
 }
 
 /**
  * 一次提问:必要时打开点点页面,发消息,轮询这一轮的状态并把增量写成事件,结束后取引用。
+ * 任何失败都先写一条 error 事件(中文原因)再抛出,对话窗口直接显示它,不用再翻译错误码。
  * @param {object} options 测试注入:emit / pollMs / settleMs / referenceRetryMs / now
  */
-export async function askDot(page, { query, conversation, timeout }, {
-    emit = emitEvent, pollMs = POLL_MS, settleMs = 700, referenceRetryMs = 600, now = () => Date.now(),
-} = {}) {
+export async function askDot(page, args, options = {}) {
+    const emit = options.emit ?? emitEvent;
+    let reported = false;
+    const tracked = (event) => {
+        if (event.type === 'error') reported = true;
+        emit(event);
+    };
+    try {
+        return await runAsk(page, args, { ...options, emit: tracked });
+    }
+    catch (error) {
+        if (!reported) emit({ type: 'error', message: error instanceof Error && error.message ? error.message : '点点这次没有答出来' });
+        throw error;
+    }
+}
+
+async function runAsk(page, { query, conversation, timeout }, {
+    emit, pollMs = POLL_MS, settleMs = 700, referenceRetryMs = 600, now = () => Date.now(),
+}) {
     const prompt = String(query ?? '').trim();
     if (!prompt) throw new ArgumentError('query is required');
     const deadline = now() + clampTimeout(timeout) * 1000 - DEADLINE_MARGIN_MS;

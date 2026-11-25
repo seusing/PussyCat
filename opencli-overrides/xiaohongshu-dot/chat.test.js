@@ -2,7 +2,7 @@
 import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthRequiredError, CommandExecutionError, TimeoutError } from '@jackwener/opencli/errors';
-import { DOT_PAGES, STOP_JS, askDot, clampTimeout, normalizeReferences } from './chat.js';
+import { DOT_PAGES, STOP_JS, askDot, clampTimeout, freshUrl, normalizeReferences } from './chat.js';
 
 const HOSTS = { xiaohongshu: 'www.xiaohongshu.com', rednote: 'www.rednote.com' };
 
@@ -142,7 +142,7 @@ describe('askDot', () => {
         const { events, promise } = run(site.page, { query: '推荐剪辑视频' });
         const rows = await promise;
 
-        expect(site.page.goto).toHaveBeenCalledWith('https://www.rednote.com/explore');
+        expect(site.page.goto).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/www\.rednote\.com\/explore\?_zz=\d+$/));
         expect(site.store().createConversation).toHaveBeenCalledWith('conv-1', undefined);
         expect(events).toEqual([
             { type: 'start', conversationId: 'conv-1', messageId: 'msg-1', region: 'rednote' },
@@ -166,7 +166,7 @@ describe('askDot', () => {
         const site = fakeSite({ region: 'xiaohongshu', onPoll: streamOf(['你好']) });
         const { events, promise } = run(site.page, { query: '问' });
         await promise;
-        expect(site.page.goto).toHaveBeenCalledWith('https://www.xiaohongshu.com/ai_chat');
+        expect(site.page.goto).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/www\.xiaohongshu\.com\/ai_chat\?_zz=\d+$/));
         expect(site.store().switchScene).toHaveBeenCalledWith('aiChat');
         expect(site.store().createConversation).toHaveBeenCalledWith('conv-1', 'aiChat');
         expect(events[0]).toMatchObject({ type: 'start', region: 'xiaohongshu' });
@@ -177,7 +177,7 @@ describe('askDot', () => {
         const site = fakeSite({ region: 'xiaohongshu', onPoll: answerAtOnce });
         site.page.getCookies.mockResolvedValue([{ name: 'id_token', value: 'token' }]);
         await run(site.page, { query: '问' }).promise;
-        expect(site.page.goto).toHaveBeenCalledWith(DOT_PAGES.xiaohongshu.url);
+        expect(site.page.goto).toHaveBeenCalledWith(expect.stringContaining(DOT_PAGES.xiaohongshu.url));
     });
 
     it('已在点点页面且页面不旧:不重新打开,同一会话里接着问', async () => {
@@ -204,20 +204,48 @@ describe('askDot', () => {
     it('页面在后台放久了:先刷新再问', async () => {
         const site = fakeSite({ at: 'dot', pageAgeMs: 5 * 60 * 1000, onPoll: answerAtOnce });
         await run(site.page, { query: '问' }).promise;
-        expect(site.page.goto).toHaveBeenCalledWith(DOT_PAGES.rednote.url);
+        expect(site.page.goto).toHaveBeenCalledWith(expect.stringContaining(DOT_PAGES.rednote.url));
     });
 
     it('两边都没登录:直接报需要登录,不打开页面', async () => {
         const site = fakeSite({ loggedIn: null });
-        await expect(run(site.page, { query: '问' }).promise).rejects.toBeInstanceOf(AuthRequiredError);
+        const { events, promise } = run(site.page, { query: '问' });
+        await expect(promise).rejects.toBeInstanceOf(AuthRequiredError);
         expect(site.page.goto).not.toHaveBeenCalled();
+        expect(events).toEqual([{ type: 'error', message: expect.stringContaining('要先在 Chrome 里登录小红书') }]);
     });
 
-    it('打开点点页后被跳走(登录失效):报需要登录', async () => {
+    it('大陆站点点页被跳回发现页(有的账号会这样):照样在发现页里问', async () => {
+        const site = fakeSite({ region: 'xiaohongshu', onPoll: answerAtOnce });
+        const visit = site.page.goto.getMockImplementation();
+        site.page.goto.mockImplementation(async (url) => {
+            await visit(url);
+            site.location.pathname = '/explore';
+        });
+        const { events, promise } = run(site.page, { query: '问' });
+        await promise;
+        expect(events[0]).toMatchObject({ type: 'start', region: 'xiaohongshu' });
+    });
+
+    it('标签停在网络错误页:带新参数强制重新打开;还是打不开就报网络问题,不说成没登录', async () => {
+        const site = fakeSite({ region: 'xiaohongshu' });
+        site.location.hostname = '';
+        site.page.goto.mockImplementation(async () => {
+            site.location.hostname = '';
+            site.location.href = 'chrome-error://chromewebdata/';
+        });
+        const { events, promise } = run(site.page, { query: '问' });
+        await expect(promise).rejects.toThrow('打不开小红书网页');
+        await expect(promise).rejects.toBeInstanceOf(CommandExecutionError);
+        // 原因写进事件流,对话窗口直接显示
+        expect(events).toEqual([{ type: 'error', message: '打不开小红书网页：检查网络或代理后重试' }]);
+    });
+
+    it('打开后被跳到别的站点(登录失效):报需要登录', async () => {
         const site = fakeSite({ region: 'xiaohongshu' });
         site.page.goto.mockImplementation(async () => {
-            site.location.hostname = 'www.xiaohongshu.com';
-            site.location.pathname = '/explore';
+            site.location.hostname = 'passport.example.com';
+            site.location.pathname = '/login';
         });
         await expect(run(site.page, { query: '问' }).promise).rejects.toBeInstanceOf(AuthRequiredError);
     });
@@ -369,6 +397,11 @@ describe('normalizeReferences / clampTimeout', () => {
         expect(clampTimeout(30.7)).toBe(30);
         expect(clampTimeout(999)).toBe(180);
         expect(clampTimeout('x')).toBe(180);
+    });
+
+    it('打开地址每次都带新参数,原有参数保留', () => {
+        expect(freshUrl('https://www.rednote.com/explore', 42)).toBe('https://www.rednote.com/explore?_zz=42');
+        expect(freshUrl('https://www.xiaohongshu.com/ai_chat?a=1', 7)).toBe('https://www.xiaohongshu.com/ai_chat?a=1&_zz=7');
     });
 
     it('两个地区的点点页面', () => {
