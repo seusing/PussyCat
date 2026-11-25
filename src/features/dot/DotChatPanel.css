@@ -90,7 +90,8 @@
 .dot-turn-markdown ol { padding-left: 20px; }
 .dot-turn-markdown h1,
 .dot-turn-markdown h2,
-.dot-turn-markdown h3 { margin: 14px 0 8px; font-size: 15px; font-weight: 650; }
+.dot-turn-markdown h3,
+.dot-turn-markdown h4 { margin: 14px 0 8px; font-size: 15px; font-weight: 650; }
 .dot-turn-markdown table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; }
 .dot-turn-markdown th,
 .dot-turn-markdown td { border: 1px solid var(--color-line); padding: 4px 8px; }

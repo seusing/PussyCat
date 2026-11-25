@@ -112,6 +112,34 @@ describe('DotChatPanel', () => {
     expect(useAppStore.getState().activeModule).toBe('vk')
   })
 
+  it('回答里夹着的点点图片块显示成笔记链接,在浏览器里打开;缩进的残行不显示成代码', async () => {
+    const { started } = setup()
+    await userEvent.type(screen.getByTestId('dot-chat-input'), '周末去哪{Enter}')
+    const runId = started[0].runId
+    const image = `<div class="ai-msg-image-item" data-index="1">
+  <img
+    src="http://sns-note-i4.xhscdn.com/a"
+    data-noteId="69ad4ff6000000002602ff78"
+    data-sourceNickname="西岁"
+  />
+</div>`
+    emit(runId, { type: 'delta', text: `**肇庆**：高铁约1小时。
+</div>
+
+${image}
+
+    缩进的一行` })
+    emit(runId, { type: 'done', sourceTotal: '', interrupted: false })
+    finish(runId)
+
+    const answer = await screen.findByTestId('dot-answer')
+    const link = await within(answer).findByRole('link', { name: '配图 · 西岁' })
+    expect(link).toHaveAttribute('href', 'https://www.xiaohongshu.com/explore/69ad4ff6000000002602ff78')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(answer.textContent).not.toMatch(/<\/?div|<img/)
+    expect(answer.querySelector('pre')).toBeNull()
+  })
+
   it('出错时显示原因', async () => {
     const { started } = setup()
     await userEvent.type(screen.getByTestId('dot-chat-input'), '问{Enter}')
