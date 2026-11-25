@@ -20,6 +20,19 @@ function isXhsAuthorProfile(link: string): boolean {
   }
 }
 
+// 国际版(rednote)网页上的笔记链接换成大陆站的同一条笔记:路径和参数(含 xsec_token)两边通用,
+// 往后的识别、点点、解析就都只认 xiaohongshu.com,用户不用管自己的账号在哪边。
+function toXiaohongshuHost(link: string): string {
+  try {
+    const url = new URL(link)
+    if (url.hostname !== 'rednote.com' && url.hostname !== 'www.rednote.com') return link
+    url.hostname = 'www.xiaohongshu.com'
+    return url.toString()
+  } catch {
+    return link
+  }
+}
+
 export function extractSources(text: string): { sources: string[]; dropped: number } {
   const sources = new Set<string>()
   let dropped = 0
@@ -35,7 +48,7 @@ export function extractSources(text: string): { sources: string[]; dropped: numb
       dropped += 1
       continue
     }
-    for (const link of links) sources.add(link.replace(TRAILING_PUNCTUATION, ''))
+    for (const link of links) sources.add(toXiaohongshuHost(link.replace(TRAILING_PUNCTUATION, '')))
   }
   return { sources: [...sources], dropped }
 }

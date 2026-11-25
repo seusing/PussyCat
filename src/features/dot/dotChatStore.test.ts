@@ -139,4 +139,52 @@ describe('useDotChat', () => {
     state().newConversation()
     expect(state()).toMatchObject({ turns: [], conversationId: null })
   })
+
+  it('点点正被视频解析占用:这一问自动排队,隔一会儿用同一个问题、同一个会话再试', () => {
+    vi.useFakeTimers()
+    const { host, started } = fakeHost()
+    state().bindHost(host)
+    useDotChat.setState({ conversationId: 'c1' })
+    state().ask('问题')
+    const busy = { summary: '该网站上一条写入命令还没结束：等它结束或取消约 45 秒后再试', detail: 'OpenCLI exited with code 75\nSESSION_BUSY: Session "site:xiaohongshu-dot" is busy' }
+    state().handleDone(done(started[0].runId, 'error', { error: busy }))
+    expect(lastTurn()).toMatchObject({ state: 'waiting', steps: ['点点正忙，排队中'], busyRetries: 1 })
+    expect(state().activeRunId).toBe(started[0].runId)
+    expect(started).toHaveLength(1)
+
+    vi.advanceTimersByTime(2000)
+    expect(started).toHaveLength(2)
+    expect(started[1].argv).toEqual(['xiaohongshu-dot', 'chat', '问题', '--conversation', 'c1', '--timeout', '180', '-f', 'json'])
+    expect(lastTurn().runId).toBe(started[1].runId)
+    state().handleOutput(out(started[1].runId, line({ type: 'delta', text: '轮到了' })))
+    state().handleDone(done(started[1].runId, 'success'))
+    expect(lastTurn()).toMatchObject({ state: 'done', answer: '轮到了' })
+  })
+
+  it('排队时点停止:直接结束,不再重试', () => {
+    vi.useFakeTimers()
+    const { host, started } = fakeHost()
+    state().bindHost(host)
+    state().ask('问题')
+    state().handleDone(done(started[0].runId, 'error', { error: { summary: 'x', detail: 'SESSION_BUSY: busy' } }))
+    state().stop()
+    vi.advanceTimersByTime(10_000)
+    expect(started).toHaveLength(1)
+    expect(lastTurn().state).toBe('stopped')
+    expect(state().activeRunId).toBeNull()
+  })
+
+  it('排队两分钟还轮不到:报出错', () => {
+    vi.useFakeTimers()
+    const { host, started } = fakeHost()
+    state().bindHost(host)
+    state().ask('问题')
+    const busy = { summary: '该网站上一条写入命令还没结束', detail: 'SESSION_BUSY: busy' }
+    for (let attempt = 0; attempt <= 60; attempt += 1) {
+      state().handleDone(done(started[started.length - 1].runId, 'error', { error: busy }))
+      vi.advanceTimersByTime(2000)
+    }
+    expect(lastTurn()).toMatchObject({ state: 'error', error: '该网站上一条写入命令还没结束' })
+    expect(state().activeRunId).toBeNull()
+  })
 })

@@ -316,6 +316,15 @@ describe('askDot', () => {
         expect(events.at(-1)).toEqual({ type: 'error', message: '点点在限定时间内没有答完' });
     });
 
+    it('点点直接读了笔记(没有引用、只给出处说明):不再重取,出处照常带出', async () => {
+        const site = fakeSite({ references: [], onPoll: answerAtOnce });
+        const { events, promise } = run(site.page, { query: '总结这条小红书视频笔记讲了什么:https://www.xiaohongshu.com/explore/69bbe9d8000000001a02e786' });
+        const rows = await promise;
+        expect(site.store().agent.getResponseReferences).toHaveBeenCalledTimes(1);
+        expect(events.at(-1)).toEqual({ type: 'done', sourceTotal: 'ai总结2篇笔记生成', interrupted: false });
+        expect(rows[0]).toMatchObject({ source_total_text: 'ai总结2篇笔记生成', source_count: 0 });
+    });
+
     it('引用晚到:隔一会儿再取,取到就停', async () => {
         const site = fakeSite({ references: [REFERENCE], referenceDelays: 1, onPoll: answerAtOnce });
         const { events, promise } = run(site.page, { query: '问' });

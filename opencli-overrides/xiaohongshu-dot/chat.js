@@ -351,11 +351,12 @@ export async function askDot(page, { query, conversation, timeout }, {
         fail(snapshot.errorReason || '点点这次没有答出来', new CommandExecutionError(snapshot.errorReason || '点点这次没有答出来'));
     }
 
-    // 引用有时比正文晚到一点:取不到就隔一会儿再取,最多 3 次
+    // 引用有时比正文晚到一点:还没有结果就隔一会儿再取,最多 3 次。点点直接读了某条笔记时
+    // 没有引用、只给出处说明(「ai为你回答」),那就是定论,不必再等。
     let references = [];
     let total = '';
     if (!interrupted && answer) {
-        for (let attempt = 0; attempt < 3 && references.length === 0; attempt += 1) {
+        for (let attempt = 0; attempt < 3 && references.length === 0 && !total; attempt += 1) {
             if (attempt > 0) await sleep(referenceRetryMs);
             const raw = await evaluateIn(page, buildReferencesJs(prompt, sent.messageId)).catch(() => null);
             references = normalizeReferences(raw?.items);

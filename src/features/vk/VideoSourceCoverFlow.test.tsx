@@ -76,6 +76,10 @@ describe('VideoSourceCoverFlow', () => {
     }
   })
 
+  it('recognizes a rednote (国际版) note link as Xiaohongshu', () => {
+    expect(detectedIds('https://www.rednote.com/explore/69bbe9d8000000001a02e786')).toEqual(['xiaohongshu'])
+  })
+
   it('does not take look-alike hosts, other schemes or plain text for Xiaohongshu', () => {
     const others = samples.samples.filter(({ kind }) => kind === 'other')
     expect(others.length).toBeGreaterThan(0)

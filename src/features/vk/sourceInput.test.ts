@@ -71,6 +71,12 @@ describe('extractSources', () => {
     expect(extractSources(text)).toEqual({ sources: ['https://a.com/1', 'https://b.com/2', 'C:\\x.mp4'], dropped: 1 })
   })
 
+  it('rewrites a rednote (国际版) note link to the same note on xiaohongshu.com, keeping xsec_token', () => {
+    expect(extractSources('https://www.rednote.com/explore/69bbe9d8000000001a02e786?xsec_token=AB1%3D&xsec_source=pc_feed').sources)
+      .toEqual(['https://www.xiaohongshu.com/explore/69bbe9d8000000001a02e786?xsec_token=AB1%3D&xsec_source=pc_feed'])
+    expect(extractSources('https://creator.rednote.com/new/home').sources).toEqual(['https://creator.rednote.com/new/home'])
+  })
+
   it('returns nothing for empty or link-less text', () => {
     expect(extractSources('')).toEqual({ sources: [], dropped: 0 })
     expect(extractSources('\n  \n')).toEqual({ sources: [], dropped: 0 })
