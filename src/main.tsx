@@ -5,6 +5,7 @@ import { StartupSplash } from './components/StartupSplash'
 import { createHostSelection } from './host'
 import { connectInspirationLibrary } from './features/inspiration/inspirationLibrary'
 import { createHostInspirationPersistence } from './features/inspiration/inspirationHostClient'
+import { installExternalLinkHandler } from './lib/externalLinks'
 import './index.css'
 
 const hostSelection = createHostSelection({
@@ -18,6 +19,9 @@ const hostSelection = createHostSelection({
 if (hostSelection.mode === 'connected') {
   connectInspirationLibrary(createHostInspirationPersistence(hostSelection.baseUrl))
 }
+
+// 外站链接一律交给系统浏览器(桌面壳里 target="_blank" 点了没反应)
+installExternalLinkHandler()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

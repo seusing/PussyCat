@@ -33,6 +33,8 @@ tauri-plugin-log = "2"
 tauri-plugin-notification = "~2.4"
 # 单实例:必须**最先**注册,早于任何 Host bootstrap(spec §5)——否则第二实例会先拉起第二个 Node 再被劝退。
 tauri-plugin-single-instance = "2"
+# 在系统浏览器里打开外部链接(笔记原文、发布说明等);2.6 起要求 @tauri-apps/api 2.12,与上面的 notification 一样先停在 2.5。
+tauri-plugin-opener = "~2.5"
 
 # Job Object 进程连坐(spec §5 通道 1)。版本对齐 tauri 依赖树里已有的 windows 0.61,
 # 免得同一个大 crate 编两份。

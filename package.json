@@ -40,6 +40,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-notification": "~2.4.0",
+    "@tauri-apps/plugin-opener": "~2.5.3",
     "border-beam": "^1.3.0",
     "comark": "0.8.1",
     "comark-annotate": "0.9.1",
