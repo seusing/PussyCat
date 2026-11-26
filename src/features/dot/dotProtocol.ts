@@ -23,7 +23,7 @@ export type DotEvent =
   | { type: 'delta'; text: string }
   | { type: 'replace'; text: string }
   | { type: 'references'; items: DotReference[] }
-  | { type: 'done'; sourceTotal: string; interrupted: boolean }
+  | { type: 'done'; sourceTotal: string; interrupted: boolean; followUps: string[] }
   | { type: 'error'; message: string }
 
 export const dotChatRunId = (nonce: string) => `${CHAT_RUN_PREFIX}${nonce}`
@@ -34,7 +34,15 @@ export const isDotStopRunId = (runId: string) => runId.startsWith(STOP_RUN_PREFI
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 
-function reference(value: unknown): DotReference | null {
+/** 点点给的「接着问」:去掉空白和重复,最多 4 条。 */
+export function parseFollowUps(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const items = value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+  return [...new Set(items)].slice(0, 4)
+}
+
+/** 一篇引用笔记;认不出笔记 id 或链接不是 https 的返回 null。读回存档时也用它。 */
+export function parseDotReference(value: unknown): DotReference | null {
   if (!value || typeof value !== 'object') return null
   const item = value as Record<string, unknown>
   const noteId = text(item.noteId)
@@ -72,11 +80,11 @@ export function parseDotLine(line: string): DotEvent | null {
     case 'replace':
       return { type: 'replace', text: text(data.text) }
     case 'references': {
-      const items = Array.isArray(data.items) ? data.items.map(reference).filter((item): item is DotReference => !!item) : []
+      const items = Array.isArray(data.items) ? data.items.map(parseDotReference).filter((item): item is DotReference => !!item) : []
       return { type: 'references', items }
     }
     case 'done':
-      return { type: 'done', sourceTotal: text(data.sourceTotal), interrupted: data.interrupted === true }
+      return { type: 'done', sourceTotal: text(data.sourceTotal), interrupted: data.interrupted === true, followUps: parseFollowUps(data.followUps) }
     case 'error':
       return { type: 'error', message: text(data.message) || '点点这次没有答出来' }
     default:

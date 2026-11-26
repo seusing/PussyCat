@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { InlineLoader } from 'generative-loaders'
+import { AnimatePresence } from 'motion/react'
 import 'generative-loaders/styles.css'
 import {
   Clapperboard,
@@ -10,9 +11,9 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  RadioTower,
   SlidersHorizontal,
 } from 'lucide-react'
+import { DotMascot } from '../features/dot/DotMascot'
 import { DotNavIcon } from '../features/dot/DotNavIcon'
 import { SystemHealthPill } from './SystemHealthPill'
 import { NotificationBell } from './NotificationBell'
@@ -35,7 +36,6 @@ const MODULES = [
   { key: 'dot' as const, label: '点点', icon: DotNavIcon },
   { key: 'vk' as const, label: '视频解析', icon: Clapperboard },
   { key: 'providers' as const, label: '模型配置', icon: SlidersHorizontal },
-  { key: 'radar' as const, label: 'Codex Radar', icon: RadioTower },
 ]
 
 const MODULE_SIDEBAR_HANDLE_WIDTH = 9
@@ -313,7 +313,12 @@ export default function AppShell({
                 {layout.navHidden ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
               </button>
             )}
-            <div ref={titleRef} data-testid="app-header-title"><strong>{activeLabel}</strong></div>
+            <div ref={titleRef} data-testid="app-header-title">
+              <strong>{activeLabel}</strong>
+              <AnimatePresence initial={false}>
+                {activeModule === 'dot' && <DotMascot key="header-dot-mascot" size={22} testId="app-header-dot-mascot" className="app-header-mascot" />}
+              </AnimatePresence>
+            </div>
           </div>
           <div ref={actionsRef} data-testid="app-header-actions" className="app-header-actions">
             {headerActions}

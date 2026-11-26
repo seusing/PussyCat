@@ -15,7 +15,6 @@ import { LoginStatusPanel } from './features/login/LoginStatusPanel'
 import { VkPanel } from './features/vk/VkPanel'
 import { VkProviderForm } from './features/vk/VkProviderForm'
 import { VkTaskDetailSidebar } from './features/vk/VkTaskDetailSidebar'
-import { RadarPanel } from './features/radar/RadarPanel'
 import { InspirationPanel } from './features/inspiration/InspirationPanel'
 import { DotChatPanel } from './features/dot/DotChatPanel'
 import { useDotChat } from './features/dot/dotChatStore'
@@ -410,9 +409,6 @@ export default function App({
             <div className="mx-auto w-full max-w-5xl p-3 sm:p-6"><VkProviderForm baseUrl={baseUrl} onSaved={() => setProviderRevision((value) => value + 1)} /></div>
           </ModuleErrorBoundary>
         )}
-      </div>
-      <div className="app-page-stack-panel" hidden={activeModule !== 'radar'}>
-        {(visitedModules.has('radar') || activeModule === 'radar') && <ModuleErrorBoundary><RadarPanel baseUrl={baseUrl} /></ModuleErrorBoundary>}
       </div>
     </div>
   )

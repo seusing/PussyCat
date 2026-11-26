@@ -2,38 +2,32 @@ import { create } from 'zustand'
 import type { DoneEvent, HostBridge, OutputEvent } from '../../host/types'
 import {
   DOT_CHAT_COMMAND, DOT_STOP_COMMAND, dotChatRunId, dotStopRunId, isDotStopRunId, parseDotLine,
-  type DotReference,
 } from './dotProtocol'
+import {
+  conversationTitle, readDotHistory, serializeDotHistory,
+  type DotConversation, type DotHistoryPersistence, type DotTurn,
+} from './dotHistory'
 
-export type DotTurnState = 'waiting' | 'streaming' | 'done' | 'stopped' | 'error'
+export type { DotConversation, DotTurn, DotTurnState } from './dotHistory'
 
-export type DotTurn = {
-  id: string
-  question: string
-  answer: string
-  /** 点点的过程步骤(搜索、整理……),按出现顺序 */
-  steps: string[]
-  references: DotReference[]
-  /** 点点给的出处说明,例如「ai总结 12 篇笔记生成」 */
-  sourceTotal: string
-  state: DotTurnState
-  error?: string
-  runId: string
-  /** 点点被占用(视频解析的点点速览正在问)时已经排队重试了几次 */
-  busyRetries: number
-}
+/** 对话记录的存取状态:没接宿主(演示模式、测试)时只在内存里。 */
+export type DotHistoryPhase = 'memory' | 'loading' | 'ready' | 'error'
 
 type DotChatState = {
-  turns: DotTurn[]
-  /** 点点那边的会话 id;下一问带上它接着聊,新对话时清空 */
-  conversationId: string | null
+  /** 全部对话,存档顺序;列表按 updatedAt 排 */
+  conversations: DotConversation[]
+  /** 正在看的对话;null 是还没问第一句的新对话 */
+  activeId: string | null
   activeRunId: string | null
   host: HostBridge | null
+  history: { phase: DotHistoryPhase; error: string }
   bindHost: (host: HostBridge) => void
   ask: (question: string) => void
   stop: () => void
   regenerate: () => void
   newConversation: () => void
+  openConversation: (id: string) => void
+  retryHistory: () => void
   handleOutput: (event: OutputEvent) => void
   handleDone: (event: DoneEvent) => void
 }
@@ -46,11 +40,16 @@ const ANSWER_TIMEOUT_SECONDS = 180
 const BUSY_RETRY_MS = 2000
 const BUSY_RETRY_LIMIT = 60
 export const QUEUED_STEP = '点点正忙，排队中'
+// 存档:改动停下来 800ms 后整份写一次;一直在变(回答流式到达)时最多攒 4 秒
+const SAVE_DEBOUNCE_MS = 800
+const SAVE_MAX_WAIT_MS = 4000
+const SAVE_RETRY_MS = 10_000
 
 let stopTimer: ReturnType<typeof setTimeout> | undefined
 let retryTimer: ReturnType<typeof setTimeout> | undefined
 
 const isSessionBusy = (event: DoneEvent) => [event.error?.summary, event.error?.detail].some((text) => /SESSION_BUSY/.test(text ?? ''))
+const isLive = (turn: DotTurn) => turn.state === 'waiting' || turn.state === 'streaming'
 
 function errorSummary(error: unknown, fallback: string): string {
   if (error && typeof error === 'object' && 'summary' in error && typeof error.summary === 'string') return error.summary
@@ -59,58 +58,90 @@ function errorSummary(error: unknown, fallback: string): string {
 
 const nonce = () => crypto.randomUUID()
 
+export const selectActiveConversation = (state: Pick<DotChatState, 'conversations' | 'activeId'>) =>
+  state.conversations.find((conversation) => conversation.id === state.activeId) ?? null
+
+/** 正在回答的那个对话的 id;没有在答的返回 null。 */
+export const selectLiveConversationId = (state: Pick<DotChatState, 'conversations' | 'activeRunId'>) =>
+  (state.activeRunId
+    ? state.conversations.find((conversation) => conversation.turns.some((turn) => turn.runId === state.activeRunId))?.id ?? null
+    : null)
+
+const EMPTY_TURNS: DotTurn[] = []
+
 export const useDotChat = create<DotChatState>((set, get) => {
   const patchTurn = (runId: string, patch: (turn: DotTurn) => Partial<DotTurn>) => set((state) => ({
-    turns: state.turns.map((turn) => (turn.runId === runId ? { ...turn, ...patch(turn) } : turn)),
+    conversations: state.conversations.map((conversation) => (conversation.turns.some((turn) => turn.runId === runId)
+      ? { ...conversation, turns: conversation.turns.map((turn) => (turn.runId === runId ? { ...turn, ...patch(turn) } : turn)) }
+      : conversation)),
   }))
-  const isLive = (turn: DotTurn) => turn.state === 'waiting' || turn.state === 'streaming'
+  const patchConversationOf = (runId: string, patch: Partial<DotConversation>) => set((state) => ({
+    conversations: state.conversations.map((conversation) => (conversation.turns.some((turn) => turn.runId === runId)
+      ? { ...conversation, ...patch }
+      : conversation)),
+  }))
+  const finish = (turn: DotTurn): Pick<DotTurn, 'finishedAt'> => ({ finishedAt: turn.finishedAt ?? Date.now() })
   const cancelActive = () => {
     const { host, activeRunId } = get()
     if (host && activeRunId) void host.cancelCommand(activeRunId).catch(() => {})
   }
   // 起一条 chat 运行回答这一问(第一次提问和排队重试都走这里)
-  const startRun = (turnId: string) => {
-    const { host, conversationId, turns } = get()
-    const turn = turns.find((item) => item.id === turnId)
-    if (!host || !turn) return
+  const startRun = (conversationId: string, turnId: string) => {
+    const { host, conversations } = get()
+    const conversation = conversations.find((item) => item.id === conversationId)
+    const turn = conversation?.turns.find((item) => item.id === turnId)
+    if (!host || !conversation || !turn) return
     const runId = dotChatRunId(nonce())
     set((state) => ({
       activeRunId: runId,
-      turns: state.turns.map((item) => (item.id === turnId ? { ...item, runId } : item)),
+      conversations: state.conversations.map((item) => (item.id === conversationId
+        ? { ...item, turns: item.turns.map((entry) => (entry.id === turnId ? { ...entry, runId } : entry)) }
+        : item)),
     }))
     const argv = ['xiaohongshu-dot', 'chat', turn.question]
-    if (conversationId) argv.push('--conversation', conversationId)
+    if (conversation.remoteId) argv.push('--conversation', conversation.remoteId)
     argv.push('--timeout', String(ANSWER_TIMEOUT_SECONDS), '-f', 'json')
     host.startCommand({ runId, commandKey: DOT_CHAT_COMMAND, argv }).catch((error: unknown) => {
-      patchTurn(runId, () => ({ state: 'error', error: errorSummary(error, '点点没能开始回答') }))
+      patchTurn(runId, (item) => ({ state: 'error', error: errorSummary(error, '点点没能开始回答'), ...finish(item) }))
       if (get().activeRunId === runId) set({ activeRunId: null })
     })
   }
 
   return {
-    turns: [],
-    conversationId: null,
+    conversations: [],
+    activeId: null,
     activeRunId: null,
     host: null,
+    history: { phase: 'memory', error: '' },
     bindHost: (host) => set({ host }),
 
     ask: (question) => {
       const text = question.trim()
-      const { host, activeRunId } = get()
+      const { host, activeRunId, activeId, conversations } = get()
       if (!text || !host || activeRunId) return
+      const now = Date.now()
       const turn: DotTurn = {
-        id: nonce(), question: text, answer: '', steps: [], references: [], sourceTotal: '',
-        state: 'waiting', runId: '', busyRetries: 0,
+        id: nonce(), question: text, answer: '', steps: [], references: [], sourceTotal: '', followUps: [],
+        state: 'waiting', startedAt: now, runId: '', busyRetries: 0,
       }
-      set((state) => ({ turns: [...state.turns, turn] }))
-      startRun(turn.id)
+      const current = conversations.find((item) => item.id === activeId)
+      const conversationId = current?.id ?? nonce()
+      set((state) => ({
+        activeId: conversationId,
+        conversations: current
+          ? state.conversations.map((item) => (item.id === conversationId ? { ...item, updatedAt: now, turns: [...item.turns, turn] } : item))
+          : [...state.conversations, {
+            id: conversationId, remoteId: null, title: conversationTitle(text), createdAt: now, updatedAt: now, turns: [turn],
+          }],
+      }))
+      startRun(conversationId, turn.id)
     },
 
     // 停止:界面立刻定格;再让点点自己停下,chat 看到记号后正常收尾。点点那边停不了就直接取消进程。
     stop: () => {
       const { host, activeRunId } = get()
       if (!host || !activeRunId) return
-      patchTurn(activeRunId, (turn) => (isLive(turn) ? { state: 'stopped' } : {}))
+      patchTurn(activeRunId, (turn) => (isLive(turn) ? { state: 'stopped', ...finish(turn) } : {}))
       // 还在排队(没有在跑的运行):不用叫点点停,直接结束
       if (retryTimer !== undefined) {
         clearTimeout(retryTimer)
@@ -128,16 +159,24 @@ export const useDotChat = create<DotChatState>((set, get) => {
     },
 
     regenerate: () => {
-      const { turns, activeRunId } = get()
-      const last = turns[turns.length - 1]
-      if (!last || activeRunId) return
-      set({ turns: turns.slice(0, -1) })
+      const { activeRunId } = get()
+      const conversation = selectActiveConversation(get())
+      const last = conversation?.turns[conversation.turns.length - 1]
+      if (!conversation || !last || activeRunId) return
+      set((state) => ({
+        conversations: state.conversations.map((item) => (item.id === conversation.id ? { ...item, turns: item.turns.slice(0, -1) } : item)),
+      }))
       get().ask(last.question)
     },
 
-    newConversation: () => {
-      if (get().activeRunId) return
-      set({ turns: [], conversationId: null })
+    newConversation: () => set({ activeId: null }),
+
+    openConversation: (id) => {
+      if (get().conversations.some((conversation) => conversation.id === id)) set({ activeId: id })
+    },
+
+    retryHistory: () => {
+      if (get().history.phase === 'error') void loadHistory()
     },
 
     handleOutput: (event) => {
@@ -146,16 +185,20 @@ export const useDotChat = create<DotChatState>((set, get) => {
       if (!parsed) return
       switch (parsed.type) {
         case 'start':
-          set({ conversationId: parsed.conversationId || null })
+          if (parsed.conversationId) patchConversationOf(event.runId, { remoteId: parsed.conversationId })
           return
         case 'status':
           patchTurn(event.runId, (turn) => (turn.steps.includes(parsed.text) ? {} : { steps: [...turn.steps, parsed.text] }))
           return
         case 'delta':
-          patchTurn(event.runId, (turn) => (isLive(turn) ? { answer: turn.answer + parsed.text, state: 'streaming' } : {}))
+          patchTurn(event.runId, (turn) => (isLive(turn)
+            ? { answer: turn.answer + parsed.text, state: 'streaming', answeredAt: turn.answeredAt ?? Date.now() }
+            : {}))
           return
         case 'replace':
-          patchTurn(event.runId, (turn) => (isLive(turn) ? { answer: parsed.text, state: 'streaming' } : {}))
+          patchTurn(event.runId, (turn) => (isLive(turn)
+            ? { answer: parsed.text, state: 'streaming', answeredAt: turn.answeredAt ?? Date.now() }
+            : {}))
           return
         case 'references':
           patchTurn(event.runId, () => ({ references: parsed.items }))
@@ -163,11 +206,12 @@ export const useDotChat = create<DotChatState>((set, get) => {
         case 'done':
           patchTurn(event.runId, (turn) => ({
             sourceTotal: parsed.sourceTotal,
-            ...(isLive(turn) ? { state: parsed.interrupted ? 'stopped' : 'done' } : {}),
+            followUps: parsed.followUps,
+            ...(isLive(turn) ? { state: parsed.interrupted ? 'stopped' : 'done', ...finish(turn) } : {}),
           }))
           return
         case 'error':
-          patchTurn(event.runId, (turn) => (turn.state === 'stopped' ? {} : { state: 'error', error: parsed.message }))
+          patchTurn(event.runId, (turn) => (turn.state === 'stopped' ? {} : { state: 'error', error: parsed.message, ...finish(turn) }))
           return
       }
     },
@@ -181,8 +225,9 @@ export const useDotChat = create<DotChatState>((set, get) => {
       }
       if (event.runId !== get().activeRunId) return
       clearTimeout(stopTimer)
-      const turn = get().turns.find((item) => item.runId === event.runId)
-      if (turn && isLive(turn) && event.outcome === 'error' && isSessionBusy(event) && turn.busyRetries < BUSY_RETRY_LIMIT) {
+      const conversation = get().conversations.find((item) => item.turns.some((turn) => turn.runId === event.runId))
+      const turn = conversation?.turns.find((item) => item.runId === event.runId)
+      if (conversation && turn && isLive(turn) && event.outcome === 'error' && isSessionBusy(event) && turn.busyRetries < BUSY_RETRY_LIMIT) {
         // 点点正被别处占用:这一问保持「在答」,排队后重试
         patchTurn(event.runId, (item) => ({
           busyRetries: item.busyRetries + 1,
@@ -190,17 +235,124 @@ export const useDotChat = create<DotChatState>((set, get) => {
         }))
         retryTimer = setTimeout(() => {
           retryTimer = undefined
-          startRun(turn.id)
+          startRun(conversation.id, turn.id)
         }, BUSY_RETRY_MS)
         return
       }
       set({ activeRunId: null })
-      patchTurn(event.runId, (turn) => {
-        if (!isLive(turn)) return {}
-        if (event.outcome === 'success') return { state: 'done' }
-        if (event.outcome === 'cancelled') return { state: 'stopped' }
-        return { state: 'error', error: event.error?.summary ?? '点点这次没有答出来' }
+      patchTurn(event.runId, (item) => {
+        if (!isLive(item)) return {}
+        if (event.outcome === 'success') return { state: 'done', ...finish(item) }
+        if (event.outcome === 'cancelled') return { state: 'stopped', ...finish(item) }
+        return { state: 'error', error: event.error?.summary ?? '点点这次没有答出来', ...finish(item) }
       })
     },
   }
 })
+
+/** 正在看的对话的各轮;新对话是空数组(同一个引用,不触发重渲染)。 */
+export function useActiveTurns(): DotTurn[] {
+  return useDotChat((state) => selectActiveConversation(state)?.turns ?? EMPTY_TURNS)
+}
+
+// —— 存档 ——
+// 权威存储是宿主上的文件。这里持有内存副本(就是 store 里的 conversations),有改动就去抖整份写回。
+// 读回完成前不写:免得用一份不全的记录盖掉文件;读失败也不写,等用户重试。
+
+let persistence: DotHistoryPersistence | null = null
+let epoch = 0
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+let firstDirtyAt = 0
+let saving = false
+let dirty = false
+let unsubscribe: (() => void) | null = null
+let pagehideBound = false
+
+const setHistory = (phase: DotHistoryPhase, error = '') => useDotChat.setState({ history: { phase, error } })
+
+function schedulePersist(delay = SAVE_DEBOUNCE_MS) {
+  if (!persistence || useDotChat.getState().history.phase !== 'ready') return
+  const now = Date.now()
+  if (!dirty) {
+    dirty = true
+    firstDirtyAt = now
+  }
+  clearTimeout(saveTimer)
+  const due = Math.min(now + delay, firstDirtyAt + SAVE_MAX_WAIT_MS)
+  saveTimer = setTimeout(() => { void flushPersist() }, Math.max(0, due - now))
+}
+
+async function flushPersist() {
+  clearTimeout(saveTimer)
+  saveTimer = undefined
+  if (!persistence || saving || !dirty || useDotChat.getState().history.phase !== 'ready') return
+  const target = persistence
+  const current = epoch
+  saving = true
+  dirty = false
+  let failed = false
+  try {
+    await target.save(serializeDotHistory(useDotChat.getState().conversations))
+  } catch {
+    failed = true
+  }
+  if (current !== epoch) return
+  saving = false
+  // 写的过程中又有新改动,或写失败了:排下一次(失败的隔一会儿再试,期间有新改动会提前)
+  if (failed) dirty = true
+  if (!dirty || saveTimer !== undefined) return
+  if (failed) {
+    firstDirtyAt = Date.now()
+    saveTimer = setTimeout(() => { void flushPersist() }, SAVE_RETRY_MS)
+  } else {
+    schedulePersist(0)
+  }
+}
+
+async function loadHistory() {
+  const source = persistence
+  if (!source) return
+  const current = epoch
+  setHistory('loading')
+  try {
+    const remote = await source.load()
+    if (current !== epoch) return
+    const stored = remote.exists ? readDotHistory(remote.history) : []
+    // 读回期间新问的对话(存档里没有)排在后面一起留下
+    const storedIds = new Set(stored.map((conversation) => conversation.id))
+    const fresh = useDotChat.getState().conversations.filter((conversation) => !storedIds.has(conversation.id))
+    useDotChat.setState({ conversations: [...stored, ...fresh] })
+    setHistory('ready')
+    if (fresh.length > 0) schedulePersist(0)
+  } catch (error) {
+    if (current !== epoch) return
+    setHistory('error', `读取点点对话记录失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** 应用启动时调用:接上宿主并读回对话记录。 */
+export function connectDotHistory(next: DotHistoryPersistence): void {
+  persistence = next
+  if (!unsubscribe) {
+    unsubscribe = useDotChat.subscribe((state, previous) => {
+      if (state.conversations !== previous.conversations) schedulePersist()
+    })
+  }
+  if (!pagehideBound && typeof window !== 'undefined') {
+    pagehideBound = true
+    window.addEventListener('pagehide', () => { void flushPersist() })
+  }
+  void loadHistory()
+}
+
+export function resetDotHistoryForTests(): void {
+  epoch += 1
+  clearTimeout(saveTimer)
+  saveTimer = undefined
+  saving = false
+  dirty = false
+  persistence = null
+  unsubscribe?.()
+  unsubscribe = null
+  useDotChat.setState({ history: { phase: 'memory', error: '' } })
+}

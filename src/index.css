@@ -617,6 +617,8 @@ select:focus-visible {
 .app-header-primary > div { display: flex; min-width: 0; align-items: baseline; gap: 9px; }
 .app-header-primary span { color: #6f7888; font-size: 11px; text-transform: uppercase; }
 .app-header-primary strong { overflow: hidden; color: #eef0f4; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+/* 点点页标题旁的点点:与标题文字居中对齐(容器按基线对齐,没有文字的图标会被顶到基线上方) */
+.app-header-primary .app-header-mascot { align-self: center; }
 
 .app-icon-button,
 .inspiration-breadcrumb > button,
@@ -1049,26 +1051,6 @@ select:focus-visible {
   overflow-y: auto;
   border-radius: 8px;
   padding: 4px;
-}
-
-.radar-glass-section {
-  border: 1px solid color-mix(in srgb, var(--color-line) 82%, transparent);
-  background: color-mix(in srgb, var(--color-panel) 78%, transparent);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%), 0 18px 48px rgb(0 0 0 / 18%);
-  backdrop-filter: blur(10px) saturate(1.08);
-}
-
-.radar-glass-card {
-  border: 1px solid color-mix(in srgb, var(--color-line) 82%, transparent);
-  background: color-mix(in srgb, var(--color-canvas) 74%, transparent);
-  backdrop-filter: blur(8px) saturate(1.06);
-}
-
-.radar-model-card {
-  border: 1px solid color-mix(in srgb, var(--radar-model-color) 36%, var(--color-line));
-  background: color-mix(in srgb, var(--radar-model-color) 9%, transparent);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
-  backdrop-filter: blur(8px) saturate(1.05);
 }
 
 .app-glass-dialog {

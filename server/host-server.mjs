@@ -18,10 +18,9 @@ import { VkSidecarError } from './vk-sidecar.mjs'
 import { VkRuntimeError } from './vk-runtime.mjs'
 import { VkCapabilityPackError, getCapabilityPack, projectCapabilityPacks } from './vk-capability-packs.mjs'
 import { WechatArticleError, fetchWechatArticle, requestArticleImage } from './wechat-article.mjs'
-import { createRadarService, diagnosticOf, reasonOf } from './radar.mjs'
 import { checkOpencliRelease } from './opencli-release.mjs'
 import { OpencliUpdateError, createOpencliUpdate } from './opencli-update.mjs'
-import { InspirationStoreError } from './inspiration-store.mjs'
+import { DocumentStoreError } from './json-document-store.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
 
@@ -236,13 +235,13 @@ export function createHostServer({
   vkSidecar = null,
   vkJobShadow = null,
   vkRuntime = null,
-  radarService = createRadarService(),
   opencliRelease = checkOpencliRelease,
   // 生效的 OpenCLI(内置或应用内更新装下的);有它才有 /opencli/update 与 /opencli/rollback。
   // opencliUpdateOptions 是测试注入点(假 registry、假 npm、假校验)。
   opencliRuntime = null,
   opencliUpdateOptions = {},
   inspirationStore = null,
+  dotHistoryStore = null,
   wechatArticle = { fetchWechatArticle, requestArticleImage },
 } = {}) {
   if (!policy) throw new Error('policy is required')
@@ -570,6 +569,20 @@ export function createHostServer({
         return
       }
 
+      // 点点对话记录整份读写,落在爪爪数据目录下的文件里(见 dot-history-store.mjs)。
+      if (url.pathname === '/dot/history' && (request.method === 'GET' || request.method === 'PUT')) {
+        if (!dotHistoryStore) {
+          writeJson(response, 503, { error: '点点对话记录存储未接线', reasonCode: 'not-configured' })
+          return
+        }
+        if (request.method === 'GET') {
+          writeJson(response, 200, await dotHistoryStore.read())
+        } else {
+          writeJson(response, 200, await dotHistoryStore.write(await readJson(request, dotHistoryStore.maxBytes)))
+        }
+        return
+      }
+
       if (url.pathname === '/article-image' && request.method === 'GET') {
         const upstream = await wechatArticle.requestArticleImage(url.searchParams.get('url') ?? '')
         const buffer = Buffer.from(await upstream.arrayBuffer())
@@ -642,24 +655,6 @@ export function createHostServer({
         if (!vkRuntime) throw new VkRuntimeError(503, 'bundle-missing', 'runtime 安装编排未接线')
         const status = await vkRuntime.adopt(body?.pythonPath, async () => { await vkSidecar?.stop() })
         writeJson(response, 200, status)
-        return
-      }
-
-      // codexradar 的公开评分。由 Node 侧代取,渲染进程不直连第三方 —— 见 radar.mjs。
-      if (url.pathname === '/radar/v1/model-ratings' && request.method === 'GET') {
-        if (!radarService) {
-          writeJson(response, 503, { error: 'codexradar 未接线', reasonCode: 'not-configured' })
-          return
-        }
-        try {
-          writeJson(response, 200, await radarService.get({ force: url.searchParams.get('force') === '1' }))
-        } catch (error) {
-          writeJson(response, 502, {
-            error: reasonOf(error),
-            reasonCode: 'radar-unavailable',
-            diagnostic: diagnosticOf(error),
-          })
-        }
         return
       }
 
@@ -759,7 +754,7 @@ export function createHostServer({
           || error instanceof VkRuntimeError
           || error instanceof VkCapabilityPackError
           || error instanceof WechatArticleError
-          || error instanceof InspirationStoreError
+          || error instanceof DocumentStoreError
           || error instanceof OpencliUpdateError
           ? error.statusCode
           : 500

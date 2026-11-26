@@ -11,7 +11,9 @@ describe('parseDotLine', () => {
     expect(parseDotLine(line({ type: 'delta', text: '你好' }))).toEqual({ type: 'delta', text: '你好' })
     expect(parseDotLine(line({ type: 'replace', text: '' }))).toEqual({ type: 'replace', text: '' })
     expect(parseDotLine(line({ type: 'done', sourceTotal: 'ai为你回答', interrupted: false })))
-      .toEqual({ type: 'done', sourceTotal: 'ai为你回答', interrupted: false })
+      .toEqual({ type: 'done', sourceTotal: 'ai为你回答', interrupted: false, followUps: [] })
+    expect(parseDotLine(line({ type: 'done', sourceTotal: '', interrupted: false, followUps: [' 肇庆怎么玩 ', '', 3, '肇庆怎么玩', '清远', '惠州', '珠海', '顺德'] })))
+      .toMatchObject({ followUps: ['肇庆怎么玩', '清远', '惠州', '珠海'] })
     expect(parseDotLine(line({ type: 'error', message: '' }))).toEqual({ type: 'error', message: '点点这次没有答出来' })
   })
 

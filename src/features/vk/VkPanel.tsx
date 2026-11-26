@@ -71,7 +71,7 @@ import { STORYLINE_IN_PROGRESS, VK_STORYLINE_STARTED_EVENT } from './storyline'
 import { VkCapabilityPacksPanel } from './VkCapabilityPacksPanel'
 import { VideoSourceCoverFlow, isXiaohongshuSource } from './VideoSourceCoverFlow'
 import { DotSuggestTip, type XhsParser } from './DotSuggestTip'
-import { DotMascot } from './DotMascot'
+import { DotMascot } from '../dot/DotMascot'
 import { XhsParserLabel } from './XhsParserLabel'
 import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { VkTaskTable } from './VkTaskTable'
@@ -1741,7 +1741,7 @@ export function VkPanel({ baseUrl, selectedJobId, onSelectJob, refreshToken, pro
               checked={dotSelected}
               onChange={(on) => setXhsParser(on ? 'dot' : 'model')}
             >
-              <AnimatePresence initial={false}>{dotSelected && <DotMascot key="dot-mascot" />}</AnimatePresence>
+              <AnimatePresence initial={false}>{dotSelected && <DotMascot key="dot-mascot" testId="vk-dot-mascot" />}</AnimatePresence>
             </ToggleSwitch>
           )}
           <button

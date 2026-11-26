@@ -154,6 +154,16 @@ export function buildSnapshotJs(messageId) {
     .filter((step) => step && Number(step.progressStatus) > 0)
     .map((step) => String(step.progressText || ''))
     .filter(Boolean);
+  // 点点给的「接着问」:Recommend 片段(fragmentType 4)的 recommendTextList,条目是字符串或带文字字段的对象
+  const followUps = [];
+  for (const fragment of fragments) {
+    if (!fragment || Number(fragment.fragmentType) !== 4 || !Array.isArray(fragment.recommendTextList)) continue;
+    for (const item of fragment.recommendTextList) {
+      const raw = typeof item === 'string' ? item : item && (item.text || item.content || item.query || item.title);
+      const value = typeof raw === 'string' ? raw.trim() : '';
+      if (value && !followUps.includes(value)) followUps.push(value);
+    }
+  }
   return {
     delta: appended ? text.slice(previous.length) : '',
     replace: appended ? null : text,
@@ -163,6 +173,7 @@ export function buildSnapshotJs(messageId) {
     failed: !!(ai.isTimeout || ai.isSendFailed),
     errorReason: String(ai.errorReason || ''),
     querySource: String((ai.querySource && (ai.querySource.text || ai.querySource.oneboxText)) || ''),
+    followUps: followUps.slice(0, 4),
     stopRequested: !!dot.stopRequested,
   };
 })()`;
@@ -395,7 +406,13 @@ async function runAsk(page, { query, conversation, timeout }, {
         if (references.length) emit({ type: 'references', items: references });
     }
     const sourceTotal = snapshot?.querySource || total;
-    emit({ type: 'done', sourceTotal, interrupted });
+    let followUps = interrupted ? [] : (snapshot?.followUps ?? []);
+    // 「接着问」可能在正文结束后才补上:取完引用再看一眼
+    if (!interrupted && answer && followUps.length === 0) {
+        const last = await evaluateIn(page, buildSnapshotJs(sent.messageId)).catch(() => null);
+        if (Array.isArray(last?.followUps)) followUps = last.followUps;
+    }
+    emit({ type: 'done', sourceTotal, interrupted, ...(followUps.length ? { followUps } : {}) });
     return [{
         answer,
         source_total_text: sourceTotal,

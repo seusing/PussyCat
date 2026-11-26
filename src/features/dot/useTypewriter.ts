@@ -6,6 +6,8 @@ import { useReducedMotion } from 'motion/react'
 const BASE_CHARS_PER_SECOND = 45
 const CATCH_UP_PER_CHAR = 2.5
 const FINISH_MULTIPLIER = 3
+// 正文每次放字都要整段重排一遍 Markdown,约 30 帧一秒足够顺,不必每帧都更新
+const MIN_COMMIT_MS = 32
 
 /** 经过 dtMs 之后应该显示到第几个字(纯函数,便于测试)。 */
 export function nextReveal(shown: number, total: number, dtMs: number, streaming: boolean): number {
@@ -23,7 +25,8 @@ export function nextReveal(shown: number, total: number, dtMs: number, streaming
 export function useTypewriter(text: string, streaming: boolean, instant = false): string {
   const reduceMotion = useReducedMotion()
   const immediate = instant || !!reduceMotion || typeof requestAnimationFrame !== 'function'
-  const [shown, setShown] = useState(() => (immediate ? text.length : 0))
+  // 打开时已经答完的回答(翻看对话记录)直接整段显示,不重新打一遍字
+  const [shown, setShown] = useState(() => (immediate || !streaming ? text.length : 0))
   const shownRef = useRef(shown)
   shownRef.current = Math.min(shown, text.length)
 
@@ -35,7 +38,13 @@ export function useTypewriter(text: string, streaming: boolean, instant = false)
     if (shownRef.current >= text.length) return
     let frame = 0
     let last = performance.now()
-    const tick = (now: number) => {
+    // 用 performance.now() 而不是帧回调给的时间戳:两者在有的环境(jsdom)里不是同一个起点
+    const tick = () => {
+      const now = performance.now()
+      if (now - last < MIN_COMMIT_MS) {
+        frame = requestAnimationFrame(tick)
+        return
+      }
       const next = nextReveal(shownRef.current, text.length, now - last, streaming)
       last = now
       shownRef.current = next

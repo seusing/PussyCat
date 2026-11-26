@@ -353,6 +353,43 @@ describe('askDot', () => {
         expect(rows[0]).toMatchObject({ source_total_text: 'ai总结2篇笔记生成', source_count: 0 });
     });
 
+    it('点点给了「接着问」:随结束事件带出,字符串和对象条目都认,去重、最多 4 条', async () => {
+        const site = fakeSite({
+            references: [],
+            onPoll: (n, round) => {
+                if (!round || round.aiMessage.isFinished) return;
+                round.aiMessage.dataFragments = [
+                    { fragmentType: 1, text: '答' },
+                    { fragmentType: 4, text: '', recommendTextList: ['肇庆怎么玩', { text: '清远有什么好吃的' }, '肇庆怎么玩', { content: ' 顺德一日游 ' }, '惠州', '珠海'] },
+                ];
+                Object.assign(round.aiMessage, { text: '答', isFinished: true });
+            },
+        });
+        const { events, promise } = run(site.page, { query: '周末去哪' });
+        await promise;
+        expect(events.at(-1)).toEqual({
+            type: 'done', sourceTotal: 'ai总结2篇笔记生成', interrupted: false,
+            followUps: ['肇庆怎么玩', '清远有什么好吃的', '顺德一日游', '惠州'],
+        });
+    });
+
+    it('「接着问」在正文结束后才补上:取完引用再看一眼', async () => {
+        const site = fakeSite({
+            references: [],
+            onPoll: (n, round) => {
+                if (!round) return;
+                if (!round.aiMessage.isFinished) {
+                    Object.assign(round.aiMessage, { text: '答', isFinished: true });
+                    return;
+                }
+                round.aiMessage.dataFragments = [{ fragmentType: 4, recommendTextList: ['再推荐几个'] }];
+            },
+        });
+        const { events, promise } = run(site.page, { query: '周末去哪' });
+        await promise;
+        expect(events.at(-1)).toMatchObject({ type: 'done', followUps: ['再推荐几个'] });
+    });
+
     it('引用晚到:隔一会儿再取,取到就停', async () => {
         const site = fakeSite({ references: [REFERENCE], referenceDelays: 1, onPoll: answerAtOnce });
         const { events, promise } = run(site.page, { query: '问' });

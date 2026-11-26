@@ -3,19 +3,19 @@ import './DotMascot.css'
 
 // 指数缓出、不回弹:从一个小点长出来,关掉时缩回去(做法参照 bloub)
 const GROW = [0.16, 1, 0.3, 1] as const
-// 开关文字与点点之间的间距,算进点点自己的占位里,收起时一并收掉
+// 与左边文字之间的间距,算进点点自己的占位里,收起时一并收掉
 const SLOT_GAP = 8
 
 /**
  * 点点:一颗绿点加两只眼睛。待机时眨眼、眼神左右漂移;放进 AnimatePresence 才有进出动画。
- * 进出时占位宽度跟着一起伸缩(含与左边的 8px 间距),旁边的按钮随之平滑移动,不会先顿住再跳。
+ * 进出时占位宽度跟着一起伸缩(含与左边的 8px 间距),旁边的元素随之平滑移动,不会先顿住再跳。
  */
-export function DotMascot({ size = 26 }: { size?: number }) {
+export function DotMascot({ size = 26, testId = 'dot-mascot', className }: { size?: number; testId?: string; className?: string }) {
   const reduceMotion = useReducedMotion()
   return (
     <motion.span
-      className="dot-mascot"
-      data-testid="vk-dot-mascot"
+      className={className ? `dot-mascot ${className}` : 'dot-mascot'}
+      data-testid={testId}
       aria-hidden="true"
       style={{ height: size }}
       initial={reduceMotion ? false : { width: 0, scale: 0.15, opacity: 0 }}

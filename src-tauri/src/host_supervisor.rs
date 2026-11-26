@@ -501,7 +501,6 @@ const HOST_ENV_KEYS: &[&str] = &[
     "OPENCLI_HOST_VK_ROOT",
     "OPENCLI_HOST_VK_CONFIG_DIR",
     "OPENCLI_HOST_VK_STATE_DIR",
-    "OPENCLI_HOST_RADAR_STATE_FILE",
     "OPENCLI_HOST_VK_HOME",
     "OPENCLI_HOST_VK_BUNDLE_DIR",
 ];
@@ -547,7 +546,6 @@ fn configure_host_env(cmd: &mut Command) {
         .env_remove("OPENCLI_HOST_VK_ROOT")
         .env_remove("OPENCLI_HOST_VK_CONFIG_DIR")
         .env_remove("OPENCLI_HOST_VK_STATE_DIR")
-        .env_remove("OPENCLI_HOST_RADAR_STATE_FILE")
         .env_remove("OPENCLI_HOST_VK_HOME")
         .env_remove("OPENCLI_HOST_VK_BUNDLE_DIR");
 
